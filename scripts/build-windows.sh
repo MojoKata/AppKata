@@ -58,8 +58,14 @@ rm -f "$I"/Qt6Quick3D*.dll "$I"/Qt6Pdf*.dll "$I"/Qt6VirtualKeyboard*.dll "$I"/op
 echo "build/windows/dist/AppKata: $(du -sh "$DIST" | cut -f1)"
 
 echo "== Inno Setup (Wine)"
-docker run --rm -v "$HERE:/work" -w /work/packaging/windows "$INNOSETUP_IMAGE" "/DAppVersion=$VERSION" appkata.iss 2>&1 | tail -3
-docker run --rm -v "$HERE:/src" "$PYWINE_IMAGE" chown -R "$(id -u):$(id -g)" /src/releases >/dev/null 2>&1 || true
+# The image's Wine runs as its own user, uid 1000, which can write only where anyone may (it wrote
+# into releases/ only for a host user of that same uid; on GitHub's runners, 1001, it was "Access
+# denied"): Setup is written into a folder of its own, then moved into releases/.
+mkdir -p "$HERE/build/windows/setup" && chmod 777 "$HERE/build/windows/setup"
+docker run --rm -v "$HERE:/work" -w /work/packaging/windows "$INNOSETUP_IMAGE" "/DAppVersion=$VERSION" \
+    "/O..\\..\\build\\windows\\setup" appkata.iss 2>&1 | tail -3
+docker run --rm -v "$HERE:/src" "$PYWINE_IMAGE" chown -R "$(id -u):$(id -g)" /src/build/windows/setup >/dev/null 2>&1 || true
 OUT="AppKata-$VERSION-setup.exe"
-test -f "$HERE/releases/$OUT"
+test -f "$HERE/build/windows/setup/$OUT" || { echo "Inno Setup wrote no $OUT"; exit 1; }
+mv -f "$HERE/build/windows/setup/$OUT" "$HERE/releases/$OUT"
 (cd "$HERE/releases" && sha256sum "$OUT" > "$OUT.sha256" && ls -l "$OUT" && cat "$OUT.sha256")
