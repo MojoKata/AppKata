@@ -14,7 +14,7 @@ if ! docker image inspect appkata-ocr >/dev/null 2>&1; then
 fi
 rm -rf "$OUT" && mkdir -p "$OUT"
 cd "$HERE"
-if [ $# -gt 0 ]; then printf '%s\n' "$@"; else git ls-files 'screenshots/*.png'; fi > "$OUT/list.txt"
+if [ $# -gt 0 ]; then printf '%s\n' "$@"; else git ls-files -co --exclude-standard 'screenshots/*.png'; fi > "$OUT/list.txt"
 docker run --rm --user "$(id -u):$(id -g)" -v "$HERE:/src:ro" -v "$OUT:/out" appkata-ocr sh -c '
     cd /src && while read -r f; do
         o="/out/$f.txt"; mkdir -p "$(dirname "$o")"
@@ -38,7 +38,7 @@ for root, _, files in os.walk(sys.argv[1]):
         hits = public_text.found(text)
         # a repository address naming AppKata that isn't its own (OCR may change case and spacing)
         hits += [m for m in re.findall(r"github\.com/[\w.-]+/appkata\b", text, re.I) if m.lower() != own]
-        hits += re.findall(r"(?<![\w/])appkata/appkata(?![\w.])", text)      # the old placeholder
+        hits += public_text.PLACEHOLDER.findall(text)
         if hits:
             bad = 1
             print(f"{shot}: {', '.join(hits)}")

@@ -5,9 +5,11 @@ They are kept as SHA-256 hashes, so this file names none of them itself.
     python3 scripts/public_text.py hash NAME...      the hash to add for a new name
     python3 scripts/public_text.py check FILE...     report any of FILE's words that are listed
 
-A word is a run of letters and digits, alone or joined to the next by -, _ or . ("kata-winvm" is
-checked whole and as "kata" and "winvm"); case doesn't matter. tests/test_public_text.py checks every
-file git tracks, and scripts/test-screenshot-text.sh the text read from every screenshot.
+A word is a run of letters and digits, alone or joined to the next by -, _ or . ("lab-vm2" is
+checked whole and as "lab" and "vm2"); case doesn't matter. tests/test_public_text.py checks every
+file git tracks or would add, and scripts/test-screenshot-text.sh the text read from every
+screenshot. PLACEHOLDER is the address AppKata's repository had before it was published, which both
+also look for.
 """
 
 import hashlib
@@ -32,6 +34,9 @@ PRIVATE = {
     "f2961e4e9a9829f8b9999136db7158e946160f737075f3a2a1e2cdf7500b7bce",
     "fe1517b74a3952aa6df0494ec75d2bf8fae306ed993658d8385ba8378cbc5567",
 }
+
+# written in two parts, so that this file doesn't name it
+PLACEHOLDER = re.compile(r"(?<![\w/])appkata/" r"appkata(?![\w.])")
 
 PART = re.compile(r"[a-z0-9]+")
 WORD = re.compile(r"[a-z0-9]+(?:[-_.][a-z0-9]+)*")
