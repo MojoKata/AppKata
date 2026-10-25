@@ -1,0 +1,164 @@
+# AppKata's CI (docs/github-workflows.md). Every PR and push to master: tier 1 and both builds,
+# whose files (unsigned, each with its .sha256) are kept with the run. A v* tag: the same, built
+# without the caches, then (once the owner approves) the AppImage signed and a draft release made.
+# Each action is pinned by its commit SHA (tests/test_pinned_inputs.py).
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ["v*"]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash      # bash -eo pipefail: a script piped through tee fails the step when it fails
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tier1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: github.ref_type != 'tag'
+        with:
+          path: |
+            build/appimage-cache
+            build/pyside-*
+          key: tier1-${{ hashFiles('packaging/versions.env') }}
+      - run: mkdir -p build && sh scripts/test-tier1.sh 2>&1 | tee build/ci-tier1.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-tier1.log test-tier1.sh
+
+  appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: github.ref_type != 'tag'
+        with:
+          path: build/appimage-cache
+          key: appimage-${{ hashFiles('packaging/versions.env') }}
+      - run: mkdir -p build && sh scripts/build-appimage.sh 2>&1 | tee build/ci-appimage.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-appimage.log build-appimage.sh
+      - run: sed 's/^/::notice title=sha256::/' releases/AppKata-*-x86_64.AppImage.sha256      # what publish.sh shows before signing
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: appimage
+          path: releases/AppKata-*-x86_64.AppImage*
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: github.ref_type != 'tag'
+        with:
+          path: build/wine-cache
+          key: windows-${{ hashFiles('packaging/versions.env', 'scripts/build-windows.sh', 'packaging/windows/icuuc-stub.c') }}
+      - run: mkdir -p build && sh scripts/build-windows.sh 2>&1 | tee build/ci-windows.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-windows.log build-windows.sh
+      - run: sed 's/^/::notice title=sha256::/' releases/AppKata-*-setup.exe.sha256      # what publish.sh shows before signing
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: windows
+          path: releases/AppKata-*-setup.exe*
+          if-no-files-found: error
+
+  # the one check the master ruleset requires: it passes only when every job above did
+  ci:
+    needs: [tier1, appimage, windows]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ needs.tier1.result }} ${{ needs.appimage.result }} ${{ needs.windows.result }}
+        run: |
+          echo "tier1, appimage, windows: $RESULTS"
+          test "$RESULTS" = "success success success"
+
+  # a v* tag only: the tag must name the version the files carry
+  version:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/appkata_core/__init__.py)
+          echo "tag $GITHUB_REF_NAME, __version__ $v"
+          test "$GITHUB_REF_NAME" = "v$v"
+
+  # a v* tag only, once the owner approves (the release environment holds the key and asks): the
+  # AppImage signed with the release key's signing subkey, in a job that checks out nothing and runs
+  # nothing it downloads
+  sign:
+    if: github.ref_type == 'tag'
+    needs: [ci, version]
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: appimage
+          path: out
+      - working-directory: out
+        env:
+          SIGNING_KEY: ${{ secrets.APPKATA_SIGNING_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.APPKATA_SIGNING_PASSPHRASE }}
+        run: |
+          sha256sum -c AppKata-*-x86_64.AppImage.sha256
+          f=$(echo AppKata-*-x86_64.AppImage)
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          trap 'gpgconf --kill all; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s\n' "$SIGNING_KEY" | gpg --batch --quiet --import
+          printf '%s' "$SIGNING_PASSPHRASE" |
+            gpg --batch --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign --output "$f.asc" "$f"
+          gpg --batch --verify "$f.asc" "$f"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: signature
+          path: out/AppKata-*-x86_64.AppImage.asc
+          if-no-files-found: error
+
+  # a v* tag only: a draft release of every file; the owner publishes it (scripts/publish.sh)
+  release:
+    if: github.ref_type == 'tag'
+    needs: [sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          path: out
+          merge-multiple: true
+      - working-directory: out
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l
+          sha256sum -c ./*.sha256
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "AppKata ${GITHUB_REF_NAME#v}" --generate-notes ./*

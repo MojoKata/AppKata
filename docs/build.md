@@ -79,13 +79,19 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
    release without its snapshot is a release the upgrade tests know nothing about. Drop a
    snapshot only when its release is no longer one AppKata upgrades from.
 4. Regenerate the screenshots if a screen changed (above), and check `git diff --stat screenshots`.
-5. Build (below), and check each release file's `.sha256`.
+5. **Tag it, and let CI build and sign it:** `scripts/publish.sh release` tags `v<version>`, waits for
+   the run, shows the files' SHA-256s, approves the signing and checks the draft release it makes
+   ([`github-workflows.md`](github-workflows.md)). The builds below are the same scripts CI runs.
 6. **The field test by hand** (`scripts/sandbox/field-test.sh`, from the commit being tagged,
    without `--non-interactive`), on real hardware with a logged-in desktop: the questions no tier
    answers ("What it asks the tester" in `docs/local-proxy-test-plan.md`; the environments are in
    `docs/testing.md`, "By hand, before a release"). Each run is posted to the release's tracking
    issue on GitHub, as `testing.md` ("Tracking the runs on GitHub") describes; until that is set up,
-   once the repository is published, keep each run's `.tar.gz` with the release.
+   once the repository is published, keep each run's `.tar.gz` with the release. The draft
+   release's AppImage is the one to test.
+7. **Publish the draft:** `scripts/publish.sh publish` checks it again and publishes it. Every
+   AppKata offers it as an update from its next sync, and with immutable releases on, its files
+   and tag can't change after that.
 
 ## Overview
 
@@ -95,7 +101,8 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
 | Windows 10 22H2, Windows 11 x64 | Linux (PyInstaller + Inno Setup under Wine, in Docker) | `AppKata-<version>-setup.exe` | the same; tested in a Windows 10 VM; signing needs a code-signing certificate |
 | macOS 13+ (universal2) | Linux: unsigned `AppKata.app` | `AppKata-<version>-macos-unsigned.tar.gz` | **a Mac** (an Intel MacBook is fine): `mac-sign.sh` → signed, notarized `AppKata-<version>.dmg` |
 
-Every release file gets a `.sha256` next to it in `releases/`.
+Every release file gets a `.sha256` next to it in `releases/`. On a release, CI also signs the
+AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 
 ## Linux
 
@@ -108,10 +115,11 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
 
 `build-appimage.sh`:
 
-1. Downloads the newest **python-build-standalone** CPython of the series in `packaging/versions.env`
-   (requirement 1.2) for x86_64 (glibc 2.17+), found on its GitHub release page, and checks it
-   against the release's `SHA256SUMS`.
-2. Installs **PySide6-Essentials** into it from PyPI and removes what AppKata doesn't use (Qt 3D,
+1. Downloads the **python-build-standalone** CPython that `packaging/versions.env` pins
+   (`PYTHON_BUILD`, requirement 1.2) for x86_64 (glibc 2.17+), and checks it against the SHA-256
+   pinned there.
+2. Installs **PySide6-Essentials** and its `shiboken6` into it from PyPI, at the version pinned there,
+   and removes what AppKata doesn't use (Qt 3D,
    PDF, the virtual keyboard, translations, pip, tkinter, tests), and adds the five xcb-util
    libraries Qt's X11 plugin needs and no Debian-family desktop installs (`libxcb-cursor`, `-icccm`,
    `-keysyms`, `-image`, `-render-util`; review 3, R3-32).
@@ -119,10 +127,16 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    (which sets `PYTHONDONTWRITEBYTECODE`), the desktop entry, the SVG icon and a 256 px PNG rendered
    from it (for the first-start install, requirement 2.11.3.1).
 4. Packs it with **appimagetool** (run with `--appimage-extract-and-run`, so FUSE isn't needed
-   on the build machine) and writes the `.sha256`.
+   on the build machine), giving it the AppImage runtime with `--runtime-file`, and writes the
+   `.sha256`. Without a runtime file appimagetool downloads the newest itself.
 
-Downloads are cached in `build/appimage-cache`. The build runs in an Ubuntu 22.04 container
-(`appkata-build-jammy`): PySide6 6.10 and later need glibc 2.34, which an older build host lacks, and
+Everything the build takes from outside is pinned in `packaging/versions.env`: the Python, the
+appimagetool release and the runtime, each with its SHA-256 (checked every time it's used), and the
+Docker images by digest. A pin changes only by a commit there; `tests/test_pinned_inputs.py` fails
+on an input named by a tag or a release that moves (`continuous`, `latest`, an image without its
+digest, a pip install without `--no-deps` and a version for each package). Downloads are cached in
+`build/appimage-cache`. The build runs in an Ubuntu 22.04 container (`appkata-build-jammy`, from
+`JAMMY_IMAGE`): PySide6 6.10 and later need glibc 2.34, which an older build host lacks, and
 Ubuntu 22.04's 2.35 is the oldest 1.1 supports, so the result runs on every platform 1.1 names (it
 was built on Rocky Linux 9 until RPM support retired). Everything else the AppImage needs it takes
 from the desktop: the libraries in `packaging/appimage-host-libs.txt` (requirement 1.6).
@@ -199,9 +213,11 @@ needs, updates itself (requirement 2.11.3) and installs itself into the app menu
 scripts/build-windows.sh     # → releases/AppKata-<version>-setup.exe + .sha256 (about 36 MB; 1–2 minutes)
 ```
 
-1. **PyInstaller under Wine** (`tobix/pywine:` the series in `packaging/versions.env`) builds the one-folder app
-   `build/windows/dist/AppKata/appkata.exe` from `packaging/windows/appkata.spec`, with
-   PyInstaller, PySide6-Essentials and `truststore` pinned in the script. `truststore` makes
+1. **PyInstaller under Wine** (`PYWINE_IMAGE` in `packaging/versions.env`, `tobix/pywine` by digest)
+   builds the one-folder app `build/windows/dist/AppKata/appkata.exe` from
+   `packaging/windows/appkata.spec`, with PyInstaller and its dependencies, PySide6-Essentials and
+   `truststore` pinned in the script and installed with `--no-deps`. The script first checks that
+   the image's Python is `PYTHON_BUILD`'s version, the one the AppImage carries (requirement 1.2). `truststore` makes
    Python check TLS certificates with Windows itself: Python's own check sees only the root
    certificates already in Windows' store, and downloads from GitHub's file host failed without it. It bundles every module of `appkata`
    and `appkata_core` and the QML files (`_internal/appkata/qml`). pip downloads are cached in
@@ -209,14 +225,14 @@ scripts/build-windows.sh     # → releases/AppKata-<version>-setup.exe + .sha25
    - Qt 6.10+ imports Windows' own ICU (`icuuc.dll`), which Wine lacks.
      Without it Qt won't load under Wine, and PyInstaller's Qt hook warns but collects no Qt
      plugins or QML, so the app can't start. The script compiles a stand-in
-     (`packaging/windows/icuuc-stub.c`, MinGW in a `debian:12` container) into Wine's `system32`
+     (`packaging/windows/icuuc-stub.c`, MinGW in a `debian:12` container, `MINGW_IMAGE`) into Wine's `system32`
      for the build only.
    - The script stops if the bundle lacks Qt's Windows platform plugin or the Basic controls. It
      also stops if the bundle carries any ICU DLL, the stand-in among them: the installed app
      must use Windows' own ICU.
 2. The script removes the Qt parts AppKata doesn't use (translations, Quick 3D, PDF, the
    virtual keyboard, the software OpenGL fallback), leaving about 135 MB unpacked.
-3. **Inno Setup under Wine** (`amake/innosetup`) builds the installer from
+3. **Inno Setup under Wine** (`amake/innosetup` by digest, `INNOSETUP_IMAGE`) builds the installer from
    `packaging/windows/appkata.iss` (requirement 15.10):
    - **Just me** by default, with no UAC prompt, into `%LOCALAPPDATA%\Programs\AppKata`
      (`PrivilegesRequired=lowest`). The dialog, or `/ALLUSERS`, installs for **Everyone** into
