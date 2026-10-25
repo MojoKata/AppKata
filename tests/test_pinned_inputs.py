@@ -24,20 +24,9 @@ FILES = ["packaging/versions.env", "scripts/build-appimage.sh", "scripts/build-w
 # what the test found when it was written, each to be pinned (item 7); the test fails on anything
 # new, and on a listed item that is gone, so the list only shrinks
 STILL_UNPINNED = {
-    "scripts/build-appimage.sh": [
-        "moving URL https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage",
-        "image ubuntu:22.04",
-        "pip install PySide6-Essentials==$PYSIDE leaves its dependencies open",
-        "appimagetool without --runtime-file (it downloads the newest runtime)"],
-    "scripts/build-windows.sh": [
-        "image debian:12", "image tobix/pywine:$PY_SERIES", "image amake/innosetup",
-        "pip install pyinstaller==$PYINSTALLER PySide6-Essentials==$PYSIDE truststore==$TRUSTSTORE leaves its dependencies open"],
-    "scripts/lib-python.sh": ["moving URL https://github.com/astral-sh/python-build-standalone/releases/latest"],
-    "scripts/python-standalone.sh": ["pip install pytest without a version", "pip install pytest leaves its dependencies open"],
-    "scripts/lib-tier1.sh": ["image ubuntu:24.04", "pip install PySide6-Essentials==$PYSIDE leaves its dependencies open"],
 }
 
-DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
+DIGEST = re.compile(r"@sha256:[0-9a-f]{64}(?![0-9a-z])")
 SHA = re.compile(r"^[0-9a-f]{64}$")
 DOCKER_VALUED = {"-v", "--volume", "-e", "--env", "--env-file", "-w", "--workdir", "-u", "--user", "--name",
                  "--entrypoint", "--network", "--platform", "--mount", "-p", "--publish", "--device", "--cap-add",
@@ -60,8 +49,8 @@ def _tokens(s):
 
 def _assigned(text, var):
     """The value text gives var (VAR=..., VAR="...", or versions.env's : "${VAR:=...}"), or None."""
-    m = re.search(rf'^\s*(?:{var}=|: "\${{{var}:=)"?([^"\n]*)', text, re.M)
-    return m.group(1).strip() if m else None
+    m = re.search(rf'^\s*: "\${{{var}:=([^}}"\n]*)}}"', text, re.M) or re.search(rf'^\s*{var}="?([^"\n]*)', text, re.M)
+    return re.split(r"\s+#", m.group(1))[0].strip() if m else None
 
 
 def _image_pinned(image, text):
@@ -126,7 +115,7 @@ def unpinned(text):
         if specs and "--no-deps" not in opts:
             found.append(f"pip install {' '.join(specs)} leaves its dependencies open")
     for line in joined.splitlines():
-        if re.search(r"appimagetool\S*\"?\s+--", line) and "--runtime-file" not in line:
+        if re.search(r"(?i)appimagetool\S*\"?\s+--", line) and "--runtime-file" not in line:
             found.append("appimagetool without --runtime-file (it downloads the newest runtime)")
     for m in re.finditer(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#]+)", text, re.M):
         u = m.group(1)
@@ -174,6 +163,7 @@ def test_the_check_finds_each_way_an_input_moves():
         'ARCH=x86_64 "$CACHE/appimagetool" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"':
             "appimagetool without --runtime-file",
         "      - uses: actions/checkout@v4": "action actions/checkout@v4",
+        '"$APPIMAGETOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"': "appimagetool without --runtime-file",
         "    container: quay.io/pypa/manylinux2014_x86_64": "image quay.io/pypa/manylinux2014_x86_64",
     }
     for text, what in bad.items():
@@ -187,9 +177,22 @@ def test_the_check_finds_each_way_an_input_moves():
         f"TOOL_URL=https://example.org/tool-1.0\nTOOL_SHA256={'a' * 64}",
         '"$PY" -m pip install -q --no-deps "PySide6-Essentials==$PYSIDE" "shiboken6==$PYSIDE" >/dev/null',
         'DEPS="altgraph==0.17.4 pefile==2024.8.26"\nwine python -m pip install -q --no-deps pyinstaller==6.16.0 $DEPS >/dev/null 2>&1',
-        '"$T" --appimage-extract-and-run --runtime-file "$R" --no-appstream "$APPDIR" "$OUT"',
+        'ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --runtime-file "$R" --no-appstream "$APPDIR" "$OUT"',
+        f"JAMMY_IMAGE=ubuntu:22.04{d}      # builds the AppImage\n_df=\"FROM $JAMMY_IMAGE\"",
         "      - uses: actions/checkout@" + "1" * 40 + "  # v5.0.0",
         "      - uses: ./.github/actions/local",
     ]
     for text in good:
         assert unpinned(text) == [], (text, unpinned(text))
+
+
+def test_one_python_for_the_appimage_the_installer_and_the_tests():
+    """Requirement 1.2: PY_SERIES is PYTHON_BUILD's series, and the Wine image is tagged with it
+    (build-windows.sh checks the image's own Python is PYTHON_BUILD's version when it runs)."""
+    env = _read("packaging/versions.env")
+    build = _assigned(env, "PYTHON_BUILD")
+    assert re.fullmatch(r"\d+\.\d+\.\d+\+\d{8}", build), build
+    series = build.rsplit(".", 1)[0]
+    assert _assigned(env, "PY_SERIES") == series
+    assert _assigned(env, "PYWINE_IMAGE").startswith(f"tobix/pywine:{series}@")
+    assert SHA.match(_assigned(env, "PYTHON_LINUX_SHA256"))

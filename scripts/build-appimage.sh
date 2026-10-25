@@ -15,11 +15,11 @@ VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE
 . "$HERE/scripts/lib-python.sh"
 if [ "${APPKATA_BUILD_IN_CONTAINER:-}" != 1 ] && command -v docker >/dev/null 2>&1; then
-    IMG=appkata-build-jammy           # with the xcb-util libraries the AppImage carries (R3-32)
-    docker image inspect "$IMG" >/dev/null 2>&1 ||
-        printf 'FROM ubuntu:22.04\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates file libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 %s >/dev/null\n' \
-            "libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0" |
-        docker build -q -t "$IMG" - >/dev/null
+    # with the xcb-util libraries the AppImage carries (R3-32); the image's tag follows this recipe
+    _df="FROM $JAMMY_IMAGE
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates file libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0 >/dev/null"
+    IMG=appkata-build-jammy:$(printf '%s' "$_df" | sha256sum | cut -c1-12)
+    docker image inspect "$IMG" >/dev/null 2>&1 || printf '%s\n' "$_df" | docker build -q -t "$IMG" - >/dev/null
     exec docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e APPKATA_BUILD_IN_CONTAINER=1 -e PY_SERIES -e PYSIDE \
         -v "$HERE:$HERE" -w "$HERE" "$IMG" sh "$HERE/scripts/build-appimage.sh" "$@"
 fi
@@ -28,21 +28,29 @@ APPDIR="$HERE/build/AppKata.AppDir"
 OUT="$HERE/releases/AppKata-$VERSION-x86_64.AppImage"
 mkdir -p "$CACHE" "$HERE/releases"
 
-# --- the newest python-build-standalone for the series, cached per series (it wasn't: a cached 3.12
-# stood in for any other)
+# --- what the build takes from outside, as packaging/versions.env pins it, checked each time it's used
 fetch_python "$PY_SERIES" "$CACHE"
-if [ ! -f "$CACHE/appimagetool" ]; then
-    curl -sSL -o "$CACHE/appimagetool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-    chmod +x "$CACHE/appimagetool"
-fi
+pinned() {      # URL SHA256: CACHE/<the SHA-256's first 12>-<its name>, into PINNED
+    PINNED="$CACHE/$(printf %s "$2" | cut -c1-12)-${1##*/}"
+    echo "$2  $PINNED" | sha256sum -c --quiet >/dev/null 2>&1 && return 0
+    curl -fsSL -o "$PINNED.part" "$1"
+    echo "$2  $PINNED.part" | sha256sum -c --quiet || { echo "${1##*/} isn't the file packaging/versions.env pins" >&2; exit 1; }
+    mv "$PINNED.part" "$PINNED"
+}
+pinned "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256"
+APPIMAGETOOL=$PINNED
+chmod +x "$APPIMAGETOOL"
+pinned "$APPIMAGE_RUNTIME_URL" "$APPIMAGE_RUNTIME_SHA256"
+RUNTIME=$PINNED
 
 # --- AppDir
-echo "== AppDir ($(cat "$CACHE/python-$PY_SERIES.name"))"
+echo "== AppDir ($(basename "$PYTHON_TARBALL"))"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/lib/appkata" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-tar -xzf "$CACHE/python-$PY_SERIES.tar.gz" -C "$APPDIR/usr"            # → usr/python
+tar -xzf "$PYTHON_TARBALL" -C "$APPDIR/usr"            # → usr/python
 PY="$APPDIR/usr/python/bin/python3"
-"$PY" -m pip install --quiet --no-compile --disable-pip-version-check --cache-dir "$CACHE/pip" "PySide6-Essentials==$PYSIDE"
+"$PY" -m pip install --quiet --no-compile --no-deps --disable-pip-version-check --cache-dir "$CACHE/pip" \
+    "PySide6-Essentials==$PYSIDE" "shiboken6==$PYSIDE"
 # trim what a desktop app doesn't need
 rm -rf "$APPDIR/usr/python/lib/python$PY_SERIES/test" "$APPDIR/usr/python/lib/python$PY_SERIES/idlelib" \
        "$APPDIR/usr/python/lib/python$PY_SERIES/tkinter" "$APPDIR/usr/python/lib/python$PY_SERIES/ensurepip"
@@ -98,7 +106,7 @@ ln -sf appkata.svg "$APPDIR/.DirIcon"
 
 echo "== appimagetool"
 rm -f "$OUT"
-ARCH=x86_64 "$CACHE/appimagetool" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT" >/dev/null 2>&1 ||
-    ARCH=x86_64 "$CACHE/appimagetool" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"
+ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --runtime-file "$RUNTIME" --no-appstream "$APPDIR" "$OUT" >/dev/null 2>&1 ||
+    ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --runtime-file "$RUNTIME" --no-appstream "$APPDIR" "$OUT"
 (cd "$HERE/releases" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 echo "wrote releases/$(basename "$OUT") ($(du -h "$OUT" | cut -f1))"
