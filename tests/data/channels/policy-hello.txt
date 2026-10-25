@@ -1,0 +1,6 @@
+hello:
+  Installed: (none)
+  Candidate: 2.10-3build1
+  Version table:
+     2.10-3build1 500
+        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages

@@ -1,0 +1,238 @@
+<?xml version='1.0' encoding='utf-8'?>
+<components origin="fedora" version="0.8"><component type="font">
+<id>AndroidEmoji</id>
+<pkgname>google-android-emoji-fonts</pkgname>
+<name>Android Emoji</name>
+<summary>Emoji font released by Google</summary>
+<icon type="cached" height="64" width="64">AndroidEmoji.png</icon>
+<project_license>Apache-2.0</project_license>
+<url type="homepage">https://android.googlesource.com/platform/frameworks/base.git/+/jb-release/data/fonts/</url>
+</component>
+<component type="desktop">
+<id>org.gnome.Calculator.desktop</id>
+<pkgname>gnome-calculator</pkgname>
+<translation type="gettext">gnome-calculator</translation>
+<name>Calculator</name>
+<summary>Perform arithmetic, scientific or financial calculations</summary>
+<developer_name>The GNOME Project</developer_name>
+<developer_name xml:lang="ar">مشروع GNOME «غنوم»</developer_name>
+<developer_name xml:lang="be">Праект GNOME</developer_name>
+<developer_name xml:lang="bg">Проектът GNOME</developer_name>
+<developer_name xml:lang="ca">El projecte GNOME</developer_name>
+<developer_name xml:lang="ca@valencia">El projecte GNOME</developer_name>
+<developer_name xml:lang="cs">Projekt GNOME</developer_name>
+<developer_name xml:lang="da">GNOME-projektet</developer_name>
+<developer_name xml:lang="de">Das GNOME-Projekt</developer_name>
+<developer_name xml:lang="el">Έργο GNOME</developer_name>
+<developer_name xml:lang="eo">La projekto GNOME</developer_name>
+<developer_name xml:lang="es">El Proyecto GNOME</developer_name>
+<developer_name xml:lang="eu">GNOME proiektua</developer_name>
+<developer_name xml:lang="fa">پروژهٔ گنوم</developer_name>
+<developer_name xml:lang="fi">Gnome-projekti</developer_name>
+<developer_name xml:lang="fo">GNOME verkætlanin</developer_name>
+<developer_name xml:lang="fr">Le projet GNOME</developer_name>
+<developer_name xml:lang="fur">Il progjet GNOME</developer_name>
+<developer_name xml:lang="gd">Pròiseact GNOME</developer_name>
+<developer_name xml:lang="gl">O proxecto GNOME</developer_name>
+<developer_name xml:lang="he">מיזם GNOME</developer_name>
+<developer_name xml:lang="hi">गनोम परियोजना</developer_name>
+<developer_name xml:lang="hr">GNOME projekt</developer_name>
+<developer_name xml:lang="hu">A GNOME projekt</developer_name>
+<developer_name xml:lang="id">Proyek GNOME</developer_name>
+<developer_name xml:lang="it">Il progetto GNOME</developer_name>
+<developer_name xml:lang="ka">პროექტი "GNOME"</developer_name>
+<developer_name xml:lang="kab">Asenfar n GNOME</developer_name>
+<developer_name xml:lang="kk">GNOME жобасы</developer_name>
+<developer_name xml:lang="ko">그놈 프로젝트</developer_name>
+<developer_name xml:lang="lt">GNOME projektas</developer_name>
+<developer_name xml:lang="lv">GNOME projekts</developer_name>
+<developer_name xml:lang="mjw">GNOME Project</developer_name>
+<developer_name xml:lang="ms">Projek GNOME</developer_name>
+<developer_name xml:lang="nb">GNOME prosjektet</developer_name>
+<developer_name xml:lang="ne">जिनोम परियोजना</developer_name>
+<developer_name xml:lang="nl">Het GNOME-project</developer_name>
+<developer_name xml:lang="oc">Lo projècte GNOME</developer_name>
+<developer_name xml:lang="pa">ਗਨੋਮ ਪਰੋਜੈਕਟ</developer_name>
+<developer_name xml:lang="pl">Projekt GNOME</developer_name>
+<developer_name xml:lang="pt">O Projeto GNOME</developer_name>
+<developer_name xml:lang="pt_BR">O Projeto GNOME</developer_name>
+<developer_name xml:lang="ro">Proiectul GNOME</developer_name>
+<developer_name xml:lang="ru">Проект GNOME</developer_name>
+<developer_name xml:lang="sk">Projekt GNOME</developer_name>
+<developer_name xml:lang="sl">Projekt GNOME</developer_name>
+<developer_name xml:lang="sr">Пројекат Гном</developer_name>
+<developer_name xml:lang="sr@latin">Projekat Gnom</developer_name>
+<developer_name xml:lang="sv">GNOME-projektet</developer_name>
+<developer_name xml:lang="th">โครงการ GNOME</developer_name>
+<developer_name xml:lang="tr">GNOME Projesi</developer_name>
+<developer_name xml:lang="uk">Проект GNOME</developer_name>
+<developer_name xml:lang="vi">Dự án GNOME</developer_name>
+<developer_name xml:lang="zh_CN">GNOME 项目</developer_name>
+<developer_name xml:lang="zh_TW">GNOME 專案</developer_name>
+<icon type="cached" height="64" width="64">org.gnome.Calculator.png</icon>
+<kudos>
+<kudo>HiDpiIcon</kudo>
+<kudo>HiDpiIcon</kudo>
+<kudo>HighContrast</kudo>
+<kudo>ModernToolkit</kudo>
+<kudo>SearchProvider</kudo>
+<kudo>UserDocs</kudo>
+<kudo>UserDocs</kudo>
+</kudos>
+<project_license>GPL-3.0-or-later</project_license>
+<url type="bugtracker">https://gitlab.gnome.org/GNOME/gnome-calculator/issues</url>
+<url type="donation">https://www.gnome.org/donate/</url>
+<url type="help">https://help.gnome.org/users/gnome-calculator/stable/</url>
+<url type="homepage">https://apps.gnome.org/Calculator</url>
+<url type="translate">https://l10n.gnome.org/module/gnome-calculator/</url>
+<url type="vcs-browser">https://gitlab.gnome.org/GNOME/gnome-calculator</url>
+<project_group>GNOME</project_group>
+<launchable type="desktop-id">org.gnome.Calculator.desktop</launchable>
+<metadata>
+<value key="Purism::form_factor">mobile</value>
+</metadata>
+</component>
+<component type="addon">
+<id>org.gnome.Software.Plugin.Epiphany</id>
+<pkgname>gnome-software</pkgname>
+<name>Web Apps Support</name>
+<summary>Run popular web applications in a browser</summary>
+<project_license>GPL-2.0-or-later</project_license>
+<url type="homepage">https://apps.gnome.org/Software</url>
+<extends>org.gnome.Software.desktop</extends>
+</component>
+<component type="addon">
+<id>org.gnome.Software.Plugin.Flatpak</id>
+<pkgname>gnome-software</pkgname>
+<name>Flatpak Support</name>
+<summary>Flatpak is a framework for desktop apps on Linux</summary>
+<project_license>GPL-2.0-or-later</project_license>
+<url type="homepage">http://flatpak.org/</url>
+<extends>org.gnome.Software.desktop</extends>
+</component>
+<component type="addon">
+<id>org.gnome.Software.Plugin.Fwupd</id>
+<pkgname>gnome-software</pkgname>
+<name>Firmware Upgrade Support</name>
+<summary>Provides support for firmware upgrades</summary>
+<project_license>GPL-2.0-or-later</project_license>
+<url type="homepage">https://fwupd.org/</url>
+<extends>org.gnome.Software.desktop</extends>
+</component>
+<component type="desktop">
+<id>org.gnome.Software.desktop</id>
+<pkgname>gnome-software</pkgname>
+<translation type="gettext">gnome-software</translation>
+<name>Software</name>
+<summary>Install and update apps</summary>
+<developer_name>The GNOME Project</developer_name>
+<developer_name xml:lang="af">Die GNOME Projek</developer_name>
+<developer_name xml:lang="ar">مشروع جنوم</developer_name>
+<developer_name xml:lang="be">Праект GNOME</developer_name>
+<developer_name xml:lang="bg">Проектът GNOME</developer_name>
+<developer_name xml:lang="bn">GNOME প্রজেক্ট</developer_name>
+<developer_name xml:lang="ca">El projecte GNOME</developer_name>
+<developer_name xml:lang="ca@valencia">El projecte GNOME</developer_name>
+<developer_name xml:lang="ckb">پرۆژەی گنۆم</developer_name>
+<developer_name xml:lang="cs">Projekt GNOME</developer_name>
+<developer_name xml:lang="da">GNOME-projektet</developer_name>
+<developer_name xml:lang="de">Das GNOME-Projekt</developer_name>
+<developer_name xml:lang="el">Το έργο GNOME</developer_name>
+<developer_name xml:lang="eo">La GNOME-projekto</developer_name>
+<developer_name xml:lang="es">El proyecto GNOME</developer_name>
+<developer_name xml:lang="eu">GNOME proiektua</developer_name>
+<developer_name xml:lang="fa">پروژهٔ گنوم</developer_name>
+<developer_name xml:lang="fi">Gnome-projekti</developer_name>
+<developer_name xml:lang="fr">Le projet GNOME</developer_name>
+<developer_name xml:lang="fur">Il progjet GNOME</developer_name>
+<developer_name xml:lang="gd">Pròiseact GNOME</developer_name>
+<developer_name xml:lang="gl">O Proxecto GNOME</developer_name>
+<developer_name xml:lang="he">מיזם GNOME</developer_name>
+<developer_name xml:lang="hi">गनोम परियोजना</developer_name>
+<developer_name xml:lang="hr">GNOME projekt</developer_name>
+<developer_name xml:lang="hu">A GNOME projekt</developer_name>
+<developer_name xml:lang="id">Proyek GNOME</developer_name>
+<developer_name xml:lang="ie">Li projecte GNOME</developer_name>
+<developer_name xml:lang="is">GNOME verkefnið</developer_name>
+<developer_name xml:lang="it">Il progetto GNOME</developer_name>
+<developer_name xml:lang="ka">პროექტი "GNOME"</developer_name>
+<developer_name xml:lang="kab">Asenfaṛ n GNOME</developer_name>
+<developer_name xml:lang="kk">GNOME жобасы</developer_name>
+<developer_name xml:lang="ko">그놈 프로젝트</developer_name>
+<developer_name xml:lang="lt">GNOME projektas</developer_name>
+<developer_name xml:lang="lv">GNOME projekts</developer_name>
+<developer_name xml:lang="mjw">GNOME Project</developer_name>
+<developer_name xml:lang="ml">ഗ്നോം പദ്ധതി</developer_name>
+<developer_name xml:lang="ms">Projek GNOME</developer_name>
+<developer_name xml:lang="nb">GNOME</developer_name>
+<developer_name xml:lang="ne">जिनोम परियोजना</developer_name>
+<developer_name xml:lang="nl">Het GNOME-project</developer_name>
+<developer_name xml:lang="oc">Lo projècte GNOME</developer_name>
+<developer_name xml:lang="pa">ਗਨੋਮ ਪਰੋਜੈੱਕਟ</developer_name>
+<developer_name xml:lang="pl">Projekt GNOME</developer_name>
+<developer_name xml:lang="pt">O Projeto GNOME</developer_name>
+<developer_name xml:lang="pt_BR">O projeto GNOME</developer_name>
+<developer_name xml:lang="ro">Proiectul GNOME</developer_name>
+<developer_name xml:lang="ru">Проект GNOME</developer_name>
+<developer_name xml:lang="sk">Projekt GNOME</developer_name>
+<developer_name xml:lang="sl">Projekt GNOME</developer_name>
+<developer_name xml:lang="sr">Гномов пројекат</developer_name>
+<developer_name xml:lang="sr@latin">Gnomov projekat</developer_name>
+<developer_name xml:lang="sv">GNOME-projektet</developer_name>
+<developer_name xml:lang="th">โครงการ GNOME</developer_name>
+<developer_name xml:lang="tr">GNOME Projesi</developer_name>
+<developer_name xml:lang="uk">Проєкт GNOME</developer_name>
+<developer_name xml:lang="vi">Dự án GNOME</developer_name>
+<developer_name xml:lang="zh_CN">GNOME 项目</developer_name>
+<developer_name xml:lang="zh_TW">GNOME 專案</developer_name>
+<icon type="cached" height="64" width="64">org.gnome.Software.png</icon>
+<kudos>
+<kudo>HiDpiIcon</kudo>
+<kudo>HiDpiIcon</kudo>
+<kudo>HighContrast</kudo>
+<kudo>ModernToolkit</kudo>
+<kudo>Notifications</kudo>
+<kudo>SearchProvider</kudo>
+<kudo>UserDocs</kudo>
+</kudos>
+<mimetypes>
+<mimetype>x-scheme-handler/appstream</mimetype>
+</mimetypes>
+<project_license>GPL-2.0-or-later</project_license>
+<url type="bugtracker">https://gitlab.gnome.org/GNOME/gnome-software/-/issues</url>
+<url type="contact">https://discourse.gnome.org/tag/gnome-software</url>
+<url type="contribute">https://welcome.gnome.org/app/Software/</url>
+<url type="donation">https://www.gnome.org/donate/</url>
+<url type="homepage">https://apps.gnome.org/Software</url>
+<url type="translate">https://l10n.gnome.org/module/gnome-software/</url>
+<url type="vcs-browser">https://gitlab.gnome.org/GNOME/gnome-software/</url>
+<project_group>GNOME</project_group>
+<compulsory_for_desktop>GNOME</compulsory_for_desktop>
+<launchable type="desktop-id">org.gnome.Software.desktop</launchable>
+</component>
+<component type="desktop">
+<id>org.keepassxc.KeePassXC.desktop</id>
+<pkgname>keepassxc</pkgname>
+<name>KeePassXC</name>
+<summary>Community-driven port of the Windows application “KeePass Password Safe”</summary>
+<developer_name>KeePassXC Team</developer_name>
+<icon type="cached" height="64" width="64">org.keepassxc.KeePassXC.png</icon>
+<kudos>
+<kudo>HiDpiIcon</kudo>
+<kudo>ModernToolkit</kudo>
+</kudos>
+<mimetypes>
+<mimetype>application/x-keepass2</mimetype>
+<mimetype>application/x-keepassxc</mimetype>
+</mimetypes>
+<project_license>GPL-3.0+</project_license>
+<url type="bugtracker">https://github.com/keepassxreboot/keepassxc/issues</url>
+<url type="contribute">https://keepassxc.org/docs#contribute</url>
+<url type="faq">https://keepassxc.org/docs#faq</url>
+<url type="help">https://keepassxc.org/docs</url>
+<url type="homepage">https://keepassxc.org</url>
+<url type="translate">https://www.transifex.com/keepassxc/keepassxc</url>
+<url type="vcs-browser">https://github.com/keepassxreboot/keepassxc</url>
+<launchable type="desktop-id">org.keepassxc.KeePassXC.desktop</launchable>
+</component>
+</components>

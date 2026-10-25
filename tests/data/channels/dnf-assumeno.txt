@@ -1,0 +1,20 @@
+Updating and loading repositories:
+ Fedora 41 openh264 (From Cisco) - x86_ 100% |   2.1 KiB/s | 986.0   B |  00m00s
+>>> Curl error (35): SSL connect error for https://codecs.fedoraproject.org/open
+>>> Curl error (35): SSL connect error for https://codecs.fedoraproject.org/open
+>>> Curl error (35): SSL connect error for https://codecs.fedoraproject.org/open
+>>> Curl error (35): SSL connect error for https://codecs.fedoraproject.org/open
+>>> Usable URL not found                                                        
+Repositories loaded.
+Package Arch   Version       Repository      Size
+Installing:
+ hello  x86_64 2.12.2-1.fc41 updates    238.1 KiB
+Installing weak dependencies:
+ info   x86_64 7.1.1-1.fc41  updates    361.7 KiB
+
+Transaction Summary:
+ Installing:         2 packages
+
+Total size of inbound packages is 276 KiB. Need to download 276 KiB.
+After this operation, 600 KiB extra will be used (install 600 KiB, remove 0 B).
+Operation aborted by the user.

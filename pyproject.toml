@@ -1,0 +1,27 @@
+[project]
+name = "appkata"
+dynamic = ["version"]
+description = "A FOSS app store built on git: Sources, Trusts and signed AppKata.md reviews"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.14"          # the Python the release carries: packaging/versions.env (requirement 1.2)
+dependencies = ["PySide6-Essentials>=6.8", "truststore>=0.10; sys_platform != 'linux'"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "appkata_core.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+appkata = ["qml/*", "qml/assets/*"]
+
+[project.scripts]
+appkata = "appkata.app:main"

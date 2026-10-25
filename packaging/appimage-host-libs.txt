@@ -1,0 +1,44 @@
+# The libraries the AppImage takes from the host, by soname, each with the group requirement 1.6
+# names it by. Every 1.1 distro's desktop install has them. scripts/test-appimage.sh checks that the
+# AppImage needs no other (scripts/appimage_host_libs.py) and that each named one is still needed,
+# and starts AppKata on X11 and Wayland in each 1.1 distro's desktop package set. Review 3, R3-31.
+ld-linux-x86-64.so.2      # glibc
+libc.so.6                 # glibc
+libdl.so.2                # glibc
+libm.so.6                 # glibc
+libpthread.so.0           # glibc
+libresolv.so.2            # glibc
+librt.so.1                # glibc
+libutil.so.1              # glibc
+libgcc_s.so.1             # the GCC runtime
+libstdc++.so.6            # the GCC runtime
+libz.so.1                 # zlib, zstd and Brotli
+libzstd.so.1              # zlib, zstd and Brotli
+libbrotlidec.so.1         # zlib, zstd and Brotli
+libglib-2.0.so.0          # GLib
+libgthread-2.0.so.0       # GLib
+libdbus-1.so.3            # D-Bus
+libGL.so.1                # OpenGL and EGL
+libEGL.so.1               # OpenGL and EGL
+libfontconfig.so.1        # Fontconfig and FreeType
+libfreetype.so.6          # Fontconfig and FreeType
+libX11.so.6               # X11 and XCB
+libX11-xcb.so.1           # X11 and XCB
+libxcb.so.1               # X11 and XCB
+libxcb-glx.so.0           # X11 and XCB
+libxcb-randr.so.0         # X11 and XCB
+libxcb-render.so.0        # X11 and XCB
+libxcb-shape.so.0         # X11 and XCB
+libxcb-shm.so.0           # X11 and XCB
+libxcb-sync.so.1          # X11 and XCB
+libxcb-util.so.1          # X11 and XCB
+libxcb-xfixes.so.0        # X11 and XCB
+libxcb-xkb.so.1           # X11 and XCB
+libxkbcommon.so.0         # xkbcommon
+libxkbcommon-x11.so.0     # xkbcommon
+libwayland-client.so.0    # Wayland
+libwayland-cursor.so.0    # Wayland
+libwayland-egl.so.1       # Wayland
+libssl.so.3               # OpenSSL 3
+libcrypto.so.3            # OpenSSL 3
+libgssapi_krb5.so.2       # Kerberos (GSSAPI)

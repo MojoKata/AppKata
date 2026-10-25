@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: appkata
+Version: 0.1.0
+Summary: A FOSS app store built on git: Sources, Trusts and signed AppKata.md reviews
+License-Expression: GPL-3.0-or-later
+Requires-Python: >=3.10
+Requires-Dist: PySide6-Essentials>=6.8

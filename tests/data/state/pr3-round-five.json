@@ -1,0 +1,109 @@
+{
+ "app_settings": {
+  "sandboxPinned": {
+   "grants": {
+    "caps": [
+     "notifications"
+    ],
+    "devices": [
+     "x11"
+    ],
+    "exec_deny": true,
+    "folders": {},
+    "level": "standard",
+    "network": true,
+    "ports": null,
+    "sound": [
+     "play"
+    ],
+    "write_app": false
+   },
+   "template": "online-app"
+  },
+  "sandboxReviewSeen": [
+   "Standard",
+   "Network",
+   "Sound \u00b7 can also record",
+   "Notifications"
+  ]
+ },
+ "files": {
+  ".local/share/appkata/sandboxes/.identity/bin/xdg-open": {
+   "mode": "0o755",
+   "text": "#!/bin/sh\n# Written by AppKata for its sandboxed apps (requirement 17.6.3): opens links and files on the host\n# through the OpenURI portal, instead of starting a host program inside the sandbox.\nset -u\ncase \"${1:-}\" in \"\"|-*) exec /usr/bin/xdg-open \"$@\" ;; esac\nif [ -z \"${DBUS_SESSION_BUS_ADDRESS:-}\" ]; then\n  echo \"AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that).\" >&2\n  exit 3\nfi\ncase \"$1\" in\n  file://*|/*|./*|../*) ;;\n  *:*)\n    if command -v gdbus >/dev/null 2>&1; then\n      exec gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \\\n        --method org.freedesktop.portal.OpenURI.OpenURI \"\" \"$1\" '{}' >/dev/null\n    elif command -v busctl >/dev/null 2>&1; then\n      exec busctl --user call org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \\\n        org.freedesktop.portal.OpenURI OpenURI 'ssa{sv}' \"\" \"$1\" 0 >/dev/null\n    fi\n    echo \"AppKata: neither gdbus nor busctl is available to open $1 on the host\" >&2; exit 3 ;;\nesac\n# The Python below exits 0 when the host opened the file (or is still asking), 4 when the host could\n# not open it (said on stderr), 5 when the user cancelled; anything else is the call itself failing.\npython3 - \"$1\" <<'PY'\nimport os, sys, urllib.parse\nfrom gi.repository import Gio, GLib\ntarget = sys.argv[1]\nif target.startswith(\"file://\"):\n    target = urllib.parse.unquote(urllib.parse.urlsplit(target).path)\nfdl = Gio.UnixFDList.new()\ni = fdl.append(os.open(target, os.O_RDONLY))\nbus = Gio.bus_get_sync(Gio.BusType.SESSION, None)\n# The call returns a Request at once; whether the host could open the file comes later, as the\n# Request's Response signal (0 opened, 1 the user cancelled a chooser, 2 failed). Wait for it, as\n# GLib does, so a file the host can't locate -- one in this app's private home -- is reported here\n# rather than opening nothing in silence (round five, R5-6: shown with the real portal).\ntoken = \"appkata%d\" % os.getpid()\nreq = \"/org/freedesktop/portal/desktop/request/%s/%s\" % (bus.get_unique_name()[1:].replace(\".\", \"_\"), token)\nloop, result = GLib.MainLoop(), {}\ndef response(conn, sender, path, iface, signal, params):\n    result[\"code\"] = params.unpack()[0]\n    loop.quit()\nbus.signal_subscribe(\"org.freedesktop.portal.Desktop\", \"org.freedesktop.portal.Request\", \"Response\", req, None,\n                     Gio.DBusSignalFlags.NONE, response)\nbus.call_with_unix_fd_list_sync(\"org.freedesktop.portal.Desktop\", \"/org/freedesktop/portal/desktop\",\n    \"org.freedesktop.portal.OpenURI\", \"OpenFile\",\n    GLib.Variant(\"(sha{sv})\", (\"\", i, {\"handle_token\": GLib.Variant(\"s\", token)})), None,\n    Gio.DBusCallFlags.NONE, 30000, fdl, None)\nGLib.timeout_add_seconds(120, loop.quit)       # a chooser may be up; past that, assume the host has it\nloop.run()\ncode = result.get(\"code\", 0)\nif code == 2:\n    print(\"AppKata: the host couldn't open %s. A file in this app's private home isn't visible outside the sandbox; \"\n          \"keep it in a folder the app is given (App Detail > Sandbox) to open it on this computer.\" % sys.argv[1], file=sys.stderr)\n    sys.exit(4)\nsys.exit(5 if code == 1 else 0)\nPY\nst=$?\n[ \"$st\" = 0 ] && exit 0\n{ [ \"$st\" = 4 ] || [ \"$st\" = 5 ]; } && exit 1\necho \"AppKata: couldn't ask the host to open $1 (is python3-gi installed?)\" >&2; exit 3\n"
+  },
+  ".local/share/appkata/sandboxes/.identity/demo": {
+   "mode": "0o644",
+   "text": "[Application]\nname=io.appkata.demo\n\n[Instance]\ninstance-id=demo\n\n[Context]\nshared=network;\n"
+  },
+  ".local/share/appkata/sandboxes/.identity/forward-files.py": {
+   "mode": "0o644",
+   "text": "import os, shlex, sys, urllib.parse\nident, rt, rest = sys.argv[1], sys.argv[2], sys.argv[3:]\nsep = rest.index(\"--\")\nvisible = [os.path.realpath(d) for d in rest[:sep]]\nargs = rest[sep + 1:]\n\n\ndef seen_inside(path):\n    real = os.path.realpath(path)\n    return any(real == v or real.startswith(v + os.sep) for v in visible)\n\n\ndef as_file(arg):\n    if arg.startswith(\"file://\"):\n        u = urllib.parse.urlsplit(arg)\n        return (urllib.parse.unquote(u.path), True) if u.netloc in (\"\", \"localhost\") else (None, True)\n    if \"://\" in arg:\n        return None, False\n    return arg, False\n\n\nbus = None\n\n\ndef export(path):\n    global bus\n    from gi.repository import Gio, GLib\n    if bus is None:\n        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)\n    fdl = Gio.UnixFDList.new()\n    i = fdl.append(os.open(path, os.O_RDONLY))\n    res, _ = bus.call_with_unix_fd_list_sync(\n        \"org.freedesktop.portal.Documents\", \"/org/freedesktop/portal/documents\", \"org.freedesktop.portal.Documents\",\n        \"Add\", GLib.Variant(\"(hbb)\", (i, True, False)), GLib.VariantType(\"(s)\"), Gio.DBusCallFlags.NONE, 5000, fdl, None)\n    doc = res.unpack()[0]\n    perms = [\"read\"] + ([\"write\"] if os.access(path, os.W_OK) else [])\n    bus.call_sync(\"org.freedesktop.portal.Documents\", \"/org/freedesktop/portal/documents\", \"org.freedesktop.portal.Documents\",\n                  \"GrantPermissions\", GLib.Variant(\"(ssas)\", (doc, ident, perms)), None, Gio.DBusCallFlags.NONE, 5000, None)\n    return os.path.join(rt, \"doc\", doc, os.path.basename(path))\n\n\nout = []\nfor a in args:\n    path, uri = as_file(a)\n    if path and os.path.isfile(path) and not seen_inside(path):\n        inner = export(path)\n        a = \"file://\" + urllib.parse.quote(inner) if uri else inner\n    out.append(a)\nprint(\" \".join(shlex.quote(a) for a in out))\n"
+  },
+  ".local/share/appkata/sandboxes/.identity/seccomp-tty.bpf": {
+   "base64": "IAAAAAQAAAAVAAIAPgAAwBUABQADAABABgAAAAAA/38gAAAAAAAAABUABQAQAAAAFQAEAAICAEAGAAAAAAD/fyAAAAAAAAAAFQABADYAAAAGAAAAAAD/fyAAAAAYAAAAFQACABJUAAAVAAEAHFQAAAYAAAAAAP9/BgAAAAEABQA=",
+   "mode": "0o644"
+  },
+  ".local/share/applications/appkata-demo.desktop": {
+   "mode": "0o755",
+   "text": "[Desktop Entry]\nType=Application\nName=Demo\nComment=\nExec=\"$HOME/bin/apps/demo/run\" --appkata-menu %U\nCategories=Utility;\nX-AppKata=true\n"
+  },
+  "bin/apps/demo/1.0/bin/demo": {
+   "mode": "0o755",
+   "text": "#!/bin/sh\n"
+  },
+  "bin/apps/demo/run": {
+   "mode": "0o755",
+   "text": "#!/bin/sh\n# Generated by AppKata for Demo. Do not edit \u2014 regenerated on update / settings change (req 17.4).\nset -eu\nid=io.appkata.demo\nrt=\"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}\"\nhome=$HOME/.local/share/appkata/sandboxes/demo\ninfo=$HOME/.local/share/appkata/sandboxes/.identity/demo\nappdir=$HOME/bin/apps/demo/1.0\nexe=bin/demo\n# Without a session runtime folder (no logind session: ssh without one, cron, a bare container)\n# nothing below can work -- the proxy socket, the display sockets and the document view all live\n# there -- so say which folder is missing rather than fail on the first mkdir.\nmkdir -p \"$home\" \"$rt/appkata\" || { echo \"AppKata: can't use the session's runtime folder $rt (XDG_RUNTIME_DIR); the sandbox needs a logged-in session.\" >&2; exit 1; }\n# Where stderr goes (requirement 14.2). Started by AppKata's Open, it is already this app's log.\n# Started from the app menu, a file manager or a shortcut -- the desktop entry passes the word\n# --appkata-menu first -- there is no terminal, so nothing would show a refused launch: stderr is\n# appended to that same log, rotated at 2 MB like AppKata's own, under a dated line. Started any\n# other way (a command link in a terminal or a script) it stays the caller's, so a tool's `2>file`\n# and pipelines keep meaning what they say. $logging tells the run-time line below.\nlog=$HOME/.local/state/appkata/apps/Demo.log\nlogging=0\nif [ /dev/fd/2 -ef \"$log\" ]; then\n  logging=1\nelif [ \"${1:-}\" = --appkata-menu ]; then\n  shift\n  mkdir -p \"${log%/*}\" 2>/dev/null || true\n  if [ \"$(stat -c %s \"$log\" 2>/dev/null || echo 0)\" -gt 2097152 ]; then mv -f \"$log\" \"${log%.log}-prev.log\"; fi\n  if printf -- '--- %s AppKata: starting %s (from the menu)\\n' \"$(date '+%Y-%m-%d %H:%M:%S')\" Demo >> \"$log\" 2>/dev/null; then\n    exec 2>>\"$log\"\n    logging=1\n  fi\nfi\n# A file the app was given as an argument (\"Open with\", a drop on the menu entry, `tool ~/x.txt`)\n# is a host path the sandbox can't see unless it lies in a granted folder: the rest are handed over\n# through the document portal from the host side, and the argument becomes the path the app sees.\n# Without python3-gi or a document portal the arguments pass through unchanged (requirement 17.6.2).\nif [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then\n  if fwd=$(python3 $HOME/.local/share/appkata/sandboxes/.identity/forward-files.py \"$id\" \"$rt\"  -- \"$@\" 2>/dev/null); then eval \"set -- $fwd\"; fi\nfi\n# The bwrap words decided at run time are prepended to \"$@\", ahead of the program and its own\n# arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.\nset -- -- \"$appdir/$exe\" \"$@\"\n\nguard() {\n  case \"$1\" in \"$HOME\"/*) ;; *) return 0 ;; esac\n  rel=${1#\"$HOME\"/}; p=$home\n  while [ -n \"$rel\" ]; do\n    case \"$rel\" in */*) seg=${rel%%/*}; rel=${rel#*/} ;; *) seg=$rel; rel= ;; esac\n    [ -n \"$seg\" ] || continue\n    p=\"$p/$seg\"\n    if [ -L \"$p\" ]; then\n      echo \"AppKata: removing a link the app left at $p (a mount point).\" >&2\n      rm -f \"$p\"\n    fi\n    [ -e \"$p\" ] || return 0\n  done\n}\n\nsock=\"$rt/appkata/bus-$id.$$\"\nrm -f \"$sock\"\n# Read the host bus with a default so `set -u` can't abort the launcher when it is unset.\nupstream=\"${DBUS_SESSION_BUS_ADDRESS:-}\"\n# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n# launcher (the P1 gotcha, resolved \u2014 local-proxy-test-plan.md). It carries *no*\n# /.flatpak-info: the portals judge the caller by the proxy's root, and xdg-desktop-portal\n# 1.18+ refuses a marked caller that is not a running Flatpak (requirement 17.6.1), so the\n# app is a host caller to them and the proxy allows only the portal interfaces safe for one.\nbwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n  --bind \"$rt\" \"$rt\" --die-with-parent -- \\\n  xdg-dbus-proxy \"$upstream\" \"$sock\" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --own=io.appkata.demo '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Notification.*@/org/freedesktop/portal/desktop' --talk=org.freedesktop.Notifications &\nproxy=$!\n# Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n# blocking for the full timeout.\ni=0; while [ ! -S \"$sock\" ] && kill -0 \"$proxy\" 2>/dev/null && [ \"$i\" -lt 50 ]; do i=$((i+1)); sleep 0.1; done\n\nx11=0\nif [ -n \"${WAYLAND_DISPLAY:-}\" ] && [ -e \"$rt/$WAYLAND_DISPLAY\" ]; then\n  set -- --ro-bind \"$rt/$WAYLAND_DISPLAY\" \"$rt/$WAYLAND_DISPLAY\" --setenv WAYLAND_DISPLAY \"$WAYLAND_DISPLAY\" \"$@\"\n  [ -n \"${DISPLAY:-}\" ] && x11=1\nelif [ -n \"${DISPLAY:-}\" ]; then\n  x11=1\nfi\nif [ \"$x11\" = 1 ]; then\n  set -- --ro-bind-try /tmp/.X11-unix /tmp/.X11-unix --setenv DISPLAY \"$DISPLAY\" \"$@\"\n  xa=\"${XAUTHORITY:-$HOME/.Xauthority}\"\n  if [ -e \"$xa\" ]; then guard \"$xa\"; set -- --ro-bind \"$xa\" \"$xa\" --setenv XAUTHORITY \"$xa\" \"$@\"; fi\nfi\n\nrc=$(readlink -f /etc/resolv.conf 2>/dev/null || true)\ncase \"$rc\" in\n  /run/systemd/resolve/*) set -- --ro-bind /run/systemd/resolve /run/systemd/resolve \"$@\" ;;\n  \"\"|/etc/*|/usr/*) ;;\n  *) if [ -e \"$rc\" ]; then set -- --ro-bind \"$rc\" \"$rc\" \"$@\"; fi ;;\nesac\n\nfor d in /usr/share/applications /usr/local/share/applications; do\n  if [ -d \"$d\" ]; then set -- --tmpfs \"$d\" \"$@\"; fi\ndone\n\nfor v in LANG LANGUAGE LC_ALL LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME TERM USER LOGNAME XDG_SESSION_TYPE XDG_CURRENT_DESKTOP DESKTOP_SESSION GTK_THEME QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE XCURSOR_THEME XCURSOR_SIZE GDK_SCALE GDK_DPI_SCALE QT_SCALE_FACTOR; do\n  eval \"isset=\\${$v+1}\"\n  [ -n \"$isset\" ] || continue\n  eval \"val=\\$$v\"\n  set -- --setenv \"$v\" \"$val\" \"$@\"\ndone\nfor d in \"$HOME/.themes\" \"$HOME/.icons\" \"$HOME/.fonts\" \"$HOME/.config/fontconfig\" \"$HOME/.local/share/fonts\" \"$HOME/.local/share/icons\" \"$HOME/.local/share/themes\" \"$appdir\"; do guard \"$d\"; done\n\nif [ \"$logging\" = 1 ]; then printf 'AppKata: running %s (%s)\\n' \"$appdir/$exe\" \"$(date +%s)\" >&2; fi\nstatus=0\nexec 3< $HOME/.local/share/appkata/sandboxes/.identity/seccomp-tty.bpf\nbwrap \\\n  --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n  --symlink usr/bin /bin --symlink usr/sbin /sbin --ro-bind /etc /etc \\\n  --ro-bind-try /var/cache/fontconfig /var/cache/fontconfig \\\n  --proc /proc --dev /dev --dev-bind-try /dev/dri /dev/dri --tmpfs /tmp --dir \"$rt\" \\\n  --bind-try \"$rt/doc/by-app/$id\" \"$rt/doc\" \\\n  --ro-bind-try /sys/block /sys/block --ro-bind-try /sys/bus /sys/bus --ro-bind-try /sys/class /sys/class \\\n  --ro-bind-try /sys/dev /sys/dev --ro-bind-try /sys/devices /sys/devices \\\n  --bind \"$home\" \"$HOME\" --ro-bind \"$appdir\" \"$appdir\" \\\n  --ro-bind-try \"$HOME/.themes\" \"$HOME/.themes\" --ro-bind-try \"$HOME/.icons\" \"$HOME/.icons\" \\\n  --ro-bind-try \"$HOME/.fonts\" \"$HOME/.fonts\" --ro-bind-try \"$HOME/.config/fontconfig\" \"$HOME/.config/fontconfig\" \\\n  --ro-bind-try \"$HOME/.local/share/fonts\" \"$HOME/.local/share/fonts\" \\\n  --ro-bind-try \"$HOME/.local/share/icons\" \"$HOME/.local/share/icons\" \\\n  --ro-bind-try \"$HOME/.local/share/themes\" \"$HOME/.local/share/themes\" \\\n  --ro-bind-try \"$rt/pipewire-0\" \"$rt/pipewire-0\" \\\n  --ro-bind-try \"$rt/pulse/native\" \"$rt/pulse/native\" \\\n  --ro-bind \"$info\" /.flatpak-info \\\n  --bind \"$sock\" \"$rt/bus\" \\\n  --ro-bind-try $HOME/.local/share/appkata/sandboxes/.identity/bin /run/appkata \\\n  --unshare-all --share-net --die-with-parent --seccomp 3 \\\n  --clearenv --setenv HOME \"$HOME\" --setenv PATH /run/appkata:/usr/bin:/bin:/usr/sbin:/sbin \\\n  --setenv XDG_RUNTIME_DIR \"$rt\" \\\n  --setenv DBUS_SESSION_BUS_ADDRESS \"unix:path=$rt/bus\" \\\n  --chdir \"$HOME\" \\\n  \"$@\" || status=$?\n\nkill \"$proxy\" 2>/dev/null || true\nrm -f \"$sock\"\nexit $status\n"
+  },
+  "bin/demo": {
+   "link": "$HOME/bin/apps/demo/run"
+  }
+ },
+ "installs": {
+  "kind": "tarball",
+  "name": "Demo",
+  "record": {
+   "current": {
+    "exec": "1.0/bin/demo",
+    "path": "$HOME/bin/apps/demo/1.0",
+    "version": "1.0"
+   },
+   "exec": "$HOME/bin/apps/demo/run",
+   "files": [
+    "$HOME/bin/apps/demo",
+    "$HOME/.local/share/applications/appkata-demo.desktop"
+   ],
+   "launcher": "$HOME/bin/apps/demo/run",
+   "links": [
+    "$HOME/bin/apps/demo/current",
+    "$HOME/bin/demo"
+   ],
+   "options": {
+    "appMenu": true,
+    "commandLink": true,
+    "stableName": true
+   },
+   "sandbox": {
+    "caps": [
+     "notifications"
+    ],
+    "devices": [
+     "x11"
+    ],
+    "exec_deny": true,
+    "folders": {},
+    "level": "standard",
+    "network": true,
+    "ports": null,
+    "sound": [
+     "play"
+    ],
+    "write_app": false
+   },
+   "target": "$HOME/bin/apps/demo"
+  },
+  "url": "https://github.com/example/demo",
+  "version": "1.0"
+ }
+}

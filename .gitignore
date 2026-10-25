@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+releases/
+.pytest_cache/
+/temp/
+/local.env

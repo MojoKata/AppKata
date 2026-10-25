@@ -1,0 +1,2334 @@
+{
+ "keepassxreboot/keepassxc": {
+  "repo": "keepassxreboot/keepassxc",
+  "stars": 29048,
+  "desc": "KeePassXC is a cross-platform community-driven port of the Windows application \u201cKeePass Password Safe\u201d.",
+  "license": "GPL-2.0 / GPL-3.0 / LGPL-2.1 / LGPL-3.0 / MIT",
+  "funding": true,
+  "version": "2.7.12",
+  "date": "2026-03-10",
+  "tag": "2.7.12",
+  "names": [
+   "KeePassXC-2.7.12-arm64.dmg",
+   "KeePassXC-2.7.12-arm64.dmg.DIGEST",
+   "KeePassXC-2.7.12-arm64.dmg.sig",
+   "keepassxc-2.7.12-src.tar.xz",
+   "keepassxc-2.7.12-src.tar.xz.DIGEST",
+   "keepassxc-2.7.12-src.tar.xz.sig",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.msi",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.msi.DIGEST",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.msi.sig",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.zip",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.zip.DIGEST",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.zip.sig",
+   "KeePassXC-2.7.12-Win64.msi",
+   "KeePassXC-2.7.12-Win64.msi.DIGEST",
+   "KeePassXC-2.7.12-Win64.msi.sig",
+   "KeePassXC-2.7.12-Win64.zip",
+   "KeePassXC-2.7.12-Win64.zip.DIGEST",
+   "KeePassXC-2.7.12-Win64.zip.sig",
+   "KeePassXC-2.7.12-x86_64.AppImage",
+   "KeePassXC-2.7.12-x86_64.AppImage.DIGEST",
+   "KeePassXC-2.7.12-x86_64.AppImage.sig",
+   "KeePassXC-2.7.12-x86_64.AppImage.zsync",
+   "KeePassXC-2.7.12-x86_64.AppImage.zsync.DIGEST",
+   "KeePassXC-2.7.12-x86_64.AppImage.zsync.sig",
+   "KeePassXC-2.7.12-x86_64.dmg",
+   "KeePassXC-2.7.12-x86_64.dmg.DIGEST",
+   "KeePassXC-2.7.12-x86_64.dmg.sig"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "msi",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [
+   "KeePassXC-2.7.12-arm64.dmg.DIGEST",
+   "KeePassXC-2.7.12-arm64.dmg.sig",
+   "keepassxc-2.7.12-src.tar.xz.DIGEST",
+   "keepassxc-2.7.12-src.tar.xz.sig",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.msi.DIGEST",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.msi.sig",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.zip.DIGEST",
+   "KeePassXC-2.7.12-Win64-LegacyWindows.zip.sig",
+   "KeePassXC-2.7.12-Win64.msi.DIGEST",
+   "KeePassXC-2.7.12-Win64.msi.sig",
+   "KeePassXC-2.7.12-Win64.zip.DIGEST",
+   "KeePassXC-2.7.12-Win64.zip.sig",
+   "KeePassXC-2.7.12-x86_64.AppImage.DIGEST",
+   "KeePassXC-2.7.12-x86_64.AppImage.sig",
+   "KeePassXC-2.7.12-x86_64.AppImage.zsync.DIGEST",
+   "KeePassXC-2.7.12-x86_64.AppImage.zsync.sig",
+   "KeePassXC-2.7.12-x86_64.dmg.DIGEST",
+   "KeePassXC-2.7.12-x86_64.dmg.sig"
+  ],
+  "sums": []
+ },
+ "localsend/localsend": {
+  "repo": "localsend/localsend",
+  "stars": 93189,
+  "desc": "An open-source cross-platform alternative to AirDrop",
+  "license": "Apache-2.0",
+  "funding": true,
+  "version": "1.18.2",
+  "date": "2026-08-21",
+  "tag": "v1.18.2",
+  "names": [
+   "LocalSend-1.18.2-android-arm32v7.apk",
+   "LocalSend-1.18.2-android-arm64v8.apk",
+   "LocalSend-1.18.2-android-google-play.apk",
+   "LocalSend-1.18.2-android-x64.apk",
+   "LocalSend-1.18.2-linux-arm-64.deb",
+   "LocalSend-1.18.2-linux-arm-64.tar.gz",
+   "LocalSend-1.18.2-linux-x86-64.AppImage",
+   "LocalSend-1.18.2-linux-x86-64.deb",
+   "LocalSend-1.18.2-linux-x86-64.tar.gz",
+   "LocalSend-1.18.2-windows-arm-64.zip",
+   "LocalSend-1.18.2-windows-x86-64-unsigned.exe",
+   "LocalSend-1.18.2-windows-x86-64.exe",
+   "LocalSend-1.18.2-windows-x86-64.zip",
+   "LocalSend-1.18.2.dmg",
+   "LocalSend-CLI-1.18.2-linux-arm-64.tar.gz",
+   "LocalSend-CLI-1.18.2-linux-x86-64.tar.gz",
+   "LocalSend-CLI-1.18.2-macos-arm-64.tar.gz",
+   "LocalSend-CLI-1.18.2-macos-x86-64.tar.gz",
+   "LocalSend-CLI-1.18.2-windows-arm-64.exe",
+   "LocalSend-CLI-1.18.2-windows-x86-64.exe"
+  ],
+  "linux": [
+   "appimage",
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "flameshot-org/flameshot": {
+  "repo": "flameshot-org/flameshot",
+  "stars": 31059,
+  "desc": "Powerful yet simple to use screenshot software :desktop_computer: :camera_flash: - GitHub",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "14.0.0",
+  "date": "2026-06-10",
+  "tag": "v14.0.0",
+  "names": [
+   "Flameshot-14.0-macos-arm64.dmg",
+   "Flameshot-14.0-macos-arm64.dmg.sha256sum",
+   "Flameshot-14.0-macos-intel.dmg",
+   "Flameshot-14.0-macos-intel.dmg.sha256sum",
+   "Flameshot-14.0.0-win64.msi",
+   "Flameshot-14.0.0-win64.msi.sha256sum",
+   "flameshot-14.0.0-win64.zip",
+   "flameshot-14.0.0-win64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-appimage-x86_64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-appimage-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-amd64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-arm64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-arm64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-armhf.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-armhf.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-41-x86_64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-41-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-42-x86_64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-42-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-flatpak-x86_64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-flatpak-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-snap-x86_64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-snap-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-amd64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-arm64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-arm64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-amd64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-arm64.zip",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-arm64.zip.sha256sum"
+  ],
+  "linux": [],
+  "windows": [
+   "msi",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": [
+   "Flameshot-14.0-macos-arm64.dmg.sha256sum",
+   "Flameshot-14.0-macos-intel.dmg.sha256sum",
+   "Flameshot-14.0.0-win64.msi.sha256sum",
+   "flameshot-14.0.0-win64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-appimage-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-arm64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-debian-12-armhf.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-41-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-fedora-42-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-flatpak-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-snap-x86_64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-22.04-arm64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-amd64.zip.sha256sum",
+   "flameshot-v14.0+git0.da6121bd-artifact-ubuntu-24.04-arm64.zip.sha256sum"
+  ]
+ },
+ "ventoy/Ventoy": {
+  "repo": "ventoy/Ventoy",
+  "stars": 79674,
+  "desc": "A new bootable USB solution. Contribute to ventoy/Ventoy development by creating an account on GitHub.",
+  "license": "GPL-3.0",
+  "funding": true,
+  "version": "1.1.17",
+  "date": "2026-07-24",
+  "tag": "v1.1.17",
+  "names": [
+   "sha256.txt",
+   "ventoy-1.1.17-linux.tar.gz",
+   "ventoy-1.1.17-livecd.iso",
+   "ventoy-1.1.17-windows.zip"
+  ],
+  "linux": [
+   "tarball"
+  ],
+  "windows": [
+   "zip"
+  ],
+  "macos": [],
+  "sigs": [],
+  "sums": [
+   "sha256.txt"
+  ]
+ },
+ "mltframework/shotcut": {
+  "repo": "mltframework/shotcut",
+  "stars": 15332,
+  "desc": "cross-platform (Qt), open-source (GPLv3) video editor",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "26.9.27",
+  "date": "2026-09-27",
+  "tag": "v26.9.27",
+  "names": [
+   "md5sums.txt",
+   "sha256sums.txt",
+   "shotcut-linux-x86_64-26.9.27.AppImage",
+   "shotcut-linux-x86_64-26.9.27.txz",
+   "shotcut-macos-26.9.27.dmg",
+   "shotcut-macos-26.9.28.dmg",
+   "shotcut-src-26.9.27.txz",
+   "shotcut-win64-26.9.27.exe",
+   "shotcut-win64-26.9.27.zip",
+   "shotcut-win_ARM-26.9.27.exe",
+   "shotcut-win_ARM-26.9.27.zip"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": [
+   "sha256sums.txt"
+  ]
+ },
+ "audacity/audacity": {
+  "repo": "audacity/audacity",
+  "stars": 18629,
+  "desc": "Audio Editor                                     . Contribute to audacity/audacity development by creating an account on GitHub.",
+  "license": "Other",
+  "funding": false,
+  "version": "4.0.1",
+  "date": "2026-09-29",
+  "tag": "Audacity-4.0.1",
+  "names": [
+   "audacity-linux-4.0.1-aarch64.AppImage",
+   "audacity-linux-4.0.1-x86_64.AppImage",
+   "audacity-macOS-4.0.1-arm64.dmg",
+   "audacity-macOS-4.0.1-universal.dmg",
+   "audacity-macOS-4.0.1-x86_64.dmg",
+   "audacity-sources-4.0.1.tar.xz",
+   "audacity-win-4.0.1-arm64.7z",
+   "audacity-win-4.0.1-arm64.msi",
+   "audacity-win-4.0.1-x86_64.7z",
+   "audacity-win-4.0.1-x86_64.msi",
+   "CHECKSUMS.txt"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "msi"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": [
+   "CHECKSUMS.txt"
+  ]
+ },
+ "darktable-org/darktable": {
+  "repo": "darktable-org/darktable",
+  "stars": 13176,
+  "desc": "darktable is an open source photography workflow application and raw developer",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "5.6.1",
+  "date": "2026-08-26",
+  "tag": "release-5.6.1",
+  "names": [
+   "Darktable-5.6.1-aarch64.AppImage",
+   "Darktable-5.6.1-aarch64.AppImage.zsync",
+   "darktable-5.6.1-arm64.dmg",
+   "darktable-5.6.1-win64.exe",
+   "darktable-5.6.1-woa64.exe",
+   "Darktable-5.6.1-x86_64.AppImage",
+   "Darktable-5.6.1-x86_64.AppImage.zsync",
+   "darktable-5.6.1-x86_64.dmg",
+   "darktable-5.6.1.tar.xz",
+   "darktable-5.6.1.tar.xz.asc"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [
+   "darktable-5.6.1.tar.xz.asc"
+  ],
+  "sums": []
+ },
+ "FreeCAD/FreeCAD": {
+  "repo": "FreeCAD/FreeCAD",
+  "stars": 33891,
+  "desc": "Official source code of FreeCAD, a free and opensource multiplatform 3D parametric modeler.",
+  "license": "LGPL-2.1",
+  "funding": true,
+  "version": "2026.10.01",
+  "date": "2026-10-01",
+  "tag": "weekly-2026.10.01",
+  "names": [
+   "freecad_source_weekly-2026.10.01.tar.gz",
+   "freecad_source_weekly-2026.10.01.tar.gz-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Linux-aarch64.AppImage",
+   "FreeCAD_weekly-2026.10.01-Linux-aarch64.AppImage-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Linux-aarch64.AppImage.zsync",
+   "FreeCAD_weekly-2026.10.01-Linux-x86_64.AppImage",
+   "FreeCAD_weekly-2026.10.01-Linux-x86_64.AppImage-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Linux-x86_64.AppImage.zsync",
+   "FreeCAD_weekly-2026.10.01-macOS10-x86_64.dmg",
+   "FreeCAD_weekly-2026.10.01-macOS10-x86_64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-macOS11-arm64.dmg",
+   "FreeCAD_weekly-2026.10.01-macOS11-arm64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-macOS15-arm64.dmg",
+   "FreeCAD_weekly-2026.10.01-macOS15-arm64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64-installer.exe",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64-installer.exe-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64.7z",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64.7z-SHA256.txt"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": [
+   "freecad_source_weekly-2026.10.01.tar.gz-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Linux-aarch64.AppImage-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Linux-x86_64.AppImage-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-macOS10-x86_64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-macOS11-arm64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-macOS15-arm64.dmg-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64-installer.exe-SHA256.txt",
+   "FreeCAD_weekly-2026.10.01-Windows-x86_64.7z-SHA256.txt"
+  ]
+ },
+ "xournalpp/xournalpp": {
+  "repo": "xournalpp/xournalpp",
+  "stars": 15464,
+  "desc": "Xournal++ is a handwriting notetaking software with PDF annotation support. Written in C++ with GTK3, supporting Linux (e.g. Ubuntu, Debian, Arch, SUSE), macOS and Windows 10. Supports pen input from devices such as Wacom Tablets.",
+  "license": "GPL-2.0",
+  "funding": false,
+  "version": "1.3.8",
+  "date": "2026-09-25",
+  "tag": "v1.3.8",
+  "names": [
+   "xournalpp-1.3.8-aarch64.AppImage",
+   "xournalpp-1.3.8-aarch64.AppImage.zsync",
+   "xournalpp-1.3.8-Debian-trixie-x86_64.deb",
+   "xournalpp-1.3.8-Debian-trixie-x86_64.tar.gz",
+   "xournalpp-1.3.8-macOS-ARM64.dmg",
+   "xournalpp-1.3.8-macOS-X64.dmg",
+   "xournalpp-1.3.8-Ubuntu-jammy-aarch64.deb",
+   "xournalpp-1.3.8-Ubuntu-jammy-aarch64.tar.gz",
+   "xournalpp-1.3.8-Ubuntu-jammy-x86_64.deb",
+   "xournalpp-1.3.8-Ubuntu-jammy-x86_64.tar.gz",
+   "xournalpp-1.3.8-Ubuntu-noble-aarch64.deb",
+   "xournalpp-1.3.8-Ubuntu-noble-aarch64.tar.gz",
+   "xournalpp-1.3.8-Ubuntu-noble-x86_64.deb",
+   "xournalpp-1.3.8-Ubuntu-noble-x86_64.tar.gz",
+   "xournalpp-1.3.8-Ubuntu-resolute-aarch64.deb",
+   "xournalpp-1.3.8-Ubuntu-resolute-aarch64.tar.gz",
+   "xournalpp-1.3.8-Ubuntu-resolute-x86_64.deb",
+   "xournalpp-1.3.8-Ubuntu-resolute-x86_64.tar.gz",
+   "xournalpp-1.3.8-windows-portable-AMD64.zip",
+   "xournalpp-1.3.8-windows-portable-ARM64.zip",
+   "xournalpp-1.3.8-windows-setup-AMD64.exe",
+   "xournalpp-1.3.8-windows-setup-ARM64.exe",
+   "xournalpp-1.3.8-x86_64.AppImage",
+   "xournalpp-1.3.8-x86_64.AppImage.zsync"
+  ],
+  "linux": [
+   "appimage",
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "OpenShot/openshot-qt": {
+  "repo": "OpenShot/openshot-qt",
+  "stars": 6579,
+  "desc": "OpenShot Video Editor is an award-winning free and open-source video editor for Linux, Mac, and Windows, and is dedicated to delivering high quality video editing and animation solutions to the world.",
+  "license": "Other",
+  "funding": false,
+  "version": "4.0.1",
+  "date": "2026-09-27",
+  "tag": "v4.0.1",
+  "names": [
+   "OpenShot-v4.0.1-x86.exe",
+   "OpenShot-v4.0.1-x86.exe.sha256sum",
+   "OpenShot-v4.0.1-x86.exe.sha256sum.verify",
+   "OpenShot-v4.0.1-x86.exe.torrent",
+   "OpenShot-v4.0.1-x86_64.AppImage",
+   "OpenShot-v4.0.1-x86_64.AppImage.sha256sum",
+   "OpenShot-v4.0.1-x86_64.AppImage.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.AppImage.torrent",
+   "OpenShot-v4.0.1-x86_64.dmg",
+   "OpenShot-v4.0.1-x86_64.dmg.sha256sum",
+   "OpenShot-v4.0.1-x86_64.dmg.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.dmg.torrent",
+   "OpenShot-v4.0.1-x86_64.exe",
+   "OpenShot-v4.0.1-x86_64.exe.sha256sum",
+   "OpenShot-v4.0.1-x86_64.exe.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.exe.torrent"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [],
+  "sigs": [],
+  "sums": [
+   "OpenShot-v4.0.1-x86.exe.sha256sum",
+   "OpenShot-v4.0.1-x86.exe.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.AppImage.sha256sum",
+   "OpenShot-v4.0.1-x86_64.AppImage.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.dmg.sha256sum",
+   "OpenShot-v4.0.1-x86_64.dmg.sha256sum.verify",
+   "OpenShot-v4.0.1-x86_64.exe.sha256sum",
+   "OpenShot-v4.0.1-x86_64.exe.sha256sum.verify"
+  ]
+ },
+ "veracrypt/VeraCrypt": {
+  "repo": "veracrypt/VeraCrypt",
+  "stars": 11733,
+  "desc": "Disk encryption with strong security based on TrueCrypt",
+  "license": "Other",
+  "funding": true,
+  "version": "1.26.29",
+  "date": "2026-06-11",
+  "tag": "VeraCrypt_1.26.29",
+  "names": [
+   "README.TXT",
+   "README.TXT.sig",
+   "VeraCrypt-1.26.29-aarch64.AppImage",
+   "VeraCrypt-1.26.29-aarch64.AppImage.sig",
+   "veracrypt-1.26.29-CentOS-6-i686.rpm",
+   "veracrypt-1.26.29-CentOS-6-i686.rpm.sig",
+   "veracrypt-1.26.29-CentOS-6-x86_64.rpm",
+   "veracrypt-1.26.29-CentOS-6-x86_64.rpm.sig",
+   "veracrypt-1.26.29-CentOS-7-i686.rpm",
+   "veracrypt-1.26.29-CentOS-7-i686.rpm.sig",
+   "veracrypt-1.26.29-CentOS-7-x86_64.rpm",
+   "veracrypt-1.26.29-CentOS-7-x86_64.rpm.sig",
+   "veracrypt-1.26.29-CentOS-8-x86_64.rpm",
+   "veracrypt-1.26.29-CentOS-8-x86_64.rpm.sig",
+   "veracrypt-1.26.29-Debian-11-amd64.deb",
+   "veracrypt-1.26.29-Debian-11-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-11-i386.deb",
+   "veracrypt-1.26.29-Debian-11-i386.deb.sig",
+   "veracrypt-1.26.29-Debian-12-amd64.deb",
+   "veracrypt-1.26.29-Debian-12-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-12-i386.deb",
+   "veracrypt-1.26.29-Debian-12-i386.deb.sig",
+   "veracrypt-1.26.29-Debian-13-amd64.deb",
+   "veracrypt-1.26.29-Debian-13-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-13-arm64.deb",
+   "veracrypt-1.26.29-Debian-13-arm64.deb.sig",
+   "veracrypt-1.26.29-Fedora-43-x86_64.rpm",
+   "veracrypt-1.26.29-Fedora-43-x86_64.rpm.sig",
+   "veracrypt-1.26.29-Fedora-44-x86_64.rpm",
+   "veracrypt-1.26.29-Fedora-44-x86_64.rpm.sig",
+   "VeraCrypt-1.26.29-gtk2-legacy-i686.AppImage",
+   "VeraCrypt-1.26.29-gtk2-legacy-i686.AppImage.sig",
+   "VeraCrypt-1.26.29-gtk2-legacy-x86_64.AppImage",
+   "VeraCrypt-1.26.29-gtk2-legacy-x86_64.AppImage.sig",
+   "veracrypt-1.26.29-openSUSE-15-x86_64.rpm",
+   "veracrypt-1.26.29-openSUSE-15-x86_64.rpm.sig",
+   "veracrypt-1.26.29-setup.tar.bz2",
+   "veracrypt-1.26.29-setup.tar.bz2.sig",
+   "veracrypt-1.26.29-sha256sum.txt",
+   "veracrypt-1.26.29-sha256sum.txt.sig",
+   "veracrypt-1.26.29-sha512sum.txt",
+   "veracrypt-1.26.29-sha512sum.txt.sig",
+   "veracrypt-1.26.29-Ubuntu-22.04-amd64.deb",
+   "veracrypt-1.26.29-Ubuntu-22.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-24.04-amd64.deb",
+   "veracrypt-1.26.29-Ubuntu-24.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-24.04-arm64.deb",
+   "veracrypt-1.26.29-Ubuntu-24.04-arm64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-25.10-amd64.deb",
+   "veracrypt-1.26.29-Ubuntu-25.10-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-26.04-amd64.deb",
+   "veracrypt-1.26.29-Ubuntu-26.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-26.04-arm64.deb",
+   "veracrypt-1.26.29-Ubuntu-26.04-arm64.deb.sig",
+   "veracrypt-1.26.29-x86-legacy-setup.tar.bz2",
+   "veracrypt-1.26.29-x86-legacy-setup.tar.bz2.sig",
+   "VeraCrypt-1.26.29-x86_64.AppImage",
+   "VeraCrypt-1.26.29-x86_64.AppImage.sig",
+   "veracrypt-console-1.26.29-CentOS-6-i686.rpm",
+   "veracrypt-console-1.26.29-CentOS-6-i686.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-6-x86_64.rpm",
+   "veracrypt-console-1.26.29-CentOS-6-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-7-i686.rpm",
+   "veracrypt-console-1.26.29-CentOS-7-i686.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-7-x86_64.rpm",
+   "veracrypt-console-1.26.29-CentOS-7-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-8-x86_64.rpm",
+   "veracrypt-console-1.26.29-CentOS-8-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Debian-11-amd64.deb",
+   "veracrypt-console-1.26.29-Debian-11-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-11-i386.deb",
+   "veracrypt-console-1.26.29-Debian-11-i386.deb.sig",
+   "veracrypt-console-1.26.29-Debian-12-amd64.deb",
+   "veracrypt-console-1.26.29-Debian-12-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-12-i386.deb",
+   "veracrypt-console-1.26.29-Debian-12-i386.deb.sig",
+   "veracrypt-console-1.26.29-Debian-13-amd64.deb",
+   "veracrypt-console-1.26.29-Debian-13-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-13-arm64.deb",
+   "veracrypt-console-1.26.29-Debian-13-arm64.deb.sig",
+   "veracrypt-console-1.26.29-Fedora-43-x86_64.rpm",
+   "veracrypt-console-1.26.29-Fedora-43-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Fedora-44-x86_64.rpm",
+   "veracrypt-console-1.26.29-Fedora-44-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-openSUSE-15-x86_64.rpm",
+   "veracrypt-console-1.26.29-openSUSE-15-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Ubuntu-22.04-amd64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-22.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-amd64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-arm64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-arm64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-25.10-amd64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-25.10-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-amd64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-arm64.deb",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-arm64.deb.sig",
+   "VeraCrypt-DCS-EFI-LGPL_1.26.29_Source.zip",
+   "VeraCrypt-DCS-EFI-LGPL_1.26.29_Source.zip.sig",
+   "VeraCrypt.Portable.1.26.29.exe",
+   "VeraCrypt.Portable.1.26.29.exe.sig",
+   "VeraCrypt.Setup.1.26.29.exe",
+   "VeraCrypt.Setup.1.26.29.exe.sig",
+   "VeraCrypt.User.Guide.chm",
+   "VeraCrypt.User.Guide.chm.sig",
+   "VeraCrypt.User.Guide.ru.chm",
+   "VeraCrypt.User.Guide.ru.chm.sig",
+   "VeraCrypt.User.Guide.zh-cn.chm",
+   "VeraCrypt.User.Guide.zh-cn.chm.sig",
+   "VeraCrypt_1.26.29.dmg",
+   "VeraCrypt_1.26.29.dmg.sig",
+   "VeraCrypt_1.26.29_Bundle.7z",
+   "VeraCrypt_1.26.29_Bundle.7z.checksums",
+   "VeraCrypt_1.26.29_Bundle.7z.checksums.sig",
+   "VeraCrypt_1.26.29_Bundle.7z.sig",
+   "VeraCrypt_1.26.29_Source.tar.bz2",
+   "VeraCrypt_1.26.29_Source.tar.bz2.sig",
+   "VeraCrypt_1.26.29_Source.zip",
+   "VeraCrypt_1.26.29_Source.zip.sig",
+   "VeraCrypt_1.26.29_Windows_Symbols.zip",
+   "VeraCrypt_1.26.29_Windows_Symbols.zip.sig",
+   "VeraCrypt_FUSE-T_1.26.29.dmg",
+   "VeraCrypt_FUSE-T_1.26.29.dmg.sig",
+   "VeraCrypt_Setup_arm64_1.26.29.msi",
+   "VeraCrypt_Setup_arm64_1.26.29.msi.sig",
+   "VeraCrypt_Setup_x64_1.26.29.msi",
+   "VeraCrypt_Setup_x64_1.26.29.msi.sig"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "msi",
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [
+   "README.TXT.sig",
+   "VeraCrypt-1.26.29-aarch64.AppImage.sig",
+   "veracrypt-1.26.29-CentOS-6-i686.rpm.sig",
+   "veracrypt-1.26.29-CentOS-6-x86_64.rpm.sig",
+   "veracrypt-1.26.29-CentOS-7-i686.rpm.sig",
+   "veracrypt-1.26.29-CentOS-7-x86_64.rpm.sig",
+   "veracrypt-1.26.29-CentOS-8-x86_64.rpm.sig",
+   "veracrypt-1.26.29-Debian-11-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-11-i386.deb.sig",
+   "veracrypt-1.26.29-Debian-12-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-12-i386.deb.sig",
+   "veracrypt-1.26.29-Debian-13-amd64.deb.sig",
+   "veracrypt-1.26.29-Debian-13-arm64.deb.sig",
+   "veracrypt-1.26.29-Fedora-43-x86_64.rpm.sig",
+   "veracrypt-1.26.29-Fedora-44-x86_64.rpm.sig",
+   "VeraCrypt-1.26.29-gtk2-legacy-i686.AppImage.sig",
+   "VeraCrypt-1.26.29-gtk2-legacy-x86_64.AppImage.sig",
+   "veracrypt-1.26.29-openSUSE-15-x86_64.rpm.sig",
+   "veracrypt-1.26.29-setup.tar.bz2.sig",
+   "veracrypt-1.26.29-sha256sum.txt.sig",
+   "veracrypt-1.26.29-sha512sum.txt.sig",
+   "veracrypt-1.26.29-Ubuntu-22.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-24.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-24.04-arm64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-25.10-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-26.04-amd64.deb.sig",
+   "veracrypt-1.26.29-Ubuntu-26.04-arm64.deb.sig",
+   "veracrypt-1.26.29-x86-legacy-setup.tar.bz2.sig",
+   "VeraCrypt-1.26.29-x86_64.AppImage.sig",
+   "veracrypt-console-1.26.29-CentOS-6-i686.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-6-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-7-i686.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-7-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-CentOS-8-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Debian-11-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-11-i386.deb.sig",
+   "veracrypt-console-1.26.29-Debian-12-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-12-i386.deb.sig",
+   "veracrypt-console-1.26.29-Debian-13-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Debian-13-arm64.deb.sig",
+   "veracrypt-console-1.26.29-Fedora-43-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Fedora-44-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-openSUSE-15-x86_64.rpm.sig",
+   "veracrypt-console-1.26.29-Ubuntu-22.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-24.04-arm64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-25.10-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-amd64.deb.sig",
+   "veracrypt-console-1.26.29-Ubuntu-26.04-arm64.deb.sig",
+   "VeraCrypt-DCS-EFI-LGPL_1.26.29_Source.zip.sig",
+   "VeraCrypt.Portable.1.26.29.exe.sig",
+   "VeraCrypt.Setup.1.26.29.exe.sig",
+   "VeraCrypt.User.Guide.chm.sig",
+   "VeraCrypt.User.Guide.ru.chm.sig",
+   "VeraCrypt.User.Guide.zh-cn.chm.sig",
+   "VeraCrypt_1.26.29.dmg.sig",
+   "VeraCrypt_1.26.29_Bundle.7z.checksums.sig",
+   "VeraCrypt_1.26.29_Bundle.7z.sig",
+   "VeraCrypt_1.26.29_Source.tar.bz2.sig",
+   "VeraCrypt_1.26.29_Source.zip.sig",
+   "VeraCrypt_1.26.29_Windows_Symbols.zip.sig",
+   "VeraCrypt_FUSE-T_1.26.29.dmg.sig",
+   "VeraCrypt_Setup_arm64_1.26.29.msi.sig",
+   "VeraCrypt_Setup_x64_1.26.29.msi.sig"
+  ],
+  "sums": [
+   "veracrypt-1.26.29-sha256sum.txt",
+   "veracrypt-1.26.29-sha256sum.txt.sig",
+   "veracrypt-1.26.29-sha512sum.txt",
+   "veracrypt-1.26.29-sha512sum.txt.sig",
+   "VeraCrypt_1.26.29_Bundle.7z.checksums",
+   "VeraCrypt_1.26.29_Bundle.7z.checksums.sig"
+  ]
+ },
+ "LMMS/lmms": {
+  "repo": "LMMS/lmms",
+  "stars": 10421,
+  "desc": "Cross-platform music production software. Contribute to LMMS/lmms development by creating an account on GitHub.",
+  "license": "GPL-2.0",
+  "funding": true,
+  "version": "1.2.2",
+  "date": "2020-07-04",
+  "tag": "v1.2.2",
+  "names": [
+   "lmms-1.2.2-linux-x86_64.AppImage",
+   "lmms-1.2.2-mac10.13.dmg",
+   "lmms-1.2.2-mac10.14.dmg",
+   "lmms-1.2.2-win32.exe",
+   "lmms-1.2.2-win64.exe",
+   "lmms_1.2.2.tar.xz"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "jurplel/qView": {
+  "repo": "jurplel/qView",
+  "stars": 3570,
+  "desc": "Practical and minimal image viewer. Contribute to jurplel/qView development by creating an account on GitHub.",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "7.1",
+  "date": "2025-07-26",
+  "tag": "7.1",
+  "names": [
+   "qView-7.1-legacy.dmg",
+   "qView-7.1-win32.exe",
+   "qView-7.1-win32.zip",
+   "qView-7.1-win64.exe",
+   "qView-7.1-win64.zip",
+   "qView-7.1-winarm64.exe",
+   "qView-7.1-winarm64.zip",
+   "qView-7.1-x86_64.AppImage",
+   "qView-7.1.dmg",
+   "qView-x86_64.AppImage.zsync"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "qarmin/czkawka": {
+  "repo": "qarmin/czkawka",
+  "stars": 33858,
+  "desc": "Multi functional app to find duplicates, empty folders, similar images etc.",
+  "license": "MIT",
+  "funding": true,
+  "version": "12.0.2",
+  "date": "2026-09-09",
+  "tag": "12.0.2",
+  "names": [
+   "cedinia.apk",
+   "deps_linux.sh",
+   "deps_macos.sh",
+   "deps_windows.bat",
+   "linux_czkawka_cli_arm64",
+   "linux_czkawka_cli_heif_raw_avif_arm64",
+   "linux_czkawka_cli_heif_raw_avif_x86_64",
+   "linux_czkawka_cli_musl",
+   "linux_czkawka_cli_x86_64",
+   "linux_czkawka_gui_arm64",
+   "linux_czkawka_gui_heif_raw_avif_arm64",
+   "linux_czkawka_gui_heif_raw_avif_x86_64",
+   "linux_czkawka_gui_x86_64",
+   "linux_krokiet_all_backends_arm64.zip",
+   "linux_krokiet_all_backends_x86_64.zip",
+   "linux_krokiet_arm64",
+   "linux_krokiet_femtovg_wgpu_arm64",
+   "linux_krokiet_femtovg_wgpu_x86_64",
+   "linux_krokiet_heif_raw_avif_all_backends_arm64.zip",
+   "linux_krokiet_heif_raw_avif_all_backends_x86_64.zip",
+   "linux_krokiet_heif_raw_avif_arm64",
+   "linux_krokiet_heif_raw_avif_femtovg_wgpu_arm64",
+   "linux_krokiet_heif_raw_avif_femtovg_wgpu_x86_64",
+   "linux_krokiet_heif_raw_avif_skia_opengl_arm64",
+   "linux_krokiet_heif_raw_avif_skia_opengl_x86_64",
+   "linux_krokiet_heif_raw_avif_skia_vulkan_arm64",
+   "linux_krokiet_heif_raw_avif_skia_vulkan_x86_64",
+   "linux_krokiet_heif_raw_avif_x86_64",
+   "linux_krokiet_skia_opengl_arm64",
+   "linux_krokiet_skia_opengl_x86_64",
+   "linux_krokiet_skia_vulkan_arm64",
+   "linux_krokiet_skia_vulkan_x86_64",
+   "linux_krokiet_x86_64",
+   "mac_czkawka_cli_arm64",
+   "mac_czkawka_cli_heif_avif_arm64",
+   "mac_czkawka_gui_arm64",
+   "mac_czkawka_gui_heif_avif_arm64",
+   "mac_krokiet_all_backends_arm64.zip",
+   "mac_krokiet_arm64",
+   "mac_krokiet_femtovg_wgpu_arm64",
+   "mac_krokiet_heif_avif_all_backends_arm64.zip",
+   "mac_krokiet_heif_avif_arm64",
+   "mac_krokiet_heif_avif_femtovg_wgpu_arm64",
+   "mac_krokiet_skia_vulkan_arm64",
+   "mac_krokiet_skia_vulkan_heif_avif_arm64",
+   "windows_czkawka_cli.exe",
+   "windows_czkawka_gui_gtk_412.zip",
+   "windows_krokiet_on_linux.exe",
+   "windows_krokiet_on_windows_all_backends.zip",
+   "windows_krokiet_on_windows_femtovg_wgpu.exe",
+   "windows_krokiet_on_windows_skia_opengl.exe",
+   "windows_krokiet_on_windows_skia_vulkan.exe"
+  ],
+  "linux": [],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "neovim/neovim": {
+  "repo": "neovim/neovim",
+  "stars": 102696,
+  "desc": "Vim-fork focused on extensibility and usability. Contribute to neovim/neovim development by creating an account on GitHub.",
+  "license": "Other",
+  "funding": true,
+  "version": "0.12.5",
+  "date": "2026-08-23",
+  "tag": "v0.12.5",
+  "names": [
+   "nvim-linux-arm64.appimage",
+   "nvim-linux-arm64.appimage.zsync",
+   "nvim-linux-arm64.tar.gz",
+   "nvim-linux-x86_64.appimage",
+   "nvim-linux-x86_64.appimage.zsync",
+   "nvim-linux-x86_64.tar.gz",
+   "nvim-macos-arm64.tar.gz",
+   "nvim-macos-x86_64.tar.gz",
+   "nvim-win-arm64.msi",
+   "nvim-win-arm64.zip",
+   "nvim-win64.msi",
+   "nvim-win64.zip"
+  ],
+  "linux": [
+   "appimage",
+   "tarball"
+  ],
+  "windows": [
+   "msi",
+   "zip"
+  ],
+  "macos": [],
+  "sigs": [],
+  "sums": []
+ },
+ "alacritty/alacritty": {
+  "repo": "alacritty/alacritty",
+  "stars": 65879,
+  "desc": "A cross-platform, OpenGL terminal emulator. Contribute to alacritty/alacritty development by creating an account on GitHub.",
+  "license": "Apache-2.0",
+  "funding": false,
+  "version": "0.17.0",
+  "date": "2026-04-06",
+  "tag": "v0.17.0",
+  "names": [
+   "alacritty-bindings.5.gz",
+   "alacritty-escapes.7.gz",
+   "alacritty-msg.1.gz",
+   "Alacritty-v0.17.0-installer.msi",
+   "Alacritty-v0.17.0-portable.exe",
+   "Alacritty-v0.17.0.dmg",
+   "alacritty.1.gz",
+   "alacritty.5.gz",
+   "alacritty.bash",
+   "Alacritty.desktop",
+   "alacritty.fish",
+   "alacritty.info",
+   "Alacritty.svg",
+   "_alacritty"
+  ],
+  "linux": [],
+  "windows": [
+   "msi",
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "wezterm/wezterm": {
+  "repo": "wezterm/wezterm",
+  "stars": 29096,
+  "desc": "A GPU-accelerated cross-platform terminal emulator and multiplexer written by @wez and implemented in Rust",
+  "license": "Other",
+  "funding": true,
+  "version": "20240203-110809-5046fc22",
+  "date": "2024-02-03",
+  "tag": "20240203-110809-5046fc22",
+  "names": [
+   "WezTerm-20240203-110809-5046fc22-setup.exe",
+   "WezTerm-20240203-110809-5046fc22-setup.exe.sha256",
+   "wezterm-20240203-110809-5046fc22-src.tar.gz",
+   "wezterm-20240203-110809-5046fc22-src.tar.gz.sha256",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage.sha256",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage.zsync",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage.zsync.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian10.deb",
+   "wezterm-20240203-110809-5046fc22.Debian10.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian10.tar.xz",
+   "wezterm-20240203-110809-5046fc22.Debian10.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian11.deb",
+   "wezterm-20240203-110809-5046fc22.Debian11.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian11.tar.xz",
+   "wezterm-20240203-110809-5046fc22.Debian11.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian12.arm64.deb",
+   "wezterm-20240203-110809-5046fc22.Debian12.deb",
+   "wezterm-20240203-110809-5046fc22.Debian12.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian12.tar.xz",
+   "wezterm-20240203-110809-5046fc22.Debian12.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.deb",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.tar.xz",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.arm64.deb",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.deb",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz.sha256",
+   "wezterm-20240203_110809_5046fc22-1.centos8.x86_64.rpm",
+   "wezterm-20240203_110809_5046fc22-1.centos8.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.centos9.x86_64.rpm",
+   "wezterm-20240203_110809_5046fc22-1.centos9.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora37.x86_64.rpm",
+   "wezterm-20240203_110809_5046fc22-1.fedora37.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora38.x86_64.rpm",
+   "wezterm-20240203_110809_5046fc22-1.fedora38.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora39.x86_64.rpm",
+   "wezterm-20240203_110809_5046fc22-1.fedora39.x86_64.rpm.sha256",
+   "WezTerm-macos-20240203-110809-5046fc22.zip",
+   "WezTerm-macos-20240203-110809-5046fc22.zip.sha256",
+   "WezTerm-windows-20240203-110809-5046fc22.zip",
+   "WezTerm-windows-20240203-110809-5046fc22.zip.sha256"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [],
+  "sums": [
+   "WezTerm-20240203-110809-5046fc22-setup.exe.sha256",
+   "wezterm-20240203-110809-5046fc22-src.tar.gz.sha256",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage.sha256",
+   "WezTerm-20240203-110809-5046fc22-Ubuntu20.04.AppImage.zsync.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian10.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian10.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian11.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian11.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian12.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Debian12.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu20.04.tar.xz.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.deb.sha256",
+   "wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz.sha256",
+   "wezterm-20240203_110809_5046fc22-1.centos8.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.centos9.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora37.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora38.x86_64.rpm.sha256",
+   "wezterm-20240203_110809_5046fc22-1.fedora39.x86_64.rpm.sha256",
+   "WezTerm-macos-20240203-110809-5046fc22.zip.sha256",
+   "WezTerm-windows-20240203-110809-5046fc22.zip.sha256"
+  ]
+ },
+ "helix-editor/helix": {
+  "repo": "helix-editor/helix",
+  "stars": 46433,
+  "desc": "A post-modern modal text editor. Contribute to helix-editor/helix development by creating an account on GitHub.",
+  "license": "MPL-2.0",
+  "funding": true,
+  "version": "25.07.1",
+  "date": "2025-07-18",
+  "tag": "25.07.1",
+  "names": [
+   "helix-25.07.1-aarch64-linux.tar.xz",
+   "helix-25.07.1-aarch64-macos.tar.xz",
+   "helix-25.07.1-source.tar.xz",
+   "helix-25.07.1-x86_64-linux.tar.xz",
+   "helix-25.07.1-x86_64-macos.tar.xz",
+   "helix-25.07.1-x86_64-windows.zip",
+   "helix-25.07.1-x86_64.AppImage",
+   "helix-25.07.1-x86_64.AppImage.zsync",
+   "helix_25.7.1-1_amd64.deb"
+  ],
+  "linux": [
+   "appimage",
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "zip"
+  ],
+  "macos": [],
+  "sigs": [],
+  "sums": []
+ },
+ "PintaProject/Pinta": {
+  "repo": "PintaProject/Pinta",
+  "stars": 4065,
+  "desc": "Simple GTK Paint Program. Contribute to PintaProject/Pinta development by creating an account on GitHub.",
+  "license": "MIT",
+  "funding": false,
+  "version": "3.1.2",
+  "date": "2026-04-02",
+  "tag": "3.1.2",
+  "names": [
+   "pinta-3.1.2.tar.gz",
+   "pinta-3.1.2.tar.gz.asc",
+   "pinta-3.1.2.tar.gz.sha512",
+   "pinta-3.1.2.zip",
+   "Pinta-arm64.exe",
+   "Pinta-macos-arm64.dmg",
+   "Pinta-macos-x86_64.dmg",
+   "Pinta-x86_64.exe"
+  ],
+  "linux": [],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [
+   "pinta-3.1.2.tar.gz.asc"
+  ],
+  "sums": [
+   "pinta-3.1.2.tar.gz.sha512"
+  ]
+ },
+ "Stellarium/stellarium": {
+  "repo": "Stellarium/stellarium",
+  "stars": 10027,
+  "desc": "Stellarium is a free GPL software which renders realistic skies in real time with OpenGL. It is available for Linux/Unix, Windows, macOS and Haiku. With Stellarium, you really see what you can see with your eyes, binoculars or a small telescope.",
+  "license": "GPL-2.0",
+  "funding": true,
+  "version": "26.3",
+  "date": "2026-09-28",
+  "tag": "v26.3",
+  "names": [
+   "stellarium-26.3-qt5-win64.exe",
+   "stellarium-26.3-qt5-win64.exe.asc",
+   "Stellarium-26.3-qt5-x86_64.AppImage",
+   "Stellarium-26.3-qt5-x86_64.AppImage.asc",
+   "Stellarium-26.3-qt5-x86_64.zip",
+   "Stellarium-26.3-qt5-x86_64.zip.asc",
+   "stellarium-26.3-qt6-arm64.exe",
+   "stellarium-26.3-qt6-arm64.exe.asc",
+   "Stellarium-26.3-qt6-macOS.zip",
+   "Stellarium-26.3-qt6-macOS.zip.asc",
+   "stellarium-26.3-qt6-win64.exe",
+   "stellarium-26.3-qt6-win64.exe.asc",
+   "Stellarium-26.3-qt6-x86_64.AppImage",
+   "Stellarium-26.3-qt6-x86_64.AppImage.asc",
+   "stellarium-26.3.tar.bz2",
+   "stellarium-26.3.tar.bz2.asc",
+   "stellarium-26.3.tar.gz",
+   "stellarium-26.3.tar.gz.asc",
+   "stellarium-26.3.tar.xz",
+   "stellarium-26.3.tar.xz.asc",
+   "stellarium-26.3.zip",
+   "stellarium-26.3.zip.asc",
+   "stellarium_user_guide-26.3-1.pdf",
+   "stellarium_user_guide-26.3-1.pdf.asc"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [
+   "stellarium-26.3-qt5-win64.exe.asc",
+   "Stellarium-26.3-qt5-x86_64.AppImage.asc",
+   "Stellarium-26.3-qt5-x86_64.zip.asc",
+   "stellarium-26.3-qt6-arm64.exe.asc",
+   "Stellarium-26.3-qt6-macOS.zip.asc",
+   "stellarium-26.3-qt6-win64.exe.asc",
+   "Stellarium-26.3-qt6-x86_64.AppImage.asc",
+   "stellarium-26.3.tar.bz2.asc",
+   "stellarium-26.3.tar.gz.asc",
+   "stellarium-26.3.tar.xz.asc",
+   "stellarium-26.3.zip.asc",
+   "stellarium_user_guide-26.3-1.pdf.asc"
+  ],
+  "sums": []
+ },
+ "surge-synthesizer/surge": {
+  "repo": "surge-synthesizer/surge",
+  "stars": 4042,
+  "desc": "Synthesizer plug-in (previously released as Vember Audio Surge)",
+  "license": "GPL-3.0",
+  "funding": false
+ },
+ "espanso/espanso": {
+  "repo": "espanso/espanso",
+  "stars": 14572,
+  "desc": "A Privacy-first, Cross-platform Text Expander written in Rust",
+  "license": "GPL-3.0",
+  "funding": true,
+  "version": "2.4.1",
+  "date": "2026-09-01",
+  "tag": "v2.4.1",
+  "names": [
+   "espanso-debian-wayland-amd64.deb",
+   "espanso-debian-x11-amd64.deb",
+   "Espanso-Mac-Universal.dmg",
+   "Espanso-Win-Installer-x86_64.exe",
+   "Espanso-Win-Portable-x86_64.zip",
+   "Espanso-X11.AppImage"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "qbittorrent/qBittorrent": {
+  "repo": "qbittorrent/qBittorrent",
+  "stars": 40505,
+  "desc": "qBittorrent BitTorrent client. Contribute to qbittorrent/qBittorrent development by creating an account on GitHub.",
+  "license": "GPL-2.0 / GPL-3.0",
+  "funding": true,
+  "version": "5.2.4",
+  "date": "2026-09-27",
+  "tag": "release-5.2.4",
+  "names": [
+   "qbittorrent-5.2.4.tar.xz",
+   "qbittorrent-5.2.4.tar.xz.asc",
+   "qbittorrent-5.2.4_lt20_x86_64.AppImage",
+   "qbittorrent-5.2.4_lt20_x86_64.AppImage.asc",
+   "qbittorrent-5.2.4_x86_64.AppImage",
+   "qbittorrent-5.2.4_x86_64.AppImage.asc",
+   "qbittorrent_5.2.4_lt20_x64_setup.exe",
+   "qbittorrent_5.2.4_lt20_x64_setup.exe.asc",
+   "qbittorrent_5.2.4_x64_setup.exe",
+   "qbittorrent_5.2.4_x64_setup.exe.asc"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [],
+  "sigs": [
+   "qbittorrent-5.2.4.tar.xz.asc",
+   "qbittorrent-5.2.4_lt20_x86_64.AppImage.asc",
+   "qbittorrent-5.2.4_x86_64.AppImage.asc",
+   "qbittorrent_5.2.4_lt20_x64_setup.exe.asc",
+   "qbittorrent_5.2.4_x64_setup.exe.asc"
+  ],
+  "sums": []
+ },
+ "LibreSprite/LibreSprite": {
+  "repo": "LibreSprite/LibreSprite",
+  "stars": 8479,
+  "desc": "Animated sprite editor &amp; pixel art tool -- Fork of the last GPLv2 commit of Aseprite",
+  "license": "GPL-2.0",
+  "funding": false,
+  "version": "1.3",
+  "date": "2026-10-01",
+  "tag": "v1.3",
+  "names": [
+   "libresprite-v1.3-linux-x86_64.AppImage",
+   "libresprite-v1.3-macos-arm64.dmg",
+   "libresprite-v1.3-macos-x86_64.dmg",
+   "libresprite-v1.3-windows-x86_64-installer.exe",
+   "libresprite-v1.3-windows-x86_64.zip",
+   "SOURCE.CODE.+.submodules.tar.gz",
+   "SOURCE.CODE.+.submodules.zip"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "rizinorg/cutter": {
+  "repo": "rizinorg/cutter",
+  "stars": 19861,
+  "desc": "Free and Open Source Reverse Engineering Platform powered by rizin",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "2.5.0",
+  "date": "2026-06-30",
+  "tag": "v2.5.0",
+  "names": [
+   "Cutter-v2.5.0-Linux-Qt5-x86_64.AppImage",
+   "Cutter-v2.5.0-Linux-x86_64.AppImage",
+   "Cutter-v2.5.0-macOS-arm64.dmg",
+   "Cutter-v2.5.0-macOS-x86_64.dmg",
+   "Cutter-v2.5.0-src.tar.gz",
+   "Cutter-v2.5.0-Windows-x86_64.zip"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "hluk/CopyQ": {
+  "repo": "hluk/CopyQ",
+  "stars": 12332,
+  "desc": "Clipboard manager with advanced features. Contribute to hluk/CopyQ development by creating an account on GitHub.",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "16.0.0",
+  "date": "2026-05-30",
+  "tag": "v16.0.0",
+  "names": [
+   "checksums-sha512.txt",
+   "CopyQ-16.0.0-macos-12-m1.dmg",
+   "CopyQ-16.0.0-macos-13.dmg",
+   "copyq-16.0.0-setup.exe",
+   "CopyQ-16.0.0-x86_64.AppImage",
+   "CopyQ-16.0.0.tar.gz",
+   "copyq-16.0.0.zip",
+   "cosign.bundle"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": [
+   "checksums-sha512.txt"
+  ]
+ },
+ "sqlitebrowser/sqlitebrowser": {
+  "repo": "sqlitebrowser/sqlitebrowser",
+  "stars": 24654,
+  "desc": "Official home of the DB Browser for SQLite (DB4S) project. Previously known as &quot;SQLite Database Browser&quot; and &quot;Database Browser for SQLite&quot;. Website at:  - GitHub",
+  "license": "GPL-3.0 / MIT / MPL-2.0",
+  "funding": true,
+  "version": "3.13.1",
+  "date": "2024-10-15",
+  "tag": "v3.13.1",
+  "names": [
+   "DB.Browser.for.SQLite-v3.13.1-arm64.msi",
+   "DB.Browser.for.SQLite-v3.13.1-arm64.zip",
+   "DB.Browser.for.SQLite-v3.13.1-win32.msi",
+   "DB.Browser.for.SQLite-v3.13.1-win32.zip",
+   "DB.Browser.for.SQLite-v3.13.1-win64.msi",
+   "DB.Browser.for.SQLite-v3.13.1-win64.zip",
+   "DB.Browser.for.SQLite-v3.13.1-x86.64-v2.AppImage",
+   "DB.Browser.for.SQLite-v3.13.1.dmg",
+   "SQLiteDatabaseBrowserPortable_3.13.1.paf.exe"
+  ],
+  "linux": [],
+  "windows": [
+   "msi",
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "bleachbit/bleachbit": {
+  "repo": "bleachbit/bleachbit",
+  "stars": 7037,
+  "desc": "BleachBit system cleaner for Windows and Linux. Contribute to bleachbit/bleachbit development by creating an account on GitHub.",
+  "license": "GPL-3.0",
+  "funding": true,
+  "version": "6.0.4",
+  "date": "2026-09-08",
+  "tag": "v6.0.4",
+  "names": [
+   "bleachbit-6.0.4-2.1.alma10.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.alma9.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.fc43.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.fc44.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.opensuseSlowroll.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.opensuseTumbleweed.noarch.rpm.sig",
+   "bleachbit-6.0.4-lp156.2.1.opensuse156.noarch.rpm.sig",
+   "bleachbit-6.0.4-lp160.2.1.opensuse160.noarch.rpm.sig",
+   "BleachBit-6.0.4-portable.zip",
+   "BleachBit-6.0.4-portable.zip.sig",
+   "BleachBit-6.0.4-setup-English.exe.sig",
+   "BleachBit-6.0.4-setup.exe",
+   "BleachBit-6.0.4-setup.exe.sig",
+   "BleachBit-6.0.4-setup.zip.sig",
+   "bleachbit-6.0.4-sha256sum.txt",
+   "bleachbit-6.0.4-sha256sum.txt.asc",
+   "BleachBit-6.0.4-x86_64.AppImage.sig",
+   "bleachbit-6.0.4.tar.bz2",
+   "bleachbit-6.0.4.tar.bz2.sig",
+   "bleachbit-6.0.4.tar.gz",
+   "bleachbit-6.0.4.tar.gz.sig",
+   "bleachbit-6.0.4.tar.lzma",
+   "bleachbit-6.0.4.tar.lzma.sig",
+   "bleachbit_6.0.4-0_all_debian12.deb.sig",
+   "bleachbit_6.0.4-0_all_debian13.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2204.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2404.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2604.deb.sig"
+  ],
+  "linux": [],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [
+   "bleachbit-6.0.4-2.1.alma10.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.alma9.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.fc43.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.fc44.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.opensuseSlowroll.noarch.rpm.sig",
+   "bleachbit-6.0.4-2.1.opensuseTumbleweed.noarch.rpm.sig",
+   "bleachbit-6.0.4-lp156.2.1.opensuse156.noarch.rpm.sig",
+   "bleachbit-6.0.4-lp160.2.1.opensuse160.noarch.rpm.sig",
+   "BleachBit-6.0.4-portable.zip.sig",
+   "BleachBit-6.0.4-setup-English.exe.sig",
+   "BleachBit-6.0.4-setup.exe.sig",
+   "BleachBit-6.0.4-setup.zip.sig",
+   "bleachbit-6.0.4-sha256sum.txt.asc",
+   "BleachBit-6.0.4-x86_64.AppImage.sig",
+   "bleachbit-6.0.4.tar.bz2.sig",
+   "bleachbit-6.0.4.tar.gz.sig",
+   "bleachbit-6.0.4.tar.lzma.sig",
+   "bleachbit_6.0.4-0_all_debian12.deb.sig",
+   "bleachbit_6.0.4-0_all_debian13.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2204.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2404.deb.sig",
+   "bleachbit_6.0.4-0_all_ubuntu2604.deb.sig"
+  ],
+  "sums": [
+   "bleachbit-6.0.4-sha256sum.txt",
+   "bleachbit-6.0.4-sha256sum.txt.asc"
+  ]
+ },
+ "mapeditor/tiled": {
+  "repo": "mapeditor/tiled",
+  "stars": 12935,
+  "desc": "Flexible level editor. Contribute to mapeditor/tiled development by creating an account on GitHub.",
+  "license": "Apache-2.0 / GPL-2.0",
+  "funding": true,
+  "version": "1.12.2",
+  "date": "2026-05-27",
+  "tag": "v1.12.2",
+  "names": [
+   "Tiled-1.12.2_Linux_x86_64.AppImage",
+   "Tiled-1.12.2_macOS-10.13-12.zip",
+   "Tiled-1.12.2_macOS-13+.zip",
+   "Tiled-1.12.2_Windows-10+_x86_64.msi",
+   "Tiled-1.12.2_Windows-7-8_x86.msi"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "msi"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "notepadqq/notepadqq": {
+  "repo": "notepadqq/notepadqq",
+  "stars": 2330,
+  "desc": "A simple, general-purpose editor for Linux and MacOS",
+  "license": "GPL-3.0",
+  "funding": false,
+  "version": "2.1.1",
+  "date": "2026-07-03",
+  "tag": "v2.1.1",
+  "names": [
+   "notepadqq-v2.1.1-linux-x86_64.AppImage",
+   "notepadqq-v2.1.1-macos-arm64.dmg"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "gaphor/gaphor": {
+  "repo": "gaphor/gaphor",
+  "stars": 2275,
+  "desc": "Gaphor is the simple modeling tool. Contribute to gaphor/gaphor development by creating an account on GitHub.",
+  "license": "",
+  "funding": true,
+  "version": "3.3.2",
+  "date": "2026-05-02",
+  "tag": "3.3.2",
+  "names": [
+   "Gaphor-3.3.2-arm.dmg",
+   "gaphor-3.3.2-installer.exe",
+   "Gaphor-3.3.2-intel.dmg",
+   "gaphor-3.3.2-portable.exe"
+  ],
+  "linux": [],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "pencil2d/pencil": {
+  "repo": "pencil2d/pencil",
+  "stars": 1809,
+  "desc": "Pencil2D is an easy, intuitive tool to make 2D hand-drawn animations. Pencil2D is open source and cross-platform.",
+  "license": "GPL-2.0",
+  "funding": false,
+  "version": "0.7.2",
+  "date": "2026-03-13",
+  "tag": "v0.7.2",
+  "names": [
+   "pencil2d-linux-amd64-v0.7.2.AppImage",
+   "pencil2d-linux-amd64-v0.7.2.AppImage.zsync",
+   "pencil2d-linux-i686-v0.7.2.AppImage",
+   "pencil2d-mac-v0.7.2.dmg",
+   "pencil2d-win32-v0.7.2.zip",
+   "pencil2d-win64-v0.7.2.zip"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "VSCodium/vscodium": {
+  "repo": "VSCodium/vscodium",
+  "stars": 33489,
+  "desc": "Binary releases of VS Code without Microsoft branding, telemetry or licensing",
+  "license": "MIT",
+  "funding": false,
+  "version": "1.135.06055",
+  "date": "2026-09-08",
+  "tag": "1.135.06055",
+  "names": [
+   "codium-1.135.06055-el8.aarch64.rpm",
+   "codium-1.135.06055-el8.aarch64.rpm.sha1",
+   "codium-1.135.06055-el8.aarch64.rpm.sha256",
+   "codium-1.135.06055-el8.x86_64.rpm",
+   "codium-1.135.06055-el8.x86_64.rpm.sha1",
+   "codium-1.135.06055-el8.x86_64.rpm.sha256",
+   "codium_1.135.06055_amd64.deb",
+   "codium_1.135.06055_amd64.deb.sha1",
+   "codium_1.135.06055_amd64.deb.sha256",
+   "codium_1.135.06055_arm64.deb",
+   "codium_1.135.06055_arm64.deb.sha1",
+   "codium_1.135.06055_arm64.deb.sha256",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.sha1",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.sha256",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.zsync",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.zsync.sha1",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.zsync.sha256",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.sha1",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.sha256",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.zsync",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.zsync.sha1",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.zsync.sha256",
+   "VSCodium-1.135.06055-src.tar.gz",
+   "VSCodium-1.135.06055-src.tar.gz.sha1",
+   "VSCodium-1.135.06055-src.tar.gz.sha256",
+   "VSCodium-1.135.06055-src.zip",
+   "VSCodium-1.135.06055-src.zip.sha1",
+   "VSCodium-1.135.06055-src.zip.sha256",
+   "vscodium-cli-darwin-arm64-1.135.06055.tar.gz",
+   "vscodium-cli-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-darwin-x64-1.135.06055.tar.gz",
+   "vscodium-cli-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-linux-arm64-1.135.06055.tar.gz",
+   "vscodium-cli-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-linux-x64-1.135.06055.tar.gz",
+   "vscodium-cli-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-win32-arm64-1.135.06055.tar.gz",
+   "vscodium-cli-win32-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-win32-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-win32-x64-1.135.06055.tar.gz",
+   "vscodium-cli-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-win32-x64-1.135.06055.tar.gz.sha256",
+   "VSCodium-darwin-arm64-1.135.06055.zip",
+   "VSCodium-darwin-arm64-1.135.06055.zip.sha1",
+   "VSCodium-darwin-arm64-1.135.06055.zip.sha256",
+   "VSCodium-darwin-x64-1.135.06055.zip",
+   "VSCodium-darwin-x64-1.135.06055.zip.sha1",
+   "VSCodium-darwin-x64-1.135.06055.zip.sha256",
+   "VSCodium-linux-arm64-1.135.06055.tar.gz",
+   "VSCodium-linux-arm64-1.135.06055.tar.gz.sha1",
+   "VSCodium-linux-arm64-1.135.06055.tar.gz.sha256",
+   "VSCodium-linux-x64-1.135.06055.tar.gz",
+   "VSCodium-linux-x64-1.135.06055.tar.gz.sha1",
+   "VSCodium-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-alpine-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-alpine-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-alpine-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-alpine-x64-1.135.06055.tar.gz",
+   "vscodium-reh-alpine-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-alpine-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-darwin-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-darwin-x64-1.135.06055.tar.gz",
+   "vscodium-reh-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-armhf-1.135.06055.tar.gz",
+   "vscodium-reh-linux-armhf-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-armhf-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-loong64-1.135.06055.tar.gz",
+   "vscodium-reh-linux-loong64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-loong64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-ppc64le-1.135.06055.tar.gz",
+   "vscodium-reh-linux-ppc64le-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-ppc64le-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-riscv64-1.135.06055.tar.gz",
+   "vscodium-reh-linux-riscv64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-riscv64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-s390x-1.135.06055.tar.gz",
+   "vscodium-reh-linux-s390x-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-s390x-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-x64-1.135.06055.tar.gz",
+   "vscodium-reh-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-alpine-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-web-alpine-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-alpine-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-alpine-x64-1.135.06055.tar.gz",
+   "vscodium-reh-web-alpine-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-alpine-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-darwin-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-web-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-darwin-x64-1.135.06055.tar.gz",
+   "vscodium-reh-web-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-arm64-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-armhf-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-armhf-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-armhf-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-loong64-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-loong64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-loong64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-ppc64le-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-ppc64le-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-ppc64le-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-riscv64-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-riscv64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-riscv64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-s390x-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-s390x-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-s390x-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-x64-1.135.06055.tar.gz",
+   "vscodium-reh-web-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-win32-x64-1.135.06055.tar.gz",
+   "vscodium-reh-web-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-win32-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-win32-x64-1.135.06055.tar.gz",
+   "vscodium-reh-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-win32-x64-1.135.06055.tar.gz.sha256",
+   "VSCodium-win32-arm64-1.135.06055.zip",
+   "VSCodium-win32-arm64-1.135.06055.zip.sha1",
+   "VSCodium-win32-arm64-1.135.06055.zip.sha256",
+   "VSCodium-win32-x64-1.135.06055.zip",
+   "VSCodium-win32-x64-1.135.06055.zip.sha1",
+   "VSCodium-win32-x64-1.135.06055.zip.sha256",
+   "VSCodium-x64-1.135.06055.msi",
+   "VSCodium-x64-1.135.06055.msi.sha1",
+   "VSCodium-x64-1.135.06055.msi.sha256",
+   "VSCodium-x64-updates-disabled-1.135.06055.msi",
+   "VSCodium-x64-updates-disabled-1.135.06055.msi.sha1",
+   "VSCodium-x64-updates-disabled-1.135.06055.msi.sha256",
+   "VSCodium.arm64.1.135.06055.dmg",
+   "VSCodium.arm64.1.135.06055.dmg.sha1",
+   "VSCodium.arm64.1.135.06055.dmg.sha256",
+   "VSCodium.x64.1.135.06055.dmg",
+   "VSCodium.x64.1.135.06055.dmg.sha1",
+   "VSCodium.x64.1.135.06055.dmg.sha256",
+   "VSCodiumSetup-arm64-1.135.06055.exe",
+   "VSCodiumSetup-arm64-1.135.06055.exe.sha1",
+   "VSCodiumSetup-arm64-1.135.06055.exe.sha256",
+   "VSCodiumSetup-x64-1.135.06055.exe",
+   "VSCodiumSetup-x64-1.135.06055.exe.sha1",
+   "VSCodiumSetup-x64-1.135.06055.exe.sha256",
+   "VSCodiumUserSetup-arm64-1.135.06055.exe",
+   "VSCodiumUserSetup-arm64-1.135.06055.exe.sha1",
+   "VSCodiumUserSetup-arm64-1.135.06055.exe.sha256",
+   "VSCodiumUserSetup-x64-1.135.06055.exe",
+   "VSCodiumUserSetup-x64-1.135.06055.exe.sha1",
+   "VSCodiumUserSetup-x64-1.135.06055.exe.sha256"
+  ],
+  "linux": [
+   "appimage",
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "msi",
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": [
+   "codium-1.135.06055-el8.aarch64.rpm.sha1",
+   "codium-1.135.06055-el8.aarch64.rpm.sha256",
+   "codium-1.135.06055-el8.x86_64.rpm.sha1",
+   "codium-1.135.06055-el8.x86_64.rpm.sha256",
+   "codium_1.135.06055_amd64.deb.sha1",
+   "codium_1.135.06055_amd64.deb.sha256",
+   "codium_1.135.06055_arm64.deb.sha1",
+   "codium_1.135.06055_arm64.deb.sha256",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.sha1",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.sha256",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.zsync.sha1",
+   "VSCodium-1.135.06055-anylinux-aarch64.AppImage.zsync.sha256",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.sha1",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.sha256",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.zsync.sha1",
+   "VSCodium-1.135.06055-anylinux-x86_64.AppImage.zsync.sha256",
+   "VSCodium-1.135.06055-src.tar.gz.sha1",
+   "VSCodium-1.135.06055-src.tar.gz.sha256",
+   "VSCodium-1.135.06055-src.zip.sha1",
+   "VSCodium-1.135.06055-src.zip.sha256",
+   "vscodium-cli-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-win32-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-win32-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-cli-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-cli-win32-x64-1.135.06055.tar.gz.sha256",
+   "VSCodium-darwin-arm64-1.135.06055.zip.sha1",
+   "VSCodium-darwin-arm64-1.135.06055.zip.sha256",
+   "VSCodium-darwin-x64-1.135.06055.zip.sha1",
+   "VSCodium-darwin-x64-1.135.06055.zip.sha256",
+   "VSCodium-linux-arm64-1.135.06055.tar.gz.sha1",
+   "VSCodium-linux-arm64-1.135.06055.tar.gz.sha256",
+   "VSCodium-linux-x64-1.135.06055.tar.gz.sha1",
+   "VSCodium-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-alpine-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-alpine-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-alpine-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-alpine-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-armhf-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-armhf-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-loong64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-loong64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-ppc64le-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-ppc64le-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-riscv64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-riscv64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-s390x-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-s390x-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-alpine-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-alpine-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-alpine-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-alpine-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-darwin-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-darwin-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-darwin-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-darwin-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-arm64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-arm64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-armhf-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-armhf-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-loong64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-loong64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-ppc64le-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-ppc64le-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-riscv64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-riscv64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-s390x-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-s390x-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-linux-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-linux-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-web-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-web-win32-x64-1.135.06055.tar.gz.sha256",
+   "vscodium-reh-win32-x64-1.135.06055.tar.gz.sha1",
+   "vscodium-reh-win32-x64-1.135.06055.tar.gz.sha256",
+   "VSCodium-win32-arm64-1.135.06055.zip.sha1",
+   "VSCodium-win32-arm64-1.135.06055.zip.sha256",
+   "VSCodium-win32-x64-1.135.06055.zip.sha1",
+   "VSCodium-win32-x64-1.135.06055.zip.sha256",
+   "VSCodium-x64-1.135.06055.msi.sha1",
+   "VSCodium-x64-1.135.06055.msi.sha256",
+   "VSCodium-x64-updates-disabled-1.135.06055.msi.sha1",
+   "VSCodium-x64-updates-disabled-1.135.06055.msi.sha256",
+   "VSCodium.arm64.1.135.06055.dmg.sha1",
+   "VSCodium.arm64.1.135.06055.dmg.sha256",
+   "VSCodium.x64.1.135.06055.dmg.sha1",
+   "VSCodium.x64.1.135.06055.dmg.sha256",
+   "VSCodiumSetup-arm64-1.135.06055.exe.sha1",
+   "VSCodiumSetup-arm64-1.135.06055.exe.sha256",
+   "VSCodiumSetup-x64-1.135.06055.exe.sha1",
+   "VSCodiumSetup-x64-1.135.06055.exe.sha256",
+   "VSCodiumUserSetup-arm64-1.135.06055.exe.sha1",
+   "VSCodiumUserSetup-arm64-1.135.06055.exe.sha256",
+   "VSCodiumUserSetup-x64-1.135.06055.exe.sha1",
+   "VSCodiumUserSetup-x64-1.135.06055.exe.sha256"
+  ]
+ },
+ "obsproject/obs-studio": {
+  "repo": "obsproject/obs-studio",
+  "stars": 76880,
+  "desc": "Free and open source software for live streaming and screen recording",
+  "license": "GPL-2.0",
+  "funding": true,
+  "version": "32.2.2",
+  "date": "2026-08-14",
+  "tag": "32.2.2",
+  "names": [
+   "OBS-Studio-32.2.2-macOS-Apple-dSYMs.tar.xz",
+   "OBS-Studio-32.2.2-macOS-Apple.dmg",
+   "OBS-Studio-32.2.2-macOS-Intel-dSYMs.tar.xz",
+   "OBS-Studio-32.2.2-macOS-Intel.dmg",
+   "OBS-Studio-32.2.2-Sources.tar.gz",
+   "OBS-Studio-32.2.2-Ubuntu-24.04-x86_64-dbsym.ddeb",
+   "OBS-Studio-32.2.2-Ubuntu-24.04-x86_64.deb",
+   "OBS-Studio-32.2.2-Ubuntu-26.04-x86_64-dbsym.ddeb",
+   "OBS-Studio-32.2.2-Ubuntu-26.04-x86_64.deb",
+   "OBS-Studio-32.2.2-Windows-arm64-PDBs.zip",
+   "OBS-Studio-32.2.2-Windows-arm64.zip",
+   "OBS-Studio-32.2.2-Windows-x64-Installer.exe",
+   "OBS-Studio-32.2.2-Windows-x64-PDBs.zip",
+   "OBS-Studio-32.2.2-Windows-x64.zip"
+  ],
+  "linux": [
+   "deb"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "laurent22/joplin": {
+  "repo": "laurent22/joplin",
+  "stars": 56560,
+  "desc": "A privacy-focused note-taking app with sync, for Windows, macOS, Linux, Android and iOS",
+  "license": "Other",
+  "funding": true,
+  "version": "3.7.21",
+  "date": "2026-09-25",
+  "tag": "v3.7.21",
+  "names": [
+   "Joplin-3.7.21-arm64.DMG",
+   "Joplin-3.7.21-arm64.dmg.blockmap",
+   "Joplin-3.7.21-arm64.pkg",
+   "Joplin-3.7.21-arm64.zip",
+   "Joplin-3.7.21-arm64.zip.blockmap",
+   "Joplin-3.7.21-mac.zip",
+   "Joplin-3.7.21-mac.zip.blockmap",
+   "Joplin-3.7.21.AppImage",
+   "Joplin-3.7.21.AppImage.sha512",
+   "Joplin-3.7.21.deb",
+   "Joplin-3.7.21.dmg",
+   "Joplin-3.7.21.dmg.blockmap",
+   "Joplin-3.7.21.pkg",
+   "Joplin-Setup-3.7.21.exe",
+   "Joplin-Setup-3.7.21.exe.blockmap",
+   "JoplinPortable.exe",
+   "latest-linux.yml",
+   "latest-mac-arm64.yml",
+   "latest-mac.yml",
+   "latest.yml"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg",
+   "pkg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": [
+   "Joplin-3.7.21.AppImage.sha512"
+  ]
+ },
+ "syncthing/syncthing": {
+  "repo": "syncthing/syncthing",
+  "stars": 89104,
+  "desc": "Open source continuous file synchronization",
+  "license": "MPL-2.0",
+  "funding": true,
+  "version": "2.1.5",
+  "date": "2026-09-08",
+  "tag": "v2.1.5",
+  "names": [
+   "compat.json",
+   "sha1sum.txt.asc",
+   "sha256sum.txt.asc",
+   "syncthing-freebsd-386-v2.1.5.tar.gz",
+   "syncthing-freebsd-amd64-v2.1.5.tar.gz",
+   "syncthing-freebsd-arm-v2.1.5.tar.gz",
+   "syncthing-freebsd-arm64-v2.1.5.tar.gz",
+   "syncthing-illumos-amd64-v2.1.5.tar.gz",
+   "syncthing-linux-386-v2.1.5.tar.gz",
+   "syncthing-linux-amd64-v2.1.5.tar.gz",
+   "syncthing-linux-arm-v2.1.5.tar.gz",
+   "syncthing-linux-arm64-v2.1.5.tar.gz",
+   "syncthing-linux-loong64-v2.1.5.tar.gz",
+   "syncthing-linux-mips-v2.1.5.tar.gz",
+   "syncthing-linux-mips64-v2.1.5.tar.gz",
+   "syncthing-linux-mips64le-v2.1.5.tar.gz",
+   "syncthing-linux-mipsle-v2.1.5.tar.gz",
+   "syncthing-linux-ppc64le-v2.1.5.tar.gz",
+   "syncthing-linux-riscv64-v2.1.5.tar.gz",
+   "syncthing-linux-s390x-v2.1.5.tar.gz",
+   "syncthing-macos-amd64-v2.1.5.zip",
+   "syncthing-macos-arm64-v2.1.5.zip",
+   "syncthing-macos-universal-v2.1.5.zip",
+   "syncthing-netbsd-amd64-v2.1.5.tar.gz",
+   "syncthing-openbsd-amd64-v2.1.5.tar.gz",
+   "syncthing-openbsd-arm64-v2.1.5.tar.gz",
+   "syncthing-source-v2.1.5.tar.gz",
+   "syncthing-source-v2.1.5.tar.gz.asc",
+   "syncthing-windows-386-v2.1.5.zip",
+   "syncthing-windows-amd64-v2.1.5.zip",
+   "syncthing-windows-arm64-v2.1.5.zip",
+   "syncthing_2.1.5_amd64.deb",
+   "syncthing_2.1.5_arm64.deb",
+   "syncthing_2.1.5_armel.deb",
+   "syncthing_2.1.5_armhf.deb"
+  ],
+  "linux": [
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "zip"
+  ],
+  "macos": [
+   "zip"
+  ],
+  "sigs": [
+   "sha1sum.txt.asc",
+   "sha256sum.txt.asc",
+   "syncthing-source-v2.1.5.tar.gz.asc"
+  ],
+  "sums": [
+   "sha1sum.txt.asc",
+   "sha256sum.txt.asc"
+  ]
+ },
+ "transmission/transmission": {
+  "repo": "transmission/transmission",
+  "stars": 15262,
+  "desc": "A fast, easy and free BitTorrent client",
+  "license": "Other",
+  "funding": false,
+  "version": "4.1.3",
+  "date": "2026-06-29",
+  "tag": "4.1.3",
+  "names": [
+   "Transmission-4.1.3-dsym.zip",
+   "transmission-4.1.3-qt5-x64-pdb.7z",
+   "transmission-4.1.3-qt5-x64.msi",
+   "transmission-4.1.3-qt5-x86-pdb.7z",
+   "transmission-4.1.3-qt5-x86.msi",
+   "transmission-4.1.3-x64-pdb.7z",
+   "transmission-4.1.3-x64.msi",
+   "transmission-4.1.3-x86-pdb.7z",
+   "transmission-4.1.3-x86.msi",
+   "Transmission-4.1.3.dmg",
+   "transmission-4.1.3.tar.xz"
+  ],
+  "linux": [],
+  "windows": [
+   "msi",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "HandBrake/HandBrake": {
+  "repo": "HandBrake/HandBrake",
+  "stars": 24548,
+  "desc": "An open source video transcoder",
+  "license": "GPL-2.0",
+  "funding": false,
+  "version": "1.11.2",
+  "date": "2026-06-07",
+  "tag": "1.11.2",
+  "names": [
+   "HandBrake-1.11.2-arm64-Win_GUI.exe",
+   "HandBrake-1.11.2-arm64-Win_GUI.exe.sig",
+   "HandBrake-1.11.2-arm64-Win_GUI.zip",
+   "HandBrake-1.11.2-arm64-Win_GUI.zip.sig",
+   "HandBrake-1.11.2-source.tar.bz2",
+   "HandBrake-1.11.2-source.tar.bz2.sig",
+   "HandBrake-1.11.2-x86_64-Win_GUI.exe",
+   "HandBrake-1.11.2-x86_64-Win_GUI.exe.sig",
+   "HandBrake-1.11.2-x86_64-Win_GUI.zip",
+   "HandBrake-1.11.2-x86_64-Win_GUI.zip.sig",
+   "HandBrake-1.11.2-x86_64.flatpak",
+   "HandBrake-1.11.2-x86_64.flatpak.sig",
+   "HandBrake-1.11.2.dmg",
+   "HandBrake-1.11.2.dmg.sig",
+   "HandBrake.Plugin.IntelMediaSDK-1.11.2-x86_64.flatpak",
+   "HandBrake.Plugin.IntelMediaSDK-1.11.2-x86_64.flatpak.sig",
+   "HandBrakeCLI-1.11.2-win-aarch64.zip",
+   "HandBrakeCLI-1.11.2-win-aarch64.zip.sig",
+   "HandBrakeCLI-1.11.2-win-x86_64.zip",
+   "HandBrakeCLI-1.11.2-win-x86_64.zip.sig",
+   "HandBrakeCLI-1.11.2.dmg",
+   "HandBrakeCLI-1.11.2.dmg.sig",
+   "LibHB-1.11.2-win-aarch64.zip",
+   "LibHB-1.11.2-win-aarch64.zip.sig",
+   "LibHB-1.11.2-win-x86_64.zip",
+   "LibHB-1.11.2-win-x86_64.zip.sig"
+  ],
+  "linux": [
+   "flatpak"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [
+   "HandBrake-1.11.2-arm64-Win_GUI.exe.sig",
+   "HandBrake-1.11.2-arm64-Win_GUI.zip.sig",
+   "HandBrake-1.11.2-source.tar.bz2.sig",
+   "HandBrake-1.11.2-x86_64-Win_GUI.exe.sig",
+   "HandBrake-1.11.2-x86_64-Win_GUI.zip.sig",
+   "HandBrake-1.11.2-x86_64.flatpak.sig",
+   "HandBrake-1.11.2.dmg.sig",
+   "HandBrake.Plugin.IntelMediaSDK-1.11.2-x86_64.flatpak.sig",
+   "HandBrakeCLI-1.11.2-win-aarch64.zip.sig",
+   "HandBrakeCLI-1.11.2-win-x86_64.zip.sig",
+   "HandBrakeCLI-1.11.2.dmg.sig",
+   "LibHB-1.11.2-win-aarch64.zip.sig",
+   "LibHB-1.11.2-win-x86_64.zip.sig"
+  ],
+  "sums": []
+ },
+ "ankitects/anki": {
+  "repo": "ankitects/anki",
+  "stars": 31709,
+  "desc": "A smart spaced-repetition flashcard program",
+  "license": "Other",
+  "funding": false,
+  "version": "26.09.3",
+  "date": "2026-09-22",
+  "tag": "26.09.3",
+  "names": [
+   "anki-26.09.3-linux-aarch64.tar.zst",
+   "anki-26.09.3-linux-x86_64.tar.zst",
+   "anki-26.09.3-mac-apple.dmg",
+   "anki-26.09.3-mac-intel.dmg",
+   "anki-26.09.3-win-arm64.msi",
+   "anki-26.09.3-win-x64.msi"
+  ],
+  "linux": [
+   "tarball"
+  ],
+  "windows": [
+   "msi"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "musescore/MuseScore": {
+  "repo": "musescore/MuseScore",
+  "stars": 15166,
+  "desc": "Free and open source music notation software",
+  "license": "Other",
+  "funding": false,
+  "version": "4.7.5",
+  "date": "2026-08-31",
+  "tag": "v4.7.5",
+  "names": [
+   "checksums.sha256.txt",
+   "MuseScore-Studio-4.7.5.260831071-aarch64.AppImage",
+   "MuseScore-Studio-4.7.5.260831071-aarch64.AppImage.zsync",
+   "MuseScore-Studio-4.7.5.260831071-x86_64.AppImage",
+   "MuseScore-Studio-4.7.5.260831071-x86_64.AppImage.zsync",
+   "MuseScore-Studio-4.7.5.260831071-x86_64.msi",
+   "MuseScore-Studio-4.7.5.260831071-x86_64.paf.exe",
+   "MuseScore-Studio-4.7.5.260831071.dmg"
+  ],
+  "linux": [
+   "appimage"
+  ],
+  "windows": [
+   "msi",
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": [
+   "checksums.sha256.txt"
+  ]
+ },
+ "mumble-voip/mumble": {
+  "repo": "mumble-voip/mumble",
+  "stars": 8314,
+  "desc": "Open source, low-latency, high-quality voice chat",
+  "license": "Other",
+  "funding": true,
+  "version": "1.5.915",
+  "date": "2026-07-18",
+  "tag": "v1.5.915",
+  "names": [
+   "mumble-1.5.915.tar.gz",
+   "mumble-1.5.915.tar.gz.sig",
+   "mumble_client-1.5.915.x64.exe",
+   "mumble_client-1.5.915.x64.exe.sig",
+   "mumble_server-1.5.915.x64.exe",
+   "mumble_server-1.5.915.x64.exe.sig"
+  ],
+  "linux": [],
+  "windows": [
+   "exe"
+  ],
+  "macos": [],
+  "sigs": [
+   "mumble-1.5.915.tar.gz.sig",
+   "mumble_client-1.5.915.x64.exe.sig",
+   "mumble_server-1.5.915.x64.exe.sig"
+  ],
+  "sums": []
+ },
+ "rustdesk/rustdesk": {
+  "repo": "rustdesk/rustdesk",
+  "stars": 125002,
+  "desc": "An open source remote desktop app designed for self-hosting, an alternative to TeamViewer",
+  "license": "AGPL-3.0",
+  "funding": true,
+  "version": "1.5.0",
+  "date": "2026-09-30",
+  "tag": "1.5.0",
+  "names": [
+   "rustdesk-1.5.0-0-x86_64.pkg.tar.zst",
+   "rustdesk-1.5.0-0.aarch64-suse.rpm",
+   "rustdesk-1.5.0-0.aarch64.rpm",
+   "rustdesk-1.5.0-0.x86_64-suse.rpm",
+   "rustdesk-1.5.0-0.x86_64.rpm",
+   "rustdesk-1.5.0-aarch64-signed.apk",
+   "rustdesk-1.5.0-aarch64.AppImage",
+   "rustdesk-1.5.0-aarch64.deb",
+   "rustdesk-1.5.0-aarch64.dmg",
+   "rustdesk-1.5.0-aarch64.exe",
+   "rustdesk-1.5.0-aarch64.flatpak",
+   "rustdesk-1.5.0-aarch64.msi",
+   "rustdesk-1.5.0-armv7-sciter.deb",
+   "rustdesk-1.5.0-armv7-signed.apk",
+   "rustdesk-1.5.0-universal-signed.apk",
+   "rustdesk-1.5.0-unsigned.tar.gz",
+   "rustdesk-1.5.0-x86-sciter.exe",
+   "rustdesk-1.5.0-x86_64-sciter.deb",
+   "rustdesk-1.5.0-x86_64-sciter.flatpak",
+   "rustdesk-1.5.0-x86_64-signed.apk",
+   "rustdesk-1.5.0-x86_64.AppImage",
+   "rustdesk-1.5.0-x86_64.deb",
+   "rustdesk-1.5.0-x86_64.dmg",
+   "rustdesk-1.5.0-x86_64.exe",
+   "rustdesk-1.5.0-x86_64.flatpak",
+   "rustdesk-1.5.0-x86_64.msi",
+   "rustdesk-unattended-wayland-1.5.0-x86_64.deb",
+   "rustdesk.sbom.json"
+  ],
+  "linux": [
+   "appimage",
+   "flatpak",
+   "deb",
+   "tarball"
+  ],
+  "windows": [
+   "msi",
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "upscayl/upscayl": {
+  "repo": "upscayl/upscayl",
+  "stars": 50063,
+  "desc": "A free and open source AI image upscaler for Linux, macOS and Windows",
+  "license": "AGPL-3.0",
+  "funding": true,
+  "version": "2.15.0",
+  "date": "2024-12-25",
+  "tag": "v2.15.0",
+  "names": [
+   "latest-linux.yml",
+   "latest-mac.yml",
+   "latest.yml",
+   "upscayl-2.15.0-linux.AppImage",
+   "upscayl-2.15.0-linux.deb",
+   "upscayl-2.15.0-linux.rpm",
+   "upscayl-2.15.0-linux.zip",
+   "upscayl-2.15.0-mac.dmg",
+   "upscayl-2.15.0-mac.dmg.blockmap",
+   "upscayl-2.15.0-mac.zip",
+   "upscayl-2.15.0-mac.zip.blockmap",
+   "upscayl-2.15.0-win.exe",
+   "upscayl-2.15.0-win.exe.blockmap",
+   "upscayl-2.15.0-win.zip"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "exe",
+   "zip"
+  ],
+  "macos": [
+   "dmg",
+   "zip"
+  ],
+  "sigs": [],
+  "sums": []
+ },
+ "Zettlr/Zettlr": {
+  "repo": "Zettlr/Zettlr",
+  "stars": 13638,
+  "desc": "A one-stop publication workbench: a Markdown editor for writing and research",
+  "license": "GPL-3.0",
+  "funding": true,
+  "version": "4.8.0",
+  "date": "2026-09-18",
+  "tag": "v4.8.0",
+  "names": [
+   "SHA256SUMS.txt",
+   "Zettlr-4.8.0-aarch64.rpm",
+   "Zettlr-4.8.0-amd64.deb",
+   "Zettlr-4.8.0-arm64.AppImage",
+   "Zettlr-4.8.0-arm64.deb",
+   "Zettlr-4.8.0-arm64.dmg",
+   "Zettlr-4.8.0-x64.dmg",
+   "Zettlr-4.8.0-x64.exe",
+   "Zettlr-4.8.0-x86_64.AppImage",
+   "Zettlr-4.8.0-x86_64.rpm"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [],
+  "sums": [
+   "SHA256SUMS.txt"
+  ]
+ },
+ "cryptomator/cryptomator": {
+  "repo": "cryptomator/cryptomator",
+  "stars": 16231,
+  "desc": "Client-side encryption for your cloud storage, for Windows, macOS and Linux",
+  "license": "GPL-3.0",
+  "funding": true,
+  "version": "1.19.3",
+  "date": "2026-06-29",
+  "tag": "1.19.3",
+  "names": [
+   "cryptomator-1.19.3-aarch64.AppImage",
+   "cryptomator-1.19.3-aarch64.AppImage.asc",
+   "cryptomator-1.19.3-aarch64.AppImage.zsync",
+   "cryptomator-1.19.3-aarch64.AppImage.zsync.asc",
+   "Cryptomator-1.19.3-arm64.dmg",
+   "Cryptomator-1.19.3-arm64.dmg.asc",
+   "Cryptomator-1.19.3-x64.dmg",
+   "Cryptomator-1.19.3-x64.dmg.asc",
+   "Cryptomator-1.19.3-x64.exe",
+   "Cryptomator-1.19.3-x64.exe.asc",
+   "Cryptomator-1.19.3-x64.msi",
+   "Cryptomator-1.19.3-x64.msi.asc",
+   "cryptomator-1.19.3-x86_64.AppImage",
+   "cryptomator-1.19.3-x86_64.AppImage.asc",
+   "cryptomator-1.19.3-x86_64.AppImage.zsync",
+   "cryptomator-1.19.3-x86_64.AppImage.zsync.asc",
+   "cryptomator-1.19.3.tar.gz.asc",
+   "cryptomator_1.19.3-0ppa1_amd64.deb",
+   "cryptomator_1.19.3-0ppa1_amd64.deb.asc"
+  ],
+  "linux": [
+   "appimage",
+   "deb"
+  ],
+  "windows": [
+   "msi",
+   "exe"
+  ],
+  "macos": [
+   "dmg"
+  ],
+  "sigs": [
+   "cryptomator-1.19.3-aarch64.AppImage.asc",
+   "cryptomator-1.19.3-aarch64.AppImage.zsync.asc",
+   "Cryptomator-1.19.3-arm64.dmg.asc",
+   "Cryptomator-1.19.3-x64.dmg.asc",
+   "Cryptomator-1.19.3-x64.exe.asc",
+   "Cryptomator-1.19.3-x64.msi.asc",
+   "cryptomator-1.19.3-x86_64.AppImage.asc",
+   "cryptomator-1.19.3-x86_64.AppImage.zsync.asc",
+   "cryptomator-1.19.3.tar.gz.asc",
+   "cryptomator_1.19.3-0ppa1_amd64.deb.asc"
+  ],
+  "sums": []
+ }
+}
