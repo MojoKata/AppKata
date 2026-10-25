@@ -20,8 +20,11 @@ import public_text  # noqa: E402
 
 
 def _tracked():
+    """The files git tracks, and those it would add (untracked, not ignored): a file is checked before
+    its first commit, the check's own files among them."""
     try:
-        out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z"], capture_output=True, check=True).stdout
+        out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z", "-co", "--exclude-standard"], capture_output=True,
+                             check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("not a git work tree (the Windows VM's copy of the sources)")
     return [p for p in out.decode().split("\0") if p]
@@ -40,7 +43,7 @@ def test_no_private_name_in_any_tracked_file():
         found = public_text.found(data.decode("utf-8", errors="replace"))
         if found:
             hits[rel] = found
-    assert not hits, f"private names in tracked files: {hits}"
+    assert not hits, f"private names in files git tracks or would add: {hits}"
 
 
 def test_the_check_finds_a_name_however_it_is_written(monkeypatch):
@@ -72,7 +75,7 @@ def test_the_repository_address_is_appkata_core_s():
             continue
         text = data.decode("utf-8", errors="replace")
         bad = [m for m in re.findall(r"github\.com/[\w.-]+/appkata\b", text, re.I) if m != own]
-        bad += re.findall(r"(?<![\w/])appkata/appkata(?![\w.])", text)
+        bad += public_text.PLACEHOLDER.findall(text)
         if bad:
             hits[rel] = sorted(set(bad))
     assert not hits, f"AppKata's repository other than {own}: {hits}"
