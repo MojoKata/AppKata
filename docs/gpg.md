@@ -7,6 +7,14 @@ checksums (4.4), review signatures (7.6.2, 10.7, 10.8), review Details (10.3.4),
 
 ## Short answers
 
+- **Is AppKata's own AppImage signed?** **Yes**, from the first release CI builds: each release
+  carries `AppKata-<version>-x86_64.AppImage.asc`, a detached signature by AppKata's release key
+  (its fingerprint is published in the README, and the public key as
+  `packaging/appkata-release-key.asc` and on keys.openpgp.org, when the owner makes the key,
+  [`GENESIS.md`](../GENESIS.md) step 7). CI signs it with the key's signing subkey after the owner approves
+  ([`github-workflows.md`](github-workflows.md), "Signing"); anyone can check it with
+  `gpg --verify`. AppKata itself doesn't check the `.asc` of its own updates either: that would come
+  with the feature below. Windows' installer has its `.sha256` only, until it is Authenticode-signed.
 - **Does AppKata verify a publisher's GPG/PGP (or minisign) signature on a release download?** **No.**
   On Linux portable installs (AppImage, tarball) it checks a **checksum** if one is published, which is
   *integrity*, not *authenticity*. Detached signatures (`.asc`, `.sig`, `.minisig`) are ignored.
@@ -97,8 +105,10 @@ meaningful authenticity signal in the meantime.
 
 ## Publishing signed checksums anyway
 
-Even though AppKata won't check it yet, publishing `SHA256SUMS` + `SHA256SUMS.asc` on a release is
-harmless and good practice for users who verify manually:
+AppKata's own releases sign the AppImage itself (above). A signed `SHA256SUMS` covering every file,
+the installer included, waits for the discussion of signing Windows' installer. Even though AppKata
+won't check it yet, publishing `SHA256SUMS` + `SHA256SUMS.asc` on a release is harmless and good
+practice for users who verify manually:
 
 ```sh
 cd releases

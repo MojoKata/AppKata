@@ -79,13 +79,19 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
    release without its snapshot is a release the upgrade tests know nothing about. Drop a
    snapshot only when its release is no longer one AppKata upgrades from.
 4. Regenerate the screenshots if a screen changed (above), and check `git diff --stat screenshots`.
-5. Build (below), and check each release file's `.sha256`.
+5. **Tag it, and let CI build and sign it:** `scripts/publish.sh release` tags `v<version>`, waits for
+   the run, shows the files' SHA-256s, approves the signing and checks the draft release it makes
+   ([`github-workflows.md`](github-workflows.md)). The builds below are the same scripts CI runs.
 6. **The field test by hand** (`scripts/sandbox/field-test.sh`, from the commit being tagged,
    without `--non-interactive`), on real hardware with a logged-in desktop: the questions no tier
    answers ("What it asks the tester" in `docs/local-proxy-test-plan.md`; the environments are in
    `docs/testing.md`, "By hand, before a release"). Each run is posted to the release's tracking
    issue on GitHub, as `testing.md` ("Tracking the runs on GitHub") describes; until that is set up,
-   once the repository is published, keep each run's `.tar.gz` with the release.
+   once the repository is published, keep each run's `.tar.gz` with the release. The draft
+   release's AppImage is the one to test.
+7. **Publish the draft:** `scripts/publish.sh publish` checks it again and publishes it. Every
+   AppKata offers it as an update from its next sync, and with immutable releases on, its files
+   and tag can't change after that.
 
 ## Overview
 
@@ -95,7 +101,8 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
 | Windows 10 22H2, Windows 11 x64 | Linux (PyInstaller + Inno Setup under Wine, in Docker) | `AppKata-<version>-setup.exe` | the same; tested in a Windows 10 VM; signing needs a code-signing certificate |
 | macOS 13+ (universal2) | Linux: unsigned `AppKata.app` | `AppKata-<version>-macos-unsigned.tar.gz` | **a Mac** (an Intel MacBook is fine): `mac-sign.sh` → signed, notarized `AppKata-<version>.dmg` |
 
-Every release file gets a `.sha256` next to it in `releases/`.
+Every release file gets a `.sha256` next to it in `releases/`. On a release, CI also signs the
+AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 
 ## Linux
 

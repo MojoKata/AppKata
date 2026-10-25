@@ -1,127 +1,132 @@
-# GitHub Actions for building and publishing releases
+# GitHub Actions: CI, the signed AppImage and the draft release
 
-Whether AppKata needs its own build machines to use GitHub Actions (it doesn't), what the runners cost,
-how each platform's build maps onto them, and a starting `release.yml`. Companion to
-[`build.md`](build.md) (how the artifacts are built) and the publish command in the README notes.
+What [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, when, and why it is built the
+way it is: the CI walk thru's decisions of 2026-10-24. One-time setup (the repository's settings,
+the release key) is in [`GENESIS.md`](../GENESIS.md); building by hand and the release checklist,
+in [`build.md`](build.md); what users can check a download against, in [`gpg.md`](gpg.md).
 
-Status: **no workflow exists yet** (`.github/workflows/` is absent). Releases are built with
-`scripts/build-*.sh` on a Linux machine and published by hand with `gh release create`. This document is
-the plan for moving that to Actions.
+## What runs when
 
-**Partly out of date (2026-10-25):** the AppImage now builds in an Ubuntu 22.04 container on glibc
-2.35 ([`build.md`](build.md), "AppImage"), not on an old-glibc host; this plan gets refreshed with
-the CI work.
+| Event | Jobs | What it leaves |
+|---|---|---|
+| A pull request, a push to `master` | `tier1`, `appimage`, `windows`, then `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days) |
+| A `v*` tag | the same, built without the caches, and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256` |
 
-## Do we need our own build servers?
+All of it runs on GitHub's hosted `ubuntu-24.04` runners, free for a public repository. Each job runs
+the script it would run on a development machine, so a CI failure reproduces locally:
 
-**No.** GitHub provides **GitHub-hosted runners**: for each workflow job it spins up a fresh,
-managed VM (or container), runs your steps, and tears it down. Nothing persists between runs by design.
-You get Linux, Windows and macOS out of the box:
+| Job | Runs | About |
+|---|---|---|
+| `tier1` | `scripts/test-tier1.sh` | 2 min |
+| `appimage` | `scripts/build-appimage.sh` | 1 min |
+| `windows` | `scripts/build-windows.sh`: PyInstaller and Inno Setup under Wine, in Docker, as the Windows VM tests it (`build.md`, "Windows") | 3 min |
+| `ci` | passes only when the three above did | |
+| `version` | tags only: the tag must be `v` and `__version__` (`src/appkata_core/__init__.py`) | |
+| `sign` | tags only, in the `release` environment: signs the AppImage | |
+| `release` | tags only: `gh release create --draft` with every file | |
 
-- `runs-on: ubuntu-latest`
-- `runs-on: windows-latest`
-- `runs-on: macos-latest` (Apple Silicon; `macos-13` for Intel)
+`ci` is the one check the `master` ruleset requires (GENESIS.md, step 4): a pull request can't
+merge while tier 1 fails or either build breaks, and jobs can be added without changing the ruleset.
+The tiers that need KVM or a desktop (2 and 3, [`testing.md`](testing.md)) stay on the development
+machine: GitHub advises against self-hosted runners for a public repository, since anyone can open a
+pull request and run code on them.
 
-You **can** register **self-hosted runners** (your own VM or machine) when you
-need specific hardware or a controlled toolchain — but that's opt-in, not a requirement.
+## Signing
 
-## Cost and minutes
+The AppImage is signed with the **release key**'s signing subkey, as a separate ASCII-armored
+`AppKata-<version>-x86_64.AppImage.asc`. The AppImage's own bytes don't change, so its `.sha256`
+describes the same file, and AppKata's updater, which skips `.asc` files (`assets.py`), is
+unaffected. The main key stays offline with the owner; GitHub holds only a copy of the subkey, under
+a passphrase of its own (GENESIS.md, step 7). A leaked copy is revoked and replaced without changing
+the fingerprint users check.
 
-- **Public repositories:** GitHub-hosted *standard* runners are free, subject to concurrency limits.
-- **Private repositories:** a monthly free allotment, then paid, metered with per-OS multipliers —
-  **Linux ×1, Windows ×2, macOS ×10**. macOS is the expensive one.
+Only the `sign` job sees the key:
 
-(Quotas and prices drift; confirm current numbers in GitHub's billing docs. The macOS multiplier being
-the costly one has been stable.)
+- The subkey and its passphrase are secrets of the **`release` environment**, which deploys only for
+  `v*` tags and only after the owner approves the run. The approval comes after both builds have
+  finished, so the owner approves files whose SHA-256s are known: each build job posts them as a
+  `sha256` notice, which `publish.sh release` shows before asking.
+- The job checks out nothing and runs nothing it downloads. It takes the `appimage` artifact,
+  checks it against its `.sha256`, imports the subkey into a throwaway keyring with the runner's
+  own gpg, signs, verifies the signature and keeps the `.asc` as the `signature` artifact.
+- The **`tags` ruleset** lets only admins create, move or delete a tag, so a release starts only
+  when an admin tags it.
 
-The runner compute is free/ephemeral; the only thing you must supply is **secrets** (signing
-certificates, notarization credentials, a token for uploading) — stored as encrypted
-repository/organization **Actions secrets**.
-
-## Mapping AppKata's three targets onto runners
-
-| Target | `build.md` today | On Actions | Watch out for |
-|---|---|---|---|
-| **Linux AppImage** | built on an **old-glibc host on purpose** (old glibc floor 2.17+, so it runs on Mint 21+, Ubuntu 22.04+, Debian 12+, Fedora 39+) | `ubuntu` runner, but **build inside an old-glibc container** to keep the floor | `ubuntu-latest` has a newer glibc; see below |
-| **Windows installer** | PyInstaller + Inno Setup under **Dockerized Wine on Linux** | `windows-latest` natively (simpler), or keep the Wine image on an `ubuntu` runner | Authenticode signing needs a cert in secrets |
-| **macOS `.dmg`** | unsigned tarball on Linux, then **handed off to a physical Mac** to sign/notarize | `macos-latest` can sign + notarize + build the `.dmg` directly — **removes the Mac hand-off** | ×10 minutes; needs Apple cert + notary creds in secrets |
-
-### The Linux glibc caveat (the one real gotcha)
-
-`scripts/build-appimage.sh` bundles its own CPython (python-build-standalone, glibc 2.17+) and
-PySide6 manylinux wheels, which are old-glibc-safe. The risk is anything that links against the
-*build host's* glibc. On `ubuntu-latest` (newer glibc) the produced AppImage could quietly raise its
-minimum glibc and stop running on older distros — the very thing an old-glibc build host avoids. Two ways to keep
-the floor on a hosted runner:
-
-- run the build **in a container**: `container: quay.io/pypa/manylinux2014_x86_64` (glibc 2.17), or an
-  old base image; or
-- point a **self-hosted RHEL 8 runner** at the repo and run `scripts/build-appimage.sh` unchanged.
-
-`appimagetool` itself is downloaded by the script (cached in `build/appimage-cache/`), so it doesn't
-constrain the host.
-
-## A starting `release.yml`
-
-Triggered on a `v*` tag (the tag convention is `v<version>`, matching `AppKata-<version>-…` filenames
-and `__version__` in `src/appkata_core/__init__.py`). It builds the AppImage in an old-glibc container
-and the Windows installer natively, then publishes both **with their `.sha256` sidecars** — which
-AppKata needs to verify downloads (4.4, see [`gpg.md`](gpg.md)). macOS is left as a later add so the
-first workflow doesn't incur the ×10 minutes.
-
-```yaml
-name: Release
-on:
-  push:
-    tags: ["v*"]
-permissions:
-  contents: write            # gh/action-gh-release needs this to create the Release
-jobs:
-  linux:
-    runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64   # glibc 2.17 floor (see the caveat above)
-    steps:
-      - uses: actions/checkout@v4
-      - run: scripts/build-appimage.sh             # → releases/AppKata-<ver>-x86_64.AppImage + .sha256
-      - uses: actions/upload-artifact@v4
-        with: { name: linux, path: releases/AppKata-*-x86_64.AppImage* }
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      # PyInstaller + Inno Setup (natively, instead of the Dockerized-Wine path in build.md)
-      - run: scripts/build-windows.ps1             # to be written; mirrors build-windows.sh
-      - uses: actions/upload-artifact@v4
-        with: { name: windows, path: releases/AppKata-*-setup.exe* }
-  publish:
-    needs: [linux, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { path: releases, merge-multiple: true }
-      - uses: softprops/action-gh-release@v2       # or: gh release create "$GITHUB_REF_NAME" releases/*
-        with: { files: releases/* }
-```
-
-Notes:
-- **`scripts/build-windows.sh` is Linux/Wine-oriented**; a native `windows-latest` job needs a
-  PowerShell equivalent (or run the existing Wine image on an `ubuntu` runner with Docker). Pick one
-  before wiring this up.
-- Signing (Authenticode, Apple) is intentionally **not** in this sketch — add it once the certs are in
-  Actions secrets; until then Windows shows "Unknown publisher" (as `build.md` already notes) and
-  macOS isn't built here.
-- **Which repo to release to:** AppKata's own updater reads releases from
-  `APPKATA_REPO = github.com/MojoKata/AppKata` (its self-Source), not from a fork. The workflow runs
-  in whatever repo it lives in and publishes there, so put it in that repository.
-
-## Manual publishing (until the workflow exists)
+To check a download by hand:
 
 ```sh
-VER=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/appkata_core/__init__.py)
-gh release create "v$VER" --repo MojoKata/AppKata --title "AppKata $VER" --notes "…" \
-  releases/AppKata-$VER-*.AppImage releases/AppKata-$VER-*.AppImage.sha256 \
-  releases/AppKata-$VER-setup.exe   releases/AppKata-$VER-setup.exe.sha256
+gpg --import appkata-release-key.asc     # packaging/appkata-release-key.asc, or from keys.openpgp.org
+gpg --verify AppKata-<version>-x86_64.AppImage.asc AppKata-<version>-x86_64.AppImage
 ```
 
-See [`build.md`](build.md) for building each artifact and [`gpg.md`](gpg.md) for what the `.sha256`
-sidecars (and, in future, signatures) are checked against.
+The fingerprint `gpg` names must be the one the README publishes (with the first signed release,
+GENESIS.md step 7). Windows' installer isn't signed yet
+(Authenticode needs a certificate, `build.md`, "Signing"); it has its `.sha256`.
+
+## The draft, and publishing it
+
+A published release reaches every AppKata at its next sync, since AppKata takes its own updates from
+this repository's releases (requirement 2.11). So CI makes a **draft**, which only the repository's
+writers see, and the owner publishes it after the checks no runner can make (`build.md`, "Before
+tagging a release": the field test by hand, which can use the draft's files).
+
+`scripts/publish.sh` walks through it:
+
+- `release`: checks that `master` is clean and current, tags `v<version>` and pushes it, waits for
+  the run, shows the two `sha256` notices, approves the signing, waits for the draft and verifies it.
+- `resume`: the same from "waits for the run", after an interruption.
+- `verify [VERSION]`: downloads the draft or release, checks that it holds exactly the five files,
+  each against its `.sha256`, and that the AppImage's signature is the release key's
+  (`packaging/appkata-release-key.asc`, matched by fingerprint).
+- `publish [VERSION]`: verifies again and publishes the draft as the latest release.
+
+With **immutable releases** on (GENESIS.md, step 8), a published release's files and tag can't be
+changed, and GitHub adds a release attestation (`gh release verify v<version>`). A bad release is
+fixed by a new version, never in place.
+
+## What the builds take from outside
+
+Every input is pinned in [`packaging/versions.env`](../packaging/versions.env), next to the Python
+and PySide6 the release carries: the python-build-standalone build and the SHA-256 of its tarball,
+appimagetool and the AppImage runtime with their SHA-256s, and the Docker images by digest. pip
+installs every package with `--no-deps` and its version, dependencies included. The workflow's
+actions are pinned by commit SHA. A pin changes only by a commit, so a release built twice from one
+commit takes the same inputs, and a changed input shows in a diff.
+
+`tests/test_pinned_inputs.py`, in tier 1, reads every file the builds and CI run and fails on an
+input named by something that moves: a URL through `latest` or `continuous`, an image without its
+digest, a pip install that leaves a version or a dependency open, a download pin without its
+SHA-256, appimagetool without `--runtime-file` (without it, it downloads the newest runtime into the
+AppImage), an action without its SHA. When it was written it found twelve, all since pinned.
+
+To move a pin: a release's asset SHA-256 is in GitHub's API (`gh api
+repos/OWNER/NAME/releases/tags/TAG --jq '.assets[] | .name + " " + .digest'`); an image's digest is
+`docker image inspect --format '{{index .RepoDigests 0}}' IMAGE` after a pull; an action's SHA is
+`gh api repos/OWNER/NAME/commits/TAG --jq .sha`. Then run the builds and their tests, as for any
+change to them.
+
+## Caches
+
+`build/appimage-cache` (Python, PySide6's wheels, appimagetool, the runtime), tier 1's PySide6
+folder and `build/wine-cache` are cached between runs, keyed on `packaging/versions.env` (and, for
+the Windows build, its script and the `icuuc.dll` stand-in's source). A tag's run uses no cache: a
+release is built from the pinned sources alone. The pinned files are checked against their
+SHA-256s each time they're used, cached or not.
+
+## When a job fails
+
+GitHub keeps a run's logs in storage that some networks can't reach. Each script step therefore tees
+its output to `build/ci-<job>.log`, and when it fails, `scripts/ci-tail.sh` posts its last 40 lines
+as one error annotation: the reason shows on the pull request's Checks page and through GitHub's API
+(`gh api repos/OWNER/NAME/check-runs/JOB/annotations`). Steps run under `bash -eo pipefail`, so a
+script's failure isn't hidden by the `tee`.
+
+## Not yet
+
+- **Signing Windows' installer** (Authenticode), and a signed `SHA256SUMS` covering every file:
+  the owner's next topic.
+- **macOS**: `build.md`'s hand-off to a Mac stays as it is; a `macos-latest` job could sign and
+  notarize once Apple's certificate is in secrets.
+- **AppKata checking signatures itself**: it checks a release's `.sha256`, not its `.asc`; checking
+  a publisher's signature is a feature of its own (`gpg.md`).
+- **Field-test tracking issues** ([`testing.md`](testing.md), "Tracking the runs on GitHub").
