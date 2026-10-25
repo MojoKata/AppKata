@@ -10,6 +10,9 @@ on:
     tags: ["v*"]
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash      # bash -eo pipefail: a script piped through tee fails the step when it fails
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -29,7 +32,9 @@ jobs:
             build/appimage-cache
             build/pyside-*
           key: tier1-${{ hashFiles('packaging/versions.env') }}
-      - run: sh scripts/test-tier1.sh
+      - run: mkdir -p build && sh scripts/test-tier1.sh 2>&1 | tee build/ci-tier1.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-tier1.log test-tier1.sh
 
   appimage:
     runs-on: ubuntu-24.04
@@ -43,7 +48,9 @@ jobs:
         with:
           path: build/appimage-cache
           key: appimage-${{ hashFiles('packaging/versions.env') }}
-      - run: sh scripts/build-appimage.sh
+      - run: mkdir -p build && sh scripts/build-appimage.sh 2>&1 | tee build/ci-appimage.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-appimage.log build-appimage.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: appimage
@@ -62,7 +69,9 @@ jobs:
         with:
           path: build/wine-cache
           key: windows-${{ hashFiles('packaging/versions.env', 'scripts/build-windows.sh', 'packaging/windows/icuuc-stub.c') }}
-      - run: sh scripts/build-windows.sh
+      - run: mkdir -p build && sh scripts/build-windows.sh 2>&1 | tee build/ci-windows.log
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-windows.log build-windows.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: windows
