@@ -1,7 +1,8 @@
 # AppKata's CI (docs/github-workflows.md). Every PR and push to master: tier 1 and both builds,
 # whose files (unsigned, each with its .sha256) are kept with the run. A v* tag: the same, built
 # without the caches, then (once the owner approves) the AppImage signed and a draft release made.
-# Each action is pinned by its commit SHA (tests/test_pinned_inputs.py).
+# Each action is pinned by its commit SHA (tests/test_pinned_inputs.py), as the repository requires
+# (GENESIS.md, step 5).
 name: CI
 on:
   pull_request:

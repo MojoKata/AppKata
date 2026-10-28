@@ -15,8 +15,9 @@
 #     key-extend DIR              move both expiry dates on (5 and 2 years from today) and export
 #                                 the key again; then key-github
 #   The repository's settings:
-#     setup                       the release environment, the tag ruleset, immutable releases and,
-#                                 once CI has passed, the required ci check: each only if missing
+#     setup                       the release environment, the tag ruleset, immutable releases,
+#                                 actions pinned by SHA and, once CI has passed, the required ci
+#                                 check: each only if missing
 #     check                       read back every setting GENESIS.md lists
 #   A release, from a clone of the repository on master:
 #     release                     tag v<version>, push it, wait for CI, show the files' SHA-256s,
@@ -222,6 +223,13 @@ EOF
         gh api -X PUT "repos/$REPO/immutable-releases" >/dev/null
         say "immutable releases: turned on"
     fi
+    if [ "$(gh api "repos/$REPO/actions/permissions" --jq .sha_pinning_required)" = true ]; then say "actions pinned by SHA: required"
+    else
+        ask "Require every action to be pinned to a full-length commit SHA?"
+        gh api "repos/$REPO/actions/permissions" --jq '{enabled, allowed_actions, sha_pinning_required: true}' |
+            gh api -X PUT "repos/$REPO/actions/permissions" --input - >/dev/null
+        say "actions pinned by SHA: required"
+    fi
     id=$(ruleset_id master)
     if [ -z "$id" ]; then say "master ruleset: missing (GENESIS.md says how it is made): the ci check not added"
     elif gh api "repos/$REPO/rulesets/$id" --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' | grep -qx ci; then
@@ -266,6 +274,7 @@ check() {
     fi
     is "workflow token" "$(api /actions/permissions/workflow '"\(.default_workflow_permissions), approves PRs: \(.can_approve_pull_request_reviews)"')" "read, approves PRs: false"
     is "fork PR runs wait for approval" "$(api /actions/permissions/fork-pr-contributor-approval .approval_policy)" all_external_contributors
+    is "actions pinned by SHA" "$(api /actions/permissions .sha_pinning_required)" true
     if gh api "repos/$REPO/environments/release" >/dev/null 2>&1; then
         is "release environment" "$(api /environments/release '"\([.protection_rules[].type] | sort | join(",")), custom: \(.deployment_branch_policy.custom_branch_policies)"')" "branch_policy,required_reviewers, custom: true"
         is "release environment: deploys" "$(api /environments/release/deployment-branch-policies '[.branch_policies[] | "\(.type) \(.name)"] | join(",")')" "tag v*"

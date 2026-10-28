@@ -90,7 +90,8 @@ Every input is pinned in [`packaging/versions.env`](../packaging/versions.env), 
 and PySide6 the release carries: the python-build-standalone build and the SHA-256 of its tarball,
 appimagetool and the AppImage runtime with their SHA-256s, and the Docker images by digest. pip
 installs every package with `--no-deps` and its version, dependencies included. The workflow's
-actions are pinned by commit SHA. A pin changes only by a commit, so a release built twice from one
+actions are pinned by commit SHA, and the repository refuses an action named any other way
+(GENESIS.md, step 5). A pin changes only by a commit, so a release built twice from one
 commit takes the same inputs, and a changed input shows in a diff.
 
 `tests/test_pinned_inputs.py`, in tier 1, reads every file the builds and CI run and fails on an
