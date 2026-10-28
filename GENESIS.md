@@ -59,8 +59,13 @@ Settings → Actions → General:
 - **Workflow permissions:** read repository contents and packages. A job that needs more asks for
   it by name; only the release job does (`contents: write`). "Allow GitHub Actions to create and
   approve pull requests" is off.
+- **Require actions to be pinned to a full-length commit SHA:** GitHub refuses to run a workflow
+  that names an action by a tag or a branch. `tests/test_pinned_inputs.py` checks the same from
+  inside a run, where a pull request could change it; the setting holds whatever a pull request changes.
+  `publish.sh setup` turns it on.
 
-Check: `publish.sh check`, "workflow token" and "fork PR runs wait for approval".
+Check: `publish.sh check`, "workflow token", "fork PR runs wait for approval" and "actions pinned by
+SHA".
 
 ## 6. Security
 
@@ -68,7 +73,7 @@ Settings → Security: **private vulnerability reporting** on, so a security pro
 without making it public.
 
 Check: `publish.sh check`, "private vulnerability reporting". It read back off on 2026-10-24, after
-it was meant to be turned on.
+it was meant to be turned on; on 2026-10-28 it read back on.
 
 ## 7. The release key
 
@@ -114,6 +119,7 @@ $(cat DIR/fingerprint)`, then `key 1`, `revkey`, `save`. Then
   takes an admin, and a release can't be published on a tag nobody reviewed.
 - **Immutable releases** (Settings → General → Releases): a published release's files and tag can't
   be changed, and GitHub adds a release attestation (`gh release verify`).
+- **Actions pinned by SHA** required (step 5).
 - **`ci` required** in the `master` ruleset (step 4), once it has passed.
 
 Check: `publish.sh check`.
@@ -123,8 +129,9 @@ Check: `publish.sh check`.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs tier 1 and both builds on every pull
 request and every push to `master`. On a `v*` tag it also signs the AppImage (after your approval)
 and makes a draft release. What it downloads is pinned in
-[`packaging/versions.env`](packaging/versions.env), and its actions by commit SHA;
-`tests/test_pinned_inputs.py` fails on anything named by a tag or a release that moves.
+[`packaging/versions.env`](packaging/versions.env), and its actions by commit SHA (GitHub refuses
+any other, step 5); `tests/test_pinned_inputs.py` fails on anything named by a tag or a release
+that moves.
 
 ## Each release
 

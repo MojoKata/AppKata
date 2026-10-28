@@ -57,3 +57,17 @@ def test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey(tmp_path):
     assert "BEGIN PGP PUBLIC KEY BLOCK" in (home / "appkata-release-key.asc").read_text()
     assert "REVOCATION" in (home / "revocation.asc").read_text().upper()
     assert oct((home / "gnupg").stat().st_mode & 0o777) == "0o700"
+
+
+def test_every_check_genesis_names_is_one_the_script_reads_back():
+    with open(os.path.join(ROOT, "GENESIS.md"), encoding="utf-8") as f:
+        genesis = f.read()
+    text = _script()
+    checks = text[text.index("check() {"):text.index("\n}\n", text.index("check() {"))]
+    read_back = re.findall(r'^\s+(?:else )?is "([^"]+)"', checks, re.M)
+    named = []
+    for paragraph in re.findall(r"^Check: `publish\.sh check`(.*?)(?:\n\n|\Z)", genesis, re.M | re.S):
+        named += re.findall(r'"([^"]+)"', paragraph.replace("\n", " "))
+    assert "actions pinned by SHA" in named
+    missing = [name for name in named if not any(label.startswith(name) for label in read_back)]
+    assert not missing, missing
