@@ -9,6 +9,8 @@ curl. What else the lists catch is listed open here, for the owner, before it is
 
 | Pass | When | What it found | Where fixed | Tiers at the end |
 |---|---|---|---|---|
+| The harness, the lists | 2026-10-30 | S1: tier 1 fails on the ISO download test's skip (no curl), the Mint container with no network on the DNS test's; S2, a test no tier runs; S3, tier 1 from a git worktree skips the private-names check | 16d2726 | — |
+| The fix | 2026-10-30 | — | S1: 51235bb; S2, S3 open | every tier against its list: tier 1 2,461 passed, 121 skipped; the Mint and LMDE containers 130 passed, 5 skipped; the 24.04 and 26.04 VMs 128, 6; the Mint and LMDE desktop VMs 129, 5; Windows 197 passed, 2,212 skipped, 1 failed (W2, below) |
 
 ## S1. Tests skip in the tier that exists to run them, and the run still passes — MEDIUM (testing; the walk thru) — fixed
 
@@ -68,7 +70,7 @@ Windows has none, and the tiers that have one (the VMs) don't take `test_channel
 Run from a `git worktree` (a second checkout, so work goes on in the main one meanwhile), tier 1 mounts
 the worktree at `/src`, whose `.git` file points at the main repository's `.git/worktrees/`, which
 the container doesn't have. `tests/test_public_text.py`'s two tests skip, "not a git work tree", and
-with them the check that no private name is in a tracked file. Now the run fails on it (two errors);
+with them the check that no private name is in a tracked file. Now the run fails on it (two failures);
 before, it passed. For the owner: mount the git directory the worktree names, or run tier 1 only
 from a main checkout.
 
@@ -76,3 +78,9 @@ from a main checkout.
 
 | Commit | Fixes | What | Proof |
 |---|---|---|---|
+| 16d2726 | the harness | `tests/conftest.py`, `tests/skips/`, every tier sets `APPKATA_SKIPS`, `tests/test_skip_lists.py` | every tier run with no list failed on each of its skips, and each list is that run's, read for its reasons; tier 1 at this commit: 1 error, the ISO download test |
+| 51235bb | S1 | curl in tier 1's image; the DNS test waits a minute; `docs/testing.md` | tier 1 2,461 passed; four VMs at once, the 24.04 VM's DNS test passed; the Mint container with no network: it waits 62 s, skips, fails the run; every tier against its list (Results) |
+
+W2, found running the Windows tier: `tests/test_publish.py`'s GENESIS.md test fails there, as the
+tier didn't copy GENESIS.md. Fixed with the Windows tests' Python
+([`followups-windows-test-python.md`](followups-windows-test-python.md)).
