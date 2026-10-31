@@ -69,7 +69,7 @@ def _specs_pinned(specs, text):
     words = []
     for s in specs:
         m = re.fullmatch(r"\$\{?(\w+)\}?", s)
-        words += (_assigned(text, m.group(1)) or s).split() if m else [s]
+        words += (_assigned(text, m.group(1)) or _assigned(_read("packaging/versions.env"), m.group(1)) or s).split() if m else [s]
     return [w for w in words if "==" not in w]
 
 
@@ -196,3 +196,28 @@ def test_one_python_for_the_appimage_the_installer_and_the_tests():
     assert _assigned(env, "PY_SERIES") == series
     assert _assigned(env, "PYWINE_IMAGE").startswith(f"tobix/pywine:{series}@")
     assert SHA.match(_assigned(env, "PYTHON_LINUX_SHA256"))
+    assert SHA.match(_assigned(env, "PYTHON_WINDOWS_SHA256"))
+
+
+# Every tier's Python (requirement 1.2). How the Windows one got past: the test above read only what
+# the release builds and CI run ("the local tiers' scripts aren't release inputs"), and the Windows
+# tier fetched python-build-standalone's newest release itself, with pytest and truststore at
+# whatever pip resolved that day. The class: a tier that tests AppKata on another Python than the
+# one it ships on. (The walk thru of 2026-10-30, item 8; docs/reviews/followups-windows-test-python.md.)
+TIER_PYTHON = {"scripts/lib-tier1.sh": "python-standalone.sh", "scripts/test-sandbox.sh": "python-standalone.sh",
+               "scripts/test-desktop-vm.sh": "python-standalone.sh", "scripts/test-windows-vm.sh": "PYTHON_WINDOWS_SHA256"}
+
+
+def test_every_tier_runs_the_python_the_release_carries():
+    for rel, how in TIER_PYTHON.items():
+        text = _read(rel)
+        assert how in text, rel
+        python = [w for w in unpinned(text) if w.startswith("pip install")
+                  or (w.startswith("moving URL") and "python-build-standalone" in w)]
+        assert not python, (rel, python)
+    win = _read("scripts/test-windows-vm.sh")
+    assert "cpython-$PYTHON_BUILD-x86_64-pc-windows-msvc-install_only.tar.gz" in win
+    assert 'sha256sum -c' in win and '[ "$V" = "${PYTHON_BUILD%%+*}" ]' in win     # and it checks what it got
+    assert "lib-tier1.sh" in _read("scripts/test-tier1.sh")
+    for script in ("scripts/sandbox/vm-launcher.sh", "scripts/sandbox/vm-desktop.sh"):
+        assert re.search(r"\$PY -m pytest", _read(script)), script      # the Python their host script sent
