@@ -86,7 +86,7 @@ def made(request, tmp_path):
 
 
 def _notices(platform, tree):
-    return (tree / tpn.PLACE[platform] / "THIRD-PARTY-NOTICES.txt").read_text()
+    return (tree / tpn.PLACE[platform] / "THIRD-PARTY-NOTICES.txt").read_text(encoding="utf-8")
 
 
 def test_a_build_without_the_files_fails_the_check(tmp_path):
@@ -99,7 +99,7 @@ def test_a_build_without_the_files_fails_the_check(tmp_path):
 def test_with_them_written_it_passes(made):
     platform, tree = made
     assert tpn.problems(platform, str(tree)) == []
-    assert (tree / tpn.PLACE[platform] / "LICENSE.txt").read_text() == open(os.path.join(ROOT, "LICENSE")).read()
+    assert (tree / tpn.PLACE[platform] / "LICENSE.txt").read_text(encoding="utf-8") == open(os.path.join(ROOT, "LICENSE"), encoding="utf-8").read()
 
 
 def test_each_library_is_one_parts(tmp_path):
@@ -126,10 +126,10 @@ def test_a_qt_library_of_a_repository_the_notices_dont_list_fails_it(made):
 def test_a_section_left_empty_or_another_license_fails_it(made):
     platform, tree = made
     notices = tree / tpn.PLACE[platform] / "THIRD-PARTY-NOTICES.txt"
-    text = notices.read_text()
+    text = notices.read_text(encoding="utf-8")
     title = f"Qt {tpn.pins()['PYSIDE']}"
     start = text.index(f"{tpn.RULE}\n{title}\n{tpn.RULE}\n\n") + len(f"{tpn.RULE}\n{title}\n{tpn.RULE}\n\n")
-    notices.write_text(text[:start] + "\n" + text[text.index(tpn.RULE, start):])
+    notices.write_text(text[:start] + "\n" + text[text.index(tpn.RULE, start):], encoding="utf-8")
     (tree / tpn.PLACE[platform] / "LICENSE.txt").write_text("MIT\n")
     found = tpn.problems(platform, str(tree))
     assert f"the notices have no section \"{title}\", or an empty one" in found
