@@ -43,3 +43,4 @@ own (`(Get-Date).ToString('zzz')`).
 | Commit | Fixes | What | Proof |
 |---|---|---|---|
 | e8d195f | C1 | `history(db, tz, now)`; `stage --utc-offset`; both tours pass their zone; the harness | U01 on Linux at 03:07 UTC: Today 5, Yesterday 3, the days before at their own times (the old staging at the same minute: Today 2, Yesterday 4); on Windows, the VM at 20:08 UTC-7, the same groups; the full Linux tour, 89 screens, every text inside its box |
+| b275cfe | — | The test names its databases without a `:` | on Windows `0:00:00` read as a drive and the test failed; found running all eight follow-up branches merged on the Windows tier, which then passed |
