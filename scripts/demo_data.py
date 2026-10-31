@@ -8,7 +8,8 @@
     scripts/demo_data.py check DIR     before a tour, after stage: exit 1 if an app's last sync failed (but for the errors the
                                        demo shows), or the data doesn't show what screenshots/README.md says
     scripts/demo_data.py retry DIR     sync again the apps whose last sync failed (GitHub answers 5xx at times)
-    scripts/demo_data.py remake DIR    build and finish again, keeping DIR's synced Catalog; no network
+    scripts/demo_data.py remake DIR    build and finish again, keeping DIR's synced Catalog for the apps the build
+                                       lists (it stops on one DIR never synced); no network
 
 The apps are real GitHub projects. Every reviewer and signer is made up, and so is
 TurboShield VPN (on the reserved git.example.org domain). Then:
@@ -602,9 +603,27 @@ def check(d: str) -> None:
                  f"{len(fixed)} listed ones that hold now")
 
 
+def carry_over(was: DB, db: DB) -> list[str]:
+    """The synced Catalog of was (apps, app_meta) into db, for the apps db's Sources and Trusts list
+    (sync.catalog_urls) and no others: an app the build no longer lists stays behind. Returns the
+    listed apps was has no synced row for."""
+    listed = sync.catalog_urls(db)
+    keep = set(listed)
+    for table in ("apps", "app_meta"):
+        for r in was.all(f"SELECT * FROM {table}"):
+            if r["url"] in keep:
+                cols = list(r.keys())
+                db.x(f"INSERT OR REPLACE INTO {table}({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})",
+                     tuple(r[c] for c in cols))
+    synced = {r["url"] for r in was.all("SELECT url FROM apps")}
+    return [u for u in listed if u not in synced]
+
+
 def remake(d: str) -> None:
     """build and finish again, keeping what sync brought into d: for a change to what build or
-    finish writes, without the network or a new set of releases (and the screens they change)."""
+    finish writes, without the network or a new set of releases (and the screens they change).
+    Only the apps the new build lists come over (carry_over); one it lists that d never synced stops
+    it, d as it was."""
     old = d.rstrip("/") + ".old"
     shutil.rmtree(old, ignore_errors=True)
     # gpg 2.2 finds a key folder's agent by the folder's path: the one build started for d would
@@ -615,10 +634,10 @@ def remake(d: str) -> None:
     try:
         build(d)
         db, was = DB(os.path.join(d, "appkata.db")), DB(os.path.join(old, "appkata.db"))
-        for table in ("apps", "app_meta"):
-            for r in was.all(f"SELECT * FROM {table}"):
-                cols = list(r.keys())
-                db.x(f"INSERT OR REPLACE INTO {table}({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})", tuple(r[c] for c in cols))
+        missing = carry_over(was, db)
+        if missing:
+            raise SystemExit(f"{d.rstrip('/')}.old has no synced data for what the build now lists, which remake can't "
+                             f"fetch: {', '.join(missing)}; run scripts/demo_data.py sync {d} instead")
         for r in was.all("SELECT url, forge FROM sources"):
             db.x("UPDATE sources SET forge=? WHERE url=?", (r["forge"], r["url"]))
         if was.get("autoupdate") is not None:
