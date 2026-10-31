@@ -11,8 +11,8 @@ class, and report what else the harness catches.
 
 | Pass | When | What it found | Where fixed | Tiers at the end |
 |---|---|---|---|---|
-| The harness, `check` | 2026-10-30 | L1 on both builds; every library in them is a part (Python, Qt, PySide6, ICU, xcb-util; PyInstaller, the Visual C++ runtime) | — | — |
-| The fix, `write` and `refresh` | 2026-10-30 | L2 (upstream notices with gaps) and L3 (parts AppKata doesn't use) while gathering the texts | L1, L2 here; L3 open | see "Fixes" |
+| The harness, `check` | 2026-10-30 | L1 on both builds of db5e96c; every library in them is a part (Python, Qt, PySide6, ICU, xcb-util; PyInstaller, the Visual C++ runtime) | 010c534 | — |
+| The fix, `write` and `refresh` | 2026-10-30 | L2 (upstream notices with gaps) and L3 (parts AppKata doesn't use) while gathering the texts | L1, L2: 010c534, 0d39b4a; L3 open | tier 1 2,470 passed, 122 skipped; `test-appimage.sh` ok on every desktop; the Windows VM PASS |
 
 ## L1. The builds carry no license files — HIGH (licensing; the walk thru) — fixed
 
@@ -103,3 +103,5 @@ it as it is; whether to remove it is the owner's call:
 
 | Commit | Fixes | What | Proof |
 |---|---|---|---|
+| 010c534 | L1 (the texts and the check), L2 | `scripts/third_party_notices.py`, `packaging/licenses/`, `tests/test_third_party_notices.py` | `check` fails on db5e96c's builds (no `LICENSE.txt`, no notices); with the files written it passes on both, every library one part's; the test's 15 cases |
+| 0d39b4a | L1 | Both builds write the files and run `check`; Setup installs them; `test-windows-vm.sh` looks for them | AppImage: `check` ok, both files extracted from the built AppImage, `LICENSE.txt` byte for byte AppKata's, `test-appimage.sh` starts it on X11 and Wayland in every desktop; Windows: `check` ok, `test-windows-vm.sh` PASS with `licenses: True True` after Setup; tier 1 2,470 passed, 122 skipped |
