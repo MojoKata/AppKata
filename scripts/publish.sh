@@ -191,8 +191,9 @@ key_extend() {
 
 # --- the repository's settings -------------------------------------------------------------------
 
-ruleset_id() {      # NAME
-    gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$1\") | .id"
+ruleset_id() {      # NAME: its id, nothing when there's none; fails when the rulesets can't be read
+    _rs=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$1\") | .id" 2>/dev/null) || return 1
+    printf '%s\n' "$_rs"
 }
 
 setup() {
@@ -206,7 +207,8 @@ setup() {
         gh api -X POST "repos/$REPO/environments/release/deployment-branch-policies" -f name='v*' -f type=tag >/dev/null
         say "release environment: made"
     fi
-    if [ -n "$(ruleset_id tags)" ]; then say "tags ruleset: there"
+    id=$(ruleset_id tags) || die "can't read $REPO's rulesets"
+    if [ -n "$id" ]; then say "tags ruleset: there"
     else
         ask "Make the tags ruleset (only admins create, move or delete any tag)?"
         gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null <<'EOF'
@@ -230,7 +232,7 @@ EOF
             gh api -X PUT "repos/$REPO/actions/permissions" --input - >/dev/null
         say "actions pinned by SHA: required"
     fi
-    id=$(ruleset_id master)
+    id=$(ruleset_id master) || die "can't read $REPO's rulesets"
     if [ -z "$id" ]; then say "master ruleset: missing (GENESIS.md says how it is made): the ci check not added"
     elif gh api "repos/$REPO/rulesets/$id" --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' | grep -qx ci; then
         say "the ci check: required"
@@ -251,12 +253,14 @@ check() {
     is() {     # WHAT GOT WANT
         if [ "$2" = "$3" ]; then say "ok    $1: $2"; else say "FAIL  $1: $2 (want $3)"; FAIL=1; fi
     }
-    api() { gh api "repos/$REPO$1" --jq "$2" 2>/dev/null || echo "(can't read)"; }
+    # GitHub's answer, or "(can't read)": gh prints a refused read's error JSON on stdout, which
+    # isn't the answer, and a read that fails mustn't end the check (set -e) before its other lines
+    api() { _a=$(gh api "repos/$REPO$1" --jq "$2" 2>/dev/null) && printf '%s\n' "$_a" || echo "(can't read)"; }
     is "visibility" "$(api "" .visibility)" public
     is "default branch" "$(api "" .default_branch)" master
     is "merge methods (squash merge rebase)" "$(api "" '"\(.allow_squash_merge) \(.allow_merge_commit) \(.allow_rebase_merge)"')" "true false false"
-    id=$(ruleset_id master)
-    if [ -z "$id" ]; then is "master ruleset" missing there
+    if ! id=$(ruleset_id master); then is "master ruleset" "(can't read)" there
+    elif [ -z "$id" ]; then is "master ruleset" missing there
     else
         m=/rulesets/$id
         is "master ruleset" "$(api "$m" '"\(.enforcement) \(.target) \(.conditions.ref_name.include | join(","))"')" "active branch ~DEFAULT_BRANCH"
@@ -265,8 +269,8 @@ check() {
         is "master ruleset: required checks" "$(api "$m" '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | join(",")')" ci
         is "master ruleset: admins bypass" "$(api "$m" '[.bypass_actors[]? | select(.actor_type == "RepositoryRole" and .actor_id == 5)] | length')" 1
     fi
-    id=$(ruleset_id tags)
-    if [ -z "$id" ]; then is "tags ruleset" missing there
+    if ! id=$(ruleset_id tags); then is "tags ruleset" "(can't read)" there
+    elif [ -z "$id" ]; then is "tags ruleset" missing there
     else
         t=/rulesets/$id
         is "tags ruleset" "$(api "$t" '"\(.enforcement) \(.target) \(.conditions.ref_name.include | join(",")) \([.rules[].type] | sort | join(","))"')" "active tag ~ALL creation,deletion,update"
@@ -275,11 +279,15 @@ check() {
     is "workflow token" "$(api /actions/permissions/workflow '"\(.default_workflow_permissions), approves PRs: \(.can_approve_pull_request_reviews)"')" "read, approves PRs: false"
     is "fork PR runs wait for approval" "$(api /actions/permissions/fork-pr-contributor-approval .approval_policy)" all_external_contributors
     is "actions pinned by SHA" "$(api /actions/permissions .sha_pinning_required)" true
-    if gh api "repos/$REPO/environments/release" >/dev/null 2>&1; then
+    envs=$(api /environments '[.environments[].name] | index("release") != null')
+    if [ "$envs" = true ]; then
         is "release environment" "$(api /environments/release '"\([.protection_rules[].type] | sort | join(",")), custom: \(.deployment_branch_policy.custom_branch_policies)"')" "branch_policy,required_reviewers, custom: true"
         is "release environment: deploys" "$(api /environments/release/deployment-branch-policies '[.branch_policies[] | "\(.type) \(.name)"] | join(",")')" "tag v*"
-        is "release environment: secrets" "$(gh secret list --env release --repo "$REPO" --json name --jq '[.[].name] | sort | join(",")' 2>/dev/null)" "APPKATA_SIGNING_KEY,APPKATA_SIGNING_PASSPHRASE"
-    else is "release environment" missing there
+        secrets=$(gh secret list --env release --repo "$REPO" --json name --jq '[.[].name] | sort | join(",")' 2>/dev/null) ||
+            secrets="(can't read)"
+        is "release environment: secrets" "$secrets" "APPKATA_SIGNING_KEY,APPKATA_SIGNING_PASSPHRASE"
+    elif [ "$envs" = false ]; then is "release environment" missing there
+    else is "release environment" "(can't read)" there
     fi
     is "immutable releases" "$(api /immutable-releases .enabled)" true
     is "private vulnerability reporting" "$(api /private-vulnerability-reporting .enabled)" true

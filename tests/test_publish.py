@@ -71,3 +71,33 @@ def test_every_check_genesis_names_is_one_the_script_reads_back():
     assert "actions pinned by SHA" in named
     missing = [name for name in named if not any(label.startswith(name) for label in read_back)]
     assert not missing, missing
+
+
+REFUSING_GH = """#!/bin/sh
+# gh as a member without admin rights sees GitHub: every read refused, the API's error JSON on stdout
+printf '{"message":"Must have admin rights to Repository.","status":"403"}'
+echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2
+exit 1
+"""
+
+
+def test_check_says_it_cant_read_what_github_refuses_and_goes_on(tmp_path):
+    """check, run by a member who can't read a setting: each line said the API's error JSON before
+    "(can't read)", and a refused read of the rulesets ended the whole check (set -e) after three
+    lines. The class: a command's refusal taken as its answer. With gh refusing every read, every
+    line check reads back says "(can't read)", nothing else, through to the last."""
+    gh = tmp_path / "gh"
+    gh.write_text(REFUSING_GH)
+    gh.chmod(0o755)
+    r = subprocess.run(["sh", SCRIPT, "--repo", "owner/name", "check"], capture_output=True, text=True, timeout=60,
+                       env=dict(os.environ, PATH=f"{tmp_path}{os.pathsep}{os.environ['PATH']}"))
+    lines = r.stderr.splitlines()
+    assert r.returncode == 1 and "{" not in r.stderr, r.stderr
+    assert lines[-1].startswith("FAIL  release key:"), r.stderr            # it went on to the end
+    text = _script()
+    checks = text[text.index("check() {"):text.index("\n}\n", text.index("check() {"))]
+    for name in dict.fromkeys(re.findall(r'\bis "([^"]+)" "\$\((?:api|gh) ', checks)):
+        if name in ("release environment: deploys", "release environment: secrets") or name.startswith(
+                ("master ruleset:", "tags ruleset:")):
+            continue                        # read only once the environment or the ruleset is there
+        assert f"FAIL  {name}: (can't read) (want" in r.stderr, name
