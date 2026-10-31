@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -192,14 +193,22 @@ def test_cli_tool_never_gets_the_home_or_above_or_appkata_areas(env, where):
 
 # ---------------------------------------------------------------- network (17.2)
 
-def _host_resolves(name: str) -> bool:
-    return subprocess.run(["getent", "hosts", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+def _host_resolves(name: str, wait: float = 60) -> bool:
+    """Whether this machine resolves name, given up to wait seconds: a VM's resolver can take a while
+    to answer when several VMs share the host (the walk thru of 2026-10-30, item 2)."""
+    deadline = time.monotonic() + wait
+    while subprocess.run(["getent", "hosts", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(2)
+    return True
 
 
 def test_a_network_grant_includes_working_dns(env):
     # Regression: on Ubuntu/Mint /etc/resolv.conf is a symlink into /run/systemd/resolve, which the
     # sandbox didn't bind, so an app with the network grant couldn't resolve any name. (Containers
     # bind a plain resolv.conf, so only a real install — scripts/test-sandbox.sh launcher-vm — shows it.)
+    # Where this machine can't resolve names it skips, which the VMs' skip lists don't allow.
     if not _host_resolves("example.com"):
         pytest.skip("this host can't resolve names")
     r = env.run(env.app("web", sb.resolve_template("online-app")), "getent hosts example.com && echo RESOLVED; true")
