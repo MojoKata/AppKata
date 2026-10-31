@@ -81,6 +81,7 @@ exit 1
 """
 
 
+@pytest.mark.skipif(not shutil.which("sh"), reason="runs publish.sh, a POSIX shell script")
 def test_check_says_it_cant_read_what_github_refuses_and_goes_on(tmp_path):
     """check, run by a member who can't read a setting: each line said the API's error JSON before
     "(can't read)", and a refused read of the rulesets ended the whole check (set -e) after three
