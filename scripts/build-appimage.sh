@@ -62,8 +62,12 @@ rm -rf "$SITE/pip" "$SITE"/pip-* "$SITE/PySide6/Qt/translations" "$SITE/PySide6/
 # above all: without them AppKata doesn't start on X11, every Mint edition's session (review 3,
 # R3-32). They carry no settings of their own; taken from Ubuntu 22.04, the oldest glibc 1.1
 # supports, they sit beside Qt's libraries, where Qt's RUNPATH finds them.
+LIC="$HERE/build/appimage-licenses"      # their copyright files, for the notices below
+rm -rf "$LIC" && mkdir -p "$LIC/xcb-util"
 for so in libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-keysyms.so.1 libxcb-image.so.0 libxcb-render-util.so.0; do
     cp -L "/usr/lib/x86_64-linux-gnu/$so" "$SITE/PySide6/Qt/lib/$so"
+    pkg=$(dpkg -S "/usr/lib/x86_64-linux-gnu/$so" | cut -d: -f1 | head -1)
+    cp "/usr/share/doc/$pkg/copyright" "$LIC/xcb-util/$pkg"
 done
 cp -r "$HERE/src/appkata" "$HERE/src/appkata_core" "$APPDIR/usr/lib/appkata/"
 find "$APPDIR/usr/lib/appkata" -name __pycache__ -prune -exec rm -rf {} +
@@ -103,6 +107,10 @@ p = QPainter(img); QSvgRenderer(sys.argv[1]).render(p); p.end()
 sys.exit(0 if img.save(sys.argv[2], "PNG") else 1)
 PNG
 ln -sf appkata.svg "$APPDIR/.DirIcon"
+# AppKata's license and the notices of every part the AppImage carries that others made, in
+# usr/share/licenses/appkata; the build stops if a library in it is a part they don't give
+"$PY" "$HERE/scripts/third_party_notices.py" write linux "$APPDIR" "$LIC"
+"$PY" "$HERE/scripts/third_party_notices.py" check linux "$APPDIR"
 
 echo "== appimagetool"
 rm -f "$OUT"

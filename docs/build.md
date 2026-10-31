@@ -126,7 +126,12 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
 3. Copies `src/appkata` and `src/appkata_core`, precompiles everything, and adds `AppRun`
    (which sets `PYTHONDONTWRITEBYTECODE`), the desktop entry, the SVG icon and a 256 px PNG rendered
    from it (for the first-start install, requirement 2.11.3.1).
-4. Packs it with **appimagetool** (run with `--appimage-extract-and-run`, so FUSE isn't needed
+4. Writes the **license files** into `usr/share/licenses/appkata`: AppKata's `LICENSE` as
+   `LICENSE.txt`, and `THIRD-PARTY-NOTICES.txt`, every part the AppImage carries that others made
+   (Python and the libraries it is built with, Qt, PySide6, ICU, the xcb-util libraries) with its
+   license, the license's text and where its source is ("License files", below). The build stops
+   if a library in the AppDir is a part the notices don't give.
+5. Packs it with **appimagetool** (run with `--appimage-extract-and-run`, so FUSE isn't needed
    on the build machine), giving it the AppImage runtime with `--runtime-file`, and writes the
    `.sha256`. Without a runtime file appimagetool downloads the newest itself.
 
@@ -205,6 +210,27 @@ updates, unless it also published apt and dnf repositories. The AppImage carries
 needs, updates itself (requirement 2.11.3) and installs itself into the app menu on first start
 (2.11.3.1), so it is AppKata's only form on Linux (1.6).
 
+### License files
+
+Both builds carry AppKata's license and the notices of every part they carry that others made
+(the walk thru of 2026-10-30, item 1; [`reviews/followups-license-files.md`](reviews/followups-license-files.md)).
+`scripts/third_party_notices.py write` puts them together from two sources:
+
+- **`packaging/licenses/`**, made by `scripts/third_party_notices.py refresh` from the sources of the
+  versions the builds pin: Qt's (each repository's `qt_attribution.json` and `LICENSES/`, at the tag
+  `PYSIDE` names), PySide6's, the Python build's (python-build-standalone's full archive of
+  `PYTHON_BUILD`), the ICU in Qt's Linux wheel, and what the Windows Python leaves out of its own
+  `LICENSE.txt`. `packaging/licenses/SOURCES` records the versions; when one in
+  `packaging/versions.env` changes, `tests/test_third_party_notices.py` fails until the refresh runs
+  (it needs the network and Docker) and its result is committed.
+- **What the build's own inputs carry**, copied as it runs: the xcb-util libraries' Debian copyright
+  files, and on Windows the Python's `LICENSE.txt` and truststore's and PyInstaller's licenses.
+
+`scripts/third_party_notices.py check` then takes every library in the build (ELF or PE) to the one
+part whose section gives its license, and every Qt library to a module of the Qt repositories the
+notices list; the build stops on a library no part takes. A new input that brings a library, or a
+Qt module from another repository, needs a part in `PARTS` or a repository in `QT_REPOS` first.
+
 ## Windows
 
 ### The installer
@@ -231,7 +257,10 @@ scripts/build-windows.sh     # → releases/AppKata-<version>-setup.exe + .sha25
      also stops if the bundle carries any ICU DLL, the stand-in among them: the installed app
      must use Windows' own ICU.
 2. The script removes the Qt parts AppKata doesn't use (translations, Quick 3D, PDF, the
-   virtual keyboard, the software OpenGL fallback), leaving about 135 MB unpacked.
+   virtual keyboard, the software OpenGL fallback), leaving about 135 MB unpacked, and writes the
+   **license files** beside `appkata.exe`, where Setup installs them: `LICENSE.txt` and
+   `THIRD-PARTY-NOTICES.txt` (Python, Qt, PySide6, truststore, PyInstaller's bootloader, the Visual
+   C++ runtime; "License files", below). The build stops if a library in it is a part they don't give.
 3. **Inno Setup under Wine** (`amake/innosetup` by digest, `INNOSETUP_IMAGE`) builds the installer from
    `packaging/windows/appkata.iss` (requirement 15.10):
    - **Just me** by default, with no UAC prompt, into `%LOCALAPPDATA%\Programs\AppKata`

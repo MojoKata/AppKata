@@ -37,6 +37,7 @@ CloseApplicationsFilter=*.exe,*.dll,*.pyd
 RestartApplications=no
 
 [Files]
+; the build's folder, LICENSE.txt and THIRD-PARTY-NOTICES.txt beside appkata.exe (scripts/third_party_notices.py)
 Source: "..\..\build\windows\dist\AppKata\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 ; files of an older version that this one doesn't have
 [InstallDelete]

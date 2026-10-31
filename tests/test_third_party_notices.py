@@ -175,3 +175,9 @@ def test_the_texts_are_of_the_versions_the_builds_pin():
     for name in ("qt.txt", "pyside.txt", "python.txt", "python-linux.txt", "python-windows.txt", "icu.txt", "msvc-runtime.txt"):
         assert os.path.getsize(os.path.join(tpn.LICENSES, name)) > 400, name
 
+
+def test_both_builds_write_and_check_them():
+    for script, platform in (("build-appimage.sh", "linux"), ("build-windows.sh", "windows")):
+        text = open(os.path.join(ROOT, "scripts", script)).read()
+        assert re.search(rf"third_party_notices\.py\" write {platform} ", text), script
+        assert re.search(rf"third_party_notices\.py\" check {platform} ", text), script
