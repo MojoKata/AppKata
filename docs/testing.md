@@ -16,6 +16,18 @@ CI ([`github-workflows.md`](github-workflows.md)) runs tier 1, the AppImage buil
 installer build on GitHub's runners; its `ci` check gates merging. The rest of tiers 2 and 3 needs
 KVM, a desktop or the shared Windows VM, and runs on the development machine.
 
+### What each run may skip
+
+Every pytest run a tier makes names its list of the tests it may skip, and why:
+`tests/skips/<name>.txt` (`tests/conftest.py`; the walk thru of 2026-10-30, item 2). A skip the list
+doesn't name is a failure, and so is a listed test that ran (take it off the list), so a run's
+summary line counts both. The lists: `tier1` (CI's too), `launcher-mint22.3` and `launcher-lmde7`
+(the containers), `launcher-vm-24.04` and `launcher-vm-26.04`, `desktop-mint22.3` and `desktop-lmde7`,
+and `windows` (`test-windows-vm.sh --tests`). A run by hand, without `APPKATA_SKIPS`, checks nothing.
+A skip that comes and goes with the machine (a VM that can't resolve names, a tool missing from an
+image) is a fault of the run, not an entry for the list: the DNS test waits a minute for the
+resolver before it skips.
+
 ## Environments
 
 Run times are measured where a number is given plainly, and estimated where it says "est.".

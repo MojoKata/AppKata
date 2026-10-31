@@ -1,0 +1,54 @@
+# scripts/test-windows-vm.sh --tests, on Windows (a file::* line takes every test of the file): the tests it may skip, and why.
+# A skip not listed here fails the run, and so does a listed test that ran (tests/conftest.py).
+tests/test_appkind.py::test_a_real_system_program_is_read  # no /usr/bin/true
+tests/test_audit_log_explore.py::test_autostart_and_links  # Linux desktop files; Windows: tests/test_windows.py
+tests/test_booted.py::test_this_system_boots_what_testing_md_says  # only where the tier boots the environment's own kernel (the VMs); a container has the test machine's
+tests/test_channel_ui.py::test_same_digest_and_source_settings  # could not import 'PySide6': No module named 'PySide6'
+tests/test_channels.py::test_system_bus  # no system bus
+tests/test_coworker.py::*  # the protocols need flock (util-linux)
+tests/test_dialog_contract.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (17.1)
+tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
+tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs1-gui]  # the Linux install layout
+tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
+tests/test_install_review.py::test_command_link_never_replaces_a_real_file  # the Linux install layout
+tests/test_install_review.py::test_portable_options  # the Linux install layout
+tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux install layout
+tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
+tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux install layout
+tests/test_install_review.py::test_zip_install  # the Linux install layout
+tests/test_launch.py::test_a_failed_launch_is_reported_with_its_last_lines  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launch_that_runs_is_not_reported  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[echo "AppKata: running /x/AppRun ($(date +%s))" >&2; sleep 2; exit 1\n-False]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[sleep 1; echo "AppKata: /x.AppImage didn't unpack to a folder; not running it." >&2; exit 1\n-True]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[sleep 1; echo "AppKata: running /x/AppRun ($(date +%s))" >&2; echo "Segmentation fault" >&2; exit 139\n-True]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_program_run_directly_is_only_reported_within_the_grace  # portable launch on Linux/macOS
+tests/test_launch.py::test_launches_append_to_the_app_log_and_rotate_it  # portable launch on Linux/macOS
+tests/test_launcher_golden.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_layout.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_platform_matrix.py::test_the_launcher_passes_no_variable_its_shell_made_up  # the launcher is a Linux /bin/sh script (17.1)
+tests/test_public_text.py::test_no_private_name_in_any_tracked_file  # not a git work tree (the Windows VM's copy of the sources)
+tests/test_public_text.py::test_the_repository_address_is_appkata_core_s  # not a git work tree (the Windows VM's copy of the sources)
+tests/test_publish.py::test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey  # needs gpg
+tests/test_qml_slots.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_adversarial.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_audit.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_backend.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_exposure.py::*  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_lifecycle.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_one_fact.py::*  # needs bwrap and xdg-dbus-proxy (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_properties.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_run.py::*  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher); needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_state.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_surfaces.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_threads.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_transitions.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_two_apps.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_ui_surfaces.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_user_shaped.py::*  # needs xdg-dbus-proxy and dbus-daemon; the sandbox and its launchers are Linux-only (17.1)
+tests/test_selfinstall.py::*  # AppImages are Linux only
+tests/test_theme_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_time_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_tour_rules.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_trust.py::test_gpg_trust_with_published_key  # gpg not installed

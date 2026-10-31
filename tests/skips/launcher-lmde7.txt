@@ -1,0 +1,7 @@
+# scripts/test-sandbox.sh launcher-lmde7, the LMDE 7 container: the tests it may skip, and why.
+# A skip not listed here fails the run, and so does a listed test that ran (tests/conftest.py).
+tests/test_sandbox_one_fact.py::test_every_copy_of_the_warning_says_what_the_product_does_but_the_listed  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_one_fact.py::test_the_harness_catches_review_twos_x11_advice  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_one_fact.py::test_the_launcher_and_app_detail_agree_on_which_apps_bring_chromiums_sandbox  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_run.py::test_gpu_nodes_can_be_identified_through_sys  # no /dev/dri here
+tests/test_sandbox_run.py::test_the_gpu_renders_inside_the_sandbox_where_the_host_has_one  # no render node here (the VM has a virtio GPU)

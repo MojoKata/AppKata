@@ -1,0 +1,123 @@
+# Tier 1 (scripts/test-tier1.sh, which CI runs too): the tests it may skip, and why.
+# A skip not listed here fails the run, and so does a listed test that ran (tests/conftest.py).
+tests/test_booted.py::test_this_system_boots_what_testing_md_says  # only where the tier boots the environment's own kernel (the VMs); a container has the test machine's
+tests/test_channels.py::test_system_bus  # no system bus
+tests/test_sandbox_exposure.py::test_a_run_catches_f18s_identifiers_with_its_rows_taken_out  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_exposure.py::test_a_run_catches_the_runtime_folder_bound_whole  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_exposure.py::test_the_bus_warning_is_on_exactly_where_a_dbus_launch_bus_is_reachable  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_exposure.py::test_what_an_app_sees_inside_is_exactly_what_the_inventory_lists[wayland]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_exposure.py::test_what_an_app_sees_inside_is_exactly_what_the_inventory_lists[x11]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_one_fact.py::test_the_support_status_matches_what_each_levels_launcher_does_but_the_listed  # needs bwrap and xdg-dbus-proxy (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_bus_filter_that_does_not_start_is_said_plainly  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run[False-False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run[False-True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run[True-False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run[True-True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_file_argument_is_handed_over_to_a_standard_app  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_file_exported_while_the_app_runs_is_readable_on_its_first_launch  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_launcher_rewritten_while_the_app_runs_still_tears_down_and_reports_its_status  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_link_the_app_leaves_at_a_mount_point_is_not_followed[appdir]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_link_the_app_leaves_at_a_mount_point_is_not_followed[cwd]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_link_the_app_leaves_at_a_mount_point_is_not_followed[themes]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_link_the_app_leaves_at_a_mount_point_is_not_followed[xauthority]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_missing_runtime_dir_refuses_the_launch_with_a_message  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_network_grant_includes_working_dns  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_real_install_update_rollback_and_uninstall_run_sandboxed_end_to_end  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_replaced_appimage_is_extracted_again  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_review_naming_a_relative_folder_never_opens_the_real_home[plus]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_review_naming_a_relative_folder_never_opens_the_real_home[top]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_review_naming_a_relative_folder_never_opens_the_real_home[whole]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_standard_app_without_xdg_dbus_proxy_runs_sandboxed_with_no_session_bus  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_standard_launch_leaves_no_proxy_running  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_strict_app_fails_fast_on_every_desktop_road_and_never_falls_back_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_strict_app_says_on_a_terminal_why_it_cannot_see_its_arguments  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_strict_apps_xdg_open_fails_plainly_instead_of_starting_a_browser_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_tray_icon_registers_with_a_watcher_which_can_talk_back_to_it  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_an_app_with_a_long_id_still_starts_at_standard  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_an_appimage_cannot_swap_its_extraction_for_a_host_folder  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimage_that_does_not_fit_on_the_disk_is_refused_with_a_message_and_leaves_nothing  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimage_whose_runtime_unpacks_nothing_is_refused_with_a_message  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox[-gui]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox[None-None]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox[Terminal=false-gui]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox[Terminal=true-cli]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox[hostile-None]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_appkata_can_act_on_an_app_while_it_runs_and_the_run_still_ends_cleanly[heal]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_appkata_can_act_on_an_app_while_it_runs_and_the_run_still_ends_cleanly[switch-to-off]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_appkata_can_act_on_an_app_while_it_runs_and_the_run_still_ends_cleanly[uninstall-keeping-the-home]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_appkata_can_act_on_an_app_while_it_runs_and_the_run_still_ends_cleanly[uninstall-removing-the-home]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_in_a_folder_with_spaces  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[chrome-hosts]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[config]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[environment.d]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[gnome-extensions]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[home]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[install-root]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[kwin-scripts]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[local-bin]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[nemo-actions]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[parent]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[plasma-env]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[python-site]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[root]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[runtime]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[sandboxes]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[ssh]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_never_gets_the_home_or_above_or_appkata_areas[symlink-to-home]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_cli_tool_sees_and_writes_the_project_folder_it_is_run_in  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_empty_and_spaced_values_and_app_arguments_pass_through_intact  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_every_file_the_distributions_default_bashrc_sources_is_refused  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_extraction_still_works_without_flock_on_the_path  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_file_arguments_pass_through_when_they_cannot_be_handed_over  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_gpu_nodes_can_be_identified_through_sys  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_identity_marker_cannot_be_swapped_for_a_host_file  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_links_and_files_an_app_opens_go_to_the_host_through_the_portal  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_nested_folder_grants_cannot_reopen_the_symlink_hole  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_no_launcher_file_descriptors_leak_into_the_app  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_no_network_grant_means_no_network  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_simultaneous_first_launches_both_start  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_standard_apps_reach_the_filtered_bus_when_there_is_one  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[dead]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[unset]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_strict_app_runs_and_cannot_read_the_real_home  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_terminal_input_injection_stays_blocked  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_terminal_tools_keep_their_controlling_terminal  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_app_outlives_the_process_that_started_it[online-app]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_app_outlives_the_process_that_started_it[strict]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_camera_grant_binds_the_video_devices  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_field_test_checks_the_product_and_leaves_the_testers_home_alone  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_gpu_renders_inside_the_sandbox_where_the_host_has_one  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_portals_answer_a_sandboxed_app_as_a_host_caller  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_proxy_dying_mid_run_fails_the_apps_bus_calls_but_not_its_run  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_road_the_shim_covers_still_starts_the_first_browser_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_test_bus_starts_only_the_portals_on_demand  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_tray_capability_starts_the_proxy_and_lets_the_app_own_its_item_name  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_wayland_display_reaches_the_app  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_x11_display_reaches_the_app  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_state.py::test_freeze_todays_state_when_asked  # set UPDATE_STATE=<label> to freeze today's state as tests/data/state/<label>.json
+tests/test_sandbox_user_shaped.py::test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_listed  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_user_shaped.py::test_the_harness_catches_round_twos_arguments_never_handed_over  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_windows.py::test_portable_zip_for_everyone  # needs Windows
+tests/test_windows.py::test_portable_zip_for_me  # needs Windows
+tests/test_windows.py::test_registering_with_windows  # needs Windows
+tests/test_windows.py::test_runtime_on_real_programs  # needs Windows
+tests/test_windows.py::test_signatures_and_mark_of_the_web  # needs Windows
+tests/test_windows.py::test_uninstall_entries_are_read  # needs Windows

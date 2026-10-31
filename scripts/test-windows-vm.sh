@@ -90,7 +90,8 @@ if [ "$E2E" = 1 ]; then
 fi
 if [ "$TESTS" = 1 ]; then
     echo "== unit tests on Windows"
-    OUT=$(run "cd $D/src; \$env:Path = 'C:/Program Files/Git/cmd;' + \$env:Path; & $PY -m pytest -q -p no:cacheprovider 2>&1 | Select -Last 15")
+    OUT=$(run "cd $D/src; \$env:Path = 'C:/Program Files/Git/cmd;' + \$env:Path; \$env:APPKATA_SKIPS = 'windows'
+               & $PY -m pytest -q -p no:cacheprovider 2>&1 | Select -Last 25")
     echo "$OUT"
     expect "$OUT" " passed"
     if echo "$OUT" | grep -q " failed\| error"; then echo "FAIL: unit tests"; exit 1; fi

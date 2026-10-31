@@ -1,0 +1,7 @@
+# scripts/test-desktop-vm.sh run mint22.3, the Mint 22.3 desktop VM: the tests it may skip, and why.
+# A skip not listed here fails the run, and so does a listed test that ran (tests/conftest.py).
+tests/test_sandbox_one_fact.py::test_every_copy_of_the_warning_says_what_the_product_does_but_the_listed  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_one_fact.py::test_the_harness_catches_review_twos_x11_advice  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_one_fact.py::test_the_launcher_and_app_detail_agree_on_which_apps_bring_chromiums_sandbox  # could not import 'PySide6': No module named 'PySide6'
+tests/test_sandbox_run.py::test_an_appimage_that_does_not_fit_on_the_disk_is_refused_with_a_message_and_leaves_nothing  # needs the 1 MB tmpfs the harness mounts (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_the_camera_grant_binds_the_video_devices  # no /dev/video0 here (scripts/test-sandbox.sh launcher makes one)
