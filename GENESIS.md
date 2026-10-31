@@ -121,8 +121,10 @@ $(cat DIR/fingerprint)`, then `key 1`, `revkey`, `save`. Then
   be changed, and GitHub adds a release attestation (`gh release verify`).
 - **Actions pinned by SHA** required (step 5).
 - **`ci` required** in the `master` ruleset (step 4), once it has passed.
+- **The `field-test` label**, on a release's field-test issues (`publish.sh field-test`,
+  docs/testing.md).
 
-Check: `publish.sh check`.
+Check: `publish.sh check`, among them "field-test label".
 
 ## 9. The workflow
 
@@ -137,7 +139,8 @@ that moves.
 
 These steps aren't one-time, but they rely on everything above: build.md's "Before tagging a
 release", then `scripts/publish.sh release` (tag, CI, approve the signing, check the draft),
-the field test with the draft's files, and `scripts/publish.sh publish`.
+`scripts/publish.sh field-test` and the field test with the draft's files, and `scripts/publish.sh
+publish`.
 
 ## Read back
 
