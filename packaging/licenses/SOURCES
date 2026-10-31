@@ -1,0 +1,8 @@
+# What scripts/third_party_notices.py refresh made the texts here from;
+# tests/test_third_party_notices.py checks they are the versions the builds pin
+PYSIDE=6.11.2
+PYTHON_BUILD=3.14.8+20261013
+PYWINE_IMAGE=tobix/pywine:3.14@sha256:b053219cba558a12a8a3df2401a653b2ab2fced6833accd1e5d72399d7da1ad3
+ICU=73.2
+ZSTD=1.5.7
+ZLIBNG_WINDOWS=2.2.4
