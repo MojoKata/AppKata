@@ -46,6 +46,7 @@ for v in ("APPKATA_DATA", "APPKATA_APPS"):
 from appkata_core import install, sandbox as sb          # noqa: E402  (after HOME moved)
 from appkata_core.assets import Asset                    # noqa: E402
 from appkata_core.db import DB                           # noqa: E402
+from fieldtest_questions import QUESTIONS, SETUP_QUESTIONS   # noqa: E402  (what it asks, one list)
 
 PROBE = "#!/bin/sh\n# AppKata field-test probe: runs its first argument as a shell snippet, inside the sandbox\neval \"$1\"\n"
 STATUS = {"PASS": "pass", "BLOCKED": "pass", "OK": "pass", "FAIL": "fail", "LEAK": "fail"}
@@ -137,8 +138,8 @@ def _setup_questions(r: Report, interactive: bool) -> None:
     unprivileged user namespaces and the system has no bwrap profile of its own (17.10, 17.10.2;
     review 3, R3-37); N/A elsewhere. A1-prompt asks what the first install showed (review 3, R3-38)."""
     if sb.userns_restricted() and not sb.other_bwrap_profiles():
-        ask(r, interactive, "A1-prompt", "Before the setup, did installing a first AppImage ask 'Set up the sandbox?', did Not now install it unsandboxed, and did a second install not ask again?")
-        ask(r, interactive, "A1-pkexec", "Did Settings > Sandbox > Set up... show ONE password prompt, then 'Ready'?")
+        for cid, question in SETUP_QUESTIONS:
+            ask(r, interactive, cid, question)
     else:
         for cid, what in (("A1-prompt", "the AppArmor setup's first-install prompt"), ("A1-pkexec", "the AppArmor setup's password prompt")):
             r.rec("N/A", cid, what, "no setup here: the kernel doesn't restrict user namespaces, or the system has a bwrap profile of its own")
@@ -206,13 +207,8 @@ def main() -> int:
     finally:
         probe.close()
     _setup_questions(r, not a.non_interactive)
-    ask(r, not a.non_interactive, "P-dialog", "In a sandboxed app, does its own file dialog show its private home and the folders you gave it -- and nothing else of your home?")
-    ask(r, not a.non_interactive, "P-openwith", "Does 'Open with' (or a drop on its menu entry) of a file outside its folders open that file in the sandboxed app?")
-    ask(r, not a.non_interactive, "T-tray", "Messenger template: does its tray icon appear and do its notifications arrive?")
-    ask(r, not a.non_interactive, "T-mpris", "Media player template: do the keyboard's media keys / the lock screen's controls work?")
-    ask(r, not a.non_interactive, "U-selfupd", "An app that updates itself, sandboxed: does AppKata offer its updates, and does the app cope with its own updater failing?")
-    ask(r, not a.non_interactive, "U-enable", "Switching an installed app from Off to a sandbox: are you told it starts with fresh settings?")
-    ask(r, not a.non_interactive, "E-native", "A password manager's browser integration (native messaging): does it still work?")
+    for cid, question in QUESTIONS:
+        ask(r, not a.non_interactive, cid, question)
     r.write(env)
     return _finish(r, out)
 

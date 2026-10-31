@@ -12,6 +12,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -20,6 +21,7 @@ from test_requirements_trace import _finding_exists
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PLAN = "docs/local-proxy-test-plan.md"
 SCRIPT = "scripts/sandbox/fieldtest.py"
+QUESTIONS = "scripts/sandbox/fieldtest_questions.py"       # what it asks, one list (the walk thru of 2026-10-30, item 4)
 
 # ids only one side has, and the finding that keeps each
 STILL_DIFFERENT: dict = {}
@@ -63,9 +65,18 @@ def _ids(node, exposure: tuple) -> list:
     return []                                   # a variable: ask()'s own record of its question
 
 
-def _script(text: str) -> tuple[set, set]:
+def _asked(questions_text: str) -> set:
+    """The ids of fieldtest_questions.py's QUESTIONS and SETUP_QUESTIONS, which fieldtest.py asks."""
+    ids = set()
+    for node in ast.parse(questions_text).body:
+        if isinstance(node, ast.Assign) and node.targets[0].id in ("QUESTIONS", "SETUP_QUESTIONS"):
+            ids |= {cid for cid, _ in ast.literal_eval(node.value)}
+    return ids
+
+
+def _script(text: str, questions_text: str = "") -> tuple[set, set]:
     """The script's ids: every r.rec() whose result can be a check's (not only NOT_A_RESULT), and
-    every ask()."""
+    every question it asks: each ask() of a string, and the lists it asks from."""
     tree = ast.parse(text)
     exposure: tuple = ()
     for node in ast.walk(tree):
@@ -80,13 +91,15 @@ def _script(text: str) -> tuple[set, set]:
             status = node.args[0].value if isinstance(node.args[0], ast.Constant) else "a result"
             for cid in _ids(node.args[1], exposure):
                 results.setdefault(cid, set()).add(status)
-        elif isinstance(node.func, ast.Name) and node.func.id == "ask":
+        elif isinstance(node.func, ast.Name) and node.func.id == "ask" and isinstance(node.args[2], ast.Constant):
             questions.add(node.args[2].value)
+    if "from fieldtest_questions import QUESTIONS, SETUP_QUESTIONS" in text:
+        questions |= _asked(questions_text)
     return {cid for cid, statuses in results.items() if statuses - NOT_A_RESULT}, questions
 
 
-def _differences(plan_text: str, script_text: str) -> dict:
-    (plan_checks, plan_questions), (checks, questions) = _plan(plan_text), _script(script_text)
+def _differences(plan_text: str, script_text: str, questions_text: str = "") -> dict:
+    (plan_checks, plan_questions), (checks, questions) = _plan(plan_text), _script(script_text, questions_text or _read(QUESTIONS))
     return {**{c: "a check only the plan lists" for c in plan_checks - checks},
             **{c: "a check the plan doesn't list" for c in checks - plan_checks},
             **{q: "a question only the plan asks" for q in plan_questions - questions},
@@ -106,7 +119,7 @@ def test_each_difference_names_a_finding_that_exists():
 
 
 def test_the_harness_reads_both_sides_whole():
-    checks, questions = _script(_read(SCRIPT))
+    checks, questions = _script(_read(SCRIPT), _read(QUESTIONS))
     assert {"ISO-keys", "ISO-net", "D-wayland", "D-sound", "T-cli-home", "GUI-run", "EXP-strict"} <= checks
     assert "INSTALL" not in checks and "EXP-strict-open" not in checks
     assert {"A1-pkexec", "E-native"} <= questions
@@ -117,9 +130,8 @@ def test_the_harness_reads_both_sides_whole():
 
 def test_the_harness_catches_a_question_or_a_check_added_to_one_side():
     script = _read(SCRIPT)
-    asked = script.replace('ask(r, not a.non_interactive, "E-native"',
-                           'ask(r, not a.non_interactive, "Z-new", "?")\n    ask(r, not a.non_interactive, "E-native"')
-    assert _differences(_read(PLAN), asked).get("Z-new") == "a question the plan doesn't list"
+    asked = _read(QUESTIONS).replace('    ("E-native",', '    ("Z-new", "?"),\n    ("E-native",')
+    assert _differences(_read(PLAN), script, asked).get("Z-new") == "a question the plan doesn't list"
     dropped = _read(PLAN).replace("| D-theme |", "| D-theme, D-gone |")
     assert _differences(dropped, script).get("D-gone") == "a check only the plan lists"
 
@@ -148,3 +160,34 @@ print(json.dumps(out))
     needed, own_profile, unrestricted = json.loads(res.stdout.splitlines()[-1])
     assert needed == [["MANUAL", "A1-prompt"], ["MANUAL", "A1-pkexec"]]
     assert own_profile == unrestricted == [["N/A", "A1-prompt"], ["N/A", "A1-pkexec"]]
+
+
+def test_each_environments_checklist_is_what_the_field_test_asks_there():
+    """An environment's GitHub sub-issue holds one box per question the field test asks there, the A1
+    questions only where testing.md says the setup is needed, and one for a real GPU (the walk thru
+    of 2026-10-30, item 4): field-test.sh --issue-body prints it from the list fieldtest.py asks."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts", "sandbox"))
+    import fieldtest_questions as fq
+    envs = fq.environments()
+    assert envs == {"Ubuntu 24.04 LTS": True, "Linux Mint 22.3": False, "LMDE 7": False, "Ubuntu 26.04 LTS": False}
+    asked = _asked(_read(QUESTIONS))
+    for env, needed in envs.items():
+        boxes = re.findall(r"^- \[ \] \*\*([\w-]+)\*\* ", fq.issue_body(env), re.M)
+        setup = [cid for cid, _ in fq.SETUP_QUESTIONS]
+        assert boxes == (setup if needed else []) + [cid for cid, _ in fq.QUESTIONS] + ["D-gpu"], env
+        assert set(boxes) - {"D-gpu"} <= asked and (set(setup) <= set(boxes)) == needed
+    if shutil.which("sh"):                       # field-test.sh, a POSIX shell script, prints the same
+        out = subprocess.run(["sh", os.path.join(ROOT, "scripts", "sandbox", "field-test.sh"), "--issue-body", "LMDE 7"],
+                             capture_output=True, text=True, check=True).stdout
+        assert out == fq.issue_body("LMDE 7")
+
+
+def test_the_release_issues_template_names_the_same_environments():
+    """.github/ISSUE_TEMPLATE/field-test.yml, for opening a release's issue by hand: labelled
+    field-test, its environments testing.md's, in its order (read as text: tier 1 has no YAML)."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts", "sandbox"))
+    import fieldtest_questions as fq
+    text = _read(".github/ISSUE_TEMPLATE/field-test.yml")
+    assert re.search(r'^labels: \["field-test"\]$', text, re.M)
+    options = text[text.index("id: environments"):]
+    assert re.findall(r"^        - label: (.+)$", options, re.M) == list(fq.environments())

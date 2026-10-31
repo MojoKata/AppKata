@@ -72,8 +72,10 @@ step 6 of [`build.md`](build.md)'s "Before tagging a release".
 
 ### Tracking the runs on GitHub
 
-**Not set up yet** (the owner, 2026-10-24): it waits for the repository to be published. Until
-then, keep each run's `.tar.gz` with the release.
+Set up on 2026-10-30 (the walk thru, item 4), once the repository was published: `scripts/publish.sh
+setup` makes the `field-test` label, and `scripts/publish.sh field-test [VERSION]` opens a release's
+issues as below. A release's issue can also be opened by hand, from the "Field test of a release"
+template (`.github/ISSUE_TEMPLATE/field-test.yml`).
 
 Each release gets one **tracking issue**, and each environment a **sub-issue** of it:
 
@@ -95,14 +97,16 @@ issues, with fields for the environment and the result, can follow once there ar
 Discussions and commit statuses fit less well: neither holds a checklist with a state, and a status
 can't carry the report.
 
-**To set it up, after the move:**
+**How it is set up:**
 
-1. A `field-test` label, on the tracking issues and sub-issues.
-2. An issue template, `.github/ISSUE_TEMPLATE/field-test.yml`, for the release's issue.
-3. `scripts/sandbox/field-test.sh --issue-body`: print an environment's checklist from the questions
-   the field test itself asks there, so the plan, the script and the issue are one list (E11, in
-   `tests/test_field_test_plan.py`, then compares the checklist too).
-4. Point this section, build.md's step 6 and the PR's "What's left" at the first tracking issue.
+1. The `field-test` label, on the tracking issues and sub-issues: `publish.sh setup` makes it,
+   `publish.sh check` reads it back (GENESIS.md, step 8).
+2. The issue template, `.github/ISSUE_TEMPLATE/field-test.yml`, for the release's issue.
+3. `scripts/sandbox/field-test.sh --issue-body ENVIRONMENT` prints an environment's checklist from
+   the questions the field test itself asks there (`scripts/sandbox/fieldtest_questions.py`), so the
+   plan, the script and the issue are one list: E11, in `tests/test_field_test_plan.py`, compares
+   the checklist too, and the environments are this file's table.
+4. Still to do, at the first release: point this section and build.md's step 6 at its tracking issue.
 
 ## Downloaded ISOs
 

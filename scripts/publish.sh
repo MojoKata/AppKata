@@ -1,7 +1,8 @@
 #!/bin/sh
 # The owner's steps for AppKata's release key and releases, as commands (GENESIS.md says when each
 # is run; docs/github-workflows.md how CI builds, signs and drafts a release). Needs git, gpg 2.2+
-# and gh, logged in as an admin of the repository for setup, check, release and publish.
+# and gh, logged in as an admin of the repository for setup, check, release, publish and
+# field-test, and python3 for field-test.
 #
 #   The release key, on your own machine. DIR is the key's home: keep it offline (a USB stick)
 #   and plug it in for key-github and key-extend.
@@ -16,8 +17,8 @@
 #                                 the key again; then key-github
 #   The repository's settings:
 #     setup                       the release environment, the tag ruleset, immutable releases,
-#                                 actions pinned by SHA and, once CI has passed, the required ci
-#                                 check: each only if missing
+#                                 actions pinned by SHA, the field-test label and, once CI has
+#                                 passed, the required ci check: each only if missing
 #     check                       read back every setting GENESIS.md lists
 #   A release, from a clone of the repository on master:
 #     release                     tag v<version>, push it, wait for CI, show the files' SHA-256s,
@@ -27,6 +28,9 @@
 #     verify [VERSION]            download a release or its draft and check it: the files, their
 #                                 .sha256s, the signature and its key's fingerprint
 #     publish [VERSION]           verify the draft again and publish it
+#     field-test [VERSION]        open the release's field-test issue and, under it, one for each
+#                                 environment with its checklist (docs/testing.md, "Tracking the
+#                                 runs on GitHub")
 #
 # Options: --repo OWNER/NAME (the default is APPKATA_REPO's, src/appkata_core/__init__.py: another
 # repository, a fork, to try these); --key FILE (the public key verify trusts; the default is
@@ -246,6 +250,12 @@ EOF
             gh api -X PUT "repos/$REPO/rulesets/$id" --input - >/dev/null
         say "the ci check: required"
     fi
+    if gh label list --repo "$REPO" --limit 500 --json name --jq '.[].name' | grep -qx field-test; then say "the field-test label: there"
+    else
+        ask "Make the field-test label, for a release's field-test issues (docs/testing.md)?"
+        gh label create field-test --repo "$REPO" --color 5319E7 --description "A release's field test: docs/testing.md" >/dev/null
+        say "the field-test label: made"
+    fi
 }
 
 check() {
@@ -294,6 +304,7 @@ check() {
     fi
     is "immutable releases" "$(api /immutable-releases .enabled)" true
     is "private vulnerability reporting" "$(api /private-vulnerability-reporting .enabled)" true
+    is "field-test label" "$(api "/labels?per_page=100" 'if [.[].name] | index("field-test") then "there" else "missing" end')" there
     if [ -f "$KEY" ]; then is "release key" "${KEY#"$HERE"/} $(keyfpr "$KEY" | cut -c1-8)..." "${KEY#"$HERE"/} $(keyfpr "$KEY" | cut -c1-8)..."
     else is "release key" "no ${KEY#"$HERE"/}" "${KEY#"$HERE"/}"
     fi
@@ -398,10 +409,32 @@ publish() {
     verify "${1:-$VERSION}"
 }
 
+field_test() {      # [VERSION]: the release's field-test issue, and a sub-issue for each environment
+    V=${1:-$VERSION}
+    gh label list --repo "$REPO" --limit 500 --json name --jq '.[].name' | grep -qx field-test ||
+        die "$REPO has no field-test label: publish.sh setup makes it"
+    have=$(gh issue list --repo "$REPO" --label field-test --state all --search "\"Field test: $V\" in:title" --json number --jq '.[].number')
+    [ -z "$have" ] || die "$REPO has field-test issues for $V already: $(echo $have)"
+    envs=$(python3 "$HERE/scripts/sandbox/fieldtest_questions.py" --environments) || die "can't read docs/testing.md's environments"
+    ask "Open $REPO's field-test issues for $V: one for the release, one under it for each of $(echo "$envs" | paste -sd, - | sed 's/,/, /g')?"
+    parent=$(printf '%s\n\n%s\n' \
+        "The field test of AppKata $V, before it is published: one sub-issue for each environment docs/testing.md names (\"By hand, before a release\"), with its checklist. This issue closes when every sub-issue has closed, or when the owner waives one and says why there." \
+        "$(echo "$envs" | sed 's/^/- /')" | gh issue create --repo "$REPO" --title "Field test: $V" --label field-test --body-file -)
+    say "the release's: $parent"
+    echo "$envs" | while IFS= read -r env; do
+        child=$(sh "$HERE/scripts/sandbox/field-test.sh" --issue-body "$env" |
+            gh issue create --repo "$REPO" --title "Field test: $V on $env" --label field-test --body-file -)
+        id=$(gh api "repos/$REPO/issues/${child##*/}" --jq .id)
+        gh api -X POST "repos/$REPO/issues/${parent##*/}/sub_issues" -F sub_issue_id="$id" >/dev/null
+        say "  $env: $child"
+    done
+}
+
 case $CMD in
     key-new) [ $# = 2 ] || die "key-new DIR 'NAME <EMAIL>'"; key_new "$@" ;;
     key-github|key-export|key-extend) [ $# = 1 ] || die "$CMD DIR"; "key_${CMD#key-}" "$1" ;;
     setup|check|release) "$CMD" ;;
     resume|verify|publish) "$CMD" "$@" ;;
+    field-test) field_test "$@" ;;
     *) die "no command $CMD (publish.sh with none says what there is)" ;;
 esac

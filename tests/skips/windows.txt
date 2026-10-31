@@ -29,6 +29,9 @@ tests/test_layout.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_platform_matrix.py::test_the_launcher_passes_no_variable_its_shell_made_up  # the launcher is a Linux /bin/sh script (17.1)
 tests/test_public_text.py::test_no_private_name_in_any_tracked_file  # not a git work tree (the Windows VM's copy of the sources)
 tests/test_public_text.py::test_the_repository_address_is_appkata_core_s  # not a git work tree (the Windows VM's copy of the sources)
+tests/test_publish.py::test_check_says_it_cant_read_what_github_refuses_and_goes_on  # runs publish.sh, a POSIX shell script
+tests/test_publish.py::test_field_test_opens_nothing_without_the_label_or_twice  # runs publish.sh, a POSIX shell script
+tests/test_publish.py::test_field_test_opens_the_release_issue_and_one_under_it_per_environment  # runs publish.sh, a POSIX shell script
 tests/test_publish.py::test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey  # needs gpg
 tests/test_qml_slots.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox.py::*  # the sandbox and its launchers are Linux-only (17.1)
@@ -49,6 +52,7 @@ tests/test_sandbox_ui_surfaces.py::*  # could not import 'PySide6': No module na
 tests/test_sandbox_user_shaped.py::*  # needs xdg-dbus-proxy and dbus-daemon; the sandbox and its launchers are Linux-only (17.1)
 tests/test_selfinstall.py::*  # AppImages are Linux only
 tests/test_theme_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
+tests/test_tier_args.py::test_launcher_vm_hands_pytest_each_argument_whole  # runs the scripts' POSIX shell steps
 tests/test_time_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_tour_rules.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_trust.py::test_gpg_trust_with_published_key  # gpg not installed

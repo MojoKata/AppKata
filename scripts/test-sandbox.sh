@@ -168,11 +168,15 @@ if [ "${1:-}" = launcher-vm ] || [ "${1:-}" = launcher-vm26 ]; then
         printf 'FROM ubuntu:24.04\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils curl python3 >/dev/null\n' \
             | docker build -q -t appkata-qvm - >/dev/null
     fi
-    git -C "$HERE" ls-files -co --exclude-standard src tests docs scripts/sandbox/register-test-handler.sh scripts/sandbox/field-test.sh scripts/sandbox/fieldtest.py scripts/sandbox/exposure.py | tar -C "$HERE" -czf "$VM/src.tgz" -T -
+    git -C "$HERE" ls-files -co --exclude-standard src tests docs scripts/sandbox/register-test-handler.sh scripts/sandbox/field-test.sh scripts/sandbox/fieldtest.py scripts/sandbox/fieldtest_questions.py scripts/sandbox/exposure.py | tar -C "$HERE" -czf "$VM/src.tgz" -T -
     cp "$HERE/scripts/sandbox/vm-launcher.sh" "$VM/"
     PYT=$(sh "$HERE/scripts/python-standalone.sh")          # the release's Python, beside the source
     tar -C "$(dirname "$(dirname "$(dirname "$PYT")")")" -czf "$VM/py.tgz" python
-    docker run --rm --device /dev/kvm -v "$VM:/vm" -e PYTEST_ARGS="$*" -e IMG="$IMG" -e IMGURL="$IMGURL" appkata-qvm bash -c '
+    # pytest's arguments, each kept whole on the way to vm-launcher.sh's shell: quoted for it word by
+    # word, then base64 through the cloud-config and the VM's environment, which a quote or a space
+    # in them would break ("$*" split `-k 'a or b'` into three words; tests/test_tier_args.py)
+    ARGS=$(for a in "$@"; do printf "'%s' " "$(printf '%s' "$a" | sed "s/'/'\\\\''/g")"; done | base64 -w0)
+    docker run --rm --device /dev/kvm -v "$VM:/vm" -e PYTEST_ARGS_B64="$ARGS" -e IMG="$IMG" -e IMGURL="$IMGURL" appkata-qvm bash -c '
         set -e; cd /vm
         [ -f "$IMG" ] || curl -sSL -o "$IMG" "$IMGURL"
         echo "instance-id: iid-$$; local-hostname: vmtest" > meta-data
@@ -180,7 +184,7 @@ if [ "${1:-}" = launcher-vm ] || [ "${1:-}" = launcher-vm26 ]; then
           echo "packages: [bubblewrap, xdg-dbus-proxy, dbus-daemon, python3-pytest, curl, xdg-desktop-portal, python3-gi, mesa-utils]"; echo "package_update: true"
           echo "write_files:"; echo "  - path: /root/vm-launcher.sh"; echo "    permissions: \"0755\""
           echo "    encoding: b64"; echo "    content: $(base64 -w0 vm-launcher.sh)"
-          echo "runcmd: [[ env, \"PYTEST_ARGS=$PYTEST_ARGS\", bash, /root/vm-launcher.sh ]]"; } > user-data
+          echo "runcmd: [[ env, \"PYTEST_ARGS_B64=$PYTEST_ARGS_B64\", bash, /root/vm-launcher.sh ]]"; } > user-data
         cloud-localds seed.iso user-data meta-data
         rm -f disk.qcow2; qemu-img create -f qcow2 -b "$IMG" -F qcow2 disk.qcow2 12G >/dev/null
         (python3 -m http.server 8000 --bind 0.0.0.0 >/dev/null 2>&1 &)

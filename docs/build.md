@@ -85,10 +85,10 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
 6. **The field test by hand** (`scripts/sandbox/field-test.sh`, from the commit being tagged,
    without `--non-interactive`), on real hardware with a logged-in desktop: the questions no tier
    answers ("What it asks the tester" in `docs/local-proxy-test-plan.md`; the environments are in
-   `docs/testing.md`, "By hand, before a release"). Each run is posted to the release's tracking
-   issue on GitHub, as `testing.md` ("Tracking the runs on GitHub") describes; until that is set up,
-   once the repository is published, keep each run's `.tar.gz` with the release. The draft
-   release's AppImage is the one to test.
+   `docs/testing.md`, "By hand, before a release"). `scripts/publish.sh field-test` opens the
+   release's tracking issue on GitHub and, under it, one for each environment with its checklist;
+   each run is posted to its environment's issue, as `testing.md` ("Tracking the runs on GitHub")
+   describes. The draft release's AppImage is the one to test.
 7. **Publish the draft:** `scripts/publish.sh publish` checks it again and publishes it. Every
    AppKata offers it as an update from its next sync, and with immutable releases on, its files
    and tag can't change after that.

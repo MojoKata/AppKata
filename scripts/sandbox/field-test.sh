@@ -6,6 +6,8 @@
 # The work is scripts/sandbox/fieldtest.py; the checklist it follows is docs/local-proxy-test-plan.md.
 #
 # Usage:  scripts/sandbox/field-test.sh [--app /path/to/App.AppImage] [--non-interactive]
+#         scripts/sandbox/field-test.sh --issue-body ENVIRONMENT   (the checklist of what it asks there,
+#         for that environment's sub-issue on GitHub: docs/testing.md, "Tracking the runs on GitHub")
 # Needs:  bwrap and xdg-dbus-proxy (it says so if sandboxing can't run here, and what to do), python3
 #         with python3-gi for what the launchers run on the host, and the Python the release carries
 #         (requirement 1.2): $APPKATA_PYTHON, else build/python-<series>, else fetched once;
@@ -16,6 +18,7 @@
 # Output: ./appkata-fieldtest-<host>-<date>/ (report.md, env.txt, logs, shots) and a .tar.gz of it.
 set -u
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
+[ "${1:-}" != --issue-body ] || exec python3 "$HERE/scripts/sandbox/fieldtest_questions.py" "${2:?--issue-body ENVIRONMENT}"
 . "$HERE/packaging/versions.env"
 # AppKata's own code on the Python its release carries, not this desktop's python3 (requirement 1.2;
 # review 3, R3-21: Debian 12's 3.11.2 can't unpack a tarball the way AppKata does)
