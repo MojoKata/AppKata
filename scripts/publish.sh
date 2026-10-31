@@ -256,9 +256,12 @@ check() {
     # GitHub's answer, or "(can't read)": gh prints a refused read's error JSON on stdout, which
     # isn't the answer, and a read that fails mustn't end the check (set -e) before its other lines
     api() { _a=$(gh api "repos/$REPO$1" --jq "$2" 2>/dev/null) && printf '%s\n' "$_a" || echo "(can't read)"; }
+    BYPASS='if has("bypass_actors") then [.bypass_actors[] | select(.actor_type == "RepositoryRole" and .actor_id == 5)] | length else "(can'"'"'t read)" end'
     is "visibility" "$(api "" .visibility)" public
     is "default branch" "$(api "" .default_branch)" master
-    is "merge methods (squash merge rebase)" "$(api "" '"\(.allow_squash_merge) \(.allow_merge_commit) \(.allow_rebase_merge)"')" "true false false"
+    # GitHub leaves out what only an admin may read (the merge methods, a ruleset's bypass list): that
+    # is "(can't read)" too, not a wrong value
+    is "merge methods (squash merge rebase)" "$(api "" 'if .allow_squash_merge == null then "(can'"'"'t read)" else "\(.allow_squash_merge) \(.allow_merge_commit) \(.allow_rebase_merge)" end')" "true false false"
     if ! id=$(ruleset_id master); then is "master ruleset" "(can't read)" there
     elif [ -z "$id" ]; then is "master ruleset" missing there
     else
@@ -267,14 +270,14 @@ check() {
         is "master ruleset: rules" "$(api "$m" '[.rules[].type] | sort | join(" ")')" "deletion non_fast_forward pull_request required_status_checks"
         is "master ruleset: pull requests" "$(api "$m" '.rules[] | select(.type == "pull_request") | .parameters | "\(.required_approving_review_count) approvals, \(.allowed_merge_methods | join(","))"')" "0 approvals, squash"
         is "master ruleset: required checks" "$(api "$m" '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | join(",")')" ci
-        is "master ruleset: admins bypass" "$(api "$m" '[.bypass_actors[]? | select(.actor_type == "RepositoryRole" and .actor_id == 5)] | length')" 1
+        is "master ruleset: admins bypass" "$(api "$m" "$BYPASS")" 1
     fi
     if ! id=$(ruleset_id tags); then is "tags ruleset" "(can't read)" there
     elif [ -z "$id" ]; then is "tags ruleset" missing there
     else
         t=/rulesets/$id
         is "tags ruleset" "$(api "$t" '"\(.enforcement) \(.target) \(.conditions.ref_name.include | join(",")) \([.rules[].type] | sort | join(","))"')" "active tag ~ALL creation,deletion,update"
-        is "tags ruleset: admins bypass" "$(api "$t" '[.bypass_actors[]? | select(.actor_type == "RepositoryRole" and .actor_id == 5)] | length')" 1
+        is "tags ruleset: admins bypass" "$(api "$t" "$BYPASS")" 1
     fi
     is "workflow token" "$(api /actions/permissions/workflow '"\(.default_workflow_permissions), approves PRs: \(.can_approve_pull_request_reviews)"')" "read, approves PRs: false"
     is "fork PR runs wait for approval" "$(api /actions/permissions/fork-pr-contributor-approval .approval_policy)" all_external_contributors
