@@ -7,7 +7,7 @@ The walk thru of 2026-10-30, item 6 (a clear fix): `scripts/test-sandbox.sh laun
 
 | Pass | When | What it found | Where fixed | Tiers at the end |
 |---|---|---|---|---|
-| The harness, `tests/test_tier_args.py` | 2026-10-30 | A1 (its first two tests fail on the old scripts); nothing else | 765be6c | tier 1 2,458 passed; `launcher-vm -k 'working_dns or no_network_grant'` 2 passed, 132 deselected; the Mint container the same |
+| The harness, `tests/test_tier_args.py` | 2026-10-30 | A1 (its first two tests fail on the old scripts); nothing else | 0cc5652 | tier 1 2,458 passed; `launcher-vm -k 'working_dns or no_network_grant'` 2 passed, 132 deselected; the Mint container the same |
 
 ## A1. `-k 'a or b'` reaches the VMs' pytest as three words — LOW (testing; noticed in review 3's runs) — fixed
 
@@ -38,4 +38,4 @@ quotes off.
 
 | Commit | Fixes | What | Proof |
 |---|---|---|---|
-| 765be6c | A1 | `test-sandbox.sh` quotes and base64-encodes the arguments, `vm-launcher.sh` decodes them; the harness | before, the 24.04 VM: `ERROR: file or directory not found: or`, no tests ran; after: 2 passed, 132 deselected |
+| 0cc5652 | A1 | `test-sandbox.sh` quotes and base64-encodes the arguments, `vm-launcher.sh` decodes them; the harness | before, the 24.04 VM: `ERROR: file or directory not found: or`, no tests ran; after: 2 passed, 132 deselected |

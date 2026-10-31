@@ -10,7 +10,7 @@ waits for the first release.
 
 | Pass | When | What it found | Where fixed | Tiers at the end |
 |---|---|---|---|---|
-| The one list, its checklists and `publish.sh field-test` | 2026-10-30 | F1; the launcher VM's list of field-test files | 8b16d47, 8ee111b | tier 1 2,459 passed; the Mint 22.3 desktop VM's field test asks every question from the list (17 passed, none failed); the 24.04 launcher VM 128 passed; on the fork, setup, check and field-test |
+| The one list, its checklists and `publish.sh field-test` | 2026-10-30 | F1; the launcher VM's list of field-test files | bb86a6e, 21f4597 | tier 1 2,459 passed; the Mint 22.3 desktop VM's field test asks every question from the list (17 passed, none failed); the 24.04 launcher VM 128 passed; on the fork, setup, check and field-test |
 
 ## F1. The field test's runs have nowhere to go — LOW (process; testing.md, 2026-10-24) — fixed
 
@@ -45,5 +45,5 @@ version has field-test issues already.
 
 | Commit | Fixes | What | Proof |
 |---|---|---|---|
-| 8b16d47 | F1 (the checklist) | `fieldtest_questions.py`; `fieldtest.py` asks from it; `field-test.sh --issue-body`; the template; E11 reads the list; the launcher VM copies it | the checklists' and the template's tests; the desktop VM's field test: every question MANUAL, the A1 ones N/A on Mint |
-| 8ee111b | F1 (GitHub) | `setup` makes the label, `check` reads it back; `publish.sh field-test`; GENESIS.md, testing.md, build.md | the recording-`gh` tests; on the fork: the label made and read back, the release's issue with the four environments' under it, a second run refused; all removed after, the fork's settings put back |
+| bb86a6e | F1 (the checklist) | `fieldtest_questions.py`; `fieldtest.py` asks from it; `field-test.sh --issue-body`; the template; E11 reads the list; the launcher VM copies it | the checklists' and the template's tests; the desktop VM's field test: every question MANUAL, the A1 ones N/A on Mint |
+| 21f4597 | F1 (GitHub) | `setup` makes the label, `check` reads it back; `publish.sh field-test`; GENESIS.md, testing.md, build.md | the recording-`gh` tests; on the fork: the label made and read back, the release's issue with the four environments' under it, a second run refused; all removed after, the fork's settings put back |
