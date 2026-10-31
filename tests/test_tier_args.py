@@ -9,10 +9,12 @@ shell command line) and are split again on the other side. This test sends awkwa
 through the same steps the scripts take, run as they run them, and checks the tiers that pass "$@"
 straight on keep doing so."""
 
-import base64
 import os
 import re
+import shutil
 import subprocess
+
+import pytest
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 AWKWARD = ["-k", "a or b", "-k", "not c and d", "it's", 'say "hi"', "$HOME", "*", "x  y", "back\\slash", "-x"]
@@ -27,6 +29,7 @@ def _line(text, start):
     return next(line.strip() for line in text.splitlines() if line.strip().startswith(start))
 
 
+@pytest.mark.skipif(not (shutil.which("sh") and shutil.which("bash")), reason="runs the scripts' POSIX shell steps")
 def test_launcher_vm_hands_pytest_each_argument_whole():
     host = _line(_read("scripts/test-sandbox.sh"), "ARGS=")
     vm = _line(_read("scripts/sandbox/vm-launcher.sh"), "PYTEST_ARGS=")
