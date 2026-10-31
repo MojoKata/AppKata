@@ -108,6 +108,7 @@ limited "\$p = Start-Process -Wait -PassThru $D/$S -ArgumentList '/VERYSILENT','
 OUT=$(run "Get-Content $D/limited-out.txt
      'exe: ' + (Test-Path \"$APP\\appkata.exe\")
      'qml: ' + (Test-Path \"$APP\\_internal\\appkata\\qml\\Main.qml\")
+     'licenses: ' + (Test-Path \"$APP\\LICENSE.txt\") + ' ' + (Test-Path \"$APP\\THIRD-PARTY-NOTICES.txt\")
      \$u = Get-ItemProperty '$UNINST' -ErrorAction SilentlyContinue
      'uninstall entry: ' + [bool]\$u + ' ' + \$u.DisplayVersion + ' ' + \$u.InstallLocation
      'machine entry: ' + (Test-Path ('$UNINST' -replace 'HKCU','HKLM'))
@@ -117,6 +118,7 @@ echo "$OUT"
 expect "$OUT" "setup exit: 0"
 expect "$OUT" "exe: True"
 expect "$OUT" "qml: True"
+expect "$OUT" "licenses: True True"
 expect "$OUT" "uninstall entry: True"
 expect "$OUT" "machine entry: False"
 expect "$OUT" "appkata.exe\" \"%1\""

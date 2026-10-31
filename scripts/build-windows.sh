@@ -31,6 +31,12 @@ echo "== PyInstaller (Wine)"
 docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$HERE:/src" -v "$HERE/build/wine-cache:/cache" -w /src "$PYWINE_IMAGE" sh -c "
   cp /cache/$ICU \$WINEPREFIX/drive_c/windows/system32/icuuc.dll
   wine python -m pip install -q --no-deps --cache-dir Z:\\\\cache pyinstaller==$PYINSTALLER $PYINSTALLER_DEPS PySide6-Essentials==$PYSIDE shiboken6==$PYSIDE truststore==$TRUSTSTORE >/dev/null 2>&1
+  # the license texts that come with these inputs, for the notices (scripts/third_party_notices.py)
+  L=/src/build/windows/licenses SP=\$WINEPREFIX/drive_c/Python/Lib/site-packages
+  mkdir -p \$L/python \$L/truststore \$L/pyinstaller
+  cp \$WINEPREFIX/drive_c/Python/LICENSE.txt \$L/python/
+  cp \$SP/truststore-$TRUSTSTORE.dist-info/licenses/LICENSE \$L/truststore/
+  cp \$SP/pyinstaller-$PYINSTALLER.dist-info/licenses/COPYING.txt \$L/pyinstaller/
   wine python -m PyInstaller --noconfirm --clean --log-level WARN \
        --distpath Z:\\\\src\\\\build\\\\windows\\\\dist --workpath Z:\\\\src\\\\build\\\\windows\\\\work packaging\\\\windows\\\\appkata.spec
 " 2>&1 | grep -vE "^(wine|[0-9a-f]{4}:(fixme|err|warn))" | grep -v "^$" || true
@@ -55,6 +61,10 @@ rm -rf "$I/translations" "$I/qml/QtQuick3D" "$I/qml/Qt3D" "$I/qml/QtMultimedia" 
        "$I/qml/QtDataVisualization" "$I/qml/QtSensors" "$I/qml/QtWebSockets" "$I/qml/QtTest" "$I/qml/QtQuick/VirtualKeyboard"
 rm -f "$I"/Qt6Quick3D*.dll "$I"/Qt6Pdf*.dll "$I"/Qt6VirtualKeyboard*.dll "$I"/opengl32sw.dll "$I"/Qt6Charts*.dll \
       "$I"/Qt6Multimedia*.dll "$I"/Qt6Sensors*.dll "$I"/Qt6Test*.dll
+# AppKata's license and the notices of every part the build carries that others made, beside
+# appkata.exe, where Setup installs them; the build stops if a library in it is a part they don't give
+python3 "$HERE/scripts/third_party_notices.py" write windows "$DIST" "$HERE/build/windows/licenses"
+python3 "$HERE/scripts/third_party_notices.py" check windows "$DIST"
 echo "build/windows/dist/AppKata: $(du -sh "$DIST" | cut -f1)"
 
 echo "== Inno Setup (Wine)"
