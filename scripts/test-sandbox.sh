@@ -168,7 +168,7 @@ if [ "${1:-}" = launcher-vm ] || [ "${1:-}" = launcher-vm26 ]; then
         printf 'FROM ubuntu:24.04\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils curl python3 >/dev/null\n' \
             | docker build -q -t appkata-qvm - >/dev/null
     fi
-    git -C "$HERE" ls-files -co --exclude-standard src tests docs scripts/sandbox/register-test-handler.sh scripts/sandbox/field-test.sh scripts/sandbox/fieldtest.py scripts/sandbox/exposure.py | tar -C "$HERE" -czf "$VM/src.tgz" -T -
+    git -C "$HERE" ls-files -co --exclude-standard src tests docs scripts/sandbox/register-test-handler.sh scripts/sandbox/field-test.sh scripts/sandbox/fieldtest.py scripts/sandbox/fieldtest_questions.py scripts/sandbox/exposure.py | tar -C "$HERE" -czf "$VM/src.tgz" -T -
     cp "$HERE/scripts/sandbox/vm-launcher.sh" "$VM/"
     PYT=$(sh "$HERE/scripts/python-standalone.sh")          # the release's Python, beside the source
     tar -C "$(dirname "$(dirname "$(dirname "$PYT")")")" -czf "$VM/py.tgz" python

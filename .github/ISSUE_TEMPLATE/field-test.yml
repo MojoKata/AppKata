@@ -1,0 +1,32 @@
+# A release's field-test issue, for opening by hand. scripts/publish.sh field-test opens it with a
+# sub-issue for each environment (docs/testing.md, "Tracking the runs on GitHub").
+name: Field test of a release
+description: A release's field test, before it is published, with a sub-issue for each environment
+title: "Field test: <version>"
+labels: ["field-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The field test of a release, before it is published: one sub-issue for each environment
+        docs/testing.md names ("By hand, before a release"), titled "Field test: <version> on
+        <environment>", its body the checklist `scripts/sandbox/field-test.sh --issue-body
+        <environment>` prints. This issue closes when every sub-issue has closed, or when the owner
+        waives one and says why there.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: checkboxes
+    id: environments
+    attributes:
+      label: Environments
+      description: One sub-issue each.
+      options:
+        - label: Ubuntu 24.04 LTS
+        - label: Linux Mint 22.3
+        - label: LMDE 7
+        - label: Ubuntu 26.04 LTS
