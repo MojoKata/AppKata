@@ -118,7 +118,8 @@ fi
 PYT=$(sh "$HERE/scripts/python-standalone.sh")
 git -C "$HERE" ls-files -co --exclude-standard src tests docs scripts/sandbox | tar -C "$HERE" -czf "$VM/src.tgz" -T -
 tar -C "$(dirname "$(dirname "$(dirname "$PYT")")")" -czf "$VM/py.tgz" python
-cp "${VMTEST_SCRIPT:-$HERE/scripts/sandbox/vm-desktop.sh}" "$VM/run.sh"      # VMTEST_SCRIPT: another script, to probe
+# VMTEST_SCRIPT: another script, to probe; VM_NAME tells it which VM it runs in (its skip list's name)
+sed "1a VM_NAME=$NAME" "${VMTEST_SCRIPT:-$HERE/scripts/sandbox/vm-desktop.sh}" > "$VM/run.sh"
 cp "$HERE/releases/AppKata-$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")-x86_64.AppImage" "$VM/AppKata.AppImage"
 rm -rf "$VM/shots"; mkdir -p "$VM/shots"
 docker run --rm --device /dev/kvm -v "$VM:/vm" appkata-vmtools bash -c '

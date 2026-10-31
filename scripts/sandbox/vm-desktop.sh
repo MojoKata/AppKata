@@ -48,7 +48,10 @@ else
     echo "  no setup needed (restriction: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent); other bwrap profiles: ${others:-none})"
 fi
 sudo sh scripts/sandbox/register-test-handler.sh >/dev/null && echo "  test handler registered"
-PYTHONPATH=src APPKATA_PYTHON=$PY APPKATA_BOOTED=1 $PY -m pytest -q -rfEs --tb=short -p no:cacheprovider tests/test_sandbox_run.py \
+# the tests this VM may skip: tests/skips/desktop-<VM_NAME>.txt (tests/conftest.py; VM_NAME, mint22.3 or
+# lmde7, is the line test-desktop-vm.sh adds after the first)
+PYTHONPATH=src APPKATA_PYTHON=$PY APPKATA_BOOTED=1 APPKATA_SKIPS="desktop-${VM_NAME:-unknown}" \
+    $PY -m pytest -q -rfEs --tb=short -p no:cacheprovider tests/test_sandbox_run.py \
     tests/test_sandbox_exposure.py tests/test_sandbox_one_fact.py tests/test_sandbox_user_shaped.py tests/test_booted.py 2>&1
 
 echo "-- the field test, non-interactive"

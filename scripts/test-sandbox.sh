@@ -79,7 +79,7 @@ if [ "${1:-}" = launcher ] || [ "${1:-}" = launcher-lmde7 ]; then
     # shellcheck disable=SC2086
     exec docker run --rm $OPEN --device /dev/fuse --cap-add SYS_ADMIN -v "$HERE:/src:ro" "$IMG" sh -c \
         '[ -e /dev/video0 ] || mknod -m 666 /dev/video0 c 81 0; sh /src/scripts/sandbox/register-test-handler.sh; mkdir -p /home/kata/tiny && mount -t tmpfs -o size=1m,mode=755 tmpfs /home/kata/tiny && chown kata:kata /home/kata/tiny; echo "bwrap $(bwrap --version), $(dpkg-query -W -f="\${Version}" xdg-desktop-portal) portal, GLib $(dpkg-query -W -f="\${Version}" libglib2.0-0t64)"; exec su kata -c "$0" -- sh "$@"' \
-        'cd /tmp && { Xvfb :0 -screen 0 1280x800x24 >/dev/null 2>&1 & sleep 1; } && APPKATA_PYTHON='"$CPY"' PYTHONPATH=/src/src exec '"$CPY"' -m pytest -q -p no:cacheprovider /src/tests/test_sandbox_run.py /src/tests/test_sandbox_exposure.py /src/tests/test_sandbox_one_fact.py /src/tests/test_sandbox_user_shaped.py /src/tests/test_platform_matrix.py "$@"' "$@"
+        'cd /tmp && { Xvfb :0 -screen 0 1280x800x24 >/dev/null 2>&1 & sleep 1; } && APPKATA_PYTHON='"$CPY"' APPKATA_SKIPS=launcher-'"${IMG#appkata-sandbox-}"' PYTHONPATH=/src/src exec '"$CPY"' -m pytest -q -p no:cacheprovider /src/tests/test_sandbox_run.py /src/tests/test_sandbox_exposure.py /src/tests/test_sandbox_one_fact.py /src/tests/test_sandbox_user_shaped.py /src/tests/test_platform_matrix.py "$@"' "$@"
 fi
 
 if [ "${1:-}" = wayland ]; then
