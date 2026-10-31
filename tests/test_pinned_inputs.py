@@ -221,3 +221,10 @@ def test_every_tier_runs_the_python_the_release_carries():
     assert "lib-tier1.sh" in _read("scripts/test-tier1.sh")
     for script in ("scripts/sandbox/vm-launcher.sh", "scripts/sandbox/vm-desktop.sh"):
         assert re.search(r"\$PY -m pytest", _read(script)), script      # the Python their host script sent
+
+
+def test_the_windows_tier_copies_every_file_the_tests_read():
+    """The Windows run copies what git lists but the screenshots' images: a list of folders left out
+    GENESIS.md, which tests/test_publish.py reads, and the test failed only there."""
+    zip_line = next(line for line in _read("scripts/test-windows-vm.sh").splitlines() if "git ls-files" in line)
+    assert re.search(r"git ls-files -co --exclude-standard \|", zip_line), zip_line

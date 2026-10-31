@@ -86,10 +86,11 @@ if [ "$TESTS" = 1 ] || [ "$E2E" = 1 ]; then
     V=$(run "& $PY -c 'import platform; print(platform.python_version())'")
     [ "$V" = "${PYTHON_BUILD%%+*}" ] || { echo "FAIL: the tests' Python is $V, the release's ${PYTHON_BUILD%%+*}"; exit 1; }
     echo "== copy the sources"
-    # what the tests read: the sources, the tests, the scripts and documents they check, from git's
-    # list of files (only five paths went before, and every test reading another one failed there)
-    (cd "$HERE" && rm -f build/src-tests.zip && git ls-files -co --exclude-standard src tests scripts docs packaging README.md pyproject.toml |
-        grep -v -e '/__pycache__/' -e '\.egg-info/' | zip -q build/src-tests.zip -@)
+    # what the tests read: every file git lists but the screenshots' images (100 MB, which no test
+    # reads). Only five paths went once, then seven, and each time a test reading another file failed
+    # there: GENESIS.md was the last.
+    (cd "$HERE" && rm -f build/src-tests.zip && git ls-files -co --exclude-standard |
+        grep -v -e '/__pycache__/' -e '\.egg-info/' -e '^screenshots/.*\.png$' | zip -q build/src-tests.zip -@)
     $SCP "$HERE/build/src-tests.zip" "$R:$D/src.zip"
     run "Remove-Item -Recurse -Force $D/src -ErrorAction SilentlyContinue; Expand-Archive $D/src.zip $D/src"
 fi
