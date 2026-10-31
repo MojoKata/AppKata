@@ -25,9 +25,10 @@ fi
 sudo -u ubuntu -H bash -lc "PYTHONPATH=/opt/src/src $PY -c 'from appkata_core import sandbox as s; print(\"support:\", s.support_status()[\"status\"], \"inner sandbox:\", s.nested_userns_works())'"
 sh /opt/src/scripts/sandbox/register-test-handler.sh && echo "test handler registered"
 cp -r /opt/src /home/ubuntu/src && chown -R ubuntu: /home/ubuntu/src
+PYTEST_ARGS=$(printf '%s' "${PYTEST_ARGS_B64:-}" | base64 -d)   # test-sandbox.sh's arguments, quoted for the shell below
 # the tests this VM may skip: tests/skips/launcher-vm-<version>.txt (tests/conftest.py)
 sudo -u ubuntu -H bash -lc "cd /home/ubuntu && XDG_RUNTIME_DIR=/run/user/\$(id -u) PYTHONPATH=src/src APPKATA_PYTHON=$PY APPKATA_BOOTED=1 \
   APPKATA_SKIPS=launcher-vm-$(. /etc/os-release; echo $VERSION_ID) \
-  $PY -m pytest -q -rfEs -p no:cacheprovider src/tests/test_sandbox_run.py src/tests/test_sandbox_exposure.py src/tests/test_sandbox_one_fact.py src/tests/test_sandbox_user_shaped.py src/tests/test_booted.py ${PYTEST_ARGS:-} 2>&1 | tail -40"
+  $PY -m pytest -q -rfEs -p no:cacheprovider src/tests/test_sandbox_run.py src/tests/test_sandbox_exposure.py src/tests/test_sandbox_one_fact.py src/tests/test_sandbox_user_shaped.py src/tests/test_booted.py $PYTEST_ARGS 2>&1 | tail -40"
 echo "=====VMTEST END====="
 poweroff
