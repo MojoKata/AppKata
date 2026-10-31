@@ -12,6 +12,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -175,9 +176,10 @@ def test_each_environments_checklist_is_what_the_field_test_asks_there():
         setup = [cid for cid, _ in fq.SETUP_QUESTIONS]
         assert boxes == (setup if needed else []) + [cid for cid, _ in fq.QUESTIONS] + ["D-gpu"], env
         assert set(boxes) - {"D-gpu"} <= asked and (set(setup) <= set(boxes)) == needed
-    out = subprocess.run(["sh", os.path.join(ROOT, "scripts", "sandbox", "field-test.sh"), "--issue-body", "LMDE 7"],
-                         capture_output=True, text=True, check=True).stdout
-    assert out == fq.issue_body("LMDE 7")
+    if shutil.which("sh"):                       # field-test.sh, a POSIX shell script, prints the same
+        out = subprocess.run(["sh", os.path.join(ROOT, "scripts", "sandbox", "field-test.sh"), "--issue-body", "LMDE 7"],
+                             capture_output=True, text=True, check=True).stdout
+        assert out == fq.issue_body("LMDE 7")
 
 
 def test_the_release_issues_template_names_the_same_environments():

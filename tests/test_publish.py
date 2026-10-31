@@ -138,6 +138,7 @@ def _field_test(tmp_path, **env):
     return r, calls
 
 
+@pytest.mark.skipif(not shutil.which("sh"), reason="runs publish.sh, a POSIX shell script")
 def test_field_test_opens_the_release_issue_and_one_under_it_per_environment(tmp_path):
     """publish.sh field-test (the walk thru of 2026-10-30, item 4): the release's issue, then one per
     environment docs/testing.md names, with field-test.sh --issue-body's checklist, each made a
@@ -158,6 +159,7 @@ def test_field_test_opens_the_release_issue_and_one_under_it_per_environment(tmp
     assert [a[a.index("-F") + 1] for a in linked] == [f"sub_issue_id={9102 + i}" for i in range(len(envs))]
 
 
+@pytest.mark.skipif(not shutil.which("sh"), reason="runs publish.sh, a POSIX shell script")
 def test_field_test_opens_nothing_without_the_label_or_twice(tmp_path):
     for case, env, says in (("no-label", {"FAKE_GH_LABELS": "bug"}, "publish.sh setup makes it"),
                             ("twice", {"FAKE_GH_ISSUES": "7\n"}, "already")):
