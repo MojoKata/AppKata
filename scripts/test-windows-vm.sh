@@ -59,26 +59,38 @@ for i in $(seq 1 60); do $SSH "echo up" >/dev/null 2>&1 && break; sleep 5; done
 
 PY=C:/Users/Public/appkata-py/python/python.exe
 if [ "$TESTS" = 1 ] || [ "$E2E" = 1 ]; then
-    # Python for Windows from python-build-standalone (GitHub), checked against its SHA256SUMS
-    if ! $SSH "Test-Path $PY" | grep -q True; then
-        echo "== Python for the tests"
+    # The tests run on the Python the release carries (requirement 1.2): python-build-standalone's
+    # Windows build of PYTHON_BUILD, checked against PYTHON_WINDOWS_SHA256, with pytest as every tier
+    # pins it, colorama (pytest's on Windows) and truststore as build-windows.sh pins it. The VM keeps
+    # them, with what they were made from in pin.txt; a pin that moves makes them again.
+    TRUSTSTORE=$(sed -n 's/^TRUSTSTORE=//p' "$HERE/scripts/build-windows.sh")
+    PIN="$PYTHON_BUILD $PYTEST colorama==0.4.6 truststore==$TRUSTSTORE"
+    if [ "$(run "Get-Content C:/Users/Public/appkata-py/pin.txt -ErrorAction SilentlyContinue")" != "$PIN" ]; then
+        echo "== Python $PYTHON_BUILD for the tests"
         C="$HERE/build/winpy"; mkdir -p "$C"
-        TAG=$(curl -sSIL -o /dev/null -w '%{url_effective}' https://github.com/astral-sh/python-build-standalone/releases/latest | sed 's#.*/tag/##')
-        NAME=$(curl -sSL "https://github.com/astral-sh/python-build-standalone/releases/expanded_assets/$TAG" |
-               grep -o "cpython-$(echo "$PY_SERIES" | sed 's/\./\\./')\.[0-9]*+[0-9]*-x86_64-pc-windows-msvc-install_only\.tar\.gz" | head -1)
-        curl -sSL -o "$C/py.tar.gz" "https://github.com/astral-sh/python-build-standalone/releases/download/$TAG/$NAME"
-        curl -sSL "https://github.com/astral-sh/python-build-standalone/releases/download/$TAG/SHA256SUMS" |
-            grep " $NAME\$" | awk '{print $1"  py.tar.gz"}' | (cd "$C" && sha256sum -c --quiet)
-        run "New-Item -ItemType Directory -Force $D | Out-Null"
-        $SCP "$C/py.tar.gz" "$R:$D/py.tar.gz"
-        run "New-Item -ItemType Directory -Force C:/Users/Public/appkata-py | Out-Null; tar -xzf $D/py.tar.gz -C C:/Users/Public/appkata-py
-             & $PY -m pip install -q pytest truststore 2>&1 | Select-String -NotMatch 'WARNING|PATH'"
+        NAME=cpython-$PYTHON_BUILD-x86_64-pc-windows-msvc-install_only.tar.gz
+        if ! echo "$PYTHON_WINDOWS_SHA256  $C/$NAME" | sha256sum -c --quiet >/dev/null 2>&1; then
+            curl -fsSL -o "$C/$NAME.part" \
+                "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_BUILD#*+}/$(echo "$NAME" | sed 's/+/%2B/')"
+            echo "$PYTHON_WINDOWS_SHA256  $C/$NAME.part" | sha256sum -c --quiet ||
+                { echo "FAIL: $NAME isn't the file packaging/versions.env pins"; exit 1; }
+            mv "$C/$NAME.part" "$C/$NAME"
+        fi
+        run "Remove-Item -Recurse -Force C:/Users/Public/appkata-py -ErrorAction SilentlyContinue
+             New-Item -ItemType Directory -Force $D, C:/Users/Public/appkata-py | Out-Null"
+        $SCP "$C/$NAME" "$R:$D/py.tar.gz"
+        run "tar -xzf $D/py.tar.gz -C C:/Users/Public/appkata-py
+             & $PY -m pip install -q --no-deps --disable-pip-version-check $PYTEST colorama==0.4.6 truststore==$TRUSTSTORE 2>&1 | Select-String -NotMatch 'WARNING|PATH'
+             Set-Content C:/Users/Public/appkata-py/pin.txt '$PIN'"
     fi
+    V=$(run "& $PY -c 'import platform; print(platform.python_version())'")
+    [ "$V" = "${PYTHON_BUILD%%+*}" ] || { echo "FAIL: the tests' Python is $V, the release's ${PYTHON_BUILD%%+*}"; exit 1; }
     echo "== copy the sources"
-    # what the tests read: the sources, the tests, the scripts and documents they check, from git's
-    # list of files (only five paths went before, and every test reading another one failed there)
-    (cd "$HERE" && rm -f build/src-tests.zip && git ls-files -co --exclude-standard src tests scripts docs packaging README.md pyproject.toml |
-        grep -v -e '/__pycache__/' -e '\.egg-info/' | zip -q build/src-tests.zip -@)
+    # what the tests read: every file git lists but the screenshots' images (100 MB, which no test
+    # reads). Only five paths went once, then seven, and each time a test reading another file failed
+    # there: GENESIS.md was the last.
+    (cd "$HERE" && rm -f build/src-tests.zip && git ls-files -co --exclude-standard |
+        grep -v -e '/__pycache__/' -e '\.egg-info/' -e '^screenshots/.*\.png$' | zip -q build/src-tests.zip -@)
     $SCP "$HERE/build/src-tests.zip" "$R:$D/src.zip"
     run "Remove-Item -Recurse -Force $D/src -ErrorAction SilentlyContinue; Expand-Archive $D/src.zip $D/src"
 fi

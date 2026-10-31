@@ -8,9 +8,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/packaging/versions.env"
 . "$HERE/scripts/lib-python.sh"
 DEST="$HERE/build/python-$PY_SERIES"
-PIN="$PY_SERIES from $PYTHON_BUILD"
-# pytest and its dependencies, each pinned (tests/test_pinned_inputs.py)
-PYTEST="pytest==9.1.1 iniconfig==2.3.1 packaging==26.3 pluggy==1.7.0 Pygments==2.21.0"
+PIN="$PY_SERIES from $PYTHON_BUILD with $PYTEST"
 current() { [ -x "$DEST/python/bin/python3" ] && [ "$(cat "$DEST/.pin" 2>/dev/null)" = "$PIN" ]; }
 if ! current; then
     # one at a time: the launcher tiers start together and each asks for it (flock, where present)

@@ -321,9 +321,12 @@ It uses the shared VM (below), starting it if needed, and:
    Linux file kinds (AppImage, .deb); the Windows-only screens are `W01` to `W03`, and the
    Linux-only ones (`LINUX_ONLY` in `tour.py`: the sandbox, package channels, the AppImage's first
    start) are left out.
-5. With `--tests`: unpacks a Python of that same series for Windows (python-build-standalone from GitHub,
-   checked against its `SHA256SUMS`) into `C:\Users\Public\appkata-py` the first time, adds
-   pytest and truststore, and runs the whole suite. `tests/test_windows.py` has tests that run
+5. With `--tests`: unpacks the Python the release carries, python-build-standalone's Windows build of
+   `PYTHON_BUILD`, checked against `PYTHON_WINDOWS_SHA256` (`packaging/versions.env`), into
+   `C:\Users\Public\appkata-py`, adds pytest as `PYTEST` pins it, colorama and truststore, each
+   pinned, and stops unless that Python is `PYTHON_BUILD`'s version. It makes them again when a pin
+   moves (`pin.txt` there). It copies every file git lists but the screenshots' images, and runs
+   the whole suite. `tests/test_windows.py` has tests that run
    only on Windows: a portable app with its junction, Start-menu shortcut, `.cmd` command link
    on the PATH and a running copy that blocks its update; an app for everyone in locked-down
    folders; the registry entries; Authenticode and the Mark of the Web; which programs need the
