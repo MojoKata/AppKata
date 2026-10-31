@@ -154,7 +154,7 @@ def test_the_audit_groups_by_day_the_same_at_any_hour_of_the_tour(tmp_path):
     demo = _demo()
 
     def days(tz, hh, mm):
-        db = DB(str(tmp_path / f"{tz.utcoffset(None)}-{hh}-{mm}.db"))
+        db = DB(str(tmp_path / f"{int(tz.utcoffset(None).total_seconds()) // 60}-{hh}-{mm}.db"))   # no ':' (Windows)
         now = datetime(2026, 10, 30, hh, mm, tzinfo=tz)
         demo.history(db, tz, now)
         rows = db.all("SELECT at, action, subject FROM audit ORDER BY id")
