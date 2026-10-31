@@ -157,7 +157,9 @@ if [ "$SHOTS" = 1 ]; then
     SKEW=$(( VMNOW - $(date +%s) ))
     echo "VM clock: ${SKEW#-} s $([ "$SKEW" -lt 0 ] && echo behind || echo ahead)"
     [ "${SKEW#-}" -le 60 ] || { echo "FAIL: the VM's clock is ${SKEW#-} s off this machine's"; exit 1; }
-    python3 "$HERE/scripts/demo_data.py" stage "$TD"  # the minimum age and the sync times, as of now (R3-24)
+    # the minimum age and the sync times, as of now (R3-24); the Audit's days in the VM's time zone,
+    # which the tour shows them in
+    python3 "$HERE/scripts/demo_data.py" stage "$TD" --utc-offset "$(run "(Get-Date).ToString('zzz')")"
     python3 "$HERE/scripts/demo_data.py" check "$TD"  # no failed sync, and what screenshots/README.md says each screen shows
     W="$HERE/build/windows-tour"
     rm -rf "$W"; mkdir -p "$W"; cp -a "$TD" "$W/tour-data"; rm -rf "$W/tour-data/logs"

@@ -4,7 +4,9 @@
     scripts/demo_data.py build DIR     Trust repos (really signed), your AppKata.md, Sources; no network
     scripts/demo_data.py sync DIR      sync the Catalog from GitHub (about 3 API calls per app)
     scripts/demo_data.py finish DIR    installs as of "a while ago", pins and a minimum age, from the real releases
-    scripts/demo_data.py stage DIR     before a tour: the minimum age and the sync times, as of now
+    scripts/demo_data.py stage DIR [--utc-offset +HH:MM]
+                                       before a tour: the minimum age, the sync times and the Audit, as of now,
+                                       the Audit's days in the time zone the tour shows them in (UTC by default)
     scripts/demo_data.py check DIR     before a tour, after stage: exit 1 if an app's last sync failed (but for the errors the
                                        demo shows), or the data doesn't show what screenshots/README.md says
     scripts/demo_data.py retry DIR     sync again the apps whose last sync failed (GitHub answers 5xx at times)
@@ -657,12 +659,13 @@ def remake(d: str) -> None:
 HELD, HELD_DAYS_LEFT = "Zettlr/Zettlr", 4
 
 
-def stage(d: str) -> None:
+def stage(d: str, utc_offset: str = "+00:00") -> None:
     """Before a tour: what the screens show of time, as of now (R3-24). The data is made once and
     toured for weeks, so a minimum age set when it was made runs out, and its last sync ages. The
     minimum age is set so that HELD's newest release has HELD_DAYS_LEFT days to go, in the database
     and in Settings, the last sync and each Trust's are put 50 minutes back, and the Audit is
-    written again to end half an hour back (R3-25)."""
+    written again to end half an hour back (R3-25), its days those of utc_offset's time zone, the
+    one the tour shows them in (history)."""
     import math
     from datetime import datetime, timedelta, timezone
     db = DB(os.path.join(d, "appkata.db"))
@@ -680,7 +683,8 @@ def stage(d: str) -> None:
     synced = (t - timedelta(minutes=50)).isoformat()
     db.put("last_sync", synced)
     db.x("UPDATE trusts SET synced_at=?", (synced,))
-    history(db)
+    sign, hh, mm = utc_offset[0], int(utc_offset[1:3]), int(utc_offset[4:6])
+    history(db, timezone(timedelta(hours=hh, minutes=mm) * (-1 if sign == "-" else 1)))
     print(f"staged {d}: minimum age {days} days ({HELD.split('/')[1]} {newest['version']} held, {HELD_DAYS_LEFT} days left), synced 50 min ago")
 
 
@@ -874,18 +878,24 @@ def self_app(db: DB, d: str) -> None:
          (APPKATA_REPO, "AppKata", __version__, rels[1]["date"], os.path.basename(image), "appimage", json.dumps(rec), now()))
 
 
-def history(db: DB) -> None:
+def history(db: DB, tz=None, now=None) -> None:
     """The demo's Audit (requirement 13), as if the last two weeks had happened up to now: stage
     writes it again before each tour, so U01 ends on the tour's day (review 3, R3-25). The Audit
     lists by id, as entries happen, so its rows go in by time; and build's own entries go, which
     history tells again ("found a new signer" was there twice). The Audit is append-only: its
-    triggers are dropped while it's written, in the demo data only, and put back as they were."""
-    from datetime import datetime, timedelta, timezone
-    # Each row is (days back, hour, minute) as if the tour ran at 13:00, so the newest, at 12:30, is
-    # half an hour back: a tour earlier in the day moves the whole history earlier, never past now
-    t0 = datetime.now(timezone.utc).replace(microsecond=0)
+    triggers are dropped while it's written, in the demo data only, and put back as they were.
+
+    The Audit groups its entries by day in the time zone of the machine showing it, tz here (UTC,
+    the Linux tour's container; the Windows VM's own): each row of an earlier day is on that day at
+    its clock time, so the days group the same at any hour of the tour (the walk thru of 2026-10-30,
+    item 3). Today's rows keep the newest half an hour back, moving with the hour, and squeezed into
+    the day after midnight when the tour runs early in it; before there is room, stage stops."""
+    from datetime import datetime, time, timedelta, timezone
+    tz = tz or timezone.utc
+    t0 = (now or datetime.now(timezone.utc)).astimezone(tz).replace(microsecond=0)
+    today = t0.date()
     def at(days, h, m):
-        return (t0 - timedelta(days=days, hours=13) + timedelta(hours=h, minutes=m)).replace(second=17).isoformat()
+        return datetime.combine(today - timedelta(days=days), time(h, m, 17), tz)
     ins = db.all("SELECT url, name, version FROM installs")
     v = {r["url"].rsplit("/", 1)[-1].lower(): r["version"] for r in ins}
     rows = [
@@ -922,6 +932,18 @@ def history(db: DB) -> None:
         (at(0, 12, 30), "you", "app", "set the sandbox of", "Syncthing", GH + "syncthing/syncthing", json.dumps(
             {"template": "Off", "level": "off", "removed": "the network, X11 apps"})),
     ]
+    # today's rows, by when they happened (one minute's keep their order), the newest put half an hour back
+    todays = sorted((r for r in rows if r[0].date() == today), key=lambda r: r[0])
+    last, first = t0 - timedelta(minutes=30), datetime.combine(today, time(0, 1, 17), tz)
+    if last < first + timedelta(minutes=len(todays)):
+        sys.exit(f"the tour's day ({t0:%Y-%m-%d %H:%M} {t0:%z}) has only begun: today's {len(todays)} Audit entries "
+                 f"need {len(todays) + 31} minutes of it; stage again after {first + timedelta(minutes=len(todays) + 30):%H:%M}")
+    moved = [r[0] + (last - todays[-1][0]) for r in todays]
+    if moved[0] < first:                     # squeezed between just after midnight and the newest, in proportion
+        span = todays[-1][0] - todays[0][0]
+        moved = [first + (r[0] - todays[0][0]) * ((last - first) / span) for r in todays]
+    rows = [r for r in rows if r[0].date() != today] + [(t.replace(second=17),) + r[1:] for t, r in zip(moved, todays)]
+    rows = [(r[0].astimezone(timezone.utc).replace(microsecond=0).isoformat(),) + r[1:] for r in rows]
     triggers = db.all("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='audit'")
     for t in triggers:
         db.x(f"DROP TRIGGER {t['name']}")
@@ -937,4 +959,6 @@ def history(db: DB) -> None:
 if __name__ == "__main__":
     cmd, d = sys.argv[1], os.path.abspath(sys.argv[2])
     os.environ["APPKATA_DATA"] = d
+    if cmd == "stage" and sys.argv[3:4] == ["--utc-offset"]:
+        sys.exit(stage(d, sys.argv[4]))
     {"build": build, "sync": do_sync, "finish": finish, "remake": remake, "stage": stage, "check": check, "retry": retry}[cmd](d)

@@ -135,3 +135,38 @@ def test_stage_writes_the_audit_in_time_order_ending_before_now(tmp_path):
     assert seen[0] == seen[1]
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         db.x("DELETE FROM audit")
+
+
+def test_the_audit_groups_by_day_the_same_at_any_hour_of_the_tour(tmp_path):
+    """The walk thru of 2026-10-30, item 3: history wrote the Audit as if the tour ran at 13:00, a
+    fixed number of hours back from now, and the Audit groups by the calendar day of the machine
+    showing it. At 03:00 three of today's entries were yesterday's and yesterday's the day before;
+    U01 and U02 changed with the hour, and Linux (UTC) and Windows (the VM's zone) could disagree.
+    The class: a screen whose content depends on when the tour runs. history at four hours, in two
+    time zones: each entry on the same day as at 13:00, in time order, the newest half an hour back;
+    before today's entries fit, stage stops."""
+    from datetime import datetime, timedelta, timezone
+
+    import pytest
+
+    from appkata_core.db import DB
+
+    demo = _demo()
+
+    def days(tz, hh, mm):
+        db = DB(str(tmp_path / f"{int(tz.utcoffset(None).total_seconds()) // 60}-{hh}-{mm}.db"))   # no ':' (Windows)
+        now = datetime(2026, 10, 30, hh, mm, tzinfo=tz)
+        demo.history(db, tz, now)
+        rows = db.all("SELECT at, action, subject FROM audit ORDER BY id")
+        ats = [datetime.fromisoformat(r["at"]) for r in rows]
+        assert ats == sorted(ats) and timedelta(minutes=29) < now - ats[-1] < timedelta(minutes=31)
+        assert all(a.second == 17 for a in ats)                     # as the rest of the demo's times
+        return [((now.date() - a.astimezone(tz).date()).days, r["action"], r["subject"]) for a, r in zip(ats, rows)]
+
+    for tz in (timezone.utc, timezone(timedelta(hours=-7)), timezone(timedelta(hours=5, minutes=30))):
+        at_one = days(tz, 13, 0)
+        assert sum(1 for d, _, _ in at_one if d == 0) == 5 and max(d for d, _, _ in at_one) == 14
+        for hh, mm in ((0, 40), (3, 0), (8, 15), (23, 50)):
+            assert sorted(days(tz, hh, mm)) == sorted(at_one), (tz, hh, mm)
+        with pytest.raises(SystemExit, match="has only begun"):
+            demo.history(DB(str(tmp_path / "early.db")), tz, datetime(2026, 10, 30, 0, 20, tzinfo=tz))

@@ -14,7 +14,9 @@ SHOTS=0
 tier1_setup "$HERE"
 TD="$HERE/build/tour-data"
 [ -f "$TD/appkata.db" ] || { echo "no demo data in $TD: see docs/build.md (scripts/demo_data.py)" >&2; exit 1; }
-python3 "$HERE/scripts/demo_data.py" stage "$TD"      # the minimum age and the sync times, as of now (R3-24)
+# the minimum age and the sync times, as of now (R3-24); the Audit's days in UTC, the tour's
+# container's time zone (it sets no TZ)
+python3 "$HERE/scripts/demo_data.py" stage "$TD" --utc-offset +00:00
 python3 "$HERE/scripts/demo_data.py" check "$TD"      # no failed sync, and what screenshots/README.md says each screen shows
 OUT="$HERE/build/layout-tour"
 rm -rf "$OUT" && mkdir -p "$OUT"
