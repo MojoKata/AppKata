@@ -1,0 +1,23 @@
+# What the AppImage leaves out of the Python and the PySide6 wheel it carries: paths in the AppDir,
+# each part a shell pattern (`*` stays within a part). scripts/build-appimage.sh removes them
+# (scripts/appimage_trim.py apply), and stops if a line names nothing in the AppDir or a library it
+# keeps links one left out. scripts/test-appimage.sh's trace step runs the AppImage the ways AppKata
+# is used and fails if any run used a file left out here (scripts/appimage_trim.py check), unless
+# its line starts with `?`: AppKata looks for it and does well without.
+# AppKata uses Qt Core, Gui, Widgets, Network, Svg, DBus, Qml, Quick, Quick Controls (the Basic style,
+# src/appkata/app.py), Quick Dialogs, Quick Shapes and Quick Layouts.
+
+# Python: IDLE, tkinter, pip and its installer
+usr/python/lib/python*/idlelib
+usr/python/lib/python*/tkinter
+usr/python/lib/python*/ensurepip
+usr/python/lib/python*/site-packages/pip
+usr/python/lib/python*/site-packages/pip-*
+
+# PySide6's Designer, Assistant and Linguist, Qt's translations and the virtual keyboard
+usr/python/lib/python*/site-packages/PySide6/designer
+usr/python/lib/python*/site-packages/PySide6/assistant
+usr/python/lib/python*/site-packages/PySide6/linguist
+? usr/python/lib/python*/site-packages/PySide6/Qt/translations      # Qt looks for its translation of the desktop's
+#   language; without it Qt's few words (a dialog's buttons) stay English, as all of AppKata is
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VirtualKeyboard

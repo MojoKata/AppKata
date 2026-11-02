@@ -8,8 +8,13 @@
 # in each 1.1 platform's desktop package set (scripts/appimage_desktop.sh): the tour runs offscreen and
 # never loads the platform plugin a desktop session loads. The desktop images are built once
 # (appkata-desktop-*, a few GB each).
+# Then what AppKata uses of the AppImage: the trace step runs it the ways AppKata is used, under strace
+# (scripts/appimage_trace.sh), and fails if a run used a file the build leaves out
+# (packaging/appimage-trim.txt, scripts/appimage_trim.py). The untrimmed step, not run by default,
+# does the same for a build that leaves nothing out (APPKATA_TRIM=0 scripts/build-appimage.sh) and
+# lists the largest files no run used: the candidates for the list.
 # Screenshots go to build/appimage-test/<image>/.
-#   scripts/test-appimage.sh [DEMO_DATA_DIR]      APPIMAGE_STEPS="mint hostlibs desktops" picks steps
+#   scripts/test-appimage.sh [DEMO_DATA_DIR]      APPIMAGE_STEPS="mint hostlibs desktops trace" picks steps
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")
@@ -17,7 +22,7 @@ IMG="AppKata-$VERSION-x86_64.AppImage"
 DATA=$(cd "${1:-$HERE/build/tour-data}" && pwd)
 [ -f "$HERE/releases/$IMG" ] || { echo "build it first: scripts/build-appimage.sh" >&2; exit 1; }
 [ -f "$DATA/appkata.db" ] || { echo "no demo data in $DATA (scripts/demo_data.py build|sync|finish)" >&2; exit 1; }
-STEPS=${APPIMAGE_STEPS:-mint hostlibs desktops}
+STEPS=${APPIMAGE_STEPS:-mint hostlibs desktops trace}
 fail=0
 for image in $(case " $STEPS " in *" mint "*) echo linuxmintd/mint22.3-amd64;; esac); do
     name=$(echo "$image" | sed 's#.*/##; s#-amd64##')
@@ -99,5 +104,29 @@ if case " $STEPS " in *" desktops "*) true;; *) false;; esac; then
             echo "   starts now: take $name off STILL_FAILING"; fail=1
         fi
     done
+fi
+trace() {      # trace <AppImage> <out> [AppDir]: the trace runs, then the check of them
+    desktop_image mint22.3
+    rm -rf "$2"; mkdir -p "$2"
+    docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined -v "$(dirname "$1"):/r:ro" -v "$DATA:/data:ro" \
+        -v "$HERE/scripts/appimage_trace.sh:/trace.sh:ro" -v "$2:/out" appkata-desktop-mint22.3 \
+        sh -c "sh /trace.sh /r/$(basename "$1") > /out/runs.txt 2>&1; chown -R $(id -u):$(id -g) /out"
+    sed 's/^/   /' "$2/runs.txt"
+    st=0; python3 "$HERE/scripts/appimage_trim.py" check "$2" ${3:+"$3"} > "$2/check.txt" || st=$?
+    sed 's/^/   /' "$2/check.txt"
+    return $st
+}
+if case " $STEPS " in *" trace "*) true;; *) false;; esac; then
+    echo "== what AppKata uses of the AppImage (scripts/appimage_trace.sh, packaging/appimage-trim.txt)"
+    out="$HERE/build/appimage-test/trace"
+    trace "$HERE/releases/$IMG" "$out" || fail=1
+fi
+if case " $STEPS " in *" untrimmed "*) true;; *) false;; esac; then
+    whole="$HERE/build/AppKata-$VERSION-untrimmed-x86_64.AppImage"
+    [ -f "$whole" ] || { echo "build it first: APPKATA_TRIM=0 scripts/build-appimage.sh" >&2; exit 1; }
+    echo "== what AppKata uses of a build that leaves nothing out"
+    out="$HERE/build/appimage-test/trace-untrimmed"
+    rm -rf "$out.appdir" && mkdir -p "$out.appdir" && (cd "$out.appdir" && "$whole" --appimage-extract >/dev/null)
+    trace "$whole" "$out" "$out.appdir/squashfs-root" || fail=1
 fi
 exit $fail
