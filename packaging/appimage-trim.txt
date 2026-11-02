@@ -70,6 +70,60 @@ usr/python/lib/python*/site-packages/PySide6/QtQuickTest.abi3.so
 usr/python/lib/python*/site-packages/PySide6/QtTest.abi3.so
 usr/python/lib/python*/site-packages/PySide6/QtUiTools.abi3.so
 
-
-# the virtual keyboard's QML module
+# Qt modules AppKata doesn't use, with their PySide6 modules and QML modules
+usr/python/lib/python*/site-packages/PySide6/QtConcurrent.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtOpenGLWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtPrintSupport.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtQuickWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtSql.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtSvgWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtXml.abi3.so
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Concurrent.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6OpenGLWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6PrintSupport.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Sql.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6SvgWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Xml.*
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/printsupport
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/sqldrivers
+# the QML parts of Qt 3D and Qt PDF (the wheel has no libraries for them), the virtual keyboard,
+# particles, the timeline, Lottie and vector images, local storage, the XML list model, and the Labs
+# modules but FolderListModel, which Qt's own file and folder dialogs use (not GTK's)
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Scene2D
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Scene3D
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Pdf
+# Qt tries every image plugin; this one never loads, as the wheel has no Qt PDF
+? usr/python/lib/python*/site-packages/PySide6/Qt/plugins/imageformats/libqpdf.so
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VirtualKeyboard
+# Qt tries every input method; this one never loads, as the wheel has no virtual keyboard
+? usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforminputcontexts/libqtvirtualkeyboardplugin.so
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickParticles.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Particles
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickTimeline*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Timeline
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Lottie*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickVectorImage*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VectorImage
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/vectorimageformats
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlLocalStorage.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/LocalStorage
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlXmlListModel.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQml/XmlListModel
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsAnimation.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsPlatform.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsQmlModels.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSettings.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSharedImage.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsStyleKit*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSynchronizer.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsWavefrontMesh.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/StyleKit
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/animation
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/assetdownloader
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/platform
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/qmlmodels
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/settings
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/sharedimage
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/synchronizer
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/wavefrontmesh

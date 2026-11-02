@@ -126,7 +126,8 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    (`scripts/appimage_trim.py apply`): Python's IDLE, Tcl/Tk and tkinter, pip, dbm's
    ndbm, pydoc's help texts, headers and shared libpython; PySide6's tools for building Qt programs
    (Designer, Linguist, the QML tools, headers, type descriptions), its type stubs and Qt's test
-   modules; Qt's translations and the virtual keyboard. The build
+   modules; the Qt modules, QML modules and plugins AppKata doesn't load (SQL, XML, printing, the
+   virtual keyboard, particles, Lottie, most of Qt Labs); Qt's translations. The build
    stops if a line names nothing in the AppDir (a Qt or Python update renamed the part, which would
    otherwise come back unnoticed), or if a library it keeps links one the list leaves out.
    `APPKATA_TRIM=0` leaves everything in, for the trace below to compare; that build goes to
