@@ -16,6 +16,28 @@ git repository.
   Windows installer carry it as `LICENSE.txt`, beside `THIRD-PARTY-NOTICES.txt`: the licenses of the
   parts they carry that others made, Python and Qt among them ([`docs/build.md`](docs/build.md#license-files))
 
+## The release key
+
+Each release's AppImage is signed by AppKata's release key, `AppKata <app@mojokata.xyz>`, whose
+fingerprint is
+
+```
+A5C4 FAB7 54C2 34D3 8C98  3D94 02E7 71CD 068A 1ABD
+```
+
+The public key is [`packaging/appkata-release-key.asc`](packaging/appkata-release-key.asc), also on
+keys.openpgp.org. To check a download:
+
+```sh
+gpg --import appkata-release-key.asc
+gpg --verify AppKata-<version>-x86_64.AppImage.asc AppKata-<version>-x86_64.AppImage
+```
+
+`gpg` must say "Good signature from "AppKata <app@mojokata.xyz>"" and give the fingerprint above as
+the "Primary key fingerprint". Its warning that the key "is not certified with a trusted signature"
+is expected: the fingerprint is the check. Windows' installer isn't signed yet; check it against its
+`.sha256`.
+
 ## Status (0.1.0: Linux and Windows)
 
 | Area | State |

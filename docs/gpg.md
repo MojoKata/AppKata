@@ -9,8 +9,8 @@ checksums (4.4), review signatures (7.6.2, 10.7, 10.8), review Details (10.3.4),
 
 - **Is AppKata's own AppImage signed?** **Yes**, from the first release CI builds: each release
   carries `AppKata-<version>-x86_64.AppImage.asc`, a detached signature by AppKata's release key
-  (its fingerprint is published in the README, and the public key as
-  `packaging/appkata-release-key.asc` and on keys.openpgp.org, when the owner makes the key,
+  (fingerprint `A5C4 FAB7 54C2 34D3 8C98  3D94 02E7 71CD 068A 1ABD`, published in the README with how to check a download; the
+  public key is `packaging/appkata-release-key.asc` and on keys.openpgp.org,
   [`GENESIS.md`](../GENESIS.md) step 7). CI signs it with the key's signing subkey after the owner approves
   ([`github-workflows.md`](github-workflows.md), "Signing"); anyone can check it with
   `gpg --verify`. AppKata itself doesn't check the `.asc` of its own updates either: that would come

@@ -59,6 +59,31 @@ def test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey(tmp_path):
     assert oct((home / "gnupg").stat().st_mode & 0o777) == "0o700"
 
 
+@pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
+def test_the_release_key_is_the_one_the_docs_name(tmp_path):
+    """packaging/appkata-release-key.asc is what publish.sh verify checks every release against, and
+    the README's fingerprint is what a user checks a download against: the two must be the same key,
+    and the key what GENESIS.md step 7 promises (an ed25519 main key that only certifies, 5 years; an
+    ed25519 signing subkey, 2 years)."""
+    out = subprocess.run(["gpg", "--batch", "--with-colons", "--show-keys",
+                          os.path.join(ROOT, "packaging", "appkata-release-key.asc")],
+                         env=dict(os.environ, GNUPGHOME=str(tmp_path)), check=True, capture_output=True, text=True).stdout
+    rows = [line.split(":") for line in out.splitlines()]
+    keys = [r for r in rows if r[0] in ("pub", "sub")]
+    fprs = [r[9] for r in rows if r[0] == "fpr"]
+    assert [r[0] for r in keys] == ["pub", "sub"], out
+    assert [r[9] for r in rows if r[0] == "uid"] == ["AppKata <app@mojokata.xyz>"], out
+    (pub, sub), year = keys, 365 * 86400
+    assert pub[3] == sub[3] == "22" and pub[16] == sub[16] == "ed25519", out          # EdDSA, ed25519
+    assert "".join(c for c in pub[11] if c.islower()) == "c" and sub[11] == "s", out    # certify; sign
+    assert int(pub[6]) - int(pub[5]) == 5 * year and int(sub[6]) - int(sub[5]) == 2 * year, out
+    groups = [fprs[0][i:i + 4] for i in range(0, 40, 4)]
+    shown = " ".join(groups[:5]) + "  " + " ".join(groups[5:])         # as gpg --verify prints it
+    for doc in ("README.md", os.path.join("docs", "gpg.md"), os.path.join("docs", "github-workflows.md"), "GENESIS.md"):
+        with open(os.path.join(ROOT, doc), encoding="utf-8") as f:
+            assert shown in f.read(), (doc, shown)
+
+
 def test_every_check_genesis_names_is_one_the_script_reads_back():
     with open(os.path.join(ROOT, "GENESIS.md"), encoding="utf-8") as f:
         genesis = f.read()
@@ -94,7 +119,7 @@ def test_check_says_it_cant_read_what_github_refuses_and_goes_on(tmp_path):
                        env=dict(os.environ, PATH=f"{tmp_path}{os.pathsep}{os.environ['PATH']}"))
     lines = r.stderr.splitlines()
     assert r.returncode == 1 and "{" not in r.stderr, r.stderr
-    assert lines[-1].startswith("FAIL  release key:"), r.stderr            # it went on to the end
+    assert "  release key: " in lines[-1], r.stderr            # it went on to the end
     text = _script()
     checks = text[text.index("check() {"):text.index("\n}\n", text.index("check() {"))]
     for name in dict.fromkeys(re.findall(r'\bis "([^"]+)" "\$\((?:api|gh) ', checks)):

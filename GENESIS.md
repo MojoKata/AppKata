@@ -147,3 +147,4 @@ publish`.
 | Date | By | What it showed |
 |---|---|---|
 | 2026-10-24 | a read-only member | `master` ruleset as in step 4, without the required check; private vulnerability reporting off; no environments; merge methods and Actions settings not readable |
+| 2026-11-01 | a read-only member | after step 8's `publish.sh setup`: `master` ruleset with `ci` required, the `tags` ruleset, the `release` environment (required reviewers, `v*` tags), private vulnerability reporting on, the `field-test` label. The release key, posted on issue #12 and committed as `packaging/appkata-release-key.asc`: fingerprint `A5C4 FAB7 54C2 34D3 8C98  3D94 02E7 71CD 068A 1ABD`, `AppKata <app@mojokata.xyz>`, an ed25519 main key that only certifies, made 2026-11-02 (UTC), expires 2031-11-01, and an ed25519 signing subkey, expires 2028-11-01. Not readable: the environment's secrets, immutable releases, merge methods, the Actions settings, the rulesets' bypass lists |
