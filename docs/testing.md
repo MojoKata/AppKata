@@ -68,7 +68,7 @@ in [`local-proxy-test-plan.md`](local-proxy-test-plan.md). The desktop VMs (2 an
 automatic check of `scripts/sandbox/field-test.sh` and list these questions as MANUAL. Run it
 without `--non-interactive` on real hardware, on Mint 22.3, LMDE 7, Ubuntu 24.04 and Ubuntu 26.04
 (it asks the AppArmor setup's questions only where the table above says the setup is needed). It is
-step 6 of [`RELEASE.md`](RELEASE.md).
+step 4 of [`RELEASE.md`](RELEASE.md#4-the-field-test).
 
 ### Tracking the runs on GitHub
 
@@ -106,7 +106,7 @@ can't carry the report.
    the questions the field test itself asks there (`scripts/sandbox/fieldtest_questions.py`), so the
    plan, the script and the issue are one list: E11, in `tests/test_field_test_plan.py`, compares
    the checklist too, and the environments are this file's table.
-4. Still to do, at the first release: point this section and RELEASE.md's step 6 at its tracking issue.
+4. Still to do, at the first release: point this section and RELEASE.md's step 4 at its tracking issue.
 
 ## Downloaded ISOs
 

@@ -69,19 +69,14 @@ The "Primary key fingerprint" `gpg` names must be the one the README publishes,
 A published release reaches every AppKata at its next sync, since AppKata takes its own updates from
 this repository's releases (requirement 2.11). So CI makes a **draft**, which only the repository's
 writers see, and the owner publishes it after the checks no runner can make
-([`RELEASE.md`](RELEASE.md), step 6: the field test by hand, which uses the draft's files).
+([`RELEASE.md`](RELEASE.md#4-the-field-test), 4: the field test by hand, which uses the draft's files).
 
-`scripts/publish.sh` walks through it:
-
-- `release`: checks that `master` is clean and current, tags `v<version>` and pushes it, waits for
-  the run, shows the two `sha256` notices, approves the signing, waits for the draft and verifies it.
-- `resume`: the same from "waits for the run", after an interruption, or after a failed run is run
-  again (`gh run rerun RUN`, with or without `--failed`; it reads each `sha256` notice from the
-  attempt that built the file, since a job carried into a new attempt keeps none).
-- `verify [VERSION]`: downloads the draft or release, checks that it holds exactly the five files,
-  each against its `.sha256`, and that the AppImage's signature is the release key's
-  (`packaging/appkata-release-key.asc`, matched by fingerprint).
-- `publish [VERSION]`: verifies again and publishes the draft as the latest release.
+`scripts/publish.sh` walks through it: `release` tags, waits for the run, shows the two `sha256`
+notices, approves the signing and verifies the draft, and `publish` publishes it once the field test
+is done. What each command does and refuses is in [`RELEASE.md`](RELEASE.md#8-what-publishsh-does).
+`resume`, after a failed run is run again (`gh run rerun RUN`, with or without `--failed`), reads
+each `sha256` notice from the attempt that built the file, since a job carried into a new attempt
+keeps none.
 
 With **immutable releases** on (GENESIS.md, step 8), a published release's files and tag can't be
 changed, and GitHub adds a release attestation (`gh release verify v<version>`). A bad release is

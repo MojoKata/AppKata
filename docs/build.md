@@ -63,8 +63,9 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
 
 ## Releasing
 
-The release checklist, from the tests before tagging to publishing the draft, with each command
-and what it prints, is in [`RELEASE.md`](RELEASE.md).
+How a release is made, from the release pull request to publishing the draft, with each command
+and what it prints: the owner's steps in [`RELEASE.md`](RELEASE.md), the agent's in
+[`RELEASE_AGENT.md`](RELEASE_AGENT.md).
 
 ## Overview
 

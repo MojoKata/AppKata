@@ -211,8 +211,8 @@ own machine (not a shared one):
 Check: `publish.sh check`, "release key" and "release environment: secrets";
 `gpg --show-keys packaging/appkata-release-key.asc` shows both expiry dates.
 
-Renewing the subkey before it expires, and replacing a leaked copy: [`RELEASE.md`](RELEASE.md),
-"The release key between releases".
+Renewing the subkey before it expires, and replacing a leaked copy:
+[`RELEASE.md`](RELEASE.md#9-the-release-key-between-releases), 9.
 
 ## 8. CI's settings
 

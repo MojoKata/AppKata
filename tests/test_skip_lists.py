@@ -61,7 +61,7 @@ TAKES = {"tier1": None, "windows": None, "launcher": LAUNCHER + ["test_platform_
 # (docs/reviews/followups-skips.md). The test fails on anything new, and on a listed test some tier runs.
 NEVER_RUN = {
     "tests/test_sandbox_state.py::test_freeze_todays_state_when_asked":
-        "a tool, not a check: docs/RELEASE.md's step 3 runs it with UPDATE_STATE",
+        "a tool, not a check: docs/RELEASE_AGENT.md's 'Prepare a release' runs it with UPDATE_STATE",
     "tests/test_channels.py::test_system_bus":
         "S2, open: tier 1's container has no system bus, and no tier that has one takes test_channels.py",
 }
