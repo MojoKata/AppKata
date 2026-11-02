@@ -110,8 +110,9 @@ AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 ### AppImage
 
 ```sh
-scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 98 MB)
-scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop
+scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 63 MB)
+scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop,
+                               # and traces what AppKata uses of it (none of what the build leaves out)
 ```
 
 `build-appimage.sh`:
