@@ -33,11 +33,43 @@ usr/python/bin/pydoc*
 usr/python/bin/python*-config
 usr/python/bin/pyside6-*
 
-# PySide6's Designer, Assistant and Linguist, Qt's translations and the virtual keyboard
+# PySide6's tools for building Qt programs (Designer, Linguist, the QML tools, the C++ headers and
+# type descriptions shiboken generates from), the type stubs for editors, and Qt's test modules
 usr/python/lib/python*/site-packages/PySide6/designer
 usr/python/lib/python*/site-packages/PySide6/assistant
 usr/python/lib/python*/site-packages/PySide6/linguist
+usr/python/lib/python*/site-packages/PySide6/lrelease
+usr/python/lib/python*/site-packages/PySide6/lupdate
+usr/python/lib/python*/site-packages/PySide6/qmlformat
+usr/python/lib/python*/site-packages/PySide6/qmllint
+usr/python/lib/python*/site-packages/PySide6/qmlls
+usr/python/lib/python*/site-packages/PySide6/svgtoqml
+usr/python/lib/python*/site-packages/PySide6/scripts
+usr/python/lib/python*/site-packages/PySide6/include
+usr/python/lib/python*/site-packages/PySide6/typesystems
+usr/python/lib/python*/site-packages/PySide6/glue
+usr/python/lib/python*/site-packages/PySide6/*.pyi
+usr/python/lib/python*/site-packages/PySide6/Qt/libexec
+usr/python/lib/python*/site-packages/PySide6/Qt/metatypes
 # Qt looks for its translation of the desktop's language; without it Qt's few words (a dialog's
 # buttons) stay English, as all of AppKata is
 ? usr/python/lib/python*/site-packages/PySide6/Qt/translations
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/designer
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmllint
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmltooling
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Designer*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Help.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6UiTools.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlCompiler.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickTest.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Test.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtTest
+usr/python/lib/python*/site-packages/PySide6/QtDesigner.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtHelp.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtQuickTest.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtTest.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtUiTools.abi3.so
+
+
+# the virtual keyboard's QML module
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VirtualKeyboard
