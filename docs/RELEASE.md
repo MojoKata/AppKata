@@ -15,7 +15,7 @@ files and tag can never change. A bad release is fixed by a new version, never i
 ```
  1. You → agent   "Prepare release 0.2.0"       the release pull request: tests, version,
                                                  snapshot, record          (RELEASE_AGENT.md, 1)
- 2. You           merge it
+ 2. You           merge it; wait for CI on master
  3. You           scripts/publish.sh release     tag → CI builds → you approve the signing →
                                                  the draft, checked → the field-test issues
  4. You           the field test, each desktop   field-test.sh; post the report; close its issue
@@ -48,8 +48,12 @@ tells you when the pull request's CI has passed.
 
 ## 2. Merge the release pull request
 
-Read the record in the pull request, then squash-merge it as usual. Merging starts CI on `master`;
-`release` waits for that run to pass.
+Read the record in the pull request, then squash-merge it as usual. Merging starts CI on `master`,
+which takes about 15 minutes; `release` refuses until that run has passed. To see it:
+
+```sh
+gh run list --repo MojoKata/AppKata --branch master --limit 1      # "completed  success"
+```
 
 ## 3. Tag, build and sign: `publish.sh release`
 
