@@ -188,8 +188,9 @@ more steps check what a desktop session loads (review 3, R3-31, R3-32):
   Qt opens every plugin in a folder to read its metadata. A line marked `?` is one AppKata looks for
   and does well without (Qt's translations), reported but not failed. Each run is given a session
   bus, as a desktop session has, and 15 minutes, and must end as it should: the sessions still
-  running when stopped, the dialogs and TLS working, both tours saving screens, no traceback. `tests/test_appimage_trim.py` (tier 1)
-  checks before any build that no QML or PySide6 module AppKata imports is on the list.
+  running when stopped, the dialogs and TLS working, both tours saving screens, no traceback.
+  `tests/test_appimage_trim.py` (tier 1) checks before any build that no QML or PySide6 module
+  AppKata imports is on the list.
 - **untrimmed** (not run by default): the same trace of the `APPKATA_TRIM=0` build. It lists the
   largest files no run used, the candidates for the list, and fails like `trace` if a run used a
   file the list leaves out. Run it when the list changes or Qt or Python is updated.
