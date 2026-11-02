@@ -75,6 +75,15 @@ def test_each_claim_still_wrong_names_its_finding():
         assert _finding_exists(finding), (wrong, finding)
 
 
+def _a_zone_where_its_about_noon(now):
+    """The UTC offset of a tour run about noon, now. stage stops before the tour's day has room for
+    today's Audit entries (00:40 there, test_the_audit_groups_by_day_the_same_at_any_hour_of_the_tour),
+    so a test of something else that stages at the real hour in UTC failed from 00:00 to 00:36 UTC
+    (issue #13). Noon there, whatever the hour here: UTC-11 to UTC+12."""
+    h = 12 - now.hour
+    return f"{'+' if h >= 0 else '-'}{abs(h):02d}:00"
+
+
 def test_stage_holds_the_newest_release_with_days_to_go(tmp_path):
     """stage sets the minimum age so HELD's newest release has HELD_DAYS_LEFT days to go, whatever
     the hour, in the database and in Settings, and puts the sync times 50 minutes back."""
@@ -94,7 +103,7 @@ def test_stage_holds_the_newest_release_with_days_to_go(tmp_path):
                 {"version": "4.7.0", "date": (now - timedelta(days=age + 50)).isoformat(), "assets": [{"name": "a"}]}]
         db = DB(str(d / "appkata.db"))
         db.x("INSERT INTO apps(url, name, releases) VALUES(?,?,?)", (demo.GH + demo.HELD, "Zettlr", json.dumps(rels)))
-        demo.stage(str(d))
+        demo.stage(str(d), _a_zone_where_its_about_noon(now))
         days = db.get("min_age_default")
         assert json.loads((d / "gui.json").read_text())["minAgeDefault"] == days
         assert catalog.eligible_release(rels, {"min_age": days}) == (rels[1], f"Held · {demo.HELD_DAYS_LEFT} days left")
@@ -125,7 +134,7 @@ def test_stage_writes_the_audit_in_time_order_ending_before_now(tmp_path):
          (now.isoformat(), "sync", "authority", "found a new signer,", "nadia@desk.coop", "", "{}"))
     seen = []
     for _ in range(2):
-        demo.stage(str(d))
+        demo.stage(str(d), _a_zone_where_its_about_noon(now))
         rows = db.all("SELECT at, actor, kind, action, subject FROM audit ORDER BY id")
         ats = [datetime.fromisoformat(r["at"]) for r in rows]
         assert ats == sorted(ats) and len(rows) > 20
