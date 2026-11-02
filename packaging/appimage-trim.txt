@@ -127,3 +127,15 @@ usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/settings
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/sharedimage
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/synchronizer
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/wavefrontmesh
+# the Quick Controls styles other than Basic, which AppKata sets (src/appkata/app.py)
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Fusion*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2FluentWinUI3*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Imagine*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Material*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Universal*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Fusion
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/FluentWinUI3
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Imagine
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Material
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/designer
