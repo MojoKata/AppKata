@@ -7,17 +7,37 @@
 # AppKata uses Qt Core, Gui, Widgets, Network, Svg, DBus, Qml, Quick, Quick Controls (the Basic style,
 # src/appkata/app.py), Quick Dialogs, Quick Shapes and Quick Layouts.
 
-# Python: IDLE, tkinter, pip and its installer
+# Python: IDLE, Tcl/Tk and tkinter, dbm's ndbm, pydoc's help texts, pip and its installer, the
+# headers and the shared libpython (the python3.14 program has it built in; only libpython3.so links it)
 usr/python/lib/python*/idlelib
 usr/python/lib/python*/tkinter
+usr/python/lib/python*/turtledemo
 usr/python/lib/python*/ensurepip
+usr/python/lib/python*/lib-dynload/_tkinter.*
+usr/python/lib/python*/lib-dynload/_dbm.*
+usr/python/lib/python*/pydoc_data
+usr/python/lib/python*/config-*
 usr/python/lib/python*/site-packages/pip
 usr/python/lib/python*/site-packages/pip-*
+usr/python/lib/libtcl*
+usr/python/lib/tcl9*
+usr/python/lib/tk9*
+usr/python/lib/itcl*
+usr/python/lib/thread*
+usr/python/lib/libpython3*.so*
+usr/python/lib/pkgconfig
+usr/python/include
+usr/python/bin/idle*
+usr/python/bin/pip*
+usr/python/bin/pydoc*
+usr/python/bin/python*-config
+usr/python/bin/pyside6-*
 
 # PySide6's Designer, Assistant and Linguist, Qt's translations and the virtual keyboard
 usr/python/lib/python*/site-packages/PySide6/designer
 usr/python/lib/python*/site-packages/PySide6/assistant
 usr/python/lib/python*/site-packages/PySide6/linguist
-? usr/python/lib/python*/site-packages/PySide6/Qt/translations      # Qt looks for its translation of the desktop's
-#   language; without it Qt's few words (a dialog's buttons) stay English, as all of AppKata is
+# Qt looks for its translation of the desktop's language; without it Qt's few words (a dialog's
+# buttons) stay English, as all of AppKata is
+? usr/python/lib/python*/site-packages/PySide6/Qt/translations
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VirtualKeyboard

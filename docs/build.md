@@ -123,8 +123,9 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    and adds the five xcb-util libraries Qt's X11 plugin needs and no Debian-family desktop installs
    (`libxcb-cursor`, `-icccm`, `-keysyms`, `-image`, `-render-util`; review 3, R3-32). Then it
    **leaves out what AppKata doesn't use**, as `packaging/appimage-trim.txt` lists it
-   (`scripts/appimage_trim.py apply`): Python's IDLE, tkinter and pip; PySide6's Designer,
-   Assistant and Linguist; Qt's translations and the virtual keyboard. The build
+   (`scripts/appimage_trim.py apply`): Python's IDLE, Tcl/Tk and tkinter, pip, dbm's
+   ndbm, pydoc's help texts, headers and shared libpython; PySide6's Designer, Assistant and
+   Linguist; Qt's translations and the virtual keyboard. The build
    stops if a line names nothing in the AppDir (a Qt or Python update renamed the part, which would
    otherwise come back unnoticed), or if a library it keeps links one the list leaves out.
    `APPKATA_TRIM=0` leaves everything in, for the trace below to compare; that build goes to
