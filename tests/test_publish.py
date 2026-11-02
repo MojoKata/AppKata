@@ -1,4 +1,4 @@
-"""scripts/publish.sh, the owner's steps for the release key and releases (GENESIS.md): what can be
+"""scripts/publish.sh, the owner's steps for the release key and releases (docs/GENESIS.md): what can be
 checked without GitHub. Its GitHub half (setup, check, key-github, resume, verify) was run against a
 fork with a throwaway key; see docs/github-workflows.md."""
 
@@ -79,13 +79,13 @@ def test_the_release_key_is_the_one_the_docs_name(tmp_path):
     assert int(pub[6]) - int(pub[5]) == 5 * year and int(sub[6]) - int(sub[5]) == 2 * year, out
     groups = [fprs[0][i:i + 4] for i in range(0, 40, 4)]
     shown = " ".join(groups[:5]) + "  " + " ".join(groups[5:])         # as gpg --verify prints it
-    for doc in ("README.md", os.path.join("docs", "gpg.md"), os.path.join("docs", "github-workflows.md"), "GENESIS.md"):
+    for doc in ("README.md", os.path.join("docs", "gpg.md"), os.path.join("docs", "github-workflows.md"), os.path.join("docs", "GENESIS.md")):
         with open(os.path.join(ROOT, doc), encoding="utf-8") as f:
             assert shown in f.read(), (doc, shown)
 
 
 def test_every_check_genesis_names_is_one_the_script_reads_back():
-    with open(os.path.join(ROOT, "GENESIS.md"), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, "docs", "GENESIS.md"), encoding="utf-8") as f:
         genesis = f.read()
     text = _script()
     checks = text[text.index("check() {"):text.index("\n}\n", text.index("check() {"))]
@@ -251,3 +251,124 @@ def test_resume_shows_what_ci_built_after_any_rerun(tmp_path, attempts, built, s
         assert "no public key to check the signature with" in r.stderr, r.stderr
     else:
         assert "publish.sh: the run's build jobs posted no sha256 notices" in r.stderr, r.stderr
+
+
+GATE_GH = r'''#!/usr/bin/env python3
+# gh for publish.sh release's and publish's gates, without GitHub. FAKE_CI: CI's run on master at the
+# commit ("completed success", "in_progress ", "completed failure" or nothing); FAKE_FT_ALL and
+# FAKE_FT_OPEN: the release's field-test issues; anything about the tag's run fails, which ends release.
+import os, sys
+a = sys.argv[1:]
+if a[:2] == ["run", "list"] and "master" in a:
+    print(os.environ.get("FAKE_CI", ""), end="")
+elif a[:2] == ["release", "view"]:
+    print("true")
+elif a[:2] == ["issue", "list"]:
+    print(os.environ.get("FAKE_FT_" + a[a.index("--state") + 1].upper(), ""), end="")
+else:
+    sys.exit(1)
+'''
+
+RECORD = "".join(f"- [x] **{step}** done\n" for step in
+                 ("tier1", "sandbox", "github-paths", "version", "state", "screenshots"))
+
+
+def _gate_repo(tmp_path, record=RECORD, state=True, status="0.9.9: Linux and Windows"):
+    """A clone of a repository like this one at the commit the release pull request left, whose
+    origin is a bare repository standing in for github.com/owner/name."""
+    work, bare = tmp_path / "work", tmp_path / "remote" / "github.com" / "owner" / "name.git"
+    for d in ("scripts", "src/appkata_core", "docs/releases", "tests/data/state", "bin"):
+        (work / d).mkdir(parents=True)
+    shutil.copy(SCRIPT, work / "scripts" / "publish.sh")
+    (work / "src/appkata_core/__init__.py").write_text(
+        '__version__ = "0.9.9"\nAPPKATA_REPO = "https://github.com/owner/name"\n')
+    (work / "README.md").write_text(f"# AppKata\n\n## Status ({status})\n")
+    if record is not None:
+        (work / "docs/releases/0.9.9.md").write_text("# AppKata 0.9.9\n\n" + record)
+    if state:
+        (work / "tests/data/state/0.9.9.json").write_text("{}\n")
+    (work / ".gitignore").write_text("bin/\n")
+    gh = work / "bin" / "gh"
+    gh.write_text(GATE_GH)
+    gh.chmod(0o755)
+    git = lambda *args, cwd=work: subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)  # noqa: E731
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True)
+    git("init", "-q", "-b", "master")
+    for k, v in (("user.name", "Test"), ("user.email", "test@example.org"), ("commit.gpgsign", "false"),
+                 ("tag.gpgsign", "false")):                 # this throwaway repository's own, for release's tag too
+        git("config", k, v)
+    git("add", "-A")
+    git("commit", "-q", "-m", "0.9.9")
+    git("remote", "add", "origin", str(bare))
+    git("push", "-q", "origin", "master")
+    return work, bare
+
+
+def _gate(work, *args, **env):
+    return subprocess.run(["sh", str(work / "scripts" / "publish.sh"), "--yes", *args], cwd=work, capture_output=True,
+                          text=True, timeout=120, env=dict(os.environ, **env, GIT_CONFIG_GLOBAL=os.devnull,
+                                                           PATH=f"{work / 'bin'}{os.pathsep}{os.environ['PATH']}"))
+
+
+@pytest.mark.skipif(not (shutil.which("sh") and shutil.which("git")), reason="runs publish.sh in a git repository")
+@pytest.mark.parametrize("case, says", [
+    ("no record", "the release pull request isn't merged"),
+    ("a step left out", "the step screenshots isn't ticked"),
+    ("a step not done", "has steps not done: - [ ] **notes**"),
+    ("no state", "tests/data/state/0.9.9.json is missing"),
+    ("README", "README.md's Status heading doesn't name 0.9.9"),
+    ("CI not run", "CI hasn't run on master"),
+    ("CI running", "CI is still running on master"),
+    ("CI failed", "CI failed on master"),
+])
+def test_release_tags_nothing_before_the_release_pull_request_is_merged_and_ci_passed_on_it(tmp_path, case, says):
+    """release used to tag whatever master held: a missing state snapshot only asked "tag anyway?",
+    and that CI had passed on master, the steps the release pull request takes and the README's
+    version were the owner's to remember (docs/RELEASE.md). Each is a refusal now, before the tag."""
+    repo = {"no record": dict(record=None), "a step left out": dict(record=RECORD.replace("**screenshots**", "**other**")),
+            "a step not done": dict(record=RECORD + "- [ ] **notes** the release notes\n"), "no state": dict(state=False),
+            "README": dict(status="0.9.8: Linux and Windows")}.get(case, {})
+    ci = {"CI not run": "", "CI running": "in_progress \n", "CI failed": "completed failure\n"}.get(case, "completed success\n")
+    work, bare = _gate_repo(tmp_path, **repo)
+    r = _gate(work, "release", FAKE_CI=ci)
+    assert r.returncode == 1 and says in r.stderr, r.stderr
+    tags = subprocess.run(["git", "tag"], cwd=bare, capture_output=True, text=True).stdout
+    assert tags == "", tags
+
+
+@pytest.mark.skipif(not (shutil.which("sh") and shutil.which("git")), reason="runs publish.sh in a git repository")
+def test_release_tags_once_the_release_pull_request_is_merged_and_ci_passed_on_it(tmp_path):
+    work, bare = _gate_repo(tmp_path)
+    r = _gate(work, "release", FAKE_CI="completed success\n")
+    assert "CI passed on master at" in r.stderr, r.stderr
+    tags = subprocess.run(["git", "tag"], cwd=bare, capture_output=True, text=True).stdout
+    assert tags == "v0.9.9\n", r.stderr
+
+
+@pytest.mark.skipif(not (shutil.which("sh") and shutil.which("git")), reason="runs publish.sh in a git repository")
+@pytest.mark.parametrize("case, all_, open_, says", [
+    ("none", "", "", "0.9.9 has no field-test issues"),
+    ("open", "#5 CLOSED Field test: 0.9.9 on A\n#4 OPEN Field test: 0.9.9\n", "#4 OPEN Field test: 0.9.9\n",
+     "the field test of 0.9.9 isn't done: these are open (docs/RELEASE.md, 4):\n#4 OPEN Field test: 0.9.9"),
+    ("closed", "#5 CLOSED Field test: 0.9.9 on A\n#4 CLOSED Field test: 0.9.9\n", "",
+     "Every field-test issue of 0.9.9 is closed.\npublish.sh: no public key"),
+])
+def test_publish_waits_for_every_field_test_issue_to_close(tmp_path, case, all_, open_, says):
+    """publish used to publish any draft: that the field test was done was the owner's to remember.
+    It refuses while the release has no field-test issues or one is open; once all are closed it
+    goes on (to verify, which stops here on the missing key)."""
+    work, _ = _gate_repo(tmp_path)
+    r = _gate(work, "--key", str(tmp_path / "no-key.asc"), "publish", FAKE_FT_ALL=all_, FAKE_FT_OPEN=open_)
+    assert r.returncode == 1 and says in r.stderr, r.stderr
+
+
+def test_the_steps_release_requires_are_the_ones_the_agent_is_told_to_take():
+    """release reads the record's ticked steps by ID (PREPARED); docs/RELEASE_AGENT.md's "Prepare a
+    release" names each step by the same ID and shows the record's template. A step added to one and
+    not the other is either never checked or never done."""
+    prepared = re.search(r'^PREPARED="([^"]+)"', _script(), re.M).group(1).split()
+    with open(os.path.join(ROOT, "docs", "RELEASE_AGENT.md"), encoding="utf-8") as f:
+        agent = f.read()
+    section = agent[agent.index("## 1. Prepare a release"):agent.index("## 2.")]
+    assert re.findall(r"^\d+\. \*\*`([a-z0-9-]+)`:\*\*", section, re.M) == prepared
+    assert re.findall(r"^   - \[x\] \*\*([a-z0-9-]+)\*\*", section, re.M) == prepared

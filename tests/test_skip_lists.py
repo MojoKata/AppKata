@@ -61,7 +61,7 @@ TAKES = {"tier1": None, "windows": None, "launcher": LAUNCHER + ["test_platform_
 # (docs/reviews/followups-skips.md). The test fails on anything new, and on a listed test some tier runs.
 NEVER_RUN = {
     "tests/test_sandbox_state.py::test_freeze_todays_state_when_asked":
-        "a tool, not a check: docs/build.md's release step 3 runs it with UPDATE_STATE",
+        "a tool, not a check: docs/RELEASE_AGENT.md's 'Prepare a release' runs it with UPDATE_STATE",
     "tests/test_channels.py::test_system_bus":
         "S2, open: tier 1's container has no system bus, and no tier that has one takes test_channels.py",
 }
@@ -98,3 +98,14 @@ def test_every_test_some_tier_skips_another_runs():
 def conftest_listed_all():
     conftest.listed.cache_clear()
     return sorted({t for n in LISTS for t in conftest.listed(n)})
+
+
+def test_a_listed_name_covers_each_case_of_a_parametrized_test(monkeypatch):
+    """A parametrized test's cases have ids with their parameters ("…[1-1-True]"), which no list line
+    named, so a tier that skipped one failed on it (#14's test_resume_… on Windows, where there's no
+    sh): the test's name alone now covers its cases, and no other test."""
+    monkeypatch.setattr(conftest, "listed", lambda name: {"tests/test_a.py::test_x": "why"})
+    assert conftest.allows("windows", "tests/test_a.py::test_x[1-1-True]")
+    assert conftest.allows("windows", "tests/test_a.py::test_x")
+    assert not conftest.allows("windows", "tests/test_a.py::test_x_more[1]")
+    assert not conftest.allows("windows", "tests/test_b.py::test_x[1]")
