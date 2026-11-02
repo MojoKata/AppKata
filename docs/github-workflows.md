@@ -59,8 +59,8 @@ gpg --import appkata-release-key.asc     # packaging/appkata-release-key.asc, or
 gpg --verify AppKata-<version>-x86_64.AppImage.asc AppKata-<version>-x86_64.AppImage
 ```
 
-The fingerprint `gpg` names must be the one the README publishes (with the first signed release,
-GENESIS.md step 7). Windows' installer isn't signed yet
+The "Primary key fingerprint" `gpg` names must be the one the README publishes,
+`A5C4 FAB7 54C2 34D3 8C98  3D94 02E7 71CD 068A 1ABD` (GENESIS.md step 7). Windows' installer isn't signed yet
 (Authenticode needs a certificate, `build.md`, "Signing"); it has its `.sha256`.
 
 ## The draft, and publishing it
