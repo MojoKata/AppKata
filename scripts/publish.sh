@@ -354,7 +354,7 @@ release() {
     [ "$(git rev-parse HEAD)" = "$(git rev-parse "$remote/master")" ] || die "master isn't $remote/master"
     ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "$TAG exists here"
     [ -z "$(git ls-remote --tags "$remote" "$TAG")" ] || die "$TAG exists on $remote"
-    [ -f "tests/data/state/$VERSION.json" ] || ask "tests/data/state/$VERSION.json is missing (build.md, \"Before tagging a release\", 3): tag anyway?"
+    [ -f "tests/data/state/$VERSION.json" ] || ask "tests/data/state/$VERSION.json is missing (docs/RELEASE.md, step 3): tag anyway?"
     ask "Tag $(git rev-parse --short HEAD) as $TAG and push it to $REPO?"
     git tag -a "$TAG" -m "AppKata $VERSION"
     git push -q "$remote" "$TAG"
@@ -404,8 +404,8 @@ resume() {
     drafted=$(cd "$HERE/build/publish/$TAG" && sha256 "AppKata-$VERSION-x86_64.AppImage" "AppKata-$VERSION-setup.exe")
     [ "$(echo "$drafted" | sort)" = "$(echo "$built" | sort)" ] || die "the draft's files aren't the ones approved: $drafted"
     say "The draft's two files are the ones whose SHA-256s you approved."
-    say "The draft: https://github.com/$REPO/releases (only you see it). Before publishing it: build.md,"
-    say "\"Before tagging a release\", 6 (the field test by hand, with the draft's files); then publish.sh publish."
+    say "The draft: https://github.com/$REPO/releases (only you see it). Before publishing it: docs/RELEASE.md,"
+    say "step 6 (the field test by hand, with the draft's files); then publish.sh publish."
 }
 
 publish() {

@@ -99,14 +99,8 @@ own machine (not a shared one):
 Check: `publish.sh check`, "release key" and "release environment: secrets";
 `gpg --show-keys packaging/appkata-release-key.asc` shows both expiry dates.
 
-**Before the subkey expires** (every 2 years): `publish.sh key-extend DIR` moves both dates on and
-exports the key again, then run `publish.sh key-github DIR`. The copy in GitHub carries the old
-date and stops signing when it passes.
-
-**If the copy in GitHub leaks:** with `DIR` plugged in, `GNUPGHOME=DIR/gnupg gpg --edit-key
-$(cat DIR/fingerprint)`, then `key 1`, `revkey`, `save`. Then
-`gpg --quick-add-key $(cat DIR/fingerprint) ed25519 sign 2y`, `publish.sh key-export DIR` and
-`publish.sh key-github DIR`. The fingerprint users check stays the same.
+Renewing the subkey before it expires, and replacing a leaked copy: [`RELEASE.md`](RELEASE.md),
+"The release key between releases".
 
 ## 8. CI's settings
 
@@ -126,21 +120,10 @@ $(cat DIR/fingerprint)`, then `key 1`, `revkey`, `save`. Then
 
 Check: `publish.sh check`, among them "field-test label".
 
-## 9. The workflow
-
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs tier 1 and both builds on every pull
-request and every push to `master`. On a `v*` tag it also signs the AppImage (after your approval)
-and makes a draft release. What it downloads is pinned in
-[`packaging/versions.env`](../packaging/versions.env), and its actions by commit SHA (GitHub refuses
-any other, step 5); `tests/test_pinned_inputs.py` fails on anything named by a tag or a release
-that moves.
-
 ## Each release
 
-These steps aren't one-time, but they rely on everything above: build.md's "Before tagging a
-release", then `scripts/publish.sh release` (tag, CI, approve the signing, check the draft),
-`scripts/publish.sh field-test` and the field test with the draft's files, and `scripts/publish.sh
-publish`.
+These steps aren't one-time, but they rely on everything above: the release checklist, CI's
+workflow and the commands, in [`RELEASE.md`](RELEASE.md).
 
 ## Read back
 

@@ -7,7 +7,8 @@ own releases (GitHub, GitLab, Forgejo/Gitea), and you can publish your own revie
 git repository.
 
 - Requirements: [`docs/requirements.md`](docs/requirements.md) (decisions in [`docs/gaps.md`](docs/gaps.md))
-- Building and releasing: [`docs/build.md`](docs/build.md); CI and the signed release:
+- Building: [`docs/build.md`](docs/build.md); releasing, step by step with each command:
+  [`docs/RELEASE.md`](docs/RELEASE.md); CI and the signed release:
   [`docs/github-workflows.md`](docs/github-workflows.md); how the repository and its release key were
   set up: [`docs/GENESIS.md`](docs/GENESIS.md)
 - Mockups and real screenshots: [`screenshots/`](screenshots/README.md)

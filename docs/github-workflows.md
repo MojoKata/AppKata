@@ -2,8 +2,9 @@
 
 What [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, when, and why it is built the
 way it is: the CI walk thru's decisions of 2026-10-24. One-time setup (the repository's settings,
-the release key) is in [`GENESIS.md`](GENESIS.md); building by hand and the release checklist,
-in [`build.md`](build.md); what users can check a download against, in [`gpg.md`](gpg.md).
+the release key) is in [`GENESIS.md`](GENESIS.md); building by hand, in [`build.md`](build.md);
+the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a download against, in
+[`gpg.md`](gpg.md).
 
 ## What runs when
 
@@ -67,8 +68,8 @@ The "Primary key fingerprint" `gpg` names must be the one the README publishes,
 
 A published release reaches every AppKata at its next sync, since AppKata takes its own updates from
 this repository's releases (requirement 2.11). So CI makes a **draft**, which only the repository's
-writers see, and the owner publishes it after the checks no runner can make (`build.md`, "Before
-tagging a release": the field test by hand, which can use the draft's files).
+writers see, and the owner publishes it after the checks no runner can make
+([`RELEASE.md`](RELEASE.md), step 6: the field test by hand, which uses the draft's files).
 
 `scripts/publish.sh` walks through it:
 

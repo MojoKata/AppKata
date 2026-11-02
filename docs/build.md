@@ -1,4 +1,4 @@
-# AppKata — Building and releasing
+# AppKata — Building
 
 How AppKata's release builds are made and finished for each platform. Requirements are in
 [`requirements.md`](requirements.md) (packaging: 1.6).
@@ -61,48 +61,10 @@ an hour per IP address, shared with everything else on that address; when it run
 AppKata reads releases from github.com's pages instead (requirement 2.4.1), so the sync still
 completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API throughout.
 
-## Before tagging a release
+## Releasing
 
-1. `.venv/bin/python -m pytest` green, and the sandbox tiers above if anything under
-   `src/appkata_core/sandbox.py`, `install.py` or the launcher goldens changed since the last tag.
-2. **Read github.com both ways** (review 3, R3-23): `scripts/compare_github_paths.py` reads the demo
-   data's projects through GitHub's API and through github.com's pages, which AppKata falls back to
-   when the API's hour runs out (requirement 2.4.1), and exits 1 where the two disagree. It needs
-   the network and about one API request per project; `GITHUB_TOKEN` raises the limit.
-3. **Set the version, and freeze the release's on-disk state** for the upgrade tests, in one pull
-   request. The version is `__version__` in `src/appkata_core/__init__.py`. `publish.sh release`
-   tags `v` and it, and CI's `version` job stops a tag that doesn't match it. The README's
-   "Status" heading names it too.
-   ```sh
-   UPDATE_STATE=<version> .venv/bin/python -m pytest tests/test_sandbox_state.py
-   git add src/appkata_core/__init__.py README.md tests/data/state/<version>.json
-   ```
-   `tests/test_sandbox_state.py` thaws every file in `tests/data/state/` — the rows and files an
-   installed, sandboxed app has after *that* release — into the current code on every test run,
-   so a later AppKata is shown to read, heal, change and remove what an earlier one left. A
-   release without its snapshot is a release the upgrade tests know nothing about. Drop a
-   snapshot only when its release is no longer one AppKata upgrades from.
-4. Regenerate the screenshots if a screen changed (above), and check `git diff --stat screenshots`.
-5. **Tag it, and let CI build and sign it**, once that pull request is merged and CI has passed on
-   `master` at its merge. The tag's run builds the same commit again, so a run that fails on
-   `master` fails on the tag too, with the tag already pushed. Read it on the Actions page, or:
-   ```sh
-   gh run list --repo MojoKata/AppKata --branch master --limit 1      # "completed  success"
-   ```
-   Then, on `master`, up to date: `scripts/publish.sh release` tags its tip `v<version>` (it asks
-   first), waits for the run, shows the files' SHA-256s, approves the signing and checks the draft
-   release it makes ([`github-workflows.md`](github-workflows.md)). The builds below are the same
-   scripts CI runs.
-6. **The field test by hand** (`scripts/sandbox/field-test.sh`, from the commit being tagged,
-   without `--non-interactive`), on real hardware with a logged-in desktop: the questions no tier
-   answers ("What it asks the tester" in `docs/local-proxy-test-plan.md`; the environments are in
-   `docs/testing.md`, "By hand, before a release"). `scripts/publish.sh field-test` opens the
-   release's tracking issue on GitHub and, under it, one for each environment with its checklist;
-   each run is posted to its environment's issue, as `testing.md` ("Tracking the runs on GitHub")
-   describes. The draft release's AppImage is the one to test.
-7. **Publish the draft:** `scripts/publish.sh publish` checks it again and publishes it. Every
-   AppKata offers it as an update from its next sync, and with immutable releases on, its files
-   and tag can't change after that.
+The release checklist, from the tests before tagging to publishing the draft, with each command
+and what it prints, is in [`RELEASE.md`](RELEASE.md).
 
 ## Overview
 
