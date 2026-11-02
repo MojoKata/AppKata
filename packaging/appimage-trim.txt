@@ -1,0 +1,156 @@
+# What the AppImage leaves out of the Python and the PySide6 wheel it carries: paths in the AppDir,
+# each part a shell pattern (`*` stays within a part). scripts/build-appimage.sh removes them
+# (scripts/appimage_trim.py apply), and stops if a line names nothing in the AppDir or a library it
+# keeps links one left out. scripts/test-appimage.sh's trace step runs the AppImage the ways AppKata
+# is used and fails if any run used a file left out here (scripts/appimage_trim.py check), unless
+# its line starts with `?`: AppKata looks for it and does well without.
+# AppKata uses Qt Core, Gui, Widgets, Network, Svg, DBus, Qml, Quick, Quick Controls (the Basic style,
+# src/appkata/app.py), Quick Dialogs, Quick Shapes and Quick Layouts.
+
+# Python: IDLE, Tcl/Tk and tkinter, dbm's ndbm, pydoc's help texts, pip and its installer, the
+# headers and the shared libpython (the python3.14 program has it built in; only libpython3.so links it)
+usr/python/lib/python*/idlelib
+usr/python/lib/python*/tkinter
+usr/python/lib/python*/turtledemo
+usr/python/lib/python*/ensurepip
+usr/python/lib/python*/lib-dynload/_tkinter.*
+usr/python/lib/python*/lib-dynload/_dbm.*
+usr/python/lib/python*/pydoc_data
+usr/python/lib/python*/config-*
+usr/python/lib/python*/site-packages/pip
+usr/python/lib/python*/site-packages/pip-*
+usr/python/lib/libtcl*
+usr/python/lib/tcl9*
+usr/python/lib/tk9*
+usr/python/lib/itcl*
+usr/python/lib/thread*
+usr/python/lib/libpython3*.so*
+usr/python/lib/pkgconfig
+usr/python/include
+usr/python/bin/idle*
+usr/python/bin/pip*
+usr/python/bin/pydoc*
+usr/python/bin/python*-config
+usr/python/bin/pyside6-*
+
+# PySide6's tools for building Qt programs (Designer, Linguist, the QML tools, the C++ headers and
+# type descriptions shiboken generates from), the type stubs for editors, and Qt's test modules
+usr/python/lib/python*/site-packages/PySide6/designer
+usr/python/lib/python*/site-packages/PySide6/assistant
+usr/python/lib/python*/site-packages/PySide6/linguist
+usr/python/lib/python*/site-packages/PySide6/lrelease
+usr/python/lib/python*/site-packages/PySide6/lupdate
+usr/python/lib/python*/site-packages/PySide6/qmlformat
+usr/python/lib/python*/site-packages/PySide6/qmllint
+usr/python/lib/python*/site-packages/PySide6/qmlls
+usr/python/lib/python*/site-packages/PySide6/svgtoqml
+usr/python/lib/python*/site-packages/PySide6/scripts
+usr/python/lib/python*/site-packages/PySide6/include
+usr/python/lib/python*/site-packages/PySide6/typesystems
+usr/python/lib/python*/site-packages/PySide6/glue
+usr/python/lib/python*/site-packages/PySide6/*.pyi
+usr/python/lib/python*/site-packages/PySide6/Qt/libexec
+usr/python/lib/python*/site-packages/PySide6/Qt/metatypes
+# Qt looks for its translation of the desktop's language; without it Qt's few words (a dialog's
+# buttons) stay English, as all of AppKata is
+? usr/python/lib/python*/site-packages/PySide6/Qt/translations
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/designer
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmllint
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmltooling
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Designer*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Help.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6UiTools.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlCompiler.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickTest.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Test.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtTest
+usr/python/lib/python*/site-packages/PySide6/QtDesigner.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtHelp.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtQuickTest.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtTest.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtUiTools.abi3.so
+
+# Qt modules AppKata doesn't use, with their PySide6 modules and QML modules
+usr/python/lib/python*/site-packages/PySide6/QtConcurrent.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtOpenGLWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtPrintSupport.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtQuickWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtSql.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtSvgWidgets.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtXml.abi3.so
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Concurrent.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6OpenGLWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6PrintSupport.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Sql.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6SvgWidgets.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Xml.*
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/printsupport
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/sqldrivers
+# the QML parts of Qt 3D and Qt PDF (the wheel has no libraries for them), the virtual keyboard,
+# particles, the timeline, Lottie and vector images, local storage, the XML list model, and the Labs
+# modules but FolderListModel, which Qt's own file and folder dialogs use (not GTK's)
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Scene2D
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Scene3D
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Pdf
+# Qt tries every image plugin; this one never loads, as the wheel has no Qt PDF
+? usr/python/lib/python*/site-packages/PySide6/Qt/plugins/imageformats/libqpdf.so
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VirtualKeyboard
+# Qt tries every input method; this one never loads, as the wheel has no virtual keyboard
+? usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforminputcontexts/libqtvirtualkeyboardplugin.so
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickParticles.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Particles
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickTimeline*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Timeline
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Lottie*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickVectorImage*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/VectorImage
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/vectorimageformats
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlLocalStorage.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/LocalStorage
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QmlXmlListModel.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQml/XmlListModel
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsAnimation.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsPlatform.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsQmlModels.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSettings.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSharedImage.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsStyleKit*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsSynchronizer.*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6LabsWavefrontMesh.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/StyleKit
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/animation
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/assetdownloader
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/platform
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/qmlmodels
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/settings
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/sharedimage
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/synchronizer
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/wavefrontmesh
+# the Quick Controls styles other than Basic, which AppKata sets (src/appkata/app.py)
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Fusion*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2FluentWinUI3*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Imagine*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Material*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Universal*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Fusion
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/FluentWinUI3
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Imagine
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Material
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/designer
+# the Wayland compositor side (AppKata is a client) and the platforms for a screen with no desktop
+# session (EGLFS, the Linux frame buffer, VNC, Vulkan's display), with their input plugins
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6WaylandCompositor*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6WaylandEglCompositorHwIntegration.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtWayland/Compositor
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/wayland-graphics-integration-server
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6EglFS*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6EglFsKmsSupport.*
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/egldeviceintegrations
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqeglfs.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqlinuxfb.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqminimalegl.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqvkkhrdisplay.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqvnc.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/generic
