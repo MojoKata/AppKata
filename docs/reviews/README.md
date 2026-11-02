@@ -22,3 +22,7 @@ The follow-ups after the CI work, decided in the walk thru of 2026-10-30, one fi
 - [`followups-vm-pytest-args.md`](followups-vm-pytest-args.md): pytest's arguments on the way to the launcher VMs (item 6)
 - [`followups-demo-remake.md`](followups-demo-remake.md): `remake` and the apps the build no longer lists (item 7)
 - [`followups-windows-test-python.md`](followups-windows-test-python.md): the Windows tests' Python (item 8)
+
+Found since, one file each:
+
+- [`issue-13-clock.md`](issue-13-clock.md): tests that passed or failed by the hour tier 1 ran, and `publish.sh resume` after a partial re-run (issue #13)

@@ -192,3 +192,62 @@ def test_field_test_opens_nothing_without_the_label_or_twice(tmp_path):
         r, calls = _field_test(tmp_path / case, **env)
         assert r.returncode == 1 and says in r.stderr, (case, r.stderr)
         assert not [c for c in calls if c["args"][:2] == ["issue", "create"]], case
+
+
+RESUME_GH = r'''#!/usr/bin/env python3
+# gh for publish.sh resume, without GitHub: run 77 of v0.9.9, built and not waiting for an approval.
+# FAKE_GH_ATTEMPTS is the run's attempts; a build job carries its sha256 notice only in the attempts
+# FAKE_GH_BUILT names, as when "gh run rerun --failed" carries a job over into a new attempt.
+import os, re, sys
+a = sys.argv[1:]
+attempts, built = int(os.environ["FAKE_GH_ATTEMPTS"]), os.environ["FAKE_GH_BUILT"].split()
+sha = {"appimage": "a" * 64 + "  AppKata-0.9.9-x86_64.AppImage", "windows": "b" * 64 + "  AppKata-0.9.9-setup.exe"}
+job = lambda attempt, name: f"{attempt}0{1 + list(sha).index(name)}"      # 101, 102, 201, ...
+q = a[a.index("--jq") + 1] if "--jq" in a else ""
+name = next((n for n in sha if f'"{n}"' in q), None)
+if a[:2] == ["run", "list"]:
+    print(77)
+elif a[:2] == ["run", "view"] and "status,conclusion" in a:
+    print("completed success")
+elif a[:2] == ["run", "view"] and "attempt" in a:
+    print(attempts)
+elif a[:2] == ["run", "view"] and "jobs" in a:                 # the latest attempt's jobs
+    print(job(attempts, name))
+elif a[0] == "api" and a[1].endswith("/pending_deployments"):
+    print(0)
+elif a[0] == "api" and (m := re.search(r"/attempts/(\d+)/jobs$", a[1])):
+    print(job(int(m.group(1)), name))
+elif a[0] == "api" and (m := re.search(r"/check-runs/(\d)0(\d)/annotations$", a[1])):
+    n = list(sha)[int(m.group(2)) - 1]
+    if m.group(1) in built:
+        print(sha[n])
+'''
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="runs publish.sh, a POSIX shell script")
+@pytest.mark.parametrize("attempts, built, shown", [
+    (1, "1", True),             # the run as it first ran
+    (2, "2", True),             # re-run whole: each attempt builds again
+    (2, "1", True),             # gh run rerun --failed: the builds carried over from attempt 1
+    (3, "1", True),
+    (2, "", False),             # no attempt posted them
+])
+def test_resume_shows_what_ci_built_after_any_rerun(tmp_path, attempts, built, shown):
+    """resume shows the SHA-256s of what CI built before the owner approves the signing (issue #13).
+    After "gh run rerun --failed", GitHub carries the build jobs that passed into the new attempt
+    as new jobs without their annotations, and resume stopped: "the run's build jobs posted no sha256
+    notices". It reads each from the attempt that built it."""
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text(RESUME_GH)
+    gh.chmod(0o755)
+    r = subprocess.run(["sh", SCRIPT, "--repo", "owner/name", "--key", str(tmp_path / "no-key.asc"), "--yes",
+                        "resume", "0.9.9"], capture_output=True, text=True, timeout=60,
+                       env=dict(os.environ, FAKE_GH_ATTEMPTS=str(attempts), FAKE_GH_BUILT=built,
+                                PATH=f"{gh.parent}{os.pathsep}{os.environ['PATH']}"))
+    assert r.returncode == 1, r.stderr                         # verify then stops: no key to check with
+    if shown:
+        assert f"{'a' * 64}  AppKata-0.9.9-x86_64.AppImage\n{'b' * 64}  AppKata-0.9.9-setup.exe\n" in r.stderr, r.stderr
+        assert "no public key to check the signature with" in r.stderr, r.stderr
+    else:
+        assert "publish.sh: the run's build jobs posted no sha256 notices" in r.stderr, r.stderr

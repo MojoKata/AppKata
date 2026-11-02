@@ -14,6 +14,7 @@ marked **(planned)** don't exist yet.
 "$(scripts/python-standalone.sh)" -m venv .venv && .venv/bin/pip install -e . pytest   # the release's Python (1.2)
 .venv/bin/python -m pytest                 # unit and integration tests (no network needed)
 scripts/test-tier1.sh                      # the same in a container, on a host whose glibc is older than 2.34
+scripts/test-clock.sh                      # tier 1 at seven times and zones: the day's start and end, a year's end, UTC+14, UTC-12
 scripts/demo_data.py build build/tour-data && scripts/demo_data.py sync build/tour-data \
     && scripts/demo_data.py finish build/tour-data
 scripts/test-layout.sh                     # the tour in tier 1's container: no text drawn outside its box
