@@ -139,3 +139,18 @@ usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Imagine
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Material
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/designer
+# the Wayland compositor side (AppKata is a client) and the platforms for a screen with no desktop
+# session (EGLFS, the Linux frame buffer, VNC, Vulkan's display), with their input plugins
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6WaylandCompositor*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6WaylandEglCompositorHwIntegration.*
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtWayland/Compositor
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/wayland-graphics-integration-server
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6EglFS*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6EglFsKmsSupport.*
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/egldeviceintegrations
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqeglfs.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqlinuxfb.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqminimalegl.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqvkkhrdisplay.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/platforms/libqvnc.so
+usr/python/lib/python*/site-packages/PySide6/Qt/plugins/generic
