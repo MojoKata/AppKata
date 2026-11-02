@@ -98,3 +98,14 @@ def test_every_test_some_tier_skips_another_runs():
 def conftest_listed_all():
     conftest.listed.cache_clear()
     return sorted({t for n in LISTS for t in conftest.listed(n)})
+
+
+def test_a_listed_name_covers_each_case_of_a_parametrized_test(monkeypatch):
+    """A parametrized test's cases have ids with their parameters ("…[1-1-True]"), which no list line
+    named, so a tier that skipped one failed on it (#14's test_resume_… on Windows, where there's no
+    sh): the test's name alone now covers its cases, and no other test."""
+    monkeypatch.setattr(conftest, "listed", lambda name: {"tests/test_a.py::test_x": "why"})
+    assert conftest.allows("windows", "tests/test_a.py::test_x[1-1-True]")
+    assert conftest.allows("windows", "tests/test_a.py::test_x")
+    assert not conftest.allows("windows", "tests/test_a.py::test_x_more[1]")
+    assert not conftest.allows("windows", "tests/test_b.py::test_x[1]")
