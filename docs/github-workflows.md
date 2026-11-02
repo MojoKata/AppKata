@@ -2,7 +2,7 @@
 
 What [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, when, and why it is built the
 way it is: the CI walk thru's decisions of 2026-10-24. One-time setup (the repository's settings,
-the release key) is in [`GENESIS.md`](../GENESIS.md); building by hand and the release checklist,
+the release key) is in [`GENESIS.md`](GENESIS.md); building by hand and the release checklist,
 in [`build.md`](build.md); what users can check a download against, in [`gpg.md`](gpg.md).
 
 ## What runs when

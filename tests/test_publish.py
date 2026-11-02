@@ -1,4 +1,4 @@
-"""scripts/publish.sh, the owner's steps for the release key and releases (GENESIS.md): what can be
+"""scripts/publish.sh, the owner's steps for the release key and releases (docs/GENESIS.md): what can be
 checked without GitHub. Its GitHub half (setup, check, key-github, resume, verify) was run against a
 fork with a throwaway key; see docs/github-workflows.md."""
 
@@ -79,13 +79,13 @@ def test_the_release_key_is_the_one_the_docs_name(tmp_path):
     assert int(pub[6]) - int(pub[5]) == 5 * year and int(sub[6]) - int(sub[5]) == 2 * year, out
     groups = [fprs[0][i:i + 4] for i in range(0, 40, 4)]
     shown = " ".join(groups[:5]) + "  " + " ".join(groups[5:])         # as gpg --verify prints it
-    for doc in ("README.md", os.path.join("docs", "gpg.md"), os.path.join("docs", "github-workflows.md"), "GENESIS.md"):
+    for doc in ("README.md", os.path.join("docs", "gpg.md"), os.path.join("docs", "github-workflows.md"), os.path.join("docs", "GENESIS.md")):
         with open(os.path.join(ROOT, doc), encoding="utf-8") as f:
             assert shown in f.read(), (doc, shown)
 
 
 def test_every_check_genesis_names_is_one_the_script_reads_back():
-    with open(os.path.join(ROOT, "GENESIS.md"), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, "docs", "GENESIS.md"), encoding="utf-8") as f:
         genesis = f.read()
     text = _script()
     checks = text[text.index("check() {"):text.index("\n}\n", text.index("check() {"))]

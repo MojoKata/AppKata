@@ -1,5 +1,5 @@
 #!/bin/sh
-# The owner's steps for AppKata's release key and releases, as commands (GENESIS.md says when each
+# The owner's steps for AppKata's release key and releases, as commands (docs/GENESIS.md says when each
 # is run; docs/github-workflows.md how CI builds, signs and drafts a release). Needs git, gpg 2.2+
 # and gh, logged in as an admin of the repository for setup, check, release, publish and
 # field-test, and python3 for field-test.
@@ -19,7 +19,7 @@
 #     setup                       the release environment, the tag ruleset, immutable releases,
 #                                 actions pinned by SHA, the field-test label and, once CI has
 #                                 passed, the required ci check: each only if missing
-#     check                       read back every setting GENESIS.md lists
+#     check                       read back every setting docs/GENESIS.md lists
 #   A release, from a clone of the repository on master:
 #     release                     tag v<version>, push it, wait for CI, show the files' SHA-256s,
 #                                 approve the signing, then check the draft (verify)
@@ -237,7 +237,7 @@ EOF
         say "actions pinned by SHA: required"
     fi
     id=$(ruleset_id master) || die "can't read $REPO's rulesets"
-    if [ -z "$id" ]; then say "master ruleset: missing (GENESIS.md says how it is made): the ci check not added"
+    if [ -z "$id" ]; then say "master ruleset: missing (docs/GENESIS.md says how it is made): the ci check not added"
     elif gh api "repos/$REPO/rulesets/$id" --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' | grep -qx ci; then
         say "the ci check: required"
     elif [ -z "$(gh run list --repo "$REPO" --workflow ci.yml --status success --limit 1 --json databaseId --jq '.[].databaseId')" ]; then

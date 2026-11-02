@@ -6,15 +6,15 @@ how to check it is still in place. When something breaks, walk it again from the
 `scripts/publish.sh check` reads back what GitHub shows an admin and prints `ok` or `FAIL` for each
 setting below; run it with `gh` logged in as the owner. `scripts/publish.sh setup` makes the CI
 settings of step 8 where they're missing. What each workflow job does is in
-[`docs/github-workflows.md`](docs/github-workflows.md); building by hand, in
-[`docs/build.md`](docs/build.md).
+[`github-workflows.md`](github-workflows.md); building by hand, in
+[`build.md`](build.md).
 
 ## 1. The organization and the repository
 
 - The **MojoKata** organization, on GitHub's Free plan. Its repository **MojoKata/AppKata** is
-  public, licensed GPL-3.0 ([`LICENSE`](LICENSE)), with `master` as its default branch.
+  public, licensed GPL-3.0 ([`LICENSE`](../LICENSE)), with `master` as its default branch.
 - Published on 2026-10-25 from one commit of the files as they stood then. The earlier history is
-  private ([`docs/reviews/README.md`](docs/reviews/README.md)).
+  private ([`reviews/README.md`](reviews/README.md)).
 - `APPKATA_REPO` in `src/appkata_core/__init__.py` names it. Every AppKata takes its own updates
   from this repository's releases (requirement 2.11), so **publishing a release ships an update**.
 
@@ -128,10 +128,10 @@ Check: `publish.sh check`, among them "field-test label".
 
 ## 9. The workflow
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs tier 1 and both builds on every pull
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs tier 1 and both builds on every pull
 request and every push to `master`. On a `v*` tag it also signs the AppImage (after your approval)
 and makes a draft release. What it downloads is pinned in
-[`packaging/versions.env`](packaging/versions.env), and its actions by commit SHA (GitHub refuses
+[`packaging/versions.env`](../packaging/versions.env), and its actions by commit SHA (GitHub refuses
 any other, step 5); `tests/test_pinned_inputs.py` fails on anything named by a tag or a release
 that moves.
 
