@@ -18,7 +18,7 @@ paste the output in an issue.
 ## Before you start
 
 - On your own machine: `git`, `gpg` 2.2 or newer, `python3`, and `gh` logged in as an admin of
-  MojoKata.
+  MojoKata ([`GENESIS.md`](GENESIS.md#what-the-owner-needs)).
 - A clone of the repository. Every command below runs from its top folder.
 - Not the release key: CI signs with its own copy of the signing subkey (GENESIS.md, step 7).
 
@@ -28,9 +28,8 @@ paste the output in an issue.
 request and every push to `master`. On a `v*` tag it also signs the AppImage (after your approval)
 and makes a draft release. Its builds are the scripts [`build.md`](build.md) describes. What it
 downloads is pinned in [`packaging/versions.env`](../packaging/versions.env), and its actions by
-commit SHA (GitHub refuses
-any other, GENESIS.md step 5); `tests/test_pinned_inputs.py` fails on anything named by a tag or a
-release that moves.
+commit SHA (GitHub refuses any other, GENESIS.md step 5); `tests/test_pinned_inputs.py` fails on
+anything named by a tag or a release that moves.
 
 ## The commands
 
