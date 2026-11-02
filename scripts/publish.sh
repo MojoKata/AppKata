@@ -380,9 +380,17 @@ resume() {
         sleep 20
     done
     say "== what CI built (its jobs' sha256 notices)"
+    # each from the attempt that built it: "gh run rerun --failed" carries a build job that passed
+    # into the new attempt without its annotations (issue #13)
+    attempt=$(gh run view "$id" --repo "$REPO" --json attempt --jq .attempt)
     built=$(for job in appimage windows; do
-        j=$(gh run view "$id" --repo "$REPO" --json jobs --jq ".jobs[] | select(.name == \"$job\") | .databaseId")
-        gh api "repos/$REPO/check-runs/$j/annotations" --jq '.[] | select(.title == "sha256") | .message'
+        a=$attempt
+        while [ "$a" -ge 1 ]; do
+            j=$(gh api "repos/$REPO/actions/runs/$id/attempts/$a/jobs" --jq ".jobs[] | select(.name == \"$job\") | .id")
+            n=$(gh api "repos/$REPO/check-runs/$j/annotations" --jq '.[] | select(.title == "sha256") | .message')
+            [ -z "$n" ] || { echo "$n"; break; }
+            a=$((a - 1))
+        done
     done)
     [ "$(echo "$built" | grep -c .)" = 2 ] || die "the run's build jobs posted no sha256 notices"
     say "$built"
