@@ -114,6 +114,16 @@ trace() {      # trace <AppImage> <out> [AppDir]: the trace runs, then the check
     sed 's/^/   /' "$2/runs.txt"
     st=0; python3 "$HERE/scripts/appimage_trim.py" check "$2" ${3:+"$3"} > "$2/check.txt" || st=$?
     sed 's/^/   /' "$2/check.txt"
+    # and each run as it should end: the sessions still running when stopped (143), the probes'
+    # dialogs and TLS working, no traceback (the tours end 1 on a layout fault, test-layout.sh's to judge)
+    for want in "fresh: exit 0" "x11: exit 143" "wayland: exit 143" "version: exit 0" "install-self: exit 0" \
+                "probe-plugins: exit 0" "probe-dialogs-qt: exit 0" "probe-dialogs-gtk: exit 0" \
+                "probe-dialogs-wayland: exit 0" "tls: True openssl"; do
+        grep -qx "$want" "$2/runs.txt" || { echo "   not as it should be: $want"; st=1; }
+    done
+    [ "$(grep -c '^dialogs: loaded$' "$2/runs.txt")" = 3 ] || { echo "   a dialog probe didn't load"; st=1; }
+    grep -q "^screens offscreen: [1-9]" "$2/runs.txt" && grep -q "^screens x11: [1-9]" "$2/runs.txt" || { echo "   a tour saved no screen"; st=1; }
+    ! grep -l "^Traceback" "$2"/log-*.txt 2>/dev/null | sed 's/^/   a traceback in /' | grep . || st=1
     return $st
 }
 if case " $STEPS " in *" trace "*) true;; *) false;; esac; then
