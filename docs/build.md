@@ -69,10 +69,13 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
    data's projects through GitHub's API and through github.com's pages, which AppKata falls back to
    when the API's hour runs out (requirement 2.4.1), and exits 1 where the two disagree. It needs
    the network and about one API request per project; `GITHUB_TOKEN` raises the limit.
-3. **Freeze the release's on-disk state** for the upgrade tests, and commit it with the tag:
+3. **Set the version, and freeze the release's on-disk state** for the upgrade tests, in one pull
+   request. The version is `__version__` in `src/appkata_core/__init__.py`. `publish.sh release`
+   tags `v` and it, and CI's `version` job stops a tag that doesn't match it. The README's
+   "Status" heading names it too.
    ```sh
    UPDATE_STATE=<version> .venv/bin/python -m pytest tests/test_sandbox_state.py
-   git add tests/data/state/<version>.json
+   git add src/appkata_core/__init__.py README.md tests/data/state/<version>.json
    ```
    `tests/test_sandbox_state.py` thaws every file in `tests/data/state/` — the rows and files an
    installed, sandboxed app has after *that* release — into the current code on every test run,
@@ -80,9 +83,16 @@ completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API through
    release without its snapshot is a release the upgrade tests know nothing about. Drop a
    snapshot only when its release is no longer one AppKata upgrades from.
 4. Regenerate the screenshots if a screen changed (above), and check `git diff --stat screenshots`.
-5. **Tag it, and let CI build and sign it:** `scripts/publish.sh release` tags `v<version>`, waits for
-   the run, shows the files' SHA-256s, approves the signing and checks the draft release it makes
-   ([`github-workflows.md`](github-workflows.md)). The builds below are the same scripts CI runs.
+5. **Tag it, and let CI build and sign it**, once that pull request is merged and CI has passed on
+   `master` at its merge. The tag's run builds the same commit again, so a run that fails on
+   `master` fails on the tag too, with the tag already pushed. Read it on the Actions page, or:
+   ```sh
+   gh run list --repo MojoKata/AppKata --branch master --limit 1      # "completed  success"
+   ```
+   Then, on `master`, up to date: `scripts/publish.sh release` tags its tip `v<version>` (it asks
+   first), waits for the run, shows the files' SHA-256s, approves the signing and checks the draft
+   release it makes ([`github-workflows.md`](github-workflows.md)). The builds below are the same
+   scripts CI runs.
 6. **The field test by hand** (`scripts/sandbox/field-test.sh`, from the commit being tagged,
    without `--non-interactive`), on real hardware with a logged-in desktop: the questions no tier
    answers ("What it asks the tester" in `docs/local-proxy-test-plan.md`; the environments are in
