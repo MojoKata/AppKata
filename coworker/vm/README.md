@@ -65,8 +65,10 @@ project uses the same ones, and a rebuild keeps them.
   or not saved. A project's files go in folders named after the project (on Windows,
   `C:\Users\Public\<project>-…`). What a project installs, it uninstalls, unless the VM's
   `README.md` lists it as kept for everyone.
-- **Starting is fine; stopping is the owner's.** A project starts the VM if it isn't running and
-  leaves it running.
+- **Whoever starts it stops it.** A project starts the VM if it isn't running. A run that started
+  it stops it when it ends, pass or fail, still holding the lock: an idle VM holds its memory for
+  nothing. A run that found it running leaves it running. A project may offer a way to keep it
+  running (for runs back to back); a VM left running that way is that project's to stop.
 - **The VM itself is everyone's.** Its account, password, key, ports, operating-system version and
   update policy change only by the machine's owner, through its `README.md`, and a rebuild keeps
   what `vm.env` says.

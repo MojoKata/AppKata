@@ -4,7 +4,9 @@
 # uninstall; then (with --shots) the screenshot tour into screenshots/windows/{dark,light}.
 # --tests runs the unit tests with Python on Windows; --e2e installs and uninstalls real apps from
 # GitHub through AppKata's own code (scripts/windows_e2e.py; it leaves Git for Windows installed).
-#   scripts/test-windows-vm.sh [--tests] [--e2e] [--shots] [--tour-only A01-apps,C01-catalog]
+# A run that starts the VM stops it at the end, pass or fail (coworker/vm); --keep-vm leaves it
+# running, for runs back to back. A VM that was already running is left running.
+#   scripts/test-windows-vm.sh [--tests] [--e2e] [--shots] [--tour-only A01-apps,C01-catalog] [--keep-vm]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
@@ -17,13 +19,14 @@ WINDOWS_VM=${WINDOWS_VM:-win10}
 [ -n "${COWORKER_VM_LOCKED:-}" ] || exec "$HERE/coworker/vm/lock.sh" "$WINDOWS_VM" appkata -- sh "$0" "$@"
 eval "$("$HERE/coworker/vm/env.sh" "$WINDOWS_VM")"    # VM_CONTAINER, VM_SSH_*
 R="$VM_SSH_USER@$VM_SSH_HOST"
-SHOTS=0; ONLY=""; TESTS=0; E2E=0
+SHOTS=0; ONLY=""; TESTS=0; E2E=0; KEEP_VM=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --shots) SHOTS=1 ;;
         --tests) TESTS=1 ;;
         --e2e) E2E=1 ;;
         --tour-only) ONLY=$2; shift ;;
+        --keep-vm) KEEP_VM=1 ;;
         *) echo "unknown option: $1"; exit 2 ;;
     esac
     shift
@@ -54,6 +57,13 @@ expect() {   # expect <output> <text>: fail unless the output contains the text
 if [ -n "$VM_CONTAINER" ] && [ "$(docker inspect -f '{{.State.Running}}' "$VM_CONTAINER" 2>/dev/null)" != "true" ]; then
     echo "== starting the VM"
     docker start "$VM_CONTAINER" >/dev/null
+    # this run started it, so this run stops it, still holding the lock (coworker/vm): an idle
+    # Windows VM holds 8 GB. docker stop shuts Windows down cleanly (the container's stop timeout).
+    if [ "$KEEP_VM" = 0 ]; then
+        trap 'rc=$?; echo "== stopping the VM (this run started it; --keep-vm leaves it running)"
+              docker stop "$VM_CONTAINER" >/dev/null || rc=1; exit $rc' EXIT
+        trap 'exit 130' INT TERM
+    fi
 fi
 for i in $(seq 1 60); do $SSH "echo up" >/dev/null 2>&1 && break; sleep 5; done
 

@@ -272,9 +272,10 @@ scripts/test-windows-vm.sh --shots            # also the screenshot tour → scr
 scripts/test-windows-vm.sh --shots --tour-only A01-apps,C01-catalog
 scripts/test-windows-vm.sh --tests            # also the unit tests, with Python on Windows
 scripts/test-windows-vm.sh --e2e              # also real installs from GitHub (scripts/windows_e2e.py)
+scripts/test-windows-vm.sh --keep-vm          # leave the VM running after, for runs back to back
 ```
 
-It uses the shared VM (below), starting it if needed, and:
+It uses the shared VM (below), starting it if needed (and then stopping it at the end), and:
 
 1. Copies the newest `releases/AppKata-*-setup.exe` to `C:\Users\Public\appkata-test`.
 2. Installs for the current user, silently, **without administrator rights**. The VM's SSH
@@ -427,10 +428,12 @@ the protocol in [`coworker/vm`](../coworker/vm/README.md). It is `win10` in `$VM
 unless `local.env` says otherwise; `WINDOWS_VM` names another), and its folder's `vm.env` says how
 to reach it: its container, SSH port, account and key, the same for every project.
 `scripts/test-windows-vm.sh` claims it for `appkata`, holds its lock for the whole run (another
-project's run waits, or AppKata's waits for it), starts it if it isn't running and leaves it
-running. AppKata's files go in `C:\Users\Public\appkata-test` and `appkata-py`, the screen size it
-sets is put back and not saved, and what it installs it uninstalls, except Git for Windows and the
-Visual C++ run-time from `--e2e`.
+project's run waits, or AppKata's waits for it), and starts it if it isn't running. A run that
+started it stops it at the end, pass or fail, so an idle VM doesn't hold its 8 GB; `--keep-vm`
+leaves it running, and a VM that was already running is left running. AppKata's files go in
+`C:\Users\Public\appkata-test` and `appkata-py`, the screen size it sets is put back and not
+saved, and what it installs it uninstalls, except Git for Windows and the Visual C++ run-time from
+`--e2e`.
 
 What the tests need of the VM, and how this one was made:
 
