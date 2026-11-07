@@ -33,6 +33,12 @@ jobs:
             build/appimage-cache
             build/pyside-*
           key: tier1-${{ hashFiles('packaging/versions.env') }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
+        with:
+          repository: MojoKata/coworker
+          ref: 96bb60f7ba1ceff6ace4587033708fce7643b4a9
+          path: build/coworker-src
+      - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/test-tier1.sh 2>&1 | tee build/ci-tier1.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-tier1.log test-tier1.sh
@@ -49,6 +55,12 @@ jobs:
         with:
           path: build/appimage-cache
           key: appimage-${{ hashFiles('packaging/versions.env') }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
+        with:
+          repository: MojoKata/coworker
+          ref: 96bb60f7ba1ceff6ace4587033708fce7643b4a9
+          path: build/coworker-src
+      - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/build-appimage.sh 2>&1 | tee build/ci-appimage.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-appimage.log build-appimage.sh
@@ -71,6 +83,12 @@ jobs:
         with:
           path: build/wine-cache
           key: windows-${{ hashFiles('packaging/versions.env', 'scripts/build-windows.sh', 'packaging/windows/icuuc-stub.c') }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
+        with:
+          repository: MojoKata/coworker
+          ref: 96bb60f7ba1ceff6ace4587033708fce7643b4a9
+          path: build/coworker-src
+      - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/build-windows.sh 2>&1 | tee build/ci-windows.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-windows.log build-windows.sh

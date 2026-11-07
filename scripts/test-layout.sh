@@ -8,6 +8,9 @@
 #   scripts/test-layout.sh [--shots] [--tour-only NAMES]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
+[ -x "$CW/bin/deps" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
+"$CW/bin/deps" register "$HERE"
 SHOTS=0
 [ "${1:-}" != --shots ] || { SHOTS=1; shift; }
 . "$HERE/scripts/lib-tier1.sh"
