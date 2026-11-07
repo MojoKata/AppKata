@@ -6,3 +6,4 @@ releases/
 .pytest_cache/
 /temp/
 /local.env
+*.egg-info/
