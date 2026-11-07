@@ -24,7 +24,7 @@ python3 "$HERE/scripts/demo_data.py" check "$TD"      # no failed sync, and what
 OUT="$HERE/build/layout-tour"
 rm -rf "$OUT" && mkdir -p "$OUT"
 set +e
-# this machine's home, so the paths the screens show read as here (~/appkata/build/tour-data/...);
+# this machine's home, so the paths the screens show read as here (~/kata/AppKata/build/tour-data/...);
 # nothing is written there: the caches and settings go to /tmp
 docker run --rm --user "$(id -u):$(id -g)" -e HOME="$HOME" -e XDG_CACHE_HOME=/tmp/cache -e XDG_CONFIG_HOME=/tmp/config \
     -e QT_QPA_PLATFORM=offscreen -e PYTHONDONTWRITEBYTECODE=1 \
