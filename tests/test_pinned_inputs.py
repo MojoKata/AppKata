@@ -228,3 +228,21 @@ def test_the_windows_tier_copies_every_file_the_tests_read():
     GENESIS.md, which tests/test_publish.py reads, and the test failed only there."""
     zip_line = next(line for line in _read("scripts/test-windows-vm.sh").splitlines() if "git ls-files" in line)
     assert re.search(r"git ls-files -co --exclude-standard \|", zip_line), zip_line
+
+
+def test_the_image_pins_in_versions_env_are_the_ones_deps_json_declares():
+    """packaging/versions.env (what the scripts read) and .coworker/deps.json's container_images
+    (what coworker reads) name the same pinned images (the 11-07 walk thru, step 5, item 3): a bump
+    that changes one and not the other fails here."""
+    import json
+    with open(os.path.join(ROOT, "packaging", "versions.env")) as f:
+        env = dict(re.findall(r"^([A-Z]+_IMAGE)=(\S+)", f.read(), re.M))
+    with open(os.path.join(ROOT, ".coworker", "deps.json")) as f:
+        declared = json.load(f).get("container_images", [])
+    named = {e["image"] for e in declared} | {b for e in declared for b in e.get("from", [])}
+    pinned = {r for r in named if DIGEST.search(r)}
+    assert env, "no *_IMAGE pins in packaging/versions.env"
+    missing = {k: v for k, v in env.items() if v not in named}
+    assert not missing, f"pinned in versions.env, not declared in deps.json's container_images: {missing}"
+    extra = pinned - set(env.values())
+    assert not extra, f"pinned in deps.json's container_images, not in versions.env: {sorted(extra)}"
