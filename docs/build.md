@@ -22,6 +22,13 @@ scripts/test-layout.sh --shots             # the same, and its screens replace s
 scripts/test-screenshot-text.sh            # after any screenshots are made again: no private name or other repository address in them
 ```
 
+What the machine needs for these (Qt's system libraries for the `.venv`, bubblewrap and
+xdg-dbus-proxy for the sandbox, and the network hosts the scripts reach) is in
+`.coworker/deps.json`, read by the [coworker protocol](https://github.com/MojoKata/coworker)'s
+`deps`: `~/coworker/bin/deps check .` says what's missing, `deps install .` prints the command that
+installs it (the `sudo` part is the machine owner's), and `deps hosts .` lists the hosts to open on a
+firewall. Each entry says why it's there.
+
 Which tests run when, on which environment, and how long each takes is in [`testing.md`](testing.md).
 The sandbox's own runs are in containers and VMs (`scripts/test-sandbox.sh`; what each shows is in
 [`app-sandboxing.md`](app-sandboxing.md), "Tests, in four tiers"): `launcher` (Linux Mint 22.3),
