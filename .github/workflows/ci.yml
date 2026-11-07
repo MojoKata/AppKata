@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
         with:
           repository: MojoKata/coworker
-          ref: a82a1b23d0f83ef206a2446ad17c49da309c6ab3
+          ref: a173d5caccefb7b13a113e57dd8f793099878186
           path: build/coworker-src
       - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/test-tier1.sh 2>&1 | tee build/ci-tier1.log
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
         with:
           repository: MojoKata/coworker
-          ref: a82a1b23d0f83ef206a2446ad17c49da309c6ab3
+          ref: a173d5caccefb7b13a113e57dd8f793099878186
           path: build/coworker-src
       - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/build-appimage.sh 2>&1 | tee build/ci-appimage.log
@@ -86,7 +86,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1: the coworker protocol, which the scripts require
         with:
           repository: MojoKata/coworker
-          ref: a82a1b23d0f83ef206a2446ad17c49da309c6ab3
+          ref: a173d5caccefb7b13a113e57dd8f793099878186
           path: build/coworker-src
       - run: build/coworker-src/install.sh
       - run: mkdir -p build && sh scripts/build-windows.sh 2>&1 | tee build/ci-windows.log
