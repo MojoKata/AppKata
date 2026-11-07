@@ -17,21 +17,17 @@
 # NAME: mint22.3 or lmde7. Needs /dev/kvm, Docker, and --privileged (loop devices) for build.
 #
 # The ISOs are shared with the machine's other projects through the coworker protocol
-# (MojoKata/coworker, installed in ${COWORKER_HOME:-~/coworker}): they live in its downloads/ beside
+# (the coworker/ submodule, MojoKata/coworker; installed in ${COWORKER_HOME:-~/coworker}): they live in its downloads/ beside
 # their SHA-256 (<iso>.sha256). Fetch one with "downloads fetch" (it resumes, checks the SHA-256 and
 # claims it); this script claims its ISO each time under AppKata's name (its checkout directory's),
 # and release gives it up, which removes the ISO only with the last claim (docs/testing.md,
 # "Downloaded ISOs").
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
-[ -x "$CW/bin/deps" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
-"$CW/bin/deps" register "$HERE"
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 CMD=${1:?usage: scripts/test-desktop-vm.sh build|run|release mint22.3|lmde7}
 NAME=${2:?usage: scripts/test-desktop-vm.sh build|run|release mint22.3|lmde7}
-CW=${COWORKER_HOME:-$HOME/coworker}
-[ -x "$CW/bin/downloads" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
-ISODIR=$CW/downloads
+ISODIR=${COWORKER_HOME:-$HOME/coworker}/downloads    # where the installed coworker keeps them
 case $NAME in
     mint22.3) ISO=linuxmint-22.3-cinnamon-64bit.iso LIVE=casper ;;
     lmde7)    ISO=lmde-7-cinnamon-64bit.iso LIVE=live ;;
@@ -40,11 +36,11 @@ esac
 VM=$HERE/build/desktop-vm/$NAME
 
 if [ "$CMD" = release ]; then
-    "$CW/bin/downloads" release "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")"
+    "$HERE/coworker/bin/downloads" release "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")"
     exit 0
 fi
 mkdir -p "$VM"
-"$CW/bin/downloads" claim "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")" >/dev/null   # AppKata needs this ISO (its claim: the checkout directory's name)
+"$HERE/coworker/bin/downloads" claim "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")" >/dev/null   # AppKata needs this ISO (its claim: the checkout directory's name)
 ISODIR=$(cd "$ISODIR" && pwd -P)                              # for docker's -v
 [ -e /dev/kvm ] || { echo "no /dev/kvm" >&2; exit 1; }
 
@@ -54,7 +50,7 @@ if ! docker image inspect appkata-vmtools >/dev/null 2>&1; then
 fi
 
 if [ "$CMD" = build ]; then
-    [ -f "$ISODIR/$ISO" ] || { echo "no $ISODIR/$ISO: fetch it with $CW/bin/downloads fetch (docs/testing.md)" >&2; exit 1; }
+    [ -f "$ISODIR/$ISO" ] || { echo "no $ISODIR/$ISO: fetch it with coworker/bin/downloads fetch (docs/testing.md)" >&2; exit 1; }
     (cd "$ISODIR" && sha256sum -c --status "$ISO.sha256") || { echo "$ISO: SHA-256 doesn't match $ISO.sha256" >&2; exit 1; }
     # the guest's side: what the installer does after copying the files, run in a chroot
     cat > "$VM/configure.sh" <<'EOF'

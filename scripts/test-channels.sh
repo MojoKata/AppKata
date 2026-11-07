@@ -7,9 +7,7 @@
 # Usage: scripts/test-channels.sh [ubuntu|ubuntu-pk|mint ...]   (default: all)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
-[ -x "$CW/bin/deps" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
-"$CW/bin/deps" register "$HERE"
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 RUNS=${*:-ubuntu ubuntu-pk mint}
 fail=0
 

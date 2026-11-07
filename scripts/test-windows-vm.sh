@@ -8,17 +8,15 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
-# The VM is shared with the machine's other projects through the coworker protocol (MojoKata/coworker,
+# The VM is shared with the machine's other projects through the coworker protocol (the coworker/ submodule, MojoKata/coworker;
 # installed in ${COWORKER_HOME:-~/coworker}): "vms run" claims it with what .coworker/deps.json says
 # AppKata needs of it (Windows 10 Pro 22H2), waits for another project's run, starts it if it's down,
 # checks the guest, exports how to reach it (VM_SSH_*), and stops it after if this run started it
 # (--keep-vm: leave it running, for runs back to back).
-CW=${COWORKER_HOME:-$HOME/coworker}
-[ -x "$CW/bin/vms" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
 WINDOWS_VM=${WINDOWS_VM:-win10}
 if [ -z "${COWORKER_VM_LOCKED:-}" ]; then
     KEEP=""; for a; do [ "$a" = --keep-vm ] && KEEP=--keep-vm; done
-    exec "$CW/bin/vms" run "$WINDOWS_VM" "$HERE" $KEEP -- sh "$0" "$@"
+    exec "$HERE/coworker/bin/vms" run "$WINDOWS_VM" "$HERE" $KEEP -- sh "$0" "$@"
 fi
 R="$VM_SSH_USER@$VM_SSH_HOST"
 SHOTS=0; ONLY=""; TESTS=0; E2E=0
