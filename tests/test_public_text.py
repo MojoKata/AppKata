@@ -1,5 +1,5 @@
-"""No private name in the public repository (scripts/public_text.py): not the other projects that share
-the machine AppKata is developed on, their folders or accounts, nor private accounts and domains.
+"""No private name in the public repository (scripts/public_text.py): not the private projects that share
+the machine AppKata is developed on, nor private accounts and domains.
 
 How they got in: the documents and scripts were written on that machine for its owner, so the shared
 Windows VM was named after the project that set it up, its account was the scripts' login, and the
