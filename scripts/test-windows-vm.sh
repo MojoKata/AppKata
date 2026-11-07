@@ -4,19 +4,22 @@
 # uninstall; then (with --shots) the screenshot tour into screenshots/windows/{dark,light}.
 # --tests runs the unit tests with Python on Windows; --e2e installs and uninstalls real apps from
 # GitHub through AppKata's own code (scripts/windows_e2e.py; it leaves Git for Windows installed).
-#   scripts/test-windows-vm.sh [--tests] [--e2e] [--shots] [--tour-only A01-apps,C01-catalog]
+#   scripts/test-windows-vm.sh [--tests] [--e2e] [--shots] [--tour-only A01-apps,C01-catalog] [--keep-vm]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
-# The VM can be shared with the machine's other projects through the coworker protocol
-# (MojoKata/coworker, installed in ${COWORKER_HOME:-~/coworker}): AppKata claims it, runs holding its
-# lock (another project's run is waited for), and reaches it as its vm.env says.
+# The VM is shared with the machine's other projects through the coworker protocol (MojoKata/coworker,
+# installed in ${COWORKER_HOME:-~/coworker}): "vms run" claims it with what .coworker/deps.json says
+# AppKata needs of it (Windows 10 Pro 22H2), waits for another project's run, starts it if it's down,
+# checks the guest, exports how to reach it (VM_SSH_*), and stops it after if this run started it
+# (--keep-vm: leave it running, for runs back to back).
 CW=${COWORKER_HOME:-$HOME/coworker}
 [ -x "$CW/bin/vms" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
 WINDOWS_VM=${WINDOWS_VM:-win10}
-"$CW/bin/vms" claim "$WINDOWS_VM" appkata >/dev/null
-[ -n "${COWORKER_VM_LOCKED:-}" ] || exec "$CW/bin/vms" lock "$WINDOWS_VM" appkata -- sh "$0" "$@"
-eval "$("$CW/bin/vms" env "$WINDOWS_VM")"    # VM_CONTAINER, VM_SSH_*
+if [ -z "${COWORKER_VM_LOCKED:-}" ]; then
+    KEEP=""; for a; do [ "$a" = --keep-vm ] && KEEP=--keep-vm; done
+    exec "$CW/bin/vms" run "$WINDOWS_VM" "$HERE" $KEEP -- sh "$0" "$@"
+fi
 R="$VM_SSH_USER@$VM_SSH_HOST"
 SHOTS=0; ONLY=""; TESTS=0; E2E=0
 while [ $# -gt 0 ]; do
@@ -25,6 +28,7 @@ while [ $# -gt 0 ]; do
         --tests) TESTS=1 ;;
         --e2e) E2E=1 ;;
         --tour-only) ONLY=$2; shift ;;
+        --keep-vm) ;;                   # vms run's (above)
         *) echo "unknown option: $1"; exit 2 ;;
     esac
     shift
@@ -52,11 +56,6 @@ expect() {   # expect <output> <text>: fail unless the output contains the text
     echo "$1" | grep -q -- "$2" || { echo "FAIL: expected \"$2\""; exit 1; }
 }
 
-if [ -n "$VM_CONTAINER" ] && [ "$(docker inspect -f '{{.State.Running}}' "$VM_CONTAINER" 2>/dev/null)" != "true" ]; then
-    echo "== starting the VM"
-    docker start "$VM_CONTAINER" >/dev/null
-fi
-for i in $(seq 1 60); do $SSH "echo up" >/dev/null 2>&1 && break; sleep 5; done
 
 PY=C:/Users/Public/appkata-py/python/python.exe
 if [ "$TESTS" = 1 ] || [ "$E2E" = 1 ]; then

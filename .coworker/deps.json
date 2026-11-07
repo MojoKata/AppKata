@@ -215,5 +215,16 @@
       "port": 80,
       "why": "apt in the Mint and LMDE containers (plain HTTP, as the images ship)"
     }
-  ]
+  ],
+  "vms": {
+    "win10": {
+      "os": {
+        "family": "windows",
+        "name": "Windows 10 Pro",
+        "version": "22H2",
+        "min": "10.0.19045",
+        "why": "AppKata's Windows target: Windows 10 22H2 (the installer's MinVersion is 10.0.19045)"
+      }
+    }
+  }
 }
