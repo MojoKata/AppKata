@@ -11,6 +11,7 @@
 # with scripts/test-appimage.sh.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE
 . "$HERE/scripts/lib-python.sh"

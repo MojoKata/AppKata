@@ -41,6 +41,7 @@
 # Usage: scripts/test-sandbox.sh [launcher|launcher-lmde7|launcher-vm|launcher-vm26|wayland|kwin|kwin-lmde7|inputmethod|filedialogs|filedialogs-lmde7|consumers|probe|gui|session|apparmor]   (default: probe then gui)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 OPEN="--security-opt seccomp=unconfined --security-opt systempaths=unconfined --security-opt apparmor=unconfined"
 # The launcher tiers run AppKata's code and the tests on the Python the release carries (requirement
 # 1.2; review 3, R3-21: a system's older Python can't unpack a tarball the way AppKata does), fetched

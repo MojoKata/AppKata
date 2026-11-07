@@ -7,6 +7,7 @@
 # minutes a run. Exits 1 if any run fails, after all of them.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 YEAR_END="$(date -u +%Y)-12-31 23:58"
 [ "$(date -u +%s)" -lt "$(date -u -d "$YEAR_END" +%s)" ] || YEAR_END="$(($(date -u +%Y) + 1))-12-31 23:58"
 FAILED=

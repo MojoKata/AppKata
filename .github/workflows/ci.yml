@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          submodules: true      # coworker/
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.ref_type != 'tag'
         with:
@@ -33,6 +34,7 @@ jobs:
             build/appimage-cache
             build/pyside-*
           key: tier1-${{ hashFiles('packaging/versions.env') }}
+      - run: COWORKER_UNATTENDED=1 coworker/bin/coworker status --no-network   # the coworker protocol (the coworker/ submodule): installed here, unattended
       - run: mkdir -p build && sh scripts/test-tier1.sh 2>&1 | tee build/ci-tier1.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-tier1.log test-tier1.sh
@@ -44,11 +46,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          submodules: true      # coworker/
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.ref_type != 'tag'
         with:
           path: build/appimage-cache
           key: appimage-${{ hashFiles('packaging/versions.env') }}
+      - run: COWORKER_UNATTENDED=1 coworker/bin/coworker status --no-network   # the coworker protocol (the coworker/ submodule): installed here, unattended
       - run: mkdir -p build && sh scripts/build-appimage.sh 2>&1 | tee build/ci-appimage.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-appimage.log build-appimage.sh
@@ -66,11 +70,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          submodules: true      # coworker/
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.ref_type != 'tag'
         with:
           path: build/wine-cache
           key: windows-${{ hashFiles('packaging/versions.env', 'scripts/build-windows.sh', 'packaging/windows/icuuc-stub.c') }}
+      - run: COWORKER_UNATTENDED=1 coworker/bin/coworker status --no-network   # the coworker protocol (the coworker/ submodule): installed here, unattended
       - run: mkdir -p build && sh scripts/build-windows.sh 2>&1 | tee build/ci-windows.log
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-windows.log build-windows.sh

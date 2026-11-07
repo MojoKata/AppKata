@@ -12,6 +12,7 @@
 #   scripts/test-appimage.sh [DEMO_DATA_DIR]      APPIMAGE_STEPS="mint hostlibs desktops" picks steps
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")
 IMG="AppKata-$VERSION-x86_64.AppImage"
 DATA=$(cd "${1:-$HERE/build/tour-data}" && pwd)

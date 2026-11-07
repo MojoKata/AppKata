@@ -5,6 +5,7 @@
 # See docs/build.md § Windows.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 VERSION=$(python3 -c "import sys; sys.path.insert(0, '$HERE/src'); import appkata_core; print(appkata_core.__version__)")
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
 PYINSTALLER=6.16.0

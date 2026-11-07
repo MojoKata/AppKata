@@ -7,6 +7,7 @@
 # Usage: scripts/test-channels.sh [ubuntu|ubuntu-pk|mint ...]   (default: all)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 RUNS=${*:-ubuntu ubuntu-pk mint}
 fail=0
 

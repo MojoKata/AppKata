@@ -11,6 +11,7 @@
 # start share it); APPKATA_TZ=a POSIX TZ ('XST-14' is UTC+14) sets the time zone, UTC otherwise.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+"$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 . "$HERE/scripts/lib-tier1.sh"
 tier1_setup "$HERE"
 CPY="/src${PYT#"$HERE"}"

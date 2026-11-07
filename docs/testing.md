@@ -39,7 +39,7 @@ Containers run on the test machine's kernel; the VMs on their own.
 | 2 | Linux Mint 22.3, the current release | 2, 3 | 3 · 3 · 4 · 5 · 1 est. min | ~45 GB | **2:** `scripts/test-sandbox.sh launcher` (container, with what a stock install has that changes what a sandboxed app meets: dbus-x11, gnome-keyring, Firefox, a display) · **2:** the AppImage tour, `--install-self`, host libraries and desktop start (`scripts/test-appimage.sh`) · **3:** a VM installed from the official ISO, `scripts/test-desktop-vm.sh run mint22.3`: in its Cinnamon session, logged in as a user, the stock system reported, the AppImage started as a user starts it, the launcher tests, the field test (`scripts/sandbox/field-test.sh --non-interactive`), screenshots of the session (`build mint22.3` once: 3 min, 8 GB) · **3:** `wayland`, `kwin`, `inputmethod`, `filedialogs`, `consumers` (containers) · **3:** package channels, apt (`scripts/test-channels.sh mint`) |
 | 3 | Ubuntu 22.04 LTS | 2, 3 | 1 · 1 min | ~3 GB | **2:** the AppImage build (`scripts/build-appimage.sh`), on the oldest glibc 1.1 supports (2.35) · **3:** the AppImage started on X11 and Wayland. The sandbox isn't tested here (1.1) |
 | 4 | LMDE 7, the current release | 3 | 4 · 2 · 1 · 2 · 1 min | ~35 GB | **3:** a VM installed from the official ISO, `scripts/test-desktop-vm.sh run lmde7`: the same as Mint's (`build lmde7` once: 2 min, 8 GB) · **3:** `scripts/test-sandbox.sh launcher-lmde7` · **3:** the AppImage started on X11 and Wayland · **3:** `filedialogs-lmde7` (Qt 6.8, GTK 4.18) · **3:** `kwin-lmde7` (Plasma 6) |
-| 5 | Windows 10 22H2 | 3 | 2 · 7 min | ~40 GB | **3:** the installer build (`scripts/build-windows.sh`, Wine in a container) · **3:** the VM (`scripts/test-windows-vm.sh --tests --e2e --shots`): install, the suite, end to end, the tour, uninstall. The VM can be shared with the machine's other projects (`coworker/vm`) |
+| 5 | Windows 10 22H2 | 3 | 2 · 7 min | ~40 GB | **3:** the installer build (`scripts/build-windows.sh`, Wine in a container) · **3:** the VM (`scripts/test-windows-vm.sh --tests --e2e --shots`): install, the suite, end to end, the tour, uninstall. The VM can be shared with the machine's other projects (the coworker protocol, `vms`) |
 | 6 | Ubuntu 26.04 LTS | 3 | 3 min | ~1 GB | **3:** `scripts/test-sandbox.sh launcher-vm26`: the newest sandbox versions (bwrap 0.11.1, portal 1.21), under the system's own bwrap profile |
 
 The AppImage checks are described in [`build.md`](build.md) ("AppImage"), the sandbox runs in
@@ -110,12 +110,13 @@ can't carry the report.
 
 ## Downloaded ISOs
 
-ISOs are shared with the machine's other projects by the protocol in
-[`coworker/iso`](../coworker/iso/README.md): they live in one folder, `$ISO_DIR` (`~/iso` unless
-`local.env` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs one
-claims it with an empty file named after itself, `<iso>.appkata` here. `coworker/iso/download.sh ISO
-PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it again after a
-failure and it resumes), checks its SHA-256 against `SHA_URL` (one hash, or a mirror's list naming
+ISOs are shared with the machine's other projects by the
+[coworker protocol](https://github.com/MojoKata/coworker) (the `coworker/` submodule;
+`coworker/bin/coworker status` first): they live in one folder, `$COWORKER_HOME/downloads` (`~/coworker/downloads` unless
+`COWORKER_HOME` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs
+one claims it with an empty file named after its checkout directory, `<iso>.AppKata` here.
+`downloads fetch ISO PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it
+again after a failure and it resumes), checks its SHA-256 against `SHA_URL` (one hash, or a mirror's list naming
 the ISO), keeps that as `ISO.sha256`, renames the ISO into place and claims it. When AppKata is done
 with one, `scripts/test-desktop-vm.sh release NAME` gives up its claim, and the ISO goes only with
 the last claim. Never download an ISO into this repository's folders.
@@ -123,9 +124,9 @@ the last claim. Never download an ISO into this repository's folders.
 AppKata claims `linuxmint-22.3-cinnamon-64bit.iso` and `lmde-7-cinnamon-64bit.iso`, for the desktop
 VMs (`scripts/test-desktop-vm.sh` claims its ISO each time it runs):
 
-    coworker/iso/download.sh linuxmint-22.3-cinnamon-64bit.iso appkata \
+    coworker/bin/downloads fetch linuxmint-22.3-cinnamon-64bit.iso AppKata \
         https://pub.linuxmint.io/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso \
         https://pub.linuxmint.io/stable/22.3/sha256sum.txt
-    coworker/iso/download.sh lmde-7-cinnamon-64bit.iso appkata \
+    coworker/bin/downloads fetch lmde-7-cinnamon-64bit.iso AppKata \
         https://pub.linuxmint.io/debian/lmde-7-cinnamon-64bit.iso \
         https://pub.linuxmint.io/debian/sha256sum.txt

@@ -5,7 +5,6 @@ tests/test_audit_log_explore.py::test_autostart_and_links  # Linux desktop files
 tests/test_booted.py::test_this_system_boots_what_testing_md_says  # only where the tier boots the environment's own kernel (the VMs); a container has the test machine's
 tests/test_channel_ui.py::test_same_digest_and_source_settings  # could not import 'PySide6': No module named 'PySide6'
 tests/test_channels.py::test_system_bus  # no system bus
-tests/test_coworker.py::*  # the protocols need flock (util-linux)
 tests/test_dialog_contract.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_doc_links.py::test_every_link_between_the_documents_leads_somewhere  # a copy without the screenshots' images (the Windows tier's), which the documents link to
 tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (17.1)

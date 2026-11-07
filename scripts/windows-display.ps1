@@ -1,6 +1,6 @@
 # Dot-sourced in the test VM's console session by scripts/test-windows-vm.sh. Set-Display W H puts the
 # screen at W x H for this session, and Reset-Display puts back the mode Windows has saved: the VM can
-# be shared with other projects (coworker/vm), so the change isn't saved. Each returns ChangeDisplaySettings'
+# be shared with other projects (the coworker protocol), so the change isn't saved. Each returns ChangeDisplaySettings'
 # result, 0 when it worked. Move-PointerAway puts the mouse pointer on the taskbar, off the window:
 # a mode change centres it, over the tour's window, where it hovers a row.
 Add-Type @"

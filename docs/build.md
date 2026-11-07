@@ -11,6 +11,8 @@ marked **(planned)** don't exist yet.
 ## Running from source, tests and screenshots
 
 ```sh
+git submodule update --init coworker       # with a clone made without --recurse-submodules
+coworker/bin/coworker status               # first, on any machine: what it needs, and what waits on a human
 "$(scripts/python-standalone.sh)" -m venv .venv && .venv/bin/pip install -e . pytest   # the release's Python (1.2)
 .venv/bin/python -m pytest                 # unit and integration tests (no network needed)
 scripts/test-tier1.sh                      # the same in a container, on a host whose glibc is older than 2.34
@@ -21,6 +23,16 @@ scripts/test-layout.sh                     # the tour in tier 1's container: no 
 scripts/test-layout.sh --shots             # the same, and its screens replace screenshots/linux
 scripts/test-screenshot-text.sh            # after any screenshots are made again: no private name or other repository address in them
 ```
+
+What the machine needs for these (Qt's system libraries for the `.venv`, bubblewrap and
+xdg-dbus-proxy for the sandbox, and the network hosts the scripts reach) is in
+`.coworker/deps.json`, read by the [coworker protocol](https://github.com/MojoKata/coworker), which
+AppKata carries as the `coworker/` submodule and calls only through it. `coworker/bin/coworker
+status` is the first step on any machine. It checks the installed coworker, registers AppKata, and
+lists what's waiting on a human, each with its command: installing coworker itself
+(`coworker/bin/coworker install`), the host packages (the `sudo` part is the machine owner's), and
+the hosts to open on a firewall. Each entry in `deps.json` says why it's there. CI runs the same
+step unattended (`COWORKER_UNATTENDED=1`).
 
 Which tests run when, on which environment, and how long each takes is in [`testing.md`](testing.md).
 The sandbox's own runs are in containers and VMs (`scripts/test-sandbox.sh`; what each shows is in
@@ -423,12 +435,16 @@ the x86_64 half of the app can be run; test the arm64 half on an Apple silicon M
 ## Shared Windows test VM
 
 The Windows tests run in a Windows 10 Pro 22H2 VM that the machine's other projects can share, by
-the protocol in [`coworker/vm`](../coworker/vm/README.md). It is `win10` in `$VM_DIR` (`~/vm`
-unless `local.env` says otherwise; `WINDOWS_VM` names another), and its folder's `vm.env` says how
-to reach it: its container, SSH port, account and key, the same for every project.
-`scripts/test-windows-vm.sh` claims it for `appkata`, holds its lock for the whole run (another
-project's run waits, or AppKata's waits for it), starts it if it isn't running and leaves it
-running. AppKata's files go in `C:\Users\Public\appkata-test` and `appkata-py`, the screen size it
+the [coworker protocol](https://github.com/MojoKata/coworker) (the `coworker/` submodule;
+`coworker/bin/coworker status` first). It is `win10` in `$COWORKER_HOME/vms` (`~/coworker/vms` unless `COWORKER_HOME` says
+otherwise; `WINDOWS_VM` names another VM), and its folder's `vm.env` says how to reach it: its
+container, SSH port, account and key, the same for every project. `scripts/test-windows-vm.sh` runs
+under `vms run`: it claims the VM under the checkout directory's name (`AppKata`) with what
+`.coworker/deps.json` says AppKata needs of it (`"vms"`: Windows 10 Pro 22H2, build 10.0.19045 or
+later), refuses if another project needs something that can't also hold, holds the VM's lock for the
+whole run (another project's run waits, or AppKata's waits for it), starts it if it isn't running
+and checks the guest, and stops it at the end if this run started it (`--keep-vm` leaves it
+running). AppKata's files go in `C:\Users\Public\appkata-test` and `appkata-py`, the screen size it
 sets is put back and not saved, and what it installs it uninstalls, except Git for Windows and the
 Visual C++ run-time from `--e2e`.
 

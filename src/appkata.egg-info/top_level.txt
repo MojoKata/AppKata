@@ -1,2 +1,0 @@
-appkata
-appkata_core
