@@ -5,7 +5,9 @@ how to check it is still in place. When something breaks, walk it again from the
 
 `scripts/publish.sh check` reads back what GitHub shows an admin and prints `ok` or `FAIL` for each
 setting below; run it with `gh` logged in as the owner. `scripts/publish.sh setup` makes the CI
-settings of step 8 where they're missing. What each workflow job does is in
+settings of step 8 where they're missing. `scripts/repo-admin.sh apply` makes steps 3 to 6 (merging,
+the `master` ruleset, Actions, security), as each MojoKata repository's own `repo-admin.sh` does, and
+then runs `publish.sh setup`; `repo-admin.sh check` reads both back. What each workflow job does is in
 [`github-workflows.md`](github-workflows.md); building by hand, in
 [`build.md`](build.md); each release, in [`RELEASE.md`](RELEASE.md).
 
@@ -64,7 +66,8 @@ Check: the organization's People page, and the repository's Settings → Collabo
 
 ## 3. Merging
 
-Settings → General → Pull Requests: **squash merging only** (merge commits and rebase merging off).
+Settings → General → Pull Requests: **squash merging only** (merge commits and rebase merging off),
+and a pull request's branch deleted once it's merged.
 
 Check: `publish.sh check`, "merge methods".
 
