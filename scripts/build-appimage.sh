@@ -11,9 +11,11 @@
 # with scripts/test-appimage.sh.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
-[ -x "$CW/bin/deps" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
-"$CW/bin/deps" register "$HERE"
+if [ "${APPKATA_BUILD_IN_CONTAINER:-}" != 1 ]; then   # the host's run did this; the container has no coworker
+    CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
+    [ -x "$CW/bin/deps" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
+    "$CW/bin/deps" register "$HERE"
+fi
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE
 . "$HERE/scripts/lib-python.sh"
