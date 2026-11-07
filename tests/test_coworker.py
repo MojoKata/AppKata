@@ -31,6 +31,18 @@ def isodir(tmp_path):
     return d, {"ISO_DIR": str(d)}
 
 
+def test_the_iso_folder_defaults_to_claude_downloads_iso(tmp_path):
+    """No ISO_DIR and no link at ~/iso: the shared folder is ~/claude-downloads/iso."""
+    env = {**os.environ, "HOME": str(tmp_path)}
+    env.pop("ISO_DIR", None)
+    for script in ("claim.sh", "list.sh"):
+        res = subprocess.run(["sh", os.path.join(ISO, script), *(["x.iso", "one"] if script == "claim.sh" else [])],
+                             capture_output=True, text=True, env=env, timeout=60)
+        assert res.returncode == 0, res.stderr + res.stdout
+    assert (tmp_path / "claude-downloads" / "iso" / "x.iso.one").exists()
+    assert not (tmp_path / "iso").exists()
+
+
 def test_iso_claims_keep_an_iso_until_the_last_is_released(isodir):
     d, env = isodir
     _run(os.path.join(ISO, "claim.sh"), "x.iso", "one", env=env)

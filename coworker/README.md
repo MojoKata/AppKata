@@ -6,11 +6,12 @@ folder of ISOs, a VM) records who uses it, so no project's documents need to nam
 
 | Protocol | What's shared | Where (default) |
 |---|---|---|
-| [`iso/`](iso/README.md) | installer ISOs: downloaded once, checked once, kept while any project needs them | `$ISO_DIR` (`~/iso`) |
+| [`iso/`](iso/README.md) | installer ISOs: downloaded once, checked once, kept while any project needs them | `$ISO_DIR` (`~/claude-downloads/iso`) |
 | [`vm/`](vm/README.md) | virtual machines: kept while any project needs them, used by one project at a time | `$VM_DIR` (`~/vm`) |
 
-**Version 1, 2026-10-25.** A change to a protocol changes every copy: bump the version here and
-copy the folder into each project that carries it, unchanged.
+**Version 2, 2026-11-07** (version 1, 2026-10-25, kept the ISOs in `~/iso`). A change to a
+protocol changes every copy: bump the version here and copy the folder into each project that
+carries it, unchanged.
 
 ## In a project
 

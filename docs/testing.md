@@ -111,8 +111,8 @@ can't carry the report.
 ## Downloaded ISOs
 
 ISOs are shared with the machine's other projects by the protocol in
-[`coworker/iso`](../coworker/iso/README.md): they live in one folder, `$ISO_DIR` (`~/iso` unless
-`local.env` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs one
+[`coworker/iso`](../coworker/iso/README.md): they live in one folder, `$ISO_DIR`
+(`~/claude-downloads/iso` unless `local.env` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs one
 claims it with an empty file named after itself, `<iso>.appkata` here. `coworker/iso/download.sh ISO
 PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it again after a
 failure and it resumes), checks its SHA-256 against `SHA_URL` (one hash, or a mirror's list naming

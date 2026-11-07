@@ -2,7 +2,7 @@
 # release.sh ISO PROJECT: PROJECT no longer needs ISO. Removes PROJECT's claim, and the ISO with its
 # checksum only when no other project's claim is left (coworker/iso/README.md).
 set -eu
-DIR=${ISO_DIR:-$HOME/iso}
+DIR=${ISO_DIR:-$HOME/claude-downloads/iso}
 ISO=$(basename "${1:?usage: release.sh ISO PROJECT}")
 P=${2:?usage: release.sh ISO PROJECT}
 rm -f "$DIR/$ISO.$P"

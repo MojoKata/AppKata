@@ -1,14 +1,14 @@
 #!/bin/sh
 # download.sh ISO PROJECT ISO_URL SHA_URL: downloads ISO into the shared folder, $ISO_DIR (default
-# ~/iso), checks its SHA-256 and claims it for PROJECT (coworker/iso/README.md). The ISO arrives as
-# ISO.part beside it and is renamed only once its SHA-256 matches; run the same command again after a
+# ~/claude-downloads/iso), checks its SHA-256 and claims it for PROJECT (coworker/iso/README.md).
+# The ISO arrives as ISO.part beside it and is renamed only once its SHA-256 matches; run the same command again after a
 # failure and it resumes. An ISO already there that matches is only claimed. SHA_URL may hold the one
 # hash or a list naming the ISO (a mirror's sha256sum.txt); what's kept is ISO.sha256, "<hash>  <iso>",
 # for sha256sum -c. A host this machine can't reach directly is fetched through a container
 # (curlimages/curl), when Docker is here. One download of an ISO at a time: another waits on ISO.lock.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-DIR=${ISO_DIR:-$HOME/iso}
+DIR=${ISO_DIR:-$HOME/claude-downloads/iso}
 usage="usage: download.sh ISO PROJECT ISO_URL SHA_URL"
 ISO=$(basename "${1:?$usage}")
 P=${2:?$usage}

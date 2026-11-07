@@ -1,10 +1,10 @@
 #!/bin/sh
-# list.sh [--verify]: every ISO in the shared folder, $ISO_DIR (default ~/iso), or claimed and not
-# there yet, with its size and the projects that claim it; "unclaimed" marks one no project needs
+# list.sh [--verify]: every ISO in the shared folder, $ISO_DIR (default ~/claude-downloads/iso),
+# or claimed and not there yet, with its size and the projects that claim it; "unclaimed" marks one no project needs
 # (coworker/iso/README.md, "Maintenance"). With --verify, whether each one there matches its
 # <iso>.sha256 (this reads every ISO: a minute or two).
 set -eu
-DIR=${ISO_DIR:-$HOME/iso}
+DIR=${ISO_DIR:-$HOME/claude-downloads/iso}
 [ -d "$DIR" ] || { echo "no $DIR"; exit 0; }
 cd "$DIR"
 claims_of() {

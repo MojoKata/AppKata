@@ -17,8 +17,8 @@
 # NAME: mint22.3 or lmde7. Needs /dev/kvm, Docker, and --privileged (loop devices) for build.
 #
 # The ISOs are shared with the machine's other projects (coworker/iso): they live in $ISO_DIR
-# (default ~/iso; local.env can set it) beside their SHA-256 (<iso>.sha256). Fetch one with
-# coworker/iso/download.sh (it resumes, checks the SHA-256 and claims it); this script claims its
+# (default ~/claude-downloads/iso; local.env can set it) beside their SHA-256 (<iso>.sha256).
+# Fetch one with coworker/iso/download.sh (it resumes, checks the SHA-256 and claims it); this script claims its
 # ISO for "appkata" each time, and release gives it up, which removes the ISO only with the last
 # claim (docs/testing.md, "Downloaded ISOs").
 set -eu
@@ -26,7 +26,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 CMD=${1:?usage: scripts/test-desktop-vm.sh build|run|release mint22.3|lmde7}
 NAME=${2:?usage: scripts/test-desktop-vm.sh build|run|release mint22.3|lmde7}
 [ ! -f "$HERE/local.env" ] || . "$HERE/local.env"     # this machine's settings (coworker/README.md)
-ISODIR=${ISO_DIR:-$HOME/iso}
+ISODIR=${ISO_DIR:-$HOME/claude-downloads/iso}
 export ISO_DIR="$ISODIR"
 case $NAME in
     mint22.3) ISO=linuxmint-22.3-cinnamon-64bit.iso LIVE=casper ;;

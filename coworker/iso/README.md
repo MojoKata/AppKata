@@ -1,8 +1,8 @@
 # Shared ISOs
 
 One folder on the machine for every ISO its projects need, so each is downloaded once, checked
-once, and deleted only when no project needs it any more. The folder is `$ISO_DIR`, `~/iso` unless
-a project's `local.env` says otherwise ([`../README.md`](../README.md)). Every project that follows
+once, and deleted only when no project needs it any more. The folder is `$ISO_DIR`,
+`~/claude-downloads/iso` unless a project's `local.env` says otherwise ([`../README.md`](../README.md)). Every project that follows
 this protocol carries these scripts, unchanged, and any of them can manage the folder.
 
 ## What's in the folder
