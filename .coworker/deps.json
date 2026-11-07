@@ -1,5 +1,4 @@
 {
-  "project": "appkata",
   "host": [
     {
       "package": "mesa-libGL",

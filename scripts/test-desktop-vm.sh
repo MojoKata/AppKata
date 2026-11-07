@@ -19,8 +19,9 @@
 # The ISOs are shared with the machine's other projects through the coworker protocol
 # (MojoKata/coworker, installed in ${COWORKER_HOME:-~/coworker}): they live in its downloads/ beside
 # their SHA-256 (<iso>.sha256). Fetch one with "downloads fetch" (it resumes, checks the SHA-256 and
-# claims it); this script claims its ISO for "appkata" each time, and release gives it up, which
-# removes the ISO only with the last claim (docs/testing.md, "Downloaded ISOs").
+# claims it); this script claims its ISO each time under AppKata's name (its checkout directory's),
+# and release gives it up, which removes the ISO only with the last claim (docs/testing.md,
+# "Downloaded ISOs").
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 CW=${COWORKER_HOME:-$HOME/coworker}   # the coworker protocol (MojoKata/coworker): remembers AppKata, mentions what the host lacks
@@ -39,11 +40,11 @@ esac
 VM=$HERE/build/desktop-vm/$NAME
 
 if [ "$CMD" = release ]; then
-    "$CW/bin/downloads" release "$ISO" appkata
+    "$CW/bin/downloads" release "$ISO" "$(basename "$HERE")"
     exit 0
 fi
 mkdir -p "$VM"
-"$CW/bin/downloads" claim "$ISO" appkata >/dev/null       # AppKata needs this ISO
+"$CW/bin/downloads" claim "$ISO" "$(basename "$HERE")" >/dev/null       # AppKata needs this ISO (its claim: the checkout directory's name)
 ISODIR=$(cd "$ISODIR" && pwd -P)                              # for docker's -v
 [ -e /dev/kvm ] || { echo "no /dev/kvm" >&2; exit 1; }
 

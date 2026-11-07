@@ -114,8 +114,8 @@ ISOs are shared with the machine's other projects by the
 [coworker protocol](https://github.com/MojoKata/coworker) (install it with that repository's
 `install.sh`): they live in one folder, `$COWORKER_HOME/downloads` (`~/coworker/downloads` unless
 `COWORKER_HOME` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs
-one claims it with an empty file named after itself, `<iso>.appkata` here. `downloads fetch ISO
-PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it again after a
+one claims it with an empty file named after its checkout directory, `<iso>.appkata` here.
+`downloads fetch ISO PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it again after a
 failure and it resumes), checks its SHA-256 against `SHA_URL` (one hash, or a mirror's list naming
 the ISO), keeps that as `ISO.sha256`, renames the ISO into place and claims it. When AppKata is done
 with one, `scripts/test-desktop-vm.sh release NAME` gives up its claim, and the ISO goes only with

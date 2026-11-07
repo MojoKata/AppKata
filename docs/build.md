@@ -434,7 +434,7 @@ the [coworker protocol](https://github.com/MojoKata/coworker) (install it with t
 `install.sh`). It is `win10` in `$COWORKER_HOME/vms` (`~/coworker/vms` unless `COWORKER_HOME` says
 otherwise; `WINDOWS_VM` names another VM), and its folder's `vm.env` says how to reach it: its
 container, SSH port, account and key, the same for every project. `scripts/test-windows-vm.sh`
-runs under `vms run`: it claims the VM for `appkata` with what `.coworker/deps.json` says AppKata
+runs under `vms run`: it claims the VM under the checkout directory's name (`appkata`) with what `.coworker/deps.json` says AppKata
 needs of it (`"vms"`: Windows 10 Pro 22H2, build 10.0.19045 or later), refuses if another project
 needs something that can't also hold, holds the VM's lock for the whole run (another project's run
 waits, or AppKata's waits for it), starts it if it isn't running and checks the guest, and stops it
