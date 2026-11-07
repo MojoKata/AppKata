@@ -40,11 +40,11 @@ esac
 VM=$HERE/build/desktop-vm/$NAME
 
 if [ "$CMD" = release ]; then
-    "$CW/bin/downloads" release "$ISO" "$(basename "$HERE")"
+    "$CW/bin/downloads" release "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")"
     exit 0
 fi
 mkdir -p "$VM"
-"$CW/bin/downloads" claim "$ISO" "$(basename "$HERE")" >/dev/null       # AppKata needs this ISO (its claim: the checkout directory's name)
+"$CW/bin/downloads" claim "$ISO" "$(basename "$(cd "$HERE" && pwd -P)")" >/dev/null   # AppKata needs this ISO (its claim: the checkout directory's name)
 ISODIR=$(cd "$ISODIR" && pwd -P)                              # for docker's -v
 [ -e /dev/kvm ] || { echo "no /dev/kvm" >&2; exit 1; }
 
