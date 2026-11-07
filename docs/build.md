@@ -423,10 +423,11 @@ the x86_64 half of the app can be run; test the arm64 half on an Apple silicon M
 ## Shared Windows test VM
 
 The Windows tests run in a Windows 10 Pro 22H2 VM that the machine's other projects can share, by
-the protocol in [`coworker/vm`](../coworker/vm/README.md). It is `win10` in `$VM_DIR` (`~/vm`
-unless `local.env` says otherwise; `WINDOWS_VM` names another), and its folder's `vm.env` says how
-to reach it: its container, SSH port, account and key, the same for every project.
-`scripts/test-windows-vm.sh` claims it for `appkata`, holds its lock for the whole run (another
+the [coworker protocol](https://github.com/MojoKata/coworker) (install it with that repository's
+`install.sh`). It is `win10` in `$COWORKER_HOME/vms` (`~/coworker/vms` unless `COWORKER_HOME` says
+otherwise; `WINDOWS_VM` names another VM), and its folder's `vm.env` says how to reach it: its
+container, SSH port, account and key, the same for every project. `scripts/test-windows-vm.sh`
+claims it for `appkata` (`vms claim`), holds its lock for the whole run (another
 project's run waits, or AppKata's waits for it), starts it if it isn't running and leaves it
 running. AppKata's files go in `C:\Users\Public\appkata-test` and `appkata-py`, the screen size it
 sets is put back and not saved, and what it installs it uninstalls, except Git for Windows and the

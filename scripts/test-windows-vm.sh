@@ -8,14 +8,15 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
-[ ! -f "$HERE/local.env" ] || . "$HERE/local.env"     # this machine's settings (coworker/README.md)
-[ -z "${VM_DIR:-}" ] || export VM_DIR
-# The VM can be shared with the machine's other projects (coworker/vm): AppKata claims it, runs
-# holding its lock (another project's run is waited for), and reaches it as its vm.env says.
+# The VM can be shared with the machine's other projects through the coworker protocol
+# (MojoKata/coworker, installed in ${COWORKER_HOME:-~/coworker}): AppKata claims it, runs holding its
+# lock (another project's run is waited for), and reaches it as its vm.env says.
+CW=${COWORKER_HOME:-$HOME/coworker}
+[ -x "$CW/bin/vms" ] || { echo "coworker isn't installed in $CW: run install.sh from a checkout of MojoKata/coworker" >&2; exit 1; }
 WINDOWS_VM=${WINDOWS_VM:-win10}
-"$HERE/coworker/vm/claim.sh" "$WINDOWS_VM" appkata >/dev/null
-[ -n "${COWORKER_VM_LOCKED:-}" ] || exec "$HERE/coworker/vm/lock.sh" "$WINDOWS_VM" appkata -- sh "$0" "$@"
-eval "$("$HERE/coworker/vm/env.sh" "$WINDOWS_VM")"    # VM_CONTAINER, VM_SSH_*
+"$CW/bin/vms" claim "$WINDOWS_VM" appkata >/dev/null
+[ -n "${COWORKER_VM_LOCKED:-}" ] || exec "$CW/bin/vms" lock "$WINDOWS_VM" appkata -- sh "$0" "$@"
+eval "$("$CW/bin/vms" env "$WINDOWS_VM")"    # VM_CONTAINER, VM_SSH_*
 R="$VM_SSH_USER@$VM_SSH_HOST"
 SHOTS=0; ONLY=""; TESTS=0; E2E=0
 while [ $# -gt 0 ]; do
@@ -191,7 +192,7 @@ PY
     # The screen is 1920 x 1080 while it runs, the design point (requirement 5.2.1), and the tour's
     # window takes what the taskbar leaves, as maximized. The screens show a neutral account's
     # folders, C:\Users\you, as the mockups do, not the VM's account: the tour gets that profile,
-    # made for the run and removed after (a shared VM is left as it was found, coworker/vm).
+    # made for the run and removed after (a shared VM is left as it was found: the coworker protocol).
     $SCP "$HERE/scripts/windows-display.ps1" "$R:$D/windows-display.ps1"
     YOU='C:\Users\you'
     run "New-Item -ItemType Directory -Force '$YOU\AppData\Local', '$YOU\AppData\Roaming' | Out-Null
