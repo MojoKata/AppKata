@@ -110,10 +110,11 @@ can't carry the report.
 
 ## Downloaded ISOs
 
-ISOs are shared with the machine's other projects by the protocol in
-[`coworker/iso`](../coworker/iso/README.md): they live in one folder, `$ISO_DIR` (`~/iso` unless
-`local.env` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs one
-claims it with an empty file named after itself, `<iso>.appkata` here. `coworker/iso/download.sh ISO
+ISOs are shared with the machine's other projects by the
+[coworker protocol](https://github.com/MojoKata/coworker) (install it with that repository's
+`install.sh`): they live in one folder, `$COWORKER_HOME/downloads` (`~/coworker/downloads` unless
+`COWORKER_HOME` says otherwise), each beside its SHA-256 (`<iso>.sha256`), and a project that needs
+one claims it with an empty file named after itself, `<iso>.appkata` here. `downloads fetch ISO
 PROJECT ISO_URL SHA_URL` fetches an ISO into that folder as `ISO.part` (run it again after a
 failure and it resumes), checks its SHA-256 against `SHA_URL` (one hash, or a mirror's list naming
 the ISO), keeps that as `ISO.sha256`, renames the ISO into place and claims it. When AppKata is done
@@ -123,9 +124,9 @@ the last claim. Never download an ISO into this repository's folders.
 AppKata claims `linuxmint-22.3-cinnamon-64bit.iso` and `lmde-7-cinnamon-64bit.iso`, for the desktop
 VMs (`scripts/test-desktop-vm.sh` claims its ISO each time it runs):
 
-    coworker/iso/download.sh linuxmint-22.3-cinnamon-64bit.iso appkata \
+    ~/coworker/bin/downloads fetch linuxmint-22.3-cinnamon-64bit.iso appkata \
         https://pub.linuxmint.io/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso \
         https://pub.linuxmint.io/stable/22.3/sha256sum.txt
-    coworker/iso/download.sh lmde-7-cinnamon-64bit.iso appkata \
+    ~/coworker/bin/downloads fetch lmde-7-cinnamon-64bit.iso appkata \
         https://pub.linuxmint.io/debian/lmde-7-cinnamon-64bit.iso \
         https://pub.linuxmint.io/debian/sha256sum.txt
