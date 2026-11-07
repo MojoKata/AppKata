@@ -11,6 +11,8 @@ marked **(planned)** don't exist yet.
 ## Running from source, tests and screenshots
 
 ```sh
+git submodule update --init coworker       # with a clone made without --recurse-submodules
+coworker/bin/coworker status               # first, on any machine: what it needs, and what waits on a human
 "$(scripts/python-standalone.sh)" -m venv .venv && .venv/bin/pip install -e . pytest   # the release's Python (1.2)
 .venv/bin/python -m pytest                 # unit and integration tests (no network needed)
 scripts/test-tier1.sh                      # the same in a container, on a host whose glibc is older than 2.34
@@ -24,10 +26,13 @@ scripts/test-screenshot-text.sh            # after any screenshots are made agai
 
 What the machine needs for these (Qt's system libraries for the `.venv`, bubblewrap and
 xdg-dbus-proxy for the sandbox, and the network hosts the scripts reach) is in
-`.coworker/deps.json`, read by the [coworker protocol](https://github.com/MojoKata/coworker)'s
-`deps`: `~/coworker/bin/deps check .` says what's missing, `deps install .` prints the command that
-installs it (the `sudo` part is the machine owner's), and `deps hosts .` lists the hosts to open on a
-firewall. Each entry says why it's there.
+`.coworker/deps.json`, read by the [coworker protocol](https://github.com/MojoKata/coworker), which
+AppKata carries as the `coworker/` submodule and calls only through it. `coworker/bin/coworker
+status` is the first step on any machine. It checks the installed coworker, registers AppKata, and
+lists what's waiting on a human, each with its command: installing coworker itself
+(`coworker/bin/coworker install`), the host packages (the `sudo` part is the machine owner's), and
+the hosts to open on a firewall. Each entry in `deps.json` says why it's there. CI runs the same
+step unattended (`COWORKER_UNATTENDED=1`).
 
 Which tests run when, on which environment, and how long each takes is in [`testing.md`](testing.md).
 The sandbox's own runs are in containers and VMs (`scripts/test-sandbox.sh`; what each shows is in
@@ -430,8 +435,8 @@ the x86_64 half of the app can be run; test the arm64 half on an Apple silicon M
 ## Shared Windows test VM
 
 The Windows tests run in a Windows 10 Pro 22H2 VM that the machine's other projects can share, by
-the [coworker protocol](https://github.com/MojoKata/coworker) (install it with that repository's
-`install.sh`). It is `win10` in `$COWORKER_HOME/vms` (`~/coworker/vms` unless `COWORKER_HOME` says
+the [coworker protocol](https://github.com/MojoKata/coworker) (the `coworker/` submodule;
+`coworker/bin/coworker status` first). It is `win10` in `$COWORKER_HOME/vms` (`~/coworker/vms` unless `COWORKER_HOME` says
 otherwise; `WINDOWS_VM` names another VM), and its folder's `vm.env` says how to reach it: its
 container, SSH port, account and key, the same for every project. `scripts/test-windows-vm.sh` runs
 under `vms run`: it claims the VM under the checkout directory's name (`AppKata`) with what
