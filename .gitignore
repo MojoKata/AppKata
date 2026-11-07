@@ -5,4 +5,3 @@ build/
 releases/
 .pytest_cache/
 /temp/
-/local.env

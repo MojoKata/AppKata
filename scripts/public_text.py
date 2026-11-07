@@ -1,5 +1,5 @@
 """Names that must not appear in the public repository: the other projects that share the machine it
-is developed on, their folders and accounts, and private accounts and domains (coworker/README.md).
+is developed on, their folders and accounts, and private accounts and domains (the coworker protocol, MojoKata/coworker).
 They are kept as SHA-256 hashes, so this file names none of them itself.
 
     python3 scripts/public_text.py hash NAME...      the hash to add for a new name

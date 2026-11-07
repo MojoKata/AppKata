@@ -5,7 +5,7 @@ How they got in: the documents and scripts were written on that machine for its 
 Windows VM was named after the project that set it up, its account was the scripts' login, and the
 ISOs lived in a folder named after the tool that fetched them. Nothing checked the repository for
 what only made sense there. The class: a name that belongs to the machine, not to AppKata, written into a file. The shared
-things now follow coworker/ and are reached through settings; this test reads every file git
+things now follow the coworker protocol (MojoKata/coworker) and are reached through COWORKER_HOME; this test reads every file git
 tracks, and scripts/test-screenshot-text.sh the text in every screenshot."""
 
 import os
