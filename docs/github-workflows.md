@@ -2,8 +2,9 @@
 
 What [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, when, and why it is built the
 way it is: the CI walk thru's decisions of 2026-10-24. One-time setup (the repository's settings,
-the release key) is in [`GENESIS.md`](../GENESIS.md); building by hand and the release checklist,
-in [`build.md`](build.md); what users can check a download against, in [`gpg.md`](gpg.md).
+the release key) is in [`GENESIS.md`](GENESIS.md); building by hand, in [`build.md`](build.md);
+the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a download against, in
+[`gpg.md`](gpg.md).
 
 ## What runs when
 
@@ -59,26 +60,23 @@ gpg --import appkata-release-key.asc     # packaging/appkata-release-key.asc, or
 gpg --verify AppKata-<version>-x86_64.AppImage.asc AppKata-<version>-x86_64.AppImage
 ```
 
-The fingerprint `gpg` names must be the one the README publishes (with the first signed release,
-GENESIS.md step 7). Windows' installer isn't signed yet
+The "Primary key fingerprint" `gpg` names must be the one the README publishes,
+`A5C4 FAB7 54C2 34D3 8C98  3D94 02E7 71CD 068A 1ABD` (GENESIS.md step 7). Windows' installer isn't signed yet
 (Authenticode needs a certificate, `build.md`, "Signing"); it has its `.sha256`.
 
 ## The draft, and publishing it
 
 A published release reaches every AppKata at its next sync, since AppKata takes its own updates from
 this repository's releases (requirement 2.11). So CI makes a **draft**, which only the repository's
-writers see, and the owner publishes it after the checks no runner can make (`build.md`, "Before
-tagging a release": the field test by hand, which can use the draft's files).
+writers see, and the owner publishes it after the checks no runner can make
+([`RELEASE.md`](RELEASE.md#4-the-field-test), 4: the field test by hand, which uses the draft's files).
 
-`scripts/publish.sh` walks through it:
-
-- `release`: checks that `master` is clean and current, tags `v<version>` and pushes it, waits for
-  the run, shows the two `sha256` notices, approves the signing, waits for the draft and verifies it.
-- `resume`: the same from "waits for the run", after an interruption.
-- `verify [VERSION]`: downloads the draft or release, checks that it holds exactly the five files,
-  each against its `.sha256`, and that the AppImage's signature is the release key's
-  (`packaging/appkata-release-key.asc`, matched by fingerprint).
-- `publish [VERSION]`: verifies again and publishes the draft as the latest release.
+`scripts/publish.sh` walks through it: `release` tags, waits for the run, shows the two `sha256`
+notices, approves the signing and verifies the draft, and `publish` publishes it once the field test
+is done. What each command does and refuses is in [`RELEASE.md`](RELEASE.md#8-what-publishsh-does).
+`resume`, after a failed run is run again (`gh run rerun RUN`, with or without `--failed`), reads
+each `sha256` notice from the attempt that built the file, since a job carried into a new attempt
+keeps none.
 
 With **immutable releases** on (GENESIS.md, step 8), a published release's files and tag can't be
 changed, and GitHub adds a release attestation (`gh release verify v<version>`). A bad release is

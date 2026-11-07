@@ -35,7 +35,7 @@ published; the commits the review records cite are in the private history that c
   launcher), `test_sandbox_threads.py` (the startup heal pass overlapping the UI thread),
   `test_sandbox_state.py` (the rows and files each *release* left, thawed into today's code — one
   snapshot per release in `tests/data/state/`, frozen before tagging; the steps are in
-  [`build.md`](build.md), "Before tagging a release"), `test_dialog_contract.py` and
+  [`RELEASE_AGENT.md`](RELEASE_AGENT.md#1-prepare-a-release)), `test_dialog_contract.py` and
   `test_qml_slots.py` (the real QML driven offscreen against the real Backend).
   `tests/test_sandbox_run.py` runs the generated launchers under real bwrap, in a Linux Mint 22.3
   container (`scripts/test-sandbox.sh launcher`: bwrap 0.9.0, portal 1.20), an LMDE 7 one

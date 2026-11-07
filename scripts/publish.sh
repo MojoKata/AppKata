@@ -1,5 +1,5 @@
 #!/bin/sh
-# The owner's steps for AppKata's release key and releases, as commands (GENESIS.md says when each
+# The owner's steps for AppKata's release key and releases, as commands (docs/GENESIS.md says when each
 # is run; docs/github-workflows.md how CI builds, signs and drafts a release). Needs git, gpg 2.2+
 # and gh, logged in as an admin of the repository for setup, check, release, publish and
 # field-test, and python3 for field-test.
@@ -19,18 +19,21 @@
 #     setup                       the release environment, the tag ruleset, immutable releases,
 #                                 actions pinned by SHA, the field-test label and, once CI has
 #                                 passed, the required ci check: each only if missing
-#     check                       read back every setting GENESIS.md lists
-#   A release, from a clone of the repository on master:
-#     release                     tag v<version>, push it, wait for CI, show the files' SHA-256s,
-#                                 approve the signing, then check the draft (verify)
+#     check                       read back every setting docs/GENESIS.md lists
+#   A release, from a clone of the repository on master (docs/RELEASE.md walks through it):
+#     release                     once the release pull request is merged and CI passed on it (it
+#                                 refuses before): tag v<version>, push it, wait for CI, show the
+#                                 files' SHA-256s, approve the signing, check the draft (verify),
+#                                 then open the field-test issues
 #     resume [VERSION]            the same from "wait for CI", for a tag already pushed (after an
 #                                 interruption)
 #     verify [VERSION]            download a release or its draft and check it: the files, their
 #                                 .sha256s, the signature and its key's fingerprint
-#     publish [VERSION]           verify the draft again and publish it
+#     publish [VERSION]           once every field-test issue is closed (it refuses before): verify
+#                                 the draft again and publish it
 #     field-test [VERSION]        open the release's field-test issue and, under it, one for each
 #                                 environment with its checklist (docs/testing.md, "Tracking the
-#                                 runs on GitHub")
+#                                 runs on GitHub"); release does this itself
 #
 # Options: --repo OWNER/NAME (the default is APPKATA_REPO's, src/appkata_core/__init__.py: another
 # repository, a fork, to try these); --key FILE (the public key verify trusts; the default is
@@ -237,7 +240,7 @@ EOF
         say "actions pinned by SHA: required"
     fi
     id=$(ruleset_id master) || die "can't read $REPO's rulesets"
-    if [ -z "$id" ]; then say "master ruleset: missing (GENESIS.md says how it is made): the ci check not added"
+    if [ -z "$id" ]; then say "master ruleset: missing (docs/GENESIS.md says how it is made): the ci check not added"
     elif gh api "repos/$REPO/rulesets/$id" --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' | grep -qx ci; then
         say "the ci check: required"
     elif [ -z "$(gh run list --repo "$REPO" --workflow ci.yml --status success --limit 1 --json databaseId --jq '.[].databaseId')" ]; then
@@ -343,18 +346,42 @@ verify() {
     (cd "$D" && sha256 "AppKata-$V-x86_64.AppImage" "AppKata-$V-setup.exe") >&2
 }
 
+# what the release pull request leaves (docs/RELEASE_AGENT.md, "Prepare a release"): each a ticked
+# line "- [x] **ID** ..." in docs/releases/<version>.md
+PREPARED="tier1 sandbox github-paths version state screenshots"
+
+prepared() {        # the release pull request is merged, with every step done, and CI passed on it
+    rec=docs/releases/$VERSION.md
+    short=$(git rev-parse --short HEAD)
+    [ -f "$rec" ] || die "no $rec at $short: the release pull request isn't merged. docs/RELEASE.md, 1: ask the agent to prepare release $VERSION"
+    for step in $PREPARED; do
+        grep -q "^- \[x\] \*\*$step\*\*" "$rec" || die "$rec: the step $step isn't ticked (docs/RELEASE_AGENT.md, \"Prepare a release\")"
+    done
+    ! grep -q '^- \[ \]' "$rec" || die "$rec has steps not done: $(grep '^- \[ \]' "$rec" | cut -c1-60 | paste -sd'|' -)"
+    [ -f "tests/data/state/$VERSION.json" ] || die "tests/data/state/$VERSION.json is missing: the release pull request freezes it"
+    grep -Eq "^## Status \($(echo "$VERSION" | sed 's/\./\\./g')[:)]" README.md || die "README.md's Status heading doesn't name $VERSION"
+    ci=$(gh run list --repo "$REPO" --workflow ci.yml --branch master --event push --commit "$(git rev-parse HEAD)" --limit 1 \
+        --json status,conclusion --jq '.[] | "\(.status) \(.conclusion)"') || die "can't read CI's runs on $REPO"
+    case $ci in
+        "completed success") say "CI passed on master at $short, and $rec has every step done." ;;
+        "") die "CI hasn't run on master at $short: run release again once it has passed" ;;
+        completed*) die "CI failed on master at $short ($ci): gh run list --repo $REPO --branch master. Ask the agent to look into it" ;;
+        *) die "CI is still running on master at $short: run release again once it has passed (about 15 minutes)" ;;
+    esac
+}
+
 release() {
     TAG=v$VERSION
     cd "$HERE"
     remote=$(git remote -v | awk -v r="$REPO" '$2 ~ "github.com[:/]" r "(\\.git)?$" && $3 == "(push)" { print $1; exit }')
     [ -n "$remote" ] || die "no git remote points at $REPO"
-    [ -z "$(git status --porcelain)" ] || die "the work tree has changes"
-    [ "$(git rev-parse --abbrev-ref HEAD)" = master ] || die "not on master"
+    [ -z "$(git status --porcelain)" ] || die "the work tree has changes: git status"
+    [ "$(git rev-parse --abbrev-ref HEAD)" = master ] || die "not on master: git checkout master && git pull"
     git fetch -q "$remote" master
-    [ "$(git rev-parse HEAD)" = "$(git rev-parse "$remote/master")" ] || die "master isn't $remote/master"
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse "$remote/master")" ] || die "master isn't $remote/master: git pull"
     ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "$TAG exists here"
-    [ -z "$(git ls-remote --tags "$remote" "$TAG")" ] || die "$TAG exists on $remote"
-    [ -f "tests/data/state/$VERSION.json" ] || ask "tests/data/state/$VERSION.json is missing (build.md, \"Before tagging a release\", 3): tag anyway?"
+    [ -z "$(git ls-remote --tags "$remote" "$TAG")" ] || die "$TAG exists on $remote: publish.sh resume, if its run didn't finish"
+    prepared
     ask "Tag $(git rev-parse --short HEAD) as $TAG and push it to $REPO?"
     git tag -a "$TAG" -m "AppKata $VERSION"
     git push -q "$remote" "$TAG"
@@ -380,9 +407,17 @@ resume() {
         sleep 20
     done
     say "== what CI built (its jobs' sha256 notices)"
+    # each from the attempt that built it: "gh run rerun --failed" carries a build job that passed
+    # into the new attempt without its annotations (issue #13)
+    attempt=$(gh run view "$id" --repo "$REPO" --json attempt --jq .attempt)
     built=$(for job in appimage windows; do
-        j=$(gh run view "$id" --repo "$REPO" --json jobs --jq ".jobs[] | select(.name == \"$job\") | .databaseId")
-        gh api "repos/$REPO/check-runs/$j/annotations" --jq '.[] | select(.title == "sha256") | .message'
+        a=$attempt
+        while [ "$a" -ge 1 ]; do
+            j=$(gh api "repos/$REPO/actions/runs/$id/attempts/$a/jobs" --jq ".jobs[] | select(.name == \"$job\") | .id")
+            n=$(gh api "repos/$REPO/check-runs/$j/annotations" --jq '.[] | select(.title == "sha256") | .message')
+            [ -z "$n" ] || { echo "$n"; break; }
+            a=$((a - 1))
+        done
     done)
     [ "$(echo "$built" | grep -c .)" = 2 ] || die "the run's build jobs posted no sha256 notices"
     say "$built"
@@ -396,25 +431,40 @@ resume() {
     drafted=$(cd "$HERE/build/publish/$TAG" && sha256 "AppKata-$VERSION-x86_64.AppImage" "AppKata-$VERSION-setup.exe")
     [ "$(echo "$drafted" | sort)" = "$(echo "$built" | sort)" ] || die "the draft's files aren't the ones approved: $drafted"
     say "The draft's two files are the ones whose SHA-256s you approved."
-    say "The draft: https://github.com/$REPO/releases (only you see it). Before publishing it: build.md,"
-    say "\"Before tagging a release\", 6 (the field test by hand, with the draft's files); then publish.sh publish."
+    say "The draft: https://github.com/$REPO/releases (only you see it)."
+    if [ -z "$(field_test_issues "$VERSION" all)" ]; then field_test "$VERSION"
+    else say "Its field-test issues:"; field_test_issues "$VERSION" all | sed 's/^/  /' >&2
+    fi
+    say "Next: docs/RELEASE.md, 4: the field test on each desktop, with the draft's AppImage; then publish.sh publish."
+}
+
+field_test_issues() {   # VERSION open|all: the release's field-test issues, "#N STATE TITLE" a line
+    gh issue list --repo "$REPO" --label field-test --state "$2" --limit 100 --search "\"Field test: $1\" in:title" \
+        --json number,state,title --jq ".[] | select(.title == \"Field test: $1\" or (.title | startswith(\"Field test: $1 on \"))) | \"#\\(.number) \\(.state) \\(.title)\"" ||
+        die "can't read $REPO's issues"
 }
 
 publish() {
-    TAG=v${1:-$VERSION}
+    V=${1:-$VERSION} TAG=v${1:-$VERSION}
     [ "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)" = true ] || die "$TAG isn't a draft"
-    verify "${1:-$VERSION}"
+    [ -n "$(field_test_issues "$V" all)" ] || die "$V has no field-test issues: publish.sh field-test opens them (docs/RELEASE.md, 4)"
+    left=$(field_test_issues "$V" open)
+    [ -z "$left" ] || die "the field test of $V isn't done: these are open (docs/RELEASE.md, 4):
+$left"
+    say "Every field-test issue of $V is closed."
+    verify "$V"
     ask "Publish $TAG? Every AppKata offers it as an update from its next sync."
     gh release edit "$TAG" --repo "$REPO" --draft=false --latest >/dev/null
-    verify "${1:-$VERSION}"
+    verify "$V"
+    say "Next: docs/RELEASE.md, 6: ask the agent to wrap up release $V."
 }
 
 field_test() {      # [VERSION]: the release's field-test issue, and a sub-issue for each environment
     V=${1:-$VERSION}
     gh label list --repo "$REPO" --limit 500 --json name --jq '.[].name' | grep -qx field-test ||
         die "$REPO has no field-test label: publish.sh setup makes it"
-    have=$(gh issue list --repo "$REPO" --label field-test --state all --search "\"Field test: $V\" in:title" --json number --jq '.[].number')
-    [ -z "$have" ] || die "$REPO has field-test issues for $V already: $(echo $have)"
+    have=$(field_test_issues "$V" all)
+    [ -z "$have" ] || die "$REPO has field-test issues for $V already: $(echo "$have" | cut -d' ' -f1 | paste -sd' ' -)"
     envs=$(python3 "$HERE/scripts/sandbox/fieldtest_questions.py" --environments) || die "can't read docs/testing.md's environments"
     ask "Open $REPO's field-test issues for $V: one for the release, one under it for each of $(echo "$envs" | paste -sd, - | sed 's/,/, /g')?"
     parent=$(printf '%s\n\n%s\n' \

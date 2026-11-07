@@ -41,10 +41,11 @@ def case_id(item):
 
 
 def allows(name, test):
-    """Whether tier name's list names test: by its id, or as <file>::* (every test of a file the tier
-    skips whole, the Windows run's Linux-only ones)."""
+    """Whether tier name's list names test: by its id, by its name without the [parameters] (every case
+    of a parametrized test), or as <file>::* (every test of a file the tier skips whole, the Windows
+    run's Linux-only ones)."""
     entries = listed(name)
-    return test in entries or test.split("::")[0] + "::*" in entries
+    return test in entries or test.split("[")[0] in entries or test.split("::")[0] + "::*" in entries
 
 
 def verdict(name, test, skipped, why, ran):
