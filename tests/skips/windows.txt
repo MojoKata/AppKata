@@ -61,3 +61,5 @@ tests/test_tier_args.py::test_launcher_vm_hands_pytest_each_argument_whole  # ru
 tests/test_time_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_tour_rules.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_trust.py::test_gpg_trust_with_published_key  # gpg not installed
+tests/test_appimage_trim.py::*  # the AppImage build's tool, for Linux paths
+tests/test_scripts_executable.py::test_every_script_is_executable_in_git  # not a git work tree (the Windows VM's copy of the sources)

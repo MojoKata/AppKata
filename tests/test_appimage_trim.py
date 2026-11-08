@@ -12,8 +12,14 @@ module AppKata imports that the list leaves out."""
 import importlib.util
 import os
 import re
+import sys
+
+import pytest
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+# appimage_trim.py is the AppImage build's (in a Linux container) and reads AppDir and strace paths,
+# all with "/": on Windows its paths come back with "\\" and match no line (the Windows tier, 2026-11-07)
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the AppImage build's tool, for Linux paths")
 SITE = "usr/python/lib/python3.14/site-packages"
 A = "/tmp/squashfs-root"
 
