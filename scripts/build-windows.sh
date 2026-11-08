@@ -58,10 +58,12 @@ test -z "$ICUS" || { echo "the build carries ICU, where Windows' own must serve:
 
 # Qt parts AppKata doesn't use (it needs Core, Gui, Widgets, Qml, Quick, QuickControls2, Svg, Network)
 I="$DIST/_internal/PySide6"
-rm -rf "$I/translations" "$I/qml/QtQuick3D" "$I/qml/Qt3D" "$I/qml/QtMultimedia" "$I/qml/QtPdf" "$I/qml/QtCharts" \
+rm -rf "$I/translations" "$I/qml/QtQuick3D" "$I/qml/Qt3D" "$I/qml/QtMultimedia" "$I/qml/QtPdf" "$I/qml/QtQuick/Pdf" "$I/qml/QtCharts" \
        "$I/qml/QtDataVisualization" "$I/qml/QtSensors" "$I/qml/QtWebSockets" "$I/qml/QtTest" "$I/qml/QtQuick/VirtualKeyboard"
-rm -f "$I"/Qt6Quick3D*.dll "$I"/Qt6Pdf*.dll "$I"/Qt6VirtualKeyboard*.dll "$I"/opengl32sw.dll "$I"/Qt6Charts*.dll \
-      "$I"/Qt6Multimedia*.dll "$I"/Qt6Sensors*.dll "$I"/Qt6Test*.dll
+# Qt PDF's plugins come without its library (the wheel has no Qt6Pdf.dll), so they never load, and the
+# notices leave out qtwebengine, the repository they're from (scripts/third_party_notices.py, QT_REPOS)
+rm -f "$I"/Qt6Quick3D*.dll "$I"/Qt6Pdf*.dll "$I"/plugins/imageformats/qpdf.dll "$I"/Qt6VirtualKeyboard*.dll "$I"/opengl32sw.dll \
+      "$I"/Qt6Charts*.dll "$I"/Qt6Multimedia*.dll "$I"/Qt6Sensors*.dll "$I"/Qt6Test*.dll
 # AppKata's license and the notices of every part the build carries that others made, beside
 # appkata.exe, where Setup installs them; the build stops if a library in it is a part they don't give
 python3 "$HERE/scripts/third_party_notices.py" write windows "$DIST" "$HERE/build/windows/licenses"

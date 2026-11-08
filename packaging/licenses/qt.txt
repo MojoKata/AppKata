@@ -1,4 +1,4 @@
-Qt 6.11.2, by The Qt Company Ltd. and other contributors: https://www.qt.io
+Qt 6.12.0, by The Qt Company Ltd. and other contributors: https://www.qt.io
 
 The Qt libraries and plugins here are the open-source edition of Qt. Qt offers most of its code
 under the GNU Lesser General Public License, version 3, or the GNU General Public License, version 2
@@ -6,65 +6,61 @@ or 3; some modules only under the GPL version 3. AppKata takes each file under t
 where that is offered, and otherwise under the first license offered: the GPL version 3 (its text is
 LICENSE.txt, beside this file), or the others below. Each repository the libraries and plugins come
 from, with the licenses its files carry (how many files carry each) and the modules it makes; its
-source code is the repository at the tag v6.11.2:
+source code is the repository at the tag v6.12.0:
 
-qtbase (https://github.com/qt/qtbase/tree/v6.11.2)
-  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (3735 files); BSD-3-Clause (502 files); GPL-3.0-only WITH Qt-GPL-exception-1.0 (119 files); GPL-3.0-only (53 files); Unicode-3.0 (8 files); CC0-1.0 (1 file); AFL-2.1 OR GPL-2.0-or-later (1 file); FTL OR GPL-2.0-only (1 file); BSD-2-Clause AND Imlib2 (1 file)
-  Modules: Concurrent, Core, DBus, DeviceDiscoverySupport, EglFSDeviceIntegration, EglFsKmsGbmSupport, EglFsKmsSupport, EntryPoint, FbSupport, Gui, InputSupport, KmsSupport, Network, OpenGL, OpenGLWidgets, PrintSupport, Sql, Test, TestInternals, WaylandClient, WaylandGlobal, Widgets, WlShellIntegration, XcbQpa, Xml
+qtbase (https://github.com/qt/qtbase/tree/v6.12.0)
+  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (4015 files); BSD-3-Clause (503 files); GPL-3.0-only WITH Qt-GPL-exception-1.0 (127 files); GPL-3.0-only (53 files); Unicode-3.0 (8 files); CC0-1.0 (1 file); AFL-2.1 OR GPL-2.0-or-later (1 file); FTL OR GPL-2.0-only (1 file); BSD-2-Clause AND Imlib2 (1 file)
+  Modules: Concurrent, Core, DBus, DeviceDiscoverySupport, EglFSDeviceIntegration, EglFsKmsGbmSupport, EglFsKmsSupport, EntryPoint, FbSupport, Gui, HarmonyExtras, InputSupport, KmsSupport, Network, OpenGL, OpenGLWidgets, PrintSupport, Sql, Test, TestInternals, WaylandClient, WaylandGlobal, Widgets, WlShellIntegration, XcbQpa, Xml
 
-qtdeclarative (https://github.com/qt/qtdeclarative/tree/v6.11.2)
-  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (2941 files); BSD-3-Clause (564 files); GPL-3.0-only WITH Qt-GPL-exception-1.0 (126 files); GPL-3.0-only (17 files)
-  Modules: LabsAnimation, LabsFolderListModel, LabsPlatform, LabsQmlModels, LabsSettings, LabsSharedImage, LabsStyleKit, LabsStyleKitImpl, LabsSynchronizer, LabsWavefrontMesh, PacketProtocol, Qml, QmlCompiler, QmlCore, QmlDebug, QmlDom, QmlFormat, QmlIntegration, QmlLS, QmlLocalStorage, QmlMeta, QmlModels, QmlNetwork, QmlToolingSettings, QmlTypeRegistrar, QmlWorkerScript, QmlXmlListModel, Qmltc, Quick, QuickControls2, QuickControls2Basic, QuickControls2BasicStyleImpl, QuickControls2FluentWinUI3StyleImpl, QuickControls2Fusion, QuickControls2FusionStyleImpl, QuickControls2IOSStyleImpl, QuickControls2Imagine, QuickControls2ImagineStyleImpl, QuickControls2Impl, QuickControls2MacOSStyleImpl, QuickControls2Material, QuickControls2MaterialStyleImpl, QuickControls2Universal, QuickControls2UniversalStyleImpl, QuickControls2WindowsStyleImpl, QuickControlsTestUtils, QuickDialogs2, QuickDialogs2QuickImpl, QuickDialogs2Utils, QuickEffects, QuickLayouts, QuickParticles, QuickShapes, QuickShapesDesignHelpers, QuickTemplates2, QuickTest, QuickTestUtils, QuickVectorImage, QuickVectorImageGenerator, QuickVectorImageHelpers, QuickWidgets, qtquickcontrols2fluentwinui3styleplugin, qtquickcontrols2iosstyleplugin, qtquickcontrols2macosstyleplugin, qtquickcontrols2nativestyleplugin, qtquickcontrols2windowsstyleplugin, quicktooling, quickwindow
+qtdeclarative (https://github.com/qt/qtdeclarative/tree/v6.12.0)
+  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (3024 files); BSD-3-Clause (565 files); GPL-3.0-only WITH Qt-GPL-exception-1.0 (135 files); GPL-3.0-only (17 files)
+  Modules: LabsAnimation, LabsFolderListModel, LabsPlatform, LabsQmlModels, LabsSettings, LabsSharedImage, LabsStyleKit, LabsStyleKitImpl, LabsSynchronizer, LabsWavefrontMesh, PacketProtocol, Qml, QmlCompiler, QmlCore, QmlDebug, QmlDesignSupport, QmlDom, QmlFormat, QmlIntegration, QmlLS, QmlLint, QmlLocalStorage, QmlMeta, QmlModels, QmlNetwork, QmlPreview, QmlToolingSettings, QmlTypeRegistrar, QmlWorkerScript, QmlXmlListModel, Qmltc, Quick, QuickControls2, QuickControls2Basic, QuickControls2BasicStyleImpl, QuickControls2FluentWinUI3, QuickControls2FluentWinUI3StyleImpl, QuickControls2Fusion, QuickControls2FusionStyleImpl, QuickControls2IOS, QuickControls2IOSStyleImpl, QuickControls2Imagine, QuickControls2ImagineStyleImpl, QuickControls2Impl, QuickControls2MacOSStyleImpl, QuickControls2Macos, QuickControls2Material, QuickControls2MaterialStyleImpl, QuickControls2Native, QuickControls2Universal, QuickControls2UniversalStyleImpl, QuickControls2Windows, QuickControls2WindowsStyleImpl, QuickControlsTestUtils, QuickDialogs2, QuickDialogs2QuickImpl, QuickDialogs2Utils, QuickEffects, QuickLayouts, QuickNativeStyle, QuickParticles, QuickShapes, QuickShapesDesignHelpers, QuickTemplates2, QuickTest, QuickTestUtils, QuickVectorImage, QuickVectorImageGenerator, QuickVectorImageHelpers, QuickWidgets, quicktooling, quickwindow
 
-qtsvg (https://github.com/qt/qtsvg/tree/v6.11.2)
+qtsvg (https://github.com/qt/qtsvg/tree/v6.12.0)
   Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (60 files); BSD-3-Clause (2 files)
   Modules: Svg, SvgWidgets
 
-qtimageformats (https://github.com/qt/qtimageformats/tree/v6.11.2)
-  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (36 files)
+qtimageformats (https://github.com/qt/qtimageformats/tree/v6.12.0)
+  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (31 files)
   Modules: 
 
-qtwayland (https://github.com/qt/qtwayland/tree/v6.11.2)
-  Licenses: GPL-3.0-only (243 files); LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (25 files)
+qtwayland (https://github.com/qt/qtwayland/tree/v6.12.0)
+  Licenses: GPL-3.0-only (244 files); LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (25 files)
   Modules: WaylandClientFeatures, WaylandCompositor, WaylandCompositorIviapplication, WaylandCompositorPresentationTime, WaylandCompositorQtShell, WaylandCompositorWLShell, WaylandCompositorXdgShell, WaylandEglCompositorHwIntegration, WaylandTextureSharing, WaylandTextureSharingExtension
 
-qtlottie (https://github.com/qt/qtlottie/tree/v6.11.2)
-  Licenses: GPL-3.0-only (64 files)
+qtlottie (https://github.com/qt/qtlottie/tree/v6.12.0)
+  Licenses: GPL-3.0-only (74 files)
   Modules: Lottie, LottieVectorImageGenerator, LottieVectorImageHelpers
 
-qtquicktimeline (https://github.com/qt/qtquicktimeline/tree/v6.11.2)
+qtquicktimeline (https://github.com/qt/qtquicktimeline/tree/v6.12.0)
   Licenses: GPL-3.0-only (17 files)
   Modules: QuickTimeline, QuickTimelineBlendTrees
 
-qttools (https://github.com/qt/qttools/tree/v6.11.2)
-  Licenses: GPL-3.0-only WITH Qt-GPL-exception-1.0 (667 files); LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (146 files); BSD-3-Clause (32 files)
+qttools (https://github.com/qt/qttools/tree/v6.12.0)
+  Licenses: GPL-3.0-only WITH Qt-GPL-exception-1.0 (669 files); LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (148 files); BSD-3-Clause (32 files)
   Modules: Designer, DesignerComponents, Help, Linguist, QDocCatchConversions, QDocCatchGenerators, Tools, UiPlugin, UiTools
 
-qt3d (https://github.com/qt/qt3d/tree/v6.11.2)
+qt3d (https://github.com/qt/qt3d/tree/v6.12.0)
   Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (1496 files); BSD-3-Clause (1 file)
   Modules: 3DAnimation, 3DCore, 3DExtras, 3DInput, 3DLogic, 3DQuick, 3DQuickAnimation, 3DQuickExtras, 3DQuickInput, 3DQuickLogic, 3DQuickRender, 3DQuickScene2D, 3DQuickScene3D, 3DRender, quick3dinputplugin
 
-qtscxml (https://github.com/qt/qtscxml/tree/v6.11.2)
+qtscxml (https://github.com/qt/qtscxml/tree/v6.12.0)
   Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (97 files); BSD-3-Clause (22 files)
   Modules: Scxml, ScxmlGlobal, ScxmlQml, StateMachine, StateMachineQml
-
-qtwebengine (https://github.com/qt/qtwebengine/tree/v6.11.2)
-  Licenses: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (570 files); BSD-3-Clause (12 files)
-  Modules: Pdf, PdfQuick, PdfWidgets, WebEngineCore, WebEngineQuick, WebEngineQuickDelegatesQml, WebEngineWidgets
 
 The third-party code in these repositories that Qt's libraries and plugins use, as each repository
 lists it (qt_attribution.json; code for other platforms included):
 
---- D3D12 Memory Allocator f128d39b7a95b4235bd228d231646278dc6c24b2 (qtbase/src/3rdparty/D3D12MemoryAllocator) ---
+--- D3D12 Memory Allocator v3.1.0 (qtbase/src/3rdparty/D3D12MemoryAllocator) ---
 
 Memory management for the D3D12 backend of QRhi.
 
 License: MIT License (MIT)
 Homepage: https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator
 
-Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
+Copyright (c) 2019-2026 Advanced Micro Devices, Inc. All rights reserved.
 
-Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
+Copyright (c) 2019-2026 Advanced Micro Devices, Inc. All rights reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -84,7 +80,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- Vulkan Memory Allocator 3.2.1 (qtbase/src/3rdparty/VulkanMemoryAllocator) ---
+--- Vulkan Memory Allocator 3.3.0 (qtbase/src/3rdparty/VulkanMemoryAllocator) ---
 
 Memory management for the Vulkan backend of QRhi.
 
@@ -1307,7 +1303,7 @@ Except as contained in this notice, the name of The Open Group shall not be
 used in advertising or otherwise to promote the sale, use or other dealings
 in this Software without prior written authorization from The Open Group.
 
---- Gradle wrapper 9.3.1 (qtbase/src/3rdparty/gradle) ---
+--- Gradle wrapper 9.5.1 (qtbase/src/3rdparty/gradle) ---
 
 Needed to create Android packages
 
@@ -1738,7 +1734,7 @@ https://www.mozilla.org/en-US/MPL/2.0/
 
 org.mozilla:rhino
 
---- HarfBuzz-NG 14.3.0 (qtbase/src/3rdparty/harfbuzz-ng) ---
+--- HarfBuzz-NG 14.5.0 (qtbase/src/3rdparty/harfbuzz-ng) ---
 
 Optionally used in Qt GUI. Configure with -system-harfbuzz to force the use of the system library, or -qt-harfbuzz to link statically to the library that is bundled with your Qt version.
 
@@ -2668,7 +2664,7 @@ License: Public Domain (CC0-1.0)
 
 Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.
 
---- PCRE2 10.47 (qtbase/src/3rdparty/pcre2) ---
+--- PCRE2 10.48 (qtbase/src/3rdparty/pcre2) ---
 
 Used in Qt Core (QRegularExpression).
 
@@ -2784,7 +2780,7 @@ PCRE2, it must respect the condition, but if package B is software that
 includes package A, the condition is not imposed on package B unless it uses
 PCRE2 independently.
 
---- PCRE2 - Stack-less Just-In-Time Compiler 10.47 (qtbase/src/3rdparty/pcre2) ---
+--- PCRE2 - Stack-less Just-In-Time Compiler 10.48 (qtbase/src/3rdparty/pcre2) ---
 
 Used in Qt Core (QRegularExpression).
 
@@ -3820,6 +3816,17 @@ Copyright © 2015 Jonas Ådahl
 
 (The license's text is the one given above for Wayland Color Management Protocol.)
 
+--- Wayland Linux Dmabuf V1 Protocol v1, version 5 (qtbase/src/3rdparty/wayland/protocols/linux-dmabuf) ---
+
+Used in the Qt Wayland Compositor
+
+License: MIT License (MIT)
+Homepage: https://wayland.freedesktop.org
+
+Copyright © 2014, 2015 Collabora, Ltd.
+
+(The license's text is the one given above for Wayland Color Management Protocol.)
+
 --- Wayland Linux Dmabuf Unstable V1 Protocol unstable v1, version 3 (qtbase/src/3rdparty/wayland/protocols/linux-dmabuf) ---
 
 Used in the Qt Wayland Compositor
@@ -4677,6 +4684,37 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+--- XSVG (qtbase/src/gui/util) ---
+
+Used in the Qt GUI library.
+
+License: Historical Permission Notice and Disclaimer - sell variant (HPND-sell-variant)
+
+Copyright 2002 USC/Information Sciences Institute
+
+Copyright  2002 USC/Information Sciences Institute
+
+Permission to use, copy, modify, distribute, and sell this software
+and its documentation for any purpose is hereby granted without
+fee, provided that the above copyright notice appear in all copies
+and that both that copyright notice and this permission notice
+appear in supporting documentation, and that the name of
+Information Sciences Institute not be used in advertising or
+publicity pertaining to distribution of the software without
+specific, written prior permission.  Information Sciences Institute
+makes no representations about the suitability of this software for
+any purpose.  It is provided "as is" without express or implied
+warranty.
+
+INFORMATION SCIENCES INSTITUTE DISCLAIMS ALL WARRANTIES WITH REGARD
+TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL INFORMATION SCIENCES
+INSTITUTE BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA
+OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
 --- Vulkan API Registry 1.4.308 (qtbase/src/gui/vulkan) ---
 
 Used to dynamically generate the sources for the QVulkan(Device)Functions classes.
@@ -4842,14 +4880,14 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
---- Linux Performance Events 6.13 (qtbase/src/testlib/3rdparty/linux) ---
+--- Linux Performance Events 7.0 (qtbase/src/testlib/3rdparty/linux) ---
 
 Used on Linux and Android in the Qt Test module.
 
 License: GNU General Public License v2.0 only with Linux Syscall Note (GPL-2.0-only WITH Linux-syscall-note)
 Homepage: https://www.kernel.org
 
-Copyright (C) 2008-2009, Thomas Gleixner <tglx@linutronix.de>
+Copyright (C) 2008-2009, Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
 Copyright (C) 2008-2011, Red Hat, Inc., Ingo Molnar
 Copyright (C) 2008-2011, Red Hat, Inc., Peter Zijlstra
 
@@ -5383,37 +5421,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---- XSVG (qtsvg/src/svg) ---
-
-Used in the Qt SVG library.
-
-License: Historical Permission Notice and Disclaimer - sell variant (HPND-sell-variant)
-
-Copyright 2002 USC/Information Sciences Institute
-
-Copyright  2002 USC/Information Sciences Institute
-
-Permission to use, copy, modify, distribute, and sell this software
-and its documentation for any purpose is hereby granted without
-fee, provided that the above copyright notice appear in all copies
-and that both that copyright notice and this permission notice
-appear in supporting documentation, and that the name of
-Information Sciences Institute not be used in advertising or
-publicity pertaining to distribution of the software without
-specific, written prior permission.  Information Sciences Institute
-makes no representations about the suitability of this software for
-any purpose.  It is provided "as is" without express or implied
-warranty.
-
-INFORMATION SCIENCES INSTITUTE DISCLAIMS ALL WARRANTIES WITH REGARD
-TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL INFORMATION SCIENCES
-INSTITUTE BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL
-DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA
-OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
-TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
-PERFORMANCE OF THIS SOFTWARE.
 
 --- TIFF Software Distribution (libtiff) 4.7.2 (qtimageformats/src/3rdparty/libtiff) ---
 
