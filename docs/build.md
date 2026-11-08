@@ -119,8 +119,8 @@ the day the image was built; a tag that moved less than 14 days ago keeps its pi
   `PYTHON_BUILD`: `build-windows.sh` stops unless the image carries the release's Python.
 - **Moving a pin** is a commit of its own, proven like any change: the tiers, the AppImage and the
   installer, and the AppImage trim's trace after a Qt or Python change (`packaging/appimage-trim.txt`).
-  The newest eligible release isn't always one that fits: a package can exclude a version of its
-  dependency (PyInstaller's requirements say which `pefile` it takes).
+  The newest eligible release isn't always one that fits: check that it meets what the packages
+  that use it require (PyPI's `requires_dist` for each).
 
 ## Linux
 
