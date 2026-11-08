@@ -221,7 +221,7 @@
       "why": "builds the AppImage: Ubuntu 22.04's glibc 2.35, the oldest requirement 1.1 supports (packaging/versions.env)"
     },
     {
-      "image": "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+      "image": "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852",
       "why": "tier 1: the release's Python and PySide6 on Ubuntu 24.04 (packaging/versions.env)"
     },
     {
@@ -248,7 +248,7 @@
       "image": "appkata-tier1",
       "built": "scripts/lib-tier1.sh",
       "from": [
-        "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
+        "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
       ],
       "why": "tier 1 and the tour layout runs (scripts/test-tier1.sh, test-layout.sh, test-clock.sh)"
     },
