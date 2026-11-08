@@ -676,12 +676,17 @@ def reroot(d: str) -> None:
     old, new = was[:-len(REVIEW) - 1], os.path.abspath(d)
     if old == new:
         return
+    # each as written plainly and inside JSON (a record, Settings), which escapes Windows' backslashes
+    moves = {(old, new), (json.dumps(old)[1:-1], json.dumps(new)[1:-1])}
     db = DB(os.path.join(d, "appkata.db"))
     for t in [r["name"] for r in db.all("SELECT name FROM sqlite_master WHERE type='table' "
                                         "AND name NOT LIKE 'sqlite_%' AND name != 'audit'")]:
         for c in [r["name"] for r in db.all(f"PRAGMA table_info({t})") if r["type"].upper() in ("TEXT", "")]:
-            db.x(f"UPDATE {t} SET {c}=replace({c}, ?, ?) WHERE instr({c}, ?)", (old, new, old))
-    text = open(gui).read().replace(old, new)
+            for a, b in moves:
+                db.x(f"UPDATE {t} SET {c}=replace({c}, ?, ?) WHERE instr({c}, ?)", (a, b, a))
+    text = open(gui).read()
+    for a, b in moves:
+        text = text.replace(a, b)
     with open(gui, "w") as f:
         f.write(text)
     print(f"moved {d}'s paths from {old}")
