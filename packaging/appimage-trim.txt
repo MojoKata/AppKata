@@ -55,7 +55,6 @@ usr/python/lib/python*/site-packages/PySide6/Qt/metatypes
 # buttons) stay English, as all of AppKata is
 ? usr/python/lib/python*/site-packages/PySide6/Qt/translations
 usr/python/lib/python*/site-packages/PySide6/Qt/plugins/designer
-usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmllint
 usr/python/lib/python*/site-packages/PySide6/Qt/plugins/qmltooling
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Designer*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Help.*
@@ -78,6 +77,7 @@ usr/python/lib/python*/site-packages/PySide6/QtQuickWidgets.abi3.so
 usr/python/lib/python*/site-packages/PySide6/QtSql.abi3.so
 usr/python/lib/python*/site-packages/PySide6/QtSvgWidgets.abi3.so
 usr/python/lib/python*/site-packages/PySide6/QtXml.abi3.so
+usr/python/lib/python*/site-packages/PySide6/QtLabsStyleKit.abi3.so
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6Concurrent.*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6OpenGLWidgets.*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6PrintSupport.*
@@ -127,16 +127,19 @@ usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/settings
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/sharedimage
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/synchronizer
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/Qt/labs/wavefrontmesh
-# the Quick Controls styles other than Basic, which AppKata sets (src/appkata/app.py)
+# the Quick Controls styles other than Basic, which AppKata sets (src/appkata/app.py); Qt 6.12's Native
+# style links Fusion, as its fallback
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Fusion*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2FluentWinUI3*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Imagine*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Material*
+usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Native*
 usr/python/lib/python*/site-packages/PySide6/Qt/lib/libQt6QuickControls2Universal*
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Fusion
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/FluentWinUI3
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Imagine
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Material
+usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Native
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/designer
 # the Wayland compositor side (AppKata is a client) and the platforms for a screen with no desktop
