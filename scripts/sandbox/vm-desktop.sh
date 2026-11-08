@@ -52,7 +52,8 @@ sudo sh scripts/sandbox/register-test-handler.sh >/dev/null && echo "  test hand
 # lmde7, is the line test-desktop-vm.sh adds after the first)
 PYTHONPATH=src APPKATA_PYTHON=$PY APPKATA_BOOTED=1 APPKATA_SKIPS="desktop-${VM_NAME:-unknown}" \
     $PY -m pytest -q -rfEs --tb=short -p no:cacheprovider tests/test_sandbox_run.py \
-    tests/test_sandbox_exposure.py tests/test_sandbox_one_fact.py tests/test_sandbox_user_shaped.py tests/test_booted.py 2>&1
+    tests/test_sandbox_exposure.py tests/test_sandbox_one_fact.py tests/test_sandbox_user_shaped.py tests/test_booted.py \
+    tests/test_channels.py 2>&1   # test_channels.py: test_system_bus needs the desktop's system bus (S2)
 
 echo "-- the field test, non-interactive"
 APPKATA_PYTHON=$PY bash scripts/sandbox/field-test.sh --non-interactive 2>&1 | sed -n '/^== checks ==/,$p'   # every check (its environment is above)

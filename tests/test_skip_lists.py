@@ -56,14 +56,12 @@ def test_each_listed_test_exists_and_says_why_it_may_skip():
 # scripts name (test_tiers_take_the_modules_listed holds the scripts to it)
 LAUNCHER = ["test_sandbox_run.py", "test_sandbox_exposure.py", "test_sandbox_one_fact.py", "test_sandbox_user_shaped.py"]
 TAKES = {"tier1": None, "windows": None, "launcher": LAUNCHER + ["test_platform_matrix.py"],
-         "launcher-vm": LAUNCHER + ["test_booted.py"], "desktop": LAUNCHER + ["test_booted.py"]}
+         "launcher-vm": LAUNCHER + ["test_booted.py"], "desktop": LAUNCHER + ["test_booted.py", "test_channels.py"]}
 # tests that may skip in every tier, each with why; the rest of the class is a test that never runs
 # (docs/reviews/followups-skips.md). The test fails on anything new, and on a listed test some tier runs.
 NEVER_RUN = {
     "tests/test_sandbox_state.py::test_freeze_todays_state_when_asked":
         "a tool, not a check: docs/RELEASE_AGENT.md's 'Prepare a release' runs it with UPDATE_STATE",
-    "tests/test_channels.py::test_system_bus":
-        "S2, open: tier 1's container has no system bus, and no tier that has one takes test_channels.py",
 }
 
 
