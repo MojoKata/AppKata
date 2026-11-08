@@ -88,7 +88,8 @@ def test_launches_append_to_the_app_log_and_rotate_it(db, tmp_path, monkeypatch)
     ('sleep 1; echo "AppKata: running /x/AppRun ($(date +%s))" >&2; echo "Segmentation fault" >&2; exit 139\n', True),
     # the program ran for a while, then crashed: in the log, not a launch failure (the mark has whole
     # seconds, so the watcher allows a second beyond the grace; 2 s is past that)
-    ('echo "AppKata: running /x/AppRun ($(date +%s))" >&2; sleep 2; exit 1\n', False)])
+    ('echo "AppKata: running /x/AppRun ($(date +%s))" >&2; sleep 2; exit 1\n', False)],
+    ids=["refused", "died-at-start", "crashed-later"])     # the skip lists name each; pytest's own ids move
 def test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not(db, tmp_path, script, reported):
     # Regression (round two, R4): the grace period ran from the moment the launcher started, so a
     # first launch that unpacked a large AppImage for longer than that, then failed, was log-only.
