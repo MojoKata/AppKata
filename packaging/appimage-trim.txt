@@ -140,7 +140,8 @@ usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/FluentWinUI
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Imagine
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Material
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Native
-usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
+# Qt 6.12's file dialogs look for Universal's QML module and do well without it
+? usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/Universal
 usr/python/lib/python*/site-packages/PySide6/Qt/qml/QtQuick/Controls/designer
 # the Wayland compositor side (AppKata is a client) and the platforms for a screen with no desktop
 # session (EGLFS, the Linux frame buffer, VNC, Vulkan's display), with their input plugins
