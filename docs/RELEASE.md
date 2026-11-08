@@ -41,10 +41,11 @@ numbers, and the SHA-256s.
 
 Tell the agent: **"Prepare release 0.2.0"**, with the version to release.
 
-It runs the tests and the checks no runner can make, sets the version, freezes the release's state
-for the upgrade tests, writes the release's record (`docs/releases/0.2.0.md`, a ticked line per
-step) and opens one pull request with all of it ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 1). It
-tells you when the pull request's CI has passed.
+It runs the tests and the checks no runner can make, checks that no pin is younger than the
+14-day cooldown, sets the version, freezes the release's state for the upgrade tests, writes the
+release's record (`docs/releases/0.2.0.md`, a ticked line per step) and opens one pull request with
+all of it ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 1). It tells you when the pull request's CI has
+passed.
 
 ## 2. Merge the release pull request
 

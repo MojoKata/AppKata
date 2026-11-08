@@ -348,7 +348,7 @@ verify() {
 
 # what the release pull request leaves (docs/RELEASE_AGENT.md, "Prepare a release"): each a ticked
 # line "- [x] **ID** ..." in docs/releases/<version>.md
-PREPARED="tier1 sandbox github-paths version state screenshots"
+PREPARED="tier1 sandbox github-paths pins version state screenshots"
 
 prepared() {        # the release pull request is merged, with every step done, and CI passed on it
     rec=docs/releases/$VERSION.md

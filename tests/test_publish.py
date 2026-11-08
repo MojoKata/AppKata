@@ -270,7 +270,7 @@ else:
 '''
 
 RECORD = "".join(f"- [x] **{step}** done\n" for step in
-                 ("tier1", "sandbox", "github-paths", "version", "state", "screenshots"))
+                 ("tier1", "sandbox", "github-paths", "pins", "version", "state", "screenshots"))
 
 
 def _gate_repo(tmp_path, record=RECORD, state=True, status="0.9.9: Linux and Windows"):

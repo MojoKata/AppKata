@@ -90,6 +90,38 @@ and what it prints: the owner's steps in [`RELEASE.md`](RELEASE.md), the agent's
 Every release file gets a `.sha256` next to it in `releases/`. On a release, CI also signs the
 AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 
+## Pinned inputs
+
+Everything the builds, the tests and CI take from outside is pinned, so a release's signature vouches
+for inputs the repository names: the Python, PySide6 and every pip package (each `==` a version, with
+`--no-deps`), the Docker images by digest, the AppImage tools by release and SHA-256, and CI's actions
+by commit SHA. They live in [`packaging/versions.env`](../packaging/versions.env), in
+[`scripts/build-windows.sh`](../scripts/build-windows.sh) (PyInstaller, truststore and PyInstaller's
+dependencies) and [`scripts/test-windows-vm.sh`](../scripts/test-windows-vm.sh) (colorama), and in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml). A pin changes only by a commit;
+`tests/test_pinned_inputs.py` fails on an input named by something that moves.
+
+**The cooldown: a pin moves only to a release at least 14 days old** on the day it is pinned (the
+owner, 2026-11-07). A bad release (yanked, broken or malicious) is mostly found and pulled within
+days, and the wait keeps the builds off it. "Newest" means newest by version among the releases that
+old: PySide6 6.11.3 came out after 6.12.0 and is still the older one. For a Docker image the age is
+the day the image was built; a tag that moved less than 14 days ago keeps its pinned digest.
+
+- **Checked by** [`scripts/pins-newest.py`](../scripts/pins-newest.py): for every pin, its age, the
+  newest release old enough to move to, and the newest of all. It exits 1 on a pin younger than 14
+  days. Preparing a release runs it ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 1, `pins`), and
+  `tests/test_pins_newest.py` holds its list of pins to the files above, so a pin added later is
+  checked too.
+- **An exception** is the owner's, for a security fix that can't wait 14 days: the commit that pins
+  it says so, and `pins-newest.py --allow NAME` passes it until it is old enough.
+- **Ceilings** come before age: PySide6 stays below 6.13, since Qt 6.12 is Qt's last version for
+  Windows 10 (`packaging/versions.env`), and Python stays in `PY_SERIES`. `tobix/pywine` moves with
+  `PYTHON_BUILD`: `build-windows.sh` stops unless the image carries the release's Python.
+- **Moving a pin** is a commit of its own, proven like any change: the tiers, the AppImage and the
+  installer, and the AppImage trim's trace after a Qt or Python change (`packaging/appimage-trim.txt`).
+  The newest eligible release isn't always one that fits: a package can exclude a version of its
+  dependency (PyInstaller's requirements say which `pefile` it takes).
+
 ## Linux
 
 ### AppImage
@@ -132,7 +164,7 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    on the build machine), giving it the AppImage runtime with `--runtime-file`, and writes the
    `.sha256`. Without a runtime file appimagetool downloads the newest itself.
 
-Everything the build takes from outside is pinned in `packaging/versions.env`: the Python, the
+Everything the build takes from outside is pinned in `packaging/versions.env` ("Pinned inputs", above): the Python, the
 appimagetool release and the runtime, each with its SHA-256 (checked every time it's used), and the
 Docker images by digest. A pin changes only by a commit there; `tests/test_pinned_inputs.py` fails
 on an input named by a tag or a release that moves (`continuous`, `latest`, an image without its
