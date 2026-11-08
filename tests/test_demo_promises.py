@@ -110,6 +110,40 @@ def test_stage_holds_the_newest_release_with_days_to_go(tmp_path):
         assert timedelta(minutes=49) < now - datetime.fromisoformat(db.get("last_sync")) < timedelta(minutes=52)
 
 
+def test_stage_moves_the_datas_paths_to_where_it_is_now(tmp_path):
+    """Data made in one checkout and toured from another (~/appkata, then ~/kata/AppKata from
+    2026-11-07): its paths named the old place, so every kept version read as gone (A05, A11) and
+    the Windows copy's rewrite of the data's path found nothing to rewrite. stage moves them to
+    where the data is, the Audit aside, and leaves data already there as it is."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from appkata_core import install
+    from appkata_core.db import DB
+
+    demo = _demo()
+    now = datetime.now(timezone.utc)
+    d = tmp_path / "now" / "tour-data"
+    (d / "apps" / "zettlr").mkdir(parents=True)
+    (d / "apps" / "zettlr" / "Zettlr-4.6.0.AppImage").write_text("")
+    old = str(tmp_path / "was" / "tour-data")
+    (d / "gui.json").write_text(json.dumps({"reviewPath": os.path.join(old, demo.REVIEW), "minAgeDefault": 20}))
+    db = DB(str(d / "appkata.db"))
+    url = demo.GH + demo.HELD
+    rels = [{"version": "4.8.0", "date": (now - timedelta(days=20)).isoformat(), "assets": [{"name": "a"}]}]
+    db.x("INSERT INTO apps(url, name, releases) VALUES(?,?,?)", (url, "Zettlr", json.dumps(rels)))
+    rec = {"current": {"version": "4.7.0", "path": old + "/apps/zettlr/Zettlr-4.7.0.AppImage"},
+           "kept": [{"version": "4.6.0", "path": old + "/apps/zettlr/Zettlr-4.6.0.AppImage"}]}
+    db.x("INSERT INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
+         (url, "Zettlr", "4.7.0", "", "", "appimage", json.dumps(rec), ""))
+    assert install.kept_versions(db, url) == []
+    for _ in range(2):
+        demo.stage(str(d), _a_zone_where_its_about_noon(now))
+        assert install.kept_versions(db, url) == ["4.6.0"]
+        assert json.loads((d / "gui.json").read_text())["reviewPath"] == os.path.join(str(d), demo.REVIEW)
+        assert old not in db.one("SELECT record FROM installs")["record"]
+
+
 def test_stage_writes_the_audit_in_time_order_ending_before_now(tmp_path):
     """stage writes the demo's Audit again (R3-25): in the order the Audit lists it, the newest
     entry half an hour back whatever the hour, build's own entries gone (no entry twice), the same
