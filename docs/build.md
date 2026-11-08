@@ -13,7 +13,8 @@ marked **(planned)** don't exist yet.
 ```sh
 git submodule update --init coworker       # with a clone made without --recurse-submodules
 coworker/bin/coworker status               # first, on any machine: what it needs, and what waits on a human
-"$(scripts/python-standalone.sh)" -m venv .venv && .venv/bin/pip install -e . pytest   # the release's Python (1.2)
+"$(scripts/python-standalone.sh)" -m venv .venv    # the release's Python (1.2)
+(. packaging/versions.env && .venv/bin/pip install -e . "PySide6-Essentials==$PYSIDE" "shiboken6==$PYSIDE" $PYTEST)   # and its PySide6
 .venv/bin/python -m pytest                 # unit and integration tests (no network needed)
 scripts/test-tier1.sh                      # the same in a container, on a host whose glibc is older than 2.34
 scripts/test-clock.sh                      # tier 1 at seven times and zones: the day's start and end, a year's end, UTC+14, UTC-12
