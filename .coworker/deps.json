@@ -217,7 +217,7 @@
   ],
   "container_images": [
     {
-      "image": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02",
+      "image": "ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
       "why": "builds the AppImage: Ubuntu 22.04's glibc 2.35, the oldest requirement 1.1 supports (packaging/versions.env)"
     },
     {
@@ -240,7 +240,7 @@
       "image": "appkata-build-jammy",
       "built": "scripts/build-appimage.sh",
       "from": [
-        "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"
+        "ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11"
       ],
       "why": "builds the AppImage, with the xcb-util libraries it carries"
     },
