@@ -113,8 +113,10 @@ the day the image was built; a tag that moved less than 14 days ago keeps its pi
   days. Preparing a release runs it ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 1, `pins`), and
   `tests/test_pins_newest.py` holds its list of pins to the files above, so a pin added later is
   checked too.
-- **An exception** is the owner's, for a security fix that can't wait 14 days: the commit that pins
-  it says so, and `pins-newest.py --allow NAME` passes it until it is old enough.
+- **An exception** is the owner's: a security fix that can't wait 14 days, or a release a few days
+  short that saves a round of pins (2026-11-08, for 0.1.0: Python 3.14.10, its `tobix/pywine` image
+  and pytest 9.2.0, at 12 and 13 days). The commit that pins it says so, and
+  `pins-newest.py --allow NAME` passes it until it is old enough.
 - **Ceilings** come before age: PySide6 stays below 6.13, since Qt 6.12 is Qt's last version for
   Windows 10 (`packaging/versions.env`), and Python stays in `PY_SERIES`. `tobix/pywine` moves with
   `PYTHON_BUILD`: `build-windows.sh` stops unless the image carries the release's Python.
