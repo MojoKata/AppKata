@@ -73,11 +73,16 @@ desktop_image() {      # desktop_image <name>: build appkata-desktop-<name> once
     docker image inspect "appkata-desktop-$1" >/dev/null 2>&1 && return 0
     echo "== building appkata-desktop-$1 (once)"
     case $how in
-        apt*) install="apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${how#apt } >/dev/null"
+        # retries: a fetch the mirror drops mid-download (a GB of packages) is tried again, not the build
+        apt*) install="apt-get -o Acquire::Retries=3 update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y -qq ${how#apt } >/dev/null"
               list="dpkg-query -W -f '\${Package}\\n' > /desktop-packages.txt"
-              more="DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $tools >/dev/null" ;;
+              more="DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y -qq $tools >/dev/null" ;;
     esac
-    printf 'FROM %s\nRUN %s\nRUN %s\nRUN %s\n' "$base" "$install" "$list" "$more" | docker build -q -t "appkata-desktop-$1" - >/dev/null
+    # the build's log, apt's errors in it, is kept and its end shown when the build fails
+    mkdir -p "$HERE/build/appimage-test"; log="$HERE/build/appimage-test/desktop-$1-build.log"
+    printf 'FROM %s\nRUN %s\nRUN %s\nRUN %s\n' "$base" "$install" "$list" "$more" |
+        docker build --progress=plain -t "appkata-desktop-$1" - > "$log" 2>&1 ||
+        { tail -n 25 "$log"; echo "building appkata-desktop-$1 failed: $log"; return 1; }
 }
 
 if case " $STEPS " in *" hostlibs "*) true;; *) false;; esac; then
