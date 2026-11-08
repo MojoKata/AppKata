@@ -430,7 +430,12 @@ def refresh_python(p):
     tar = path[:-4]
     if not os.path.exists(tar):
         with open(tar + ".part", "wb") as out:
-            subprocess.run(["zstd", "-dcq", path], stdout=out, check=True)
+            try:            # Python 3.14's own zstd, so the host needs no zstd tool
+                from compression import zstd
+                with zstd.open(path) as src:
+                    shutil.copyfileobj(src, out)
+            except ImportError:
+                subprocess.run(["zstd", "-dcq", path], stdout=out, check=True)
         os.rename(tar + ".part", tar)
     files = _members(tar, lambda r: r == "PYTHON.json" or r.startswith("licenses/"))
     info = json.loads(files["PYTHON.json"])
