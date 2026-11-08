@@ -95,8 +95,9 @@ AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 ### AppImage
 
 ```sh
-scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 98 MB)
-scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop
+scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 63 MB)
+scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop,
+                               # and traces what AppKata uses of it (none of what the build leaves out)
 ```
 
 `build-appimage.sh`:
@@ -105,10 +106,20 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    (`PYTHON_BUILD`, requirement 1.2) for x86_64 (glibc 2.17+), and checks it against the SHA-256
    pinned there.
 2. Installs **PySide6-Essentials** and its `shiboken6` into it from PyPI, at the version pinned there,
-   and removes what AppKata doesn't use (Qt 3D,
-   PDF, the virtual keyboard, translations, pip, tkinter, tests), and adds the five xcb-util
-   libraries Qt's X11 plugin needs and no Debian-family desktop installs (`libxcb-cursor`, `-icccm`,
-   `-keysyms`, `-image`, `-render-util`; review 3, R3-32).
+   and adds the five xcb-util libraries Qt's X11 plugin needs and no Debian-family desktop installs
+   (`libxcb-cursor`, `-icccm`, `-keysyms`, `-image`, `-render-util`; review 3, R3-32). Then it
+   **leaves out what AppKata doesn't use**, as `packaging/appimage-trim.txt` lists it
+   (`scripts/appimage_trim.py apply`): Python's IDLE, Tcl/Tk and tkinter, pip, dbm's
+   ndbm, pydoc's help texts, headers and shared libpython; PySide6's tools for building Qt programs
+   (Designer, Linguist, the QML tools, headers, type descriptions), its type stubs and Qt's test
+   modules; the Qt modules, QML modules and plugins AppKata doesn't load (SQL, XML, printing, the
+   virtual keyboard, particles, Lottie, most of Qt Labs); the Quick Controls styles other than
+   Basic, which AppKata sets; the Wayland compositor side, and the platforms for a screen without a
+   desktop session (EGLFS, the frame buffer, VNC); Qt's translations. The build
+   stops if a line names nothing in the AppDir (a Qt or Python update renamed the part, which would
+   otherwise come back unnoticed), or if a library it keeps links one the list leaves out.
+   `APPKATA_TRIM=0` leaves everything in, for the trace below to compare; that build goes to
+   `build/AppKata-<version>-untrimmed-x86_64.AppImage`, never to `releases/`.
 3. Copies `src/appkata` and `src/appkata_core`, precompiles everything, and adds `AppRun`
    (which sets `PYTHONDONTWRITEBYTECODE`), the desktop entry, the SVG icon and a 256 px PNG rendered
    from it (for the first-start install, requirement 2.11.3.1).
@@ -150,7 +161,26 @@ more steps check what a desktop session loads (review 3, R3-31, R3-32):
   provide. The images (`appkata-desktop-*`, 2 to 4 GB each) are built once. Until RPM support
   retired, Fedora 39 and 44, Rocky 9 and Debian 12 ran in this step too.
 
-`APPIMAGE_STEPS="mint hostlibs desktops"` picks the steps.
+- **trace**: in the Mint 22.3 desktop image, `scripts/appimage_trace.sh` runs the AppImage the ways
+  AppKata is used, under `strace`. The runs are the whole tour in both themes offscreen and in the
+  dark theme on X11, the first-start screens, AppKata started on X11 and on Wayland, `--version`
+  and `--install-self`, and a probe. The probe loads every plugin of the kinds a desktop session
+  loads and Qt's TLS backend, and opens the file, folder and message dialogs both as Qt's own and
+  as GTK's. Qt and Python load most parts only when they're first used, so a part the build left
+  out that's needed after all would show only on the screen, the session or the dialog that uses
+  it. `scripts/appimage_trim.py check` fails if any run used a file the list leaves out: opened it,
+  mapped it to run, or looked for it and didn't find it. A library that's only opened isn't used:
+  Qt opens every plugin in a folder to read its metadata. A line marked `?` is one AppKata looks for
+  and does well without (Qt's translations), reported but not failed. Each run is given a session
+  bus, as a desktop session has, and 15 minutes, and must end as it should: the sessions still
+  running when stopped, the dialogs and TLS working, both tours saving screens, no traceback.
+  `tests/test_appimage_trim.py` (tier 1) checks before any build that no QML or PySide6 module
+  AppKata imports is on the list.
+- **untrimmed** (not run by default): the same trace of the `APPKATA_TRIM=0` build. It lists the
+  largest files no run used, the candidates for the list, and fails like `trace` if a run used a
+  file the list leaves out. Run it when the list changes or Qt or Python is updated.
+
+`APPIMAGE_STEPS="mint hostlibs desktops trace"` picks the steps.
 
 appimagetool embeds the static type-2 runtime, so the AppImage needs only `fusermount` or
 `fusermount3`, not `libfuse2`: checked on Ubuntu 24.04 with only `fuse3` installed. Without FUSE
