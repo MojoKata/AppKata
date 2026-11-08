@@ -8,10 +8,10 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 "$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 VERSION=$(python3 -c "import sys; sys.path.insert(0, '$HERE/src'); import appkata_core; print(appkata_core.__version__)")
 . "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
-PYINSTALLER=6.16.0
-TRUSTSTORE=0.10.4
+PYINSTALLER=6.22.3
+TRUSTSTORE=0.10.5
 # PyInstaller's dependencies, installed with --no-deps like the rest, so none of them moves
-PYINSTALLER_DEPS="altgraph==0.17.5 packaging==26.3 pefile==2023.2.7 pyinstaller-hooks-contrib==2026.8 pywin32-ctypes==0.2.3 setuptools==84.0.0"
+PYINSTALLER_DEPS="altgraph==0.17.5 packaging==26.3 pefile==2024.8.26 pyinstaller-hooks-contrib==2026.9 pywin32-ctypes==0.2.3 setuptools==84.2.1"
 mkdir -p "$HERE/releases" "$HERE/build/wine-cache"
 rm -rf "$HERE/build/windows"
 
