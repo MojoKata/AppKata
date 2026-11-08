@@ -372,3 +372,17 @@ def test_the_steps_release_requires_are_the_ones_the_agent_is_told_to_take():
     section = agent[agent.index("## 1. Prepare a release"):agent.index("## 2.")]
     assert re.findall(r"^\d+\. \*\*`([a-z0-9-]+)`:\*\*", section, re.M) == prepared
     assert re.findall(r"^   - \[x\] \*\*([a-z0-9-]+)\*\*", section, re.M) == prepared
+
+
+def test_git_keeps_every_file_the_release_reads():
+    # publish.sh release reads docs/releases/<version>.md and tests/data/state/<version>.json from
+    # the merged pull request; .gitignore's "releases/" (the builds' folder at the top) also matched
+    # docs/releases/, so the record could never be committed, and release would have refused every
+    # version (the 0.1.0 re-cut, 2026-11-08, the first record).
+    if not shutil.which("git"):
+        pytest.skip("needs git")
+    for path in ("docs/releases/9.9.9.md", "tests/data/state/9.9.9.json", "screenshots/linux/dark/X.png"):
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)
+        assert r.returncode == 1, f"git ignores {path}"
+    r = subprocess.run(["git", "check-ignore", "-q", "--no-index", "releases/AppKata-9.9.9-x86_64.AppImage"], cwd=ROOT)
+    assert r.returncode == 0, "the builds' releases/ folder is no longer ignored"

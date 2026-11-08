@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 build/
-releases/
+/releases/
 .pytest_cache/
 /temp/
 *.egg-info/
