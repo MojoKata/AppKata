@@ -15,6 +15,7 @@ libstdc++.so.6            # the GCC runtime
 libz.so.1                 # zlib, zstd and Brotli
 libzstd.so.1              # zlib, zstd and Brotli
 libbrotlidec.so.1         # zlib, zstd and Brotli
+libbrotlicommon.so.1      # zlib, zstd and Brotli
 libglib-2.0.so.0          # GLib
 libgthread-2.0.so.0       # GLib
 libdbus-1.so.3            # D-Bus

@@ -19,9 +19,9 @@ tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux insta
 tests/test_install_review.py::test_zip_install  # the Linux install layout
 tests/test_launch.py::test_a_failed_launch_is_reported_with_its_last_lines  # portable launch on Linux/macOS
 tests/test_launch.py::test_a_launch_that_runs_is_not_reported  # portable launch on Linux/macOS
-tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[echo "AppKata: running /x/AppRun ($(date +%s))" >&2; sleep 2; exit 1\n-False]  # portable launch on Linux/macOS
-tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[sleep 1; echo "AppKata: /x.AppImage didn't unpack to a folder; not running it." >&2; exit 1\n-True]  # portable launch on Linux/macOS
-tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[sleep 1; echo "AppKata: running /x/AppRun ($(date +%s))" >&2; echo "Segmentation fault" >&2; exit 139\n-True]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[refused]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[died-at-start]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[crashed-later]  # portable launch on Linux/macOS
 tests/test_launch.py::test_a_program_run_directly_is_only_reported_within_the_grace  # portable launch on Linux/macOS
 tests/test_launch.py::test_launches_append_to_the_app_log_and_rotate_it  # portable launch on Linux/macOS
 tests/test_launcher_golden.py::*  # the sandbox and its launchers are Linux-only (17.1)
@@ -61,3 +61,5 @@ tests/test_tier_args.py::test_launcher_vm_hands_pytest_each_argument_whole  # ru
 tests/test_time_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_tour_rules.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_trust.py::test_gpg_trust_with_published_key  # gpg not installed
+tests/test_appimage_trim.py::*  # the AppImage build's tool, for Linux paths
+tests/test_scripts_executable.py::test_every_script_is_executable_in_git  # not a git work tree (the Windows VM's copy of the sources)

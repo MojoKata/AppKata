@@ -72,6 +72,13 @@ def pytest_runtest_makereport(item, call):
         report.outcome, report.longrepr = "failed", failed
 
 
+collected = set()    # the case_id of every test collected, before -k or -m deselects any
+
+
+def pytest_itemcollected(item):
+    collected.add(case_id(item))
+
+
 _modules = []        # (module, why, verdict) of each module skipped whole, which no test report carries
 
 

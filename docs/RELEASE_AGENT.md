@@ -12,7 +12,8 @@ with every step of its record ticked, so none of them can be skipped.
 
 The owner says: **"Prepare release `<version>`"**. `<last>` is the version released before it.
 
-1. **A branch** from `MojoKata/AppKata`'s `master`, up to date: `release-<version>`.
+1. **A branch** from `MojoKata/AppKata`'s `master`, up to date: `prepare-<version>`. It is only the
+   pull request's branch, gone once it merges; `master` stays the only line.
 2. **`tier1`:** `scripts/test-tier1.sh` passes, and `scripts/test-clock.sh` too. CI runs tier 1
    again on the pull request.
 3. **`sandbox`:** if anything the sandbox runs changed since `v<last>`, the sandbox tiers
@@ -26,10 +27,15 @@ The owner says: **"Prepare release `<version>`"**. `<last>` is the version relea
    demo data's projects through GitHub's API and through github.com's pages, which AppKata falls
    back to when the API's hour runs out (requirement 2.4.1), and exits 1 where the two disagree.
    It needs the network and about one API request per project; `GITHUB_TOKEN` raises the limit.
-5. **`version`:** `__version__` in `src/appkata_core/__init__.py` and the README's "Status" heading
+5. **`pins`:** `scripts/pins-newest.py` exits 0: no pin is younger than 14 days, the pin cooldown
+   ([`build.md`](build.md#pinned-inputs)), or the owner allowed it (`--allow`, with the commit that
+   pinned it saying why). Its table also shows the pins that could move. Moving one is a change of
+   its own, proven like any other, so say in the record which could, and leave them unless the owner
+   asks.
+6. **`version`:** `__version__` in `src/appkata_core/__init__.py` and the README's "Status" heading
    say `<version>`. `publish.sh release` tags `v<version>`, and CI's `version` job stops a tag that
    doesn't match `__version__`.
-6. **`state`:** freeze the release's on-disk state for the upgrade tests:
+7. **`state`:** freeze the release's on-disk state for the upgrade tests:
    ```sh
    UPDATE_STATE=<version> .venv/bin/python -m pytest tests/test_sandbox_state.py
    ```
@@ -38,11 +44,11 @@ The owner says: **"Prepare release `<version>`"**. `<last>` is the version relea
    a later AppKata is shown to read, heal, change and remove what an earlier one left. A release
    without its snapshot is a release the upgrade tests know nothing about. Drop a snapshot only
    when its release is no longer one AppKata upgrades from.
-7. **`screenshots`:** if a screen changed since `v<last>`, make the screenshots again
+8. **`screenshots`:** if a screen changed since `v<last>`, make the screenshots again
    ([`build.md`](build.md#running-from-source-tests-and-screenshots)), run
    `scripts/test-screenshot-text.sh`, and check `git diff --stat screenshots`. If none changed, the
    step is "not needed", with why.
-8. **The record**, `docs/releases/<version>.md`: one ticked line per step above, each with its
+9. **The record**, `docs/releases/<version>.md`: one ticked line per step above, each with its
    result. `publish.sh release` reads it, and refuses while a step is missing or unticked.
    ```markdown
    # AppKata <version>
@@ -54,11 +60,12 @@ The owner says: **"Prepare release `<version>`"**. `<last>` is the version relea
    - [x] **tier1** 2,499 passed, 121 skipped; test-clock.sh: the seven runs passed
    - [x] **sandbox** not needed: `git diff --stat v<last>..HEAD -- …` prints nothing
    - [x] **github-paths** 43 projects, no difference
+   - [x] **pins** pins-newest.py: none younger than 14 days; could move: pytest 9.1.1 → 9.2.0
    - [x] **version** `__version__` and the README's Status heading say <version>
    - [x] **state** tests/data/state/<version>.json
    - [x] **screenshots** not needed: no QML or demo data changed since v<last>
    ```
-9. **The pull request**, "Release `<version>`": the version, the README, the snapshot, the
+10. **The pull request**, "Prepare for `<version>`": the version, the README, the snapshot, the
    record, and any screenshots, with a body that links the record. Run `tests/test_public_text.py`
    first, since the repository is public. Wait for its CI to pass.
 

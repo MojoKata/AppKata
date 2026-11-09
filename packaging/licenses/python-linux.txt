@@ -1,4 +1,4 @@
-The libraries python-build-standalone 20261013 builds into this Python
+The libraries python-build-standalone 20261026 builds into this Python
 (https://github.com/astral-sh/python-build-standalone), each with the modules that use it:
 
 --- bdb (for _dbm) ---

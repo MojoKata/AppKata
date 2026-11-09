@@ -15,8 +15,9 @@ scripts/test-appimage.sh runs the AppImage in a container and writes, into RUN:
 - plugins.txt: the plugins the probe loaded, or tried to (one that fails to load still counts);
 - ldd.txt: `ldd` of each AppImage library either one loaded, resolved on that host.
 
-What the AppImage needs from the host is then what those libraries and plugins name (readelf, on
-the AppImage extracted in APPDIR), followed through the libraries it bundles, that it doesn't
+What the AppImage needs from the host is then what those libraries and plugins name (their
+DT_NEEDED, read by AppKata's own ELF reader, so the host needs no binutils; on the AppImage
+extracted in APPDIR), followed through the libraries it bundles, that it doesn't
 bundle; plus what was loaded from the host that nothing links (loaded at run time, as OpenSSL).
 Each must be in NAMED (packaging/appimage-host-libs.txt), and each named one must still be needed.
 
@@ -27,10 +28,13 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "src"))
+
+from appkata_core.appkind import elf_needed  # noqa: E402
+
 NAMED = os.path.join(HERE, "..", "packaging", "appimage-host-libs.txt")
 INSIDE = "/tmp/squashfs-root/"          # where test-appimage.sh extracts the AppImage in the container
 
@@ -84,9 +88,10 @@ def needs(direct: set[str], bundled: set[str], host_loaded: set[str], host_linke
     return (direct - bundled) | (host_loaded - host_linked - bundled)
 
 
-def readelf_needed(path: str) -> list[str]:
-    out = subprocess.run(["readelf", "-d", path], capture_output=True, text=True).stdout
-    return re.findall(r"\(NEEDED\)\s+Shared library: \[(.+?)\]", out)
+def needed_of(path: str) -> list[str]:
+    """A library's DT_NEEDED sonames ([] when it isn't ELF); it was `readelf -d`, which a host without
+    binutils lacks (Rocky 10, 2026-11-07), and this reads the same names."""
+    return elf_needed(path) or []
 
 
 def named() -> set[str]:
@@ -109,7 +114,7 @@ def main(appdir: str, runs: list[str]) -> int:
         with open(os.path.join(run, "plugins.txt")) as fh:
             tried = {line.strip() for line in fh if line.strip()}
         mine = {os.path.join(appdir, f[len(INSIDE):]) for f in ({f for f in files if f.startswith(INSIDE)} | tried)}
-        direct = closure(mine, bundled, readelf_needed)
+        direct = closure(mine, bundled, needed_of)
         host = {soname(f) for f in files if not f.startswith(INSIDE)}
         with open(os.path.join(run, "ldd.txt")) as fh:
             need |= needs(direct, set(bundled), host, linked(fh.read()))

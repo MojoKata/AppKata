@@ -272,3 +272,15 @@ def test_the_harness_catches_setup_and_the_documents_naming_different_windows_10
     monkeypatch.setitem(globals(), "_read", lambda rel: real(rel).replace("MinVersion=10.0.19045", "MinVersion=10.0.17763"))
     named, setup = _facts()["the Windows 10 release the documents name, and Setup's"]
     assert set(setup.values()) == {"1809"} and set(named.values()) == {"22H2"}, (named, setup)
+
+
+def test_the_documented_dev_setup_installs_the_releases_pyside6():
+    """The documents' `pip install -e .` pins PySide6 to versions.env's PYSIDE: without the pin, pip took
+    the newest (6.12.0 while the release carried 6.11.2, 2026-11-07), so tests ran on a PySide6 no
+    release carried. pyproject.toml's range is what AppKata runs on, not what the release ships."""
+    for doc in ("README.md", "docs/build.md"):
+        with open(os.path.join(ROOT, doc), encoding="utf-8") as f:
+            installs = [line for line in f if re.search(r"pip install .*-e \.", line)]
+        assert installs, doc
+        for line in installs:
+            assert '"PySide6-Essentials==$PYSIDE"' in line and '"shiboken6==$PYSIDE"' in line and "versions.env" in line, (doc, line)

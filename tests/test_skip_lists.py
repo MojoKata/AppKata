@@ -52,18 +52,32 @@ def test_each_listed_test_exists_and_says_why_it_may_skip():
     conftest.listed.cache_clear()
 
 
+def test_each_listed_case_is_one_pytest_collects():
+    # A case's id after the test's name, [...], is pytest's making: pytest 9.2.0 named a long string
+    # parameter "script1", so the Windows list's entry for it no longer matched, and only the
+    # Windows tier, which skips it, could tell (the 0.1.0 re-cut, 2026-11-08); the check above drops
+    # the [...]. Every file pytest collected this run is held to it: a whole run, as tier 1's, all.
+    have = conftest.collected
+    assert "tests/test_skip_lists.py::test_each_listed_case_is_one_pytest_collects" in have
+    files = {t.split("::")[0] for t in have}
+    for name in LISTS:
+        conftest.listed.cache_clear()
+        for test in conftest.listed(name):
+            if test.endswith("]") and test.split("::")[0] in files:
+                assert test in have, f"tests/skips/{name}.txt: {test}: pytest collects no such case"
+    conftest.listed.cache_clear()
+
+
 # the test modules each tier's run takes: tier 1 and Windows take tests/ whole, the others what their
 # scripts name (test_tiers_take_the_modules_listed holds the scripts to it)
 LAUNCHER = ["test_sandbox_run.py", "test_sandbox_exposure.py", "test_sandbox_one_fact.py", "test_sandbox_user_shaped.py"]
 TAKES = {"tier1": None, "windows": None, "launcher": LAUNCHER + ["test_platform_matrix.py"],
-         "launcher-vm": LAUNCHER + ["test_booted.py"], "desktop": LAUNCHER + ["test_booted.py"]}
+         "launcher-vm": LAUNCHER + ["test_booted.py"], "desktop": LAUNCHER + ["test_booted.py", "test_channels.py"]}
 # tests that may skip in every tier, each with why; the rest of the class is a test that never runs
 # (docs/reviews/followups-skips.md). The test fails on anything new, and on a listed test some tier runs.
 NEVER_RUN = {
     "tests/test_sandbox_state.py::test_freeze_todays_state_when_asked":
         "a tool, not a check: docs/RELEASE_AGENT.md's 'Prepare a release' runs it with UPDATE_STATE",
-    "tests/test_channels.py::test_system_bus":
-        "S2, open: tier 1's container has no system bus, and no tier that has one takes test_channels.py",
 }
 
 

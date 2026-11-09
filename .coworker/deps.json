@@ -217,11 +217,11 @@
   ],
   "container_images": [
     {
-      "image": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02",
+      "image": "ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
       "why": "builds the AppImage: Ubuntu 22.04's glibc 2.35, the oldest requirement 1.1 supports (packaging/versions.env)"
     },
     {
-      "image": "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+      "image": "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852",
       "why": "tier 1: the release's Python and PySide6 on Ubuntu 24.04 (packaging/versions.env)"
     },
     {
@@ -229,7 +229,7 @@
       "why": "the Windows build: compiles the icuuc.dll stand-in with MinGW (packaging/versions.env)"
     },
     {
-      "image": "tobix/pywine:3.14@sha256:b053219cba558a12a8a3df2401a653b2ab2fced6833accd1e5d72399d7da1ad3",
+      "image": "tobix/pywine:3.14@sha256:adbb25c76313f5e4d29a9874ddc4ffd963504ac63e794d55ae52279d77cc2009",
       "why": "the Windows build: PyInstaller under Wine, on the release's Python (packaging/versions.env)"
     },
     {
@@ -240,7 +240,7 @@
       "image": "appkata-build-jammy",
       "built": "scripts/build-appimage.sh",
       "from": [
-        "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"
+        "ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11"
       ],
       "why": "builds the AppImage, with the xcb-util libraries it carries"
     },
@@ -248,7 +248,7 @@
       "image": "appkata-tier1",
       "built": "scripts/lib-tier1.sh",
       "from": [
-        "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
+        "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
       ],
       "why": "tier 1 and the tour layout runs (scripts/test-tier1.sh, test-layout.sh, test-clock.sh)"
     },
@@ -258,7 +258,7 @@
       "from": [
         "ubuntu:24.04"
       ],
-      "why": "reads the text in every screenshot with tesseract"
+      "why": "reads the text in every screenshot with tesseract; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-vmtools",
@@ -266,7 +266,7 @@
       "from": [
         "ubuntu:24.04"
       ],
-      "why": "QEMU and the disk tools that build and run the desktop VMs"
+      "why": "QEMU and the disk tools that build and run the desktop VMs; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-qvm",
@@ -274,7 +274,7 @@
       "from": [
         "ubuntu:24.04"
       ],
-      "why": "QEMU for the launcher VMs (test-sandbox.sh launcher-vm, launcher-vm26)"
+      "why": "QEMU for the launcher VMs (test-sandbox.sh launcher-vm, launcher-vm26); from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-desktop-ubuntu22.04",
@@ -282,7 +282,7 @@
       "from": [
         "ubuntu:22.04"
       ],
-      "why": "the AppImage on ubuntu22.04's desktop as its installer lays it down"
+      "why": "the AppImage on ubuntu22.04's desktop as its installer lays it down; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-desktop-ubuntu24.04",
@@ -290,7 +290,7 @@
       "from": [
         "ubuntu:24.04"
       ],
-      "why": "the AppImage on ubuntu24.04's desktop as its installer lays it down"
+      "why": "the AppImage on ubuntu24.04's desktop as its installer lays it down; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-desktop-mint22.3",
@@ -298,7 +298,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "the AppImage on mint22.3's desktop as its installer lays it down"
+      "why": "the AppImage on mint22.3's desktop as its installer lays it down; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-desktop-lmde7",
@@ -306,7 +306,7 @@
       "from": [
         "linuxmintd/lmde7-amd64:latest"
       ],
-      "why": "the AppImage on lmde7's desktop as its installer lays it down"
+      "why": "the AppImage on lmde7's desktop as its installer lays it down; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-mint22.3",
@@ -314,7 +314,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "the sandbox launcher's tests on Linux Mint 22.3"
+      "why": "the sandbox launcher's tests on Linux Mint 22.3; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-lmde7",
@@ -322,7 +322,7 @@
       "from": [
         "linuxmintd/lmde7-amd64:latest"
       ],
-      "why": "the sandbox launcher's tests on LMDE 7"
+      "why": "the sandbox launcher's tests on LMDE 7; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-session-mint22.3",
@@ -330,7 +330,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "a sandboxed app's desktop session on Linux Mint 22.3"
+      "why": "a sandboxed app's desktop session on Linux Mint 22.3; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-kwin-mint22.3",
@@ -338,7 +338,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "the sandbox under KWin on Wayland, Linux Mint 22.3"
+      "why": "the sandbox under KWin on Wayland, Linux Mint 22.3; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-kwin-lmde7",
@@ -346,7 +346,7 @@
       "from": [
         "linuxmintd/lmde7-amd64:latest"
       ],
-      "why": "the sandbox under KWin on Wayland, LMDE 7"
+      "why": "the sandbox under KWin on Wayland, LMDE 7; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-im-mint22.3",
@@ -354,7 +354,7 @@
       "from": [
         "appkata-sandbox-mint22.3:latest"
       ],
-      "why": "input methods (ibus, fcitx5) in the sandbox"
+      "why": "input methods (ibus, fcitx5) in the sandbox; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-dialogs-mint22.3",
@@ -362,7 +362,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "the GTK and Qt file dialogs through the portal, Linux Mint 22.3"
+      "why": "the GTK and Qt file dialogs through the portal, Linux Mint 22.3; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-dialogs-lmde7",
@@ -370,7 +370,7 @@
       "from": [
         "linuxmintd/lmde7-amd64:latest"
       ],
-      "why": "the GTK and Qt file dialogs through the portal, LMDE 7"
+      "why": "the GTK and Qt file dialogs through the portal, LMDE 7; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     },
     {
       "image": "appkata-sandbox-consumers-mint22.3",
@@ -378,7 +378,7 @@
       "from": [
         "linuxmintd/mint22.3-amd64:latest"
       ],
-      "why": "the portal's consumers in the sandbox, Linux Mint 22.3"
+      "why": "the portal's consumers in the sandbox, Linux Mint 22.3; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
     }
   ],
   "vms": {

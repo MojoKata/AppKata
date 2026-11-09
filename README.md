@@ -74,7 +74,7 @@ the tests in a container instead.
 
 ```sh
 "$(scripts/python-standalone.sh)" -m venv .venv
-.venv/bin/pip install -e . pytest
+(. packaging/versions.env && .venv/bin/pip install -e . "PySide6-Essentials==$PYSIDE" "shiboken6==$PYSIDE" $PYTEST)   # the release's PySide6
 .venv/bin/appkata                    # or: .venv/bin/python -m appkata
 .venv/bin/python -m pytest           # 92 tests (6 run only on Windows): core, trust signatures, installs, reviews, forges, audit, log, explore, Windows
 ```

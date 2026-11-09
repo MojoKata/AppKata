@@ -13,7 +13,8 @@ marked **(planned)** don't exist yet.
 ```sh
 git submodule update --init coworker       # with a clone made without --recurse-submodules
 coworker/bin/coworker status               # first, on any machine: what it needs, and what waits on a human
-"$(scripts/python-standalone.sh)" -m venv .venv && .venv/bin/pip install -e . pytest   # the release's Python (1.2)
+"$(scripts/python-standalone.sh)" -m venv .venv    # the release's Python (1.2)
+(. packaging/versions.env && .venv/bin/pip install -e . "PySide6-Essentials==$PYSIDE" "shiboken6==$PYSIDE" $PYTEST)   # and its PySide6
 .venv/bin/python -m pytest                 # unit and integration tests (no network needed)
 scripts/test-tier1.sh                      # the same in a container, on a host whose glibc is older than 2.34
 scripts/test-clock.sh                      # tier 1 at seven times and zones: the day's start and end, a year's end, UTC+14, UTC-12
@@ -90,13 +91,48 @@ and what it prints: the owner's steps in [`RELEASE.md`](RELEASE.md), the agent's
 Every release file gets a `.sha256` next to it in `releases/`. On a release, CI also signs the
 AppImage (`.asc`, [`github-workflows.md`](github-workflows.md)).
 
+## Pinned inputs
+
+Everything the builds, the tests and CI take from outside is pinned, so a release's signature vouches
+for inputs the repository names: the Python, PySide6 and every pip package (each `==` a version, with
+`--no-deps`), the Docker images by digest, the AppImage tools by release and SHA-256, and CI's actions
+by commit SHA. They live in [`packaging/versions.env`](../packaging/versions.env), in
+[`scripts/build-windows.sh`](../scripts/build-windows.sh) (PyInstaller, truststore and PyInstaller's
+dependencies) and [`scripts/test-windows-vm.sh`](../scripts/test-windows-vm.sh) (colorama), and in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml). A pin changes only by a commit;
+`tests/test_pinned_inputs.py` fails on an input named by something that moves.
+
+**The cooldown: a pin moves only to a release at least 14 days old** on the day it is pinned (the
+owner, 2026-11-07). A bad release (yanked, broken or malicious) is mostly found and pulled within
+days, and the wait keeps the builds off it. "Newest" means newest by version among the releases that
+old: PySide6 6.11.3 came out after 6.12.0 and is still the older one. For a Docker image the age is
+the day the image was built; a tag that moved less than 14 days ago keeps its pinned digest.
+
+- **Checked by** [`scripts/pins-newest.py`](../scripts/pins-newest.py): for every pin, its age, the
+  newest release old enough to move to, and the newest of all. It exits 1 on a pin younger than 14
+  days. Preparing a release runs it ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 1, `pins`), and
+  `tests/test_pins_newest.py` holds its list of pins to the files above, so a pin added later is
+  checked too.
+- **An exception** is the owner's: a security fix that can't wait 14 days, or a release a few days
+  short that saves a round of pins (2026-11-08, for 0.1.0: Python 3.14.10, its `tobix/pywine` image
+  and pytest 9.2.0, at 12 and 13 days). The commit that pins it says so, and
+  `pins-newest.py --allow NAME` passes it until it is old enough.
+- **Ceilings** come before age: PySide6 stays below 6.13, since Qt 6.12 is Qt's last version for
+  Windows 10 (`packaging/versions.env`), and Python stays in `PY_SERIES`. `tobix/pywine` moves with
+  `PYTHON_BUILD`: `build-windows.sh` stops unless the image carries the release's Python.
+- **Moving a pin** is a commit of its own, proven like any change: the tiers, the AppImage and the
+  installer, and the AppImage trim's trace after a Qt or Python change (`packaging/appimage-trim.txt`).
+  The newest eligible release isn't always one that fits: check that it meets what the packages
+  that use it require (PyPI's `requires_dist` for each).
+
 ## Linux
 
 ### AppImage
 
 ```sh
-scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 98 MB)
-scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop
+scripts/build-appimage.sh      # → releases/AppKata-<version>-x86_64.AppImage + .sha256 (about 63 MB)
+scripts/test-appimage.sh       # runs it in Mint containers, checks what it takes from the host, starts it on each 1.1 desktop,
+                               # and traces what AppKata uses of it (none of what the build leaves out)
 ```
 
 `build-appimage.sh`:
@@ -105,10 +141,20 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    (`PYTHON_BUILD`, requirement 1.2) for x86_64 (glibc 2.17+), and checks it against the SHA-256
    pinned there.
 2. Installs **PySide6-Essentials** and its `shiboken6` into it from PyPI, at the version pinned there,
-   and removes what AppKata doesn't use (Qt 3D,
-   PDF, the virtual keyboard, translations, pip, tkinter, tests), and adds the five xcb-util
-   libraries Qt's X11 plugin needs and no Debian-family desktop installs (`libxcb-cursor`, `-icccm`,
-   `-keysyms`, `-image`, `-render-util`; review 3, R3-32).
+   and adds the five xcb-util libraries Qt's X11 plugin needs and no Debian-family desktop installs
+   (`libxcb-cursor`, `-icccm`, `-keysyms`, `-image`, `-render-util`; review 3, R3-32). Then it
+   **leaves out what AppKata doesn't use**, as `packaging/appimage-trim.txt` lists it
+   (`scripts/appimage_trim.py apply`): Python's IDLE, Tcl/Tk and tkinter, pip, dbm's
+   ndbm, pydoc's help texts, headers and shared libpython; PySide6's tools for building Qt programs
+   (Designer, Linguist, the QML tools, headers, type descriptions), its type stubs and Qt's test
+   modules; the Qt modules, QML modules and plugins AppKata doesn't load (SQL, XML, printing, the
+   virtual keyboard, particles, Lottie, most of Qt Labs); the Quick Controls styles other than
+   Basic, which AppKata sets; the Wayland compositor side, and the platforms for a screen without a
+   desktop session (EGLFS, the frame buffer, VNC); Qt's translations. The build
+   stops if a line names nothing in the AppDir (a Qt or Python update renamed the part, which would
+   otherwise come back unnoticed), or if a library it keeps links one the list leaves out.
+   `APPKATA_TRIM=0` leaves everything in, for the trace below to compare; that build goes to
+   `build/AppKata-<version>-untrimmed-x86_64.AppImage`, never to `releases/`.
 3. Copies `src/appkata` and `src/appkata_core`, precompiles everything, and adds `AppRun`
    (which sets `PYTHONDONTWRITEBYTECODE`), the desktop entry, the SVG icon and a 256 px PNG rendered
    from it (for the first-start install, requirement 2.11.3.1).
@@ -121,7 +167,7 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    on the build machine), giving it the AppImage runtime with `--runtime-file`, and writes the
    `.sha256`. Without a runtime file appimagetool downloads the newest itself.
 
-Everything the build takes from outside is pinned in `packaging/versions.env`: the Python, the
+Everything the build takes from outside is pinned in `packaging/versions.env` ("Pinned inputs", above): the Python, the
 appimagetool release and the runtime, each with its SHA-256 (checked every time it's used), and the
 Docker images by digest. A pin changes only by a commit there; `tests/test_pinned_inputs.py` fails
 on an input named by a tag or a release that moves (`continuous`, `latest`, an image without its
@@ -150,7 +196,26 @@ more steps check what a desktop session loads (review 3, R3-31, R3-32):
   provide. The images (`appkata-desktop-*`, 2 to 4 GB each) are built once. Until RPM support
   retired, Fedora 39 and 44, Rocky 9 and Debian 12 ran in this step too.
 
-`APPIMAGE_STEPS="mint hostlibs desktops"` picks the steps.
+- **trace**: in the Mint 22.3 desktop image, `scripts/appimage_trace.sh` runs the AppImage the ways
+  AppKata is used, under `strace`. The runs are the whole tour in both themes offscreen and in the
+  dark theme on X11, the first-start screens, AppKata started on X11 and on Wayland, `--version`
+  and `--install-self`, and a probe. The probe loads every plugin of the kinds a desktop session
+  loads and Qt's TLS backend, and opens the file, folder and message dialogs both as Qt's own and
+  as GTK's. Qt and Python load most parts only when they're first used, so a part the build left
+  out that's needed after all would show only on the screen, the session or the dialog that uses
+  it. `scripts/appimage_trim.py check` fails if any run used a file the list leaves out: opened it,
+  mapped it to run, or looked for it and didn't find it. A library that's only opened isn't used:
+  Qt opens every plugin in a folder to read its metadata. A line marked `?` is one AppKata looks for
+  and does well without (Qt's translations), reported but not failed. Each run is given a session
+  bus, as a desktop session has, and 15 minutes, and must end as it should: the sessions still
+  running when stopped, the dialogs and TLS working, both tours saving screens, no traceback.
+  `tests/test_appimage_trim.py` (tier 1) checks before any build that no QML or PySide6 module
+  AppKata imports is on the list.
+- **untrimmed** (not run by default): the same trace of the `APPKATA_TRIM=0` build. It lists the
+  largest files no run used, the candidates for the list, and fails like `trace` if a run used a
+  file the list leaves out. Run it when the list changes or Qt or Python is updated.
+
+`APPIMAGE_STEPS="mint hostlibs desktops trace"` picks the steps.
 
 appimagetool embeds the static type-2 runtime, so the AppImage needs only `fusermount` or
 `fusermount3`, not `libfuse2`: checked on Ubuntu 24.04 with only `fuse3` installed. Without FUSE

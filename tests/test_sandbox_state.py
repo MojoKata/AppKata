@@ -85,6 +85,10 @@ SNAPSHOTS = sorted(glob.glob(os.path.join(STATE_DIR, "*.json")))
 @pytest.fixture
 def thawed(be, tmp_path, monkeypatch, request):
     monkeypatch.setattr(sb, "have_tools", lambda: True)
+    # and xdg-dbus-proxy, as the distributions AppKata supports install it with flatpak: the launcher's
+    # text, and the state frozen from it, are the same on every host (the RHEL 8 host had none,
+    # so tests/data/state/0.1.0.json froze a launcher without the bus filter)
+    monkeypatch.setattr(sb, "have_bus_filter", lambda: True)
     monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".local" / "share"))
     _review(be, "online-app")

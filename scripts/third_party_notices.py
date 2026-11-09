@@ -244,9 +244,12 @@ def check(platform, tree):
 # ----------------------------------------------------------------------------------------- refresh
 
 CACHE = os.path.join(ROOT, "build", "notices-cache")
-# the Qt repositories the builds' Qt libraries and plugins come from
+# the Qt repositories the builds' Qt libraries and plugins come from. Not qtwebengine: the only parts of
+# it the wheels carry are Qt PDF's plugins, without Qt PDF's library, so they never load and both builds
+# remove them (packaging/appimage-trim.txt, scripts/build-windows.sh); Qt 6.12.0 has no qtwebengine
+# release to take its notices from either. `check` stops a build that carries a library from it again.
 QT_REPOS = ["qtbase", "qtdeclarative", "qtsvg", "qtimageformats", "qtwayland", "qtlottie", "qtquicktimeline", "qttools",
-            "qt3d", "qtscxml", "qtwebengine"]
+            "qt3d", "qtscxml"]
 # third-party code a Qt repository uses only to build, test or show examples, not in its libraries
 QT_NOT_SHIPPED = ("cmake/", "examples/", "tests/", "coin/", "src/testinternal/", "src/qdoc/", "src/3rdparty/gradle/")
 PBS = "https://github.com/astral-sh/python-build-standalone/releases/download"
@@ -427,7 +430,12 @@ def refresh_python(p):
     tar = path[:-4]
     if not os.path.exists(tar):
         with open(tar + ".part", "wb") as out:
-            subprocess.run(["zstd", "-dcq", path], stdout=out, check=True)
+            try:            # Python 3.14's own zstd, so the host needs no zstd tool
+                from compression import zstd
+                with zstd.open(path) as src:
+                    shutil.copyfileobj(src, out)
+            except ImportError:
+                subprocess.run(["zstd", "-dcq", path], stdout=out, check=True)
         os.rename(tar + ".part", tar)
     files = _members(tar, lambda r: r == "PYTHON.json" or r.startswith("licenses/"))
     info = json.loads(files["PYTHON.json"])

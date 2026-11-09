@@ -659,15 +659,49 @@ def remake(d: str) -> None:
 HELD, HELD_DAYS_LEFT = "Zettlr/Zettlr", 4
 
 
+# The data's paths are absolute (an install's files, a Trust's folder, the review file), so data
+# made in one checkout and toured from another named the old one, where nothing is: after the move
+# from ~/appkata to ~/kata/AppKata (2026-11-07), every kept version read as gone (A05, A11) and the
+# screens would have shown the old paths. reviewPath, <d>/REVIEW, says where the data was made.
+REVIEW = os.path.join("home", "src", "reviews", "AppKata.md")
+
+
+def reroot(d: str) -> None:
+    """The data's paths moved from where it was made to where d is now: the database's (all but the
+    Audit's, which stage writes again) and Settings'."""
+    gui = os.path.join(d, "gui.json")
+    was = json.load(open(gui)).get("reviewPath", "")
+    if not was.endswith(os.sep + REVIEW):
+        return
+    old, new = was[:-len(REVIEW) - 1], os.path.abspath(d)
+    if old == new:
+        return
+    # each as written plainly and inside JSON (a record, Settings), which escapes Windows' backslashes
+    moves = {(old, new), (json.dumps(old)[1:-1], json.dumps(new)[1:-1])}
+    db = DB(os.path.join(d, "appkata.db"))
+    for t in [r["name"] for r in db.all("SELECT name FROM sqlite_master WHERE type='table' "
+                                        "AND name NOT LIKE 'sqlite_%' AND name != 'audit'")]:
+        for c in [r["name"] for r in db.all(f"PRAGMA table_info({t})") if r["type"].upper() in ("TEXT", "")]:
+            for a, b in moves:
+                db.x(f"UPDATE {t} SET {c}=replace({c}, ?, ?) WHERE instr({c}, ?)", (a, b, a))
+    text = open(gui).read()
+    for a, b in moves:
+        text = text.replace(a, b)
+    with open(gui, "w") as f:
+        f.write(text)
+    print(f"moved {d}'s paths from {old}")
+
+
 def stage(d: str, utc_offset: str = "+00:00") -> None:
     """Before a tour: what the screens show of time, as of now (R3-24). The data is made once and
     toured for weeks, so a minimum age set when it was made runs out, and its last sync ages. The
     minimum age is set so that HELD's newest release has HELD_DAYS_LEFT days to go, in the database
     and in Settings, the last sync and each Trust's are put 50 minutes back, and the Audit is
     written again to end half an hour back (R3-25), its days those of utc_offset's time zone, the
-    one the tour shows them in (history)."""
+    one the tour shows them in (history). First, the data's paths name where it is now (reroot)."""
     import math
     from datetime import datetime, timedelta, timezone
+    reroot(d)
     db = DB(os.path.join(d, "appkata.db"))
     r = db.one("SELECT releases FROM apps WHERE url=?", (GH + HELD,))
     newest = next(x for x in json.loads(r["releases"] or "[]") if not x.get("prerelease"))
