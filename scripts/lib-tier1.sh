@@ -13,7 +13,19 @@ tier1_setup() {
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git gnupg openssh-client libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64 fonts-dejavu-core fonts-urw-base35 fontconfig python3 python3-gi zip unzip xz-utils file ca-certificates libfaketime >/dev/null
 RUN printf "<?xml version=\"1.0\"?><!DOCTYPE fontconfig SYSTEM \"fonts.dtd\"><fontconfig><alias><family>sans-serif</family><prefer><family>Nimbus Sans</family></prefer></alias></fontconfig>\n" > /etc/fonts/local.conf && fc-match sans-serif | grep -q "Nimbus Sans"'
     IMG=appkata-tier1:$(printf '%s' "$_df" | sha256sum | cut -c1-12)
-    docker image inspect "$IMG" >/dev/null 2>&1 || printf '%s\n' "$_df" | docker build -q -t "$IMG" - >/dev/null
+    # The build is quiet but bounded: on 2026-11-19 apt-get stalled on GitHub's runners and the job
+    # sat silent for its whole 30 minutes. A build takes a minute at most, so ten fail it, and a
+    # failure shows the build's own output (which mirror, which package).
+    if ! docker image inspect "$IMG" >/dev/null 2>&1; then
+        _log=$(mktemp)
+        if ! printf '%s\n' "$_df" | timeout 600 docker build --progress=plain -t "$IMG" - >"$_log" 2>&1; then
+            echo "tier1: building $IMG failed or took over 10 minutes; docker build said:" >&2
+            cat "$_log" >&2
+            rm -f "$_log"
+            return 1
+        fi
+        rm -f "$_log"
+    fi
     SITE="$1/build/pyside-$PYSIDE-py$PY_SERIES"
     if [ ! -d "$SITE/PySide6" ]; then
         echo "== PySide6-Essentials $PYSIDE for Python $PY_SERIES" >&2
