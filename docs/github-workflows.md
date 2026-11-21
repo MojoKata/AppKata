@@ -18,7 +18,7 @@ the script it would run on a development machine, so a CI failure reproduces loc
 
 | Job | Runs | About |
 |---|---|---|
-| `tier1 1 of 3` to `3 of 3` | `scripts/test-tier1.sh`, a part each, measured ("Tier 1's parts", below) | 1½ min each |
+| `tier1 1 of 3` to `3 of 3` | `scripts/test-tier1.sh`, a part each, measured ("Tier 1's parts", below) | 1 min each |
 | `coverage` | `scripts/coverage_report.py report --check` on the parts' data ("Coverage", below) | ½ min |
 | `ci-times` | `scripts/ci_times.py` on its own run: each part within 5 minutes, the parts within 1.4:1 | |
 | `appimage` | `scripts/build-appimage.sh` | 1 min |
@@ -55,11 +55,10 @@ split again, by fresh times or into more parts; making a test itself quicker is 
 The script runs by hand too, on a run or a pull request (`scripts/ci_times.py --pr N`).
 
 Within a part the tests run one at a time, without pytest-xdist. Measured on GitHub's runners, two
-or four workers took about a third off a part's tests, about 15 seconds of a job's 90 once the parts
-are balanced: each job spends about 40 seconds setting up, the publish tests wait on fixed sleeps,
-and the workers start, and are measured, one by one. Two tests of `test_sandbox_user_shaped.py`
-also fail under xdist: the launch their recording bwrap should see isn't in its log. The parts meet
-the budget without it.
+or four workers took about a third off a part's tests, which is now some 7 seconds of a job's
+70: a part's tests take about 22 seconds, and its setup about 40. Two tests of
+`test_sandbox_user_shaped.py` also fail under xdist: the launch their recording bwrap should see
+isn't in its log. The parts meet the budget without it.
 
 ## Coverage
 
