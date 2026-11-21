@@ -362,6 +362,11 @@ def test_record_and_gather_write_each_areas_baseline_of_one_commit(work, tmp_pat
     assert mutate.main(["gather", "1", "--repo", "someone/AppKata", "--same-as", "HEAD"]) == 0
     assert got["made"] == {"repo": "a fork", "runs": [1], "commit": "c0ffee", "mutmut": mutate.mutmut_pin()}
     assert got["repo"] == mutate.REPO
+    # runs of two such commits, each with the code of the one recorded (a run resumed after a fix)
+    heads["3"] = "a2"
+    monkeypatch.setattr(mutate, "blob_at", lambda commit, rel, repo: "same" if commit in ("a", "a2", "c0ffee") else "x")
+    assert mutate.main(["gather", "1", "3", "--repo", "someone/AppKata", "--same-as", "HEAD"]) == 0
+    assert got["made"]["runs"] == [1, 3] and got["made"]["commit"] == "c0ffee"
     monkeypatch.setattr(mutate, "_git", lambda *a: "beef")
     assert mutate.main(["gather", "1", "--repo", "someone/AppKata", "--same-as", "HEAD"]) == 1
 

@@ -762,24 +762,25 @@ def downloaded(run_id: str, repo: str) -> list[Path]:
 def gather(args) -> int:
     """The runs' artifacts, the earliest first, as each area's baseline. The runs must be of one
     commit, so their outcomes add up. A fork's runs (--repo) are recorded as a fork's, without its
-    name; with --same-as, a commit of this repository whose code is the runs' own is recorded as
-    theirs (a run on a branch made only to start it, its workflow file changed)."""
+    name; with --same-as, a commit of this repository whose code is each run's own is recorded as
+    theirs (runs on branches made only to start them, their workflow file changed)."""
     dirs, commits = [], set()
     for run_id in args.run:
         dirs += downloaded(run_id, args.repo)
         view = ["gh", "run", "view", run_id, "-R", args.repo, "--json", "headSha", "-q", ".headSha"]
         commits.add(subprocess.run(view, capture_output=True, text=True, check=True).stdout.strip())  # noqa: S603
-    if len(commits) != 1:
+    if len(commits) != 1 and not args.same_as:
         print(f"the runs are of {len(commits)} commits; a baseline is of one: {' '.join(sorted(commits))}")
         return 1
-    commit = commits.pop()
-    if args.same_as:
+    commit = sorted(commits)[0]
+    if args.same_as:  # each run's code, module by module, is the commit's
         same = _git("rev-parse", args.same_as)
         named = sorted({m for d in dirs for m in json.loads((d / "job.json").read_text())["modules"].split()})
-        differ = [m for m in named if blob_at(commit, m, args.repo) != blob_at(same, m, REPO)]
-        if differ:
-            print(f"{same} differs from the runs' {commit} in {' '.join(differ)}")
-            return 1
+        for ran in sorted(commits):
+            differ = [m for m in named if blob_at(ran, m, args.repo) != blob_at(same, m, REPO)]
+            if differ:
+                print(f"{same} differs from the runs' {ran} in {' '.join(differ)}")
+                return 1
         commit = same
     where = args.repo if args.repo == REPO else "a fork"
     made = {"repo": where, "runs": [int(r) for r in args.run], "commit": commit, "mutmut": mutmut_pin()}
