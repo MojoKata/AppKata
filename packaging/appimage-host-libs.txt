@@ -1,7 +1,7 @@
-# The libraries the AppImage takes from the host, by soname, each with the group requirement 1.6
-# names it by. Every 1.1 distro's desktop install has them. scripts/test-appimage.sh checks that the
+# The libraries the AppImage takes from the host, by soname, each with the group R1.6
+# names it by. Every R1.1 distro's desktop install has them. scripts/test-appimage.sh checks that the
 # AppImage needs no other (scripts/appimage_host_libs.py) and that each named one is still needed,
-# and starts AppKata on X11 and Wayland in each 1.1 distro's desktop package set. Review 3, R3-31.
+# and starts AppKata on X11 and Wayland in each R1.1 distro's desktop package set. Review 3, R3-31.
 ld-linux-x86-64.so.2      # glibc
 libc.so.6                 # glibc
 libdl.so.2                # glibc

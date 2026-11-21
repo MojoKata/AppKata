@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// A tag chip; warning tags (requirement 10.4.3) use the warning colours.
+// A tag chip; warning tags (R10.4.3) use the warning colours.
 Rectangle {
     id: root
     property string text

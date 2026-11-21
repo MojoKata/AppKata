@@ -7,7 +7,7 @@ from appkata_core.catalog import eligible_release
 from appkata_core.forges import Asset
 
 
-# ---------------------------------------------------------------- urls (requirement 2.3, 2.5)
+# ---------------------------------------------------------------- urls (R2.3, R2.5)
 @pytest.mark.parametrize("given,want", [
     ("https://github.com/LocalSend/LocalSend", "https://github.com/LocalSend/LocalSend"),
     ("https://GitHub.com/localsend/localsend.git", "https://github.com/localsend/localsend"),
@@ -35,7 +35,7 @@ def test_releases_page_flag_and_errors():
     assert urls.parse("nostr://npub1abc/app-reviews").kind == "nostr"
 
 
-# ---------------------------------------------------------------- versions (requirement 9.4)
+# ---------------------------------------------------------------- versions (R9.4)
 def test_versions():
     assert versions.clean("v1.17.0") == "1.17.0"
     assert versions.clean("release-2.0") == "2.0"
@@ -53,7 +53,7 @@ def test_versions():
     assert versions.newer("abc", "abd", "2026-02-01", "2026-01-01")
 
 
-# ---------------------------------------------------------------- assets (requirement 4.2)
+# ---------------------------------------------------------------- assets (R4.2)
 def A(*names):
     return [Asset(n, "https://x/" + n) for n in names]
 
@@ -86,7 +86,7 @@ def test_checksum_file():
     assert assets.checksum_for(rel[0], rel).name == "app.AppImage.sha256"
 
 
-# ---------------------------------------------------------------- metadata (requirement 3)
+# ---------------------------------------------------------------- metadata (R3)
 def test_summary_skips_badges_and_headings():
     md = """<p align="center"><img src="logo.png"></p>
 
@@ -126,7 +126,7 @@ def test_metainfo():
     assert m["name"] == "LocalSend" and m["summary"] == "Share files" and m["screenshot"] == "https://e.com/s1.png"
 
 
-# ---------------------------------------------------------------- AppKata.md (requirement 10)
+# ---------------------------------------------------------------- AppKata.md (R10)
 SAMPLE = """# Mara's FOSS picks
 
 Apps I trust.
@@ -184,7 +184,7 @@ def test_values():
         trustfile.parse_value("6")
 
 
-# ---------------------------------------------------------------- scoring (requirement 10.6)
+# ---------------------------------------------------------------- scoring (R10.6)
 def test_scoring():
     s = scoring.combine([(5, 4), (4, None), (None, 2)])
     assert not s.vetoed and s.trust == 4.5 and s.rating == 3.0 and s.reviewers == 3
@@ -195,7 +195,7 @@ def test_scoring():
     assert [n for n, _ in sorted(apps, key=lambda x: scoring.sort_key(x[0], x[1]))] == ["c", "a", "b", "z"]
 
 
-# ---------------------------------------------------------------- pin and minimum age (requirement 9.5)
+# ---------------------------------------------------------------- pin and minimum age (R9.5)
 def test_minimum_age():
     from datetime import datetime, timedelta, timezone
     d = lambda days: (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -220,7 +220,7 @@ def test_icon_ranking_real_repos():
 
 
 def test_portable_or_system(tmp_path):
-    """Requirement 4.2.1: the file decides; Windows .exe files are probed."""
+    """R4.2.1: the file decides; Windows .exe files are probed."""
     assert assets.category("appimage") == "portable" and assets.category("rpm") == "system"
     assert assets.category("exe", "inno") == "system" and assets.category("exe", "portable") == "portable"
     assert assets.category("exe", "unknown") == "unknown"
@@ -255,7 +255,7 @@ def test_saved_install_choice_is_used(tmp_path):
 
 
 def test_settings_subsection():
-    """'## <App>::Settings' (requirement 8.4.7, 10.3.1)."""
+    """'## <App>::Settings' (R8.4.7, R10.3.1)."""
     text = trustfile.set_review("", "Flameshot", "https://github.com/flameshot-org/flameshot", ["foss"], 4, 4,
                                 "Review about flameshot.", {"appMenu": True, "commandLink": False, "stableName": True})
     assert ("## Flameshot::Settings\n\n- Trust: 4\n- Rating: 4\n- Tags: foss\n- App menu: yes\n- Command link: no\n"
@@ -272,7 +272,7 @@ def test_settings_subsection():
 
 
 def test_weighted_scoring_by_trust_score():
-    # a 5-star Trust's review counts five times a 1-star Trust's (requirement 10.6.2)
+    # a 5-star Trust's review counts five times a 1-star Trust's (R10.6.2)
     s = scoring.combine([(5, 5, 5), (1, 1, 1)])
     assert s.trust == round((25 + 1) / 6, 1) and s.rating == round(26 / 6, 1) and s.reviewers == 2
     assert scoring.combine([(4, 4), (2, 2)]).trust == 3.0          # no weight: plain average
@@ -288,7 +288,7 @@ def test_trust_order_and_score():
 
 
 def test_settings_per_platform():
-    # requirement 10.3.1: "- <Option> (<platform>): yes|no" overrides the line without a platform
+    # R10.3.1: "- <Option> (<platform>): yes|no" overrides the line without a platform
     sec = ("Notes.\n\n## Zettlr::Settings\n\n- App menu: yes\n- Auto update: no\n- Auto update (Win): yes\n"
            "- Auto update (mac): yes\n- Command link (windows): no\n- Auto update (amiga): yes\n")
     text, opts = trustfile.split_settings("Zettlr", sec)
@@ -328,7 +328,7 @@ def test_recently_updated_sort():
 
 
 def test_source_settings_in_appkata_md():
-    # requirement 10.3.1: forge and download filter can be recommended (a regex in backticks);
+    # R10.3.1: forge and download filter can be recommended (a regex in backticks);
     # Track only and pre-releases are personal, so they're ignored
     sec = ("## Zettlr::Settings\n\n- Track only: no\n- Include pre-releases: yes\n- Forge: GitLab\n"
            "- Download filter: `x86_64\\.AppImage$`\n- Download filter (windows): `setup.*\\.exe$`\n- Forge: svn\n- Download filter (mac): `(`\n")

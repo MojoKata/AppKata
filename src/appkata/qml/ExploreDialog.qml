@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Explore (requirement 7.7): search GitHub, GitLab, Codeberg or ngit for projects, and on Linux
-// Flathub and the distribution's AppStream catalog (16.2.3), then open one's page or add it as a
-// Source. A Flathub or distribution match needs its project's git URL to become a Source (16.2.4).
+// Explore (R7.7): search GitHub, GitLab, Codeberg or ngit for projects, and on Linux
+// Flathub and the distribution's AppStream catalog (R16.2.3), then open one's page or add it as a
+// Source. A Flathub or distribution match needs its project's git URL to become a Source (R16.2.4).
 Dialog {
     id: root
     property string service: "github"
@@ -22,7 +22,7 @@ Dialog {
     onServiceChanged: if (visible && q.text.trim()) run()
     Connections { target: backend; function onExploreResults(r) { if (r.service === root.service && r.q === q.text.trim()) { root.res = r; root.searching = false } } }
 
-    Rectangle {     // service picker, like the perspective switcher (requirement 7.7.2)
+    Rectangle {     // service picker, like the perspective switcher (R7.7.2)
         id: seg
         width: Math.min(parent.width, 105 * root.services.length); height: 34; radius: 10; color: Theme.track
         Row {
@@ -73,7 +73,7 @@ Dialog {
             model: root.res ? root.res.matches : []
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            delegate: Rectangle {      // a minimal summary with its tools (requirement 7.7.3)
+            delegate: Rectangle {      // a minimal summary with its tools (R7.7.3)
                 width: list.width - 8; height: modelData.channel ? 80 : 70; radius: 12; color: Theme.input; border.color: Theme.border
                 Column {
                     x: 14; y: 10; width: parent.width - 14 - 100; spacing: 4
@@ -87,7 +87,7 @@ Dialog {
                         Pill { visible: modelData.listed && !modelData.isSource; text: "In your trusts"; color: Theme.accentSoft; fg: Theme.accent; u: 0.75; anchors.verticalCenter: parent.verticalCenter }
                     }
                     Text { width: parent.width; elide: Text.ElideRight; text: modelData.description || "No description"; color: Theme.muted; font.pixelSize: 12 }
-                    Text {      // the project found for a Flathub or distribution match (requirement 16.2.4)
+                    Text {      // the project found for a Flathub or distribution match (R16.2.4)
                         visible: !!modelData.channel; textFormat: Text.StyledText; font.pixelSize: 11
                         color: modelData.url ? Theme.faint : Theme.warn
                         text: modelData.url ? "<font color='" + Theme.muted + "'>" + modelData.url.replace("https://", "") + "</font> · from its " + (modelData.found || "AppStream") + " data"
@@ -107,7 +107,7 @@ Dialog {
                 }
                 Row {
                     anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; spacing: 8
-                    // icon-only, labelled by tooltips (requirement 7.7.3)
+                    // icon-only, labelled by tooltips (R7.7.3)
                     TipButton { icon: "open"; tip: modelData.service === "ngit" ? "Open on gitworkshop.dev" : "Project page"
                                 showTip: root.demoTip === index * 2; onClicked: Qt.openUrlExternally(modelData.page) }
                     TipButton {

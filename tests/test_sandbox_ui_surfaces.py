@@ -2,7 +2,7 @@
 (review 3, R3-2).
 
 Round four's dialog contract harness drove the Sandbox and Install dialogs. The three places where
-requirement 17 tells the user most were driven by no test: App Detail (the review badge and "Keep
+R17 tells the user most were driven by no test: App Detail (the review badge and "Keep
 mine", the setup-needed and Repair banners, the Sandboxed/Not sandboxed pill, the session and bus
 caveats, the Chromium line, the sandboxed-updates line), Settings > Sandbox (System support with Set
 up... and Repair..., the defaults, the templates, the home folders) and the uninstall dialog's offer
@@ -138,7 +138,7 @@ def test_app_detail_says_sandboxed_or_not_and_what_the_sandbox_gives(ui, be, app
     assert not _has(seen, "Sandboxed", "Sandbox", "Strict · private home", "No network"), seen
     assert "Not sandboxed" not in seen and not any("system setup needed" in t for t in seen)
     os.unlink(json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])["launcher"])
-    host["status"] = "unsupported"                                    # installed while the system couldn't (17.10)
+    host["status"] = "unsupported"                                    # installed while the system couldn't (R17.10)
     _tools(host, ["bubblewrap"])
     seen = _seen(_show(ui, be))
     assert not _has(seen, "Not sandboxed", "Running unsandboxed: bubblewrap isn't installed. Install it (sudo "), seen
@@ -197,7 +197,7 @@ def test_app_detail_says_an_app_that_keeps_its_launcher_on_a_broken_host_cant_st
 def test_app_detail_raises_the_review_badge_and_keep_mine_puts_it_down(ui, be, app):
     _review(be, "offline-editor")
     be._pin_sandbox(URL, be._resolved_sandbox(URL))
-    _review(be, "online-app")                                         # the reviewers now suggest more (17.11)
+    _review(be, "online-app")                                         # the reviewers now suggest more (R17.11)
     detail = _show(ui, be)
     assert not _has(_seen(detail), "Reviewers suggest a sandbox change", "Keep mine", "Review…",
                     "Alice suggests adding the network, sound and notifications. Until you review it, the app may not work fully."), _seen(detail)
@@ -275,7 +275,7 @@ def test_settings_sandbox_defaults_reach_the_backend(ui, be, app):
     _call(dlg, "close")
 
 
-# ------------------------------------------------------------------- the uninstall confirmation (17.14)
+# ------------------------------------------------------------------- the uninstall confirmation (R17.14)
 
 def _missing_uninstall(ui, be, app):
     out, removed = set(), []
@@ -311,7 +311,7 @@ def test_the_uninstall_dialog_offers_to_delete_the_sandbox_home_but_the_listed(u
 
 @pytest.mark.parametrize("button,now", [("Set up now", True), ("Not now", False)])
 def test_the_setup_prompt_says_what_it_does_and_its_answers_reach_the_backend(ui, be, app, monkeypatch, button, now):
-    # Review 2, F12: the first-need prompt 17.10 promised, as Main shows it from sandboxSetupNeeded
+    # Review 2, F12: the first-need prompt R17.10 promised, as Main shows it from sandboxSetupNeeded
     host, calls = app
     host["status"] = "setup-needed"
     installs = []
@@ -355,7 +355,7 @@ def test_every_setup_entry_point_names_the_apps_it_will_sandbox(ui, be, app):
 @pytest.mark.parametrize("include", [True, False])
 def test_the_review_dialog_shows_the_sandbox_it_will_write_and_writes_it_only_when_included(ui, be, app, tmp_path, monkeypatch, include):
     # Review 2, F9: the user's own sandbox is written into their review, shown first as one line with
-    # "Include my sandbox" (gaps.md 28's one exception: a sandbox can name personal folders)
+    # "Include my sandbox" (R8.4.7: a sandbox can name personal folders)
     from appkata_core import sync
     path = tmp_path / "AppKata.md"
     path.write_text("# My Trust\n")
@@ -377,7 +377,7 @@ def test_the_review_dialog_shows_the_sandbox_it_will_write_and_writes_it_only_wh
 
 
 def test_app_detail_shows_the_launch_command_and_the_audit_records_its_hash(ui, be, app):
-    # Review 2, F11: 17.4 said the launcher's text "can be shown in App Detail ('Show the launch command')
+    # Review 2, F11: R17.4 said the launcher's text "can be shown in App Detail ('Show the launch command')
     # and is recorded in the Audit"; no QML called sandboxLaunchCommand, and no entry held the text
     be.setSandbox(URL, {"template": "online-app", "overrides": {}})
     detail = _show(ui, be)

@@ -3,7 +3,7 @@ stages and each state a launcher can be in (review 3, R3-27; the tour checks tou
 screen it takes).
 
 How R3-27 slipped past: whether an app runs sandboxed is read in two places. App Detail asks
-whether the launcher file is there; the Apps list's 17.12 rule (an app that would update itself is
+whether the launcher file is there; the Apps list's R17.12 rule (an app that would update itself is
 updated by AppKata while it runs sandboxed) asks whether the install record names one. The tour
 stages "a working system, healed" by forcing App Detail's answer, and the Apps list kept reading
 the demo's records, which name no launcher, so A09 showed Syncthing both sandboxed and updating
@@ -52,7 +52,7 @@ def _staged(be, tmp_path, monkeypatch, mode, choice, launcher):
     monkeypatch.setattr(sb, "support_status", lambda: dict(host))
     monkeypatch.setattr(threading.Thread, "start", lambda self: self.run())
     _review_lines(be, "- Auto update: yes\n- Sandbox (linux): online-app\n")
-    be.db.x("UPDATE trusts SET verified_commit='e9ee159'")             # its reviews count in the catalog (10.5)
+    be.db.x("UPDATE trusts SET verified_commit='e9ee159'")             # its reviews count in the catalog (R10.5)
     be.db.x("INSERT INTO sources(url, settings, added_at) VALUES(?,?,?)", (URL, "{}", now()))
     be.db.x("INSERT INTO apps(url, name, releases) VALUES(?,?,?)", (URL, "Demo", json.dumps(
         [{"tag": "v1.0", "name": "1.0", "version": "1.0", "date": "2026-01-01T00:00:00Z", "prerelease": False, "notes": "",
@@ -77,7 +77,7 @@ def _staged(be, tmp_path, monkeypatch, mode, choice, launcher):
 def test_no_screen_contradicts_itself(be, tmp_path, monkeypatch, case):
     from appkata import tour
     _staged(be, tmp_path, monkeypatch, *CASES[case])
-    assert be._app(URL)["autoUpdate"] is True                         # the case is the one that matters: 17.12 applies
+    assert be._app(URL)["autoUpdate"] is True                         # the case is the one that matters: R17.12 applies
     seen = {f"{case}: {c}" for c in tour.contradictions(be)}
     listed = {c for c in STILL_CONTRADICTS if c.startswith(case + ": ")}
     assert seen - listed == set(), "new"

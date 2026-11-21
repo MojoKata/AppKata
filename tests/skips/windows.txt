@@ -7,7 +7,7 @@ tests/test_channel_ui.py::test_same_digest_and_source_settings  # could not impo
 tests/test_channels.py::test_system_bus  # no system bus
 tests/test_dialog_contract.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_doc_links.py::test_every_link_between_the_documents_leads_somewhere  # a copy without the screenshots' images (the Windows tier's), which the documents link to
-tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (17.1)
+tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (R17.1)
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs1-gui]  # the Linux install layout
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
@@ -24,9 +24,9 @@ tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a
 tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[crashed-later]  # portable launch on Linux/macOS
 tests/test_launch.py::test_a_program_run_directly_is_only_reported_within_the_grace  # portable launch on Linux/macOS
 tests/test_launch.py::test_launches_append_to_the_app_log_and_rotate_it  # portable launch on Linux/macOS
-tests/test_launcher_golden.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_launcher_golden.py::*  # the sandbox and its launchers are Linux-only (R17.1)
 tests/test_layout.py::*  # could not import 'PySide6': No module named 'PySide6'
-tests/test_platform_matrix.py::test_the_launcher_passes_no_variable_its_shell_made_up  # the launcher is a Linux /bin/sh script (17.1)
+tests/test_platform_matrix.py::test_the_launcher_passes_no_variable_its_shell_made_up  # the launcher is a Linux /bin/sh script (R17.1)
 tests/test_public_text.py::test_no_private_name_in_any_tracked_file  # not a git work tree (the Windows VM's copy of the sources)
 tests/test_public_text.py::test_the_repository_address_is_appkata_core_s  # not a git work tree (the Windows VM's copy of the sources)
 tests/test_publish.py::test_check_says_it_cant_read_what_github_refuses_and_goes_on  # runs publish.sh, a POSIX shell script
@@ -39,14 +39,14 @@ tests/test_publish.py::test_release_tags_once_the_release_pull_request_is_merged
 tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun  # runs publish.sh, a POSIX shell script
 tests/test_publish.py::test_the_release_key_is_the_one_the_docs_name  # needs gpg
 tests/test_qml_slots.py::*  # could not import 'PySide6': No module named 'PySide6'
-tests/test_sandbox.py::*  # the sandbox and its launchers are Linux-only (17.1)
-tests/test_sandbox_adversarial.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox.py::*  # the sandbox and its launchers are Linux-only (R17.1)
+tests/test_sandbox_adversarial.py::*  # the sandbox and its launchers are Linux-only (R17.1)
 tests/test_sandbox_audit.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox_backend.py::*  # could not import 'PySide6': No module named 'PySide6'
-tests/test_sandbox_exposure.py::*  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_exposure.py::*  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (R17.1)
 tests/test_sandbox_lifecycle.py::*  # could not import 'PySide6': No module named 'PySide6'
-tests/test_sandbox_one_fact.py::*  # needs bwrap and xdg-dbus-proxy (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (17.1)
-tests/test_sandbox_properties.py::*  # the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_one_fact.py::*  # needs bwrap and xdg-dbus-proxy (scripts/test-sandbox.sh launcher); the sandbox and its launchers are Linux-only (R17.1)
+tests/test_sandbox_properties.py::*  # the sandbox and its launchers are Linux-only (R17.1)
 tests/test_sandbox_run.py::*  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher); needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_state.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox_surfaces.py::*  # could not import 'PySide6': No module named 'PySide6'
@@ -54,7 +54,7 @@ tests/test_sandbox_threads.py::*  # could not import 'PySide6': No module named 
 tests/test_sandbox_transitions.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox_two_apps.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox_ui_surfaces.py::*  # could not import 'PySide6': No module named 'PySide6'
-tests/test_sandbox_user_shaped.py::*  # needs xdg-dbus-proxy and dbus-daemon; the sandbox and its launchers are Linux-only (17.1)
+tests/test_sandbox_user_shaped.py::*  # needs xdg-dbus-proxy and dbus-daemon; the sandbox and its launchers are Linux-only (R17.1)
 tests/test_selfinstall.py::*  # AppImages are Linux only
 tests/test_theme_shown.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_tier_args.py::test_launcher_vm_hands_pytest_each_argument_whole  # runs the scripts' POSIX shell steps

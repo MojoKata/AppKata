@@ -1,4 +1,4 @@
-"""A small HTTP client: per-host tokens (requirement 9.2.2), rate limits (9.2.1), typed errors (2.10)."""
+"""A small HTTP client: per-host tokens (R9.2.2), rate limits (R9.2.1), typed errors (R2.10)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ UA = f"AppKata/{__version__} (+{APPKATA_REPO})"
 
 
 class SourceError(Exception):
-    """A Source problem shown on its row (requirement 2.10). `code` is the error kind."""
+    """A Source problem shown on its row (R2.10). `code` is the error kind."""
     code = "Unreachable"
 
     def __init__(self, message: str = "", **extra):

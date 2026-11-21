@@ -104,13 +104,13 @@ class Backend(QObject):
     notify = Signal(str, str)                    # title, text (tray)
     exploreResults = Signal("QVariant")
     installPlan = Signal("QVariant")
-    inUse = Signal("QVariant")                   # {url, name, action, version}: "Close <App> to continue" (15.9)
+    inUse = Signal("QVariant")                   # {url, name, action, version}: "Close <App> to continue" (R15.9)
     _inUse = Signal("QVariant")
-    msvcrtNeeded = Signal("QVariant")            # {url, name}: offer the Visual C++ run-time (15.18.3)
-    flathubNeeded = Signal("QVariant")           # {url, name, option, updates}: "Add Flathub?" (16.3.4)
-    planConfirm = Signal("QVariant")             # {url, name, action, lines, refused, ...}: a package plan to confirm (16.3.5, 16.4.3)
-    permsNeeded = Signal(str)                    # url: its update asks for more permissions (16.6.3)
-    sandboxSetupNeeded = Signal("QVariant")      # {url, name, version, choice, ...}: "Set up the sandbox?" (17.10)
+    msvcrtNeeded = Signal("QVariant")            # {url, name}: offer the Visual C++ run-time (R15.18.3)
+    flathubNeeded = Signal("QVariant")           # {url, name, option, updates}: "Add Flathub?" (R16.3.4)
+    planConfirm = Signal("QVariant")             # {url, name, action, lines, refused, ...}: a package plan to confirm (R16.3.5, R16.4.3)
+    permsNeeded = Signal(str)                    # url: its update asks for more permissions (R16.6.3)
+    sandboxSetupNeeded = Signal("QVariant")      # {url, name, version, choice, ...}: "Set up the sandbox?" (R17.10)
     _setupThenInstall = Signal("QVariant")
     _flathubNeeded = Signal("QVariant")
     _planConfirm = Signal("QVariant")
@@ -128,7 +128,7 @@ class Backend(QObject):
         self._apps: list[dict] = []
         self._search, self._tag = "", ""
         self._busy: dict[str, dict] = {}
-        self._install_lock = threading.Lock()      # one install at a time; the rest wait (requirement 4.8.1)
+        self._install_lock = threading.Lock()      # one install at a time; the rest wait (R4.8.1)
         self._cancel: set[str] = set()
         self._preview_assets: dict[str, list] = {}
         self._sync = sync.Progress()
@@ -145,7 +145,7 @@ class Backend(QObject):
         self._ensure_own_trust()
         self._ensure_self()
         self.reload()
-        # e.g. bwrap installed since these apps were (17.10). Off the UI thread: deciding whether
+        # e.g. bwrap installed since these apps were (R17.10). Off the UI thread: deciding whether
         # anything needs healing can run the bwrap probe (up to 15 s on a stuck system). Not for the
         # tour (heal=False): its world is staged, and this machine's tools mustn't change it.
         if heal:
@@ -160,7 +160,7 @@ class Backend(QObject):
 
     # ---------------------------------------------------------------- data
     def _ensure_self(self) -> None:
-        """AppKata is a built-in Source (requirement 2.11). Run as an AppImage, it adopts that file as
+        """AppKata is a built-in Source (R2.11). Run as an AppImage, it adopts that file as
         installed by AppKata, so it can update itself like any portable app."""
         if not self.db.one("SELECT 1 FROM sources WHERE url=?", (APPKATA_REPO,)):
             self.db.x("INSERT INTO sources(url, input_url, settings, added_at) VALUES(?,?,?,?)",
@@ -175,10 +175,10 @@ class Backend(QObject):
                       (APPKATA_REPO, "AppKata", APPKATA_VERSION, "", os.path.basename(image), "appimage", json.dumps(rec), now()))
             log.info("adopted the running AppImage %s", image)
         self._adopt_windows_setup()
-        if selfinstall.installed(self.db):          # links and autostart follow the stable link (2.11.3.1)
+        if selfinstall.installed(self.db):          # links and autostart follow the stable link (R2.11.3.1)
             desktop.LAUNCH_OVERRIDE = json.loads(self.db.one("SELECT record FROM installs WHERE url=?", (APPKATA_REPO,))["record"])["exec"]
 
-    # ---------------------------------------------------------------- installing itself (2.11.3.1)
+    # ---------------------------------------------------------------- installing itself (R2.11.3.1)
     @Property("QVariant", notify=changed)
     def selfInstallOffer(self):
         """{version, image, dest} when AppKata can install itself, else null; `ask` when it should ask now."""
@@ -215,13 +215,13 @@ class Backend(QObject):
 
     @Slot(str)
     def demoSelfInstall(self, image: str) -> None:
-        """The tour: offer to install AppKata from a pretend download (2.11.3.1)."""
+        """The tour: offer to install AppKata from a pretend download (R2.11.3.1)."""
         if getattr(self, "_demo_self_install", "") != image:
             self._demo_self_install = image
             self.changed.emit()
 
     def _adopt_windows_setup(self) -> None:
-        """Installed with its Windows setup, AppKata adopts that installation (requirement 2.11.5)."""
+        """Installed with its Windows setup, AppKata adopts that installation (R2.11.5)."""
         from appkata_core.platform import OS
         if OS != "windows" or not getattr(sys, "frozen", False):
             return
@@ -241,10 +241,10 @@ class Backend(QObject):
 
     @Slot()
     def restartSelf(self) -> None:
-        """Start the newly installed AppKata and quit this one (requirement 2.11.3)."""
+        """Start the newly installed AppKata and quit this one (R2.11.3)."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (APPKATA_REPO,))
         rec = json.loads(row["record"] or "{}") if row else {}
-        if rec.get("pendingSetup"):         # Windows: run the new setup silently; it starts AppKata again (2.11.5)
+        if rec.get("pendingSetup"):         # Windows: run the new setup silently; it starts AppKata again (R2.11.5)
             from appkata_core import windows
             setup = rec["pendingSetup"]
             if not os.path.exists(setup):
@@ -276,7 +276,7 @@ class Backend(QObject):
 
     @Slot(int, int)
     def setTrustScore(self, tid: int, score: int) -> None:
-        """A Trust's Score, 1–5 stars, weights its reviews (requirement 10.6.2)."""
+        """A Trust's Score, 1–5 stars, weights its reviews (R10.6.2)."""
         score = max(1, min(5, int(score)))
         t = self.db.one("SELECT name, url, own FROM trusts WHERE id=?", (tid,))
         if not t or t["own"]:
@@ -301,7 +301,7 @@ class Backend(QObject):
             runtime = msvcrt_installed()
         demo_rt = getattr(self, "_demo_msvcrt", set())
         for a in self._apps:
-            if a["url"] in demo_rt:             # the tour (requirement 15.18)
+            if a["url"] in demo_rt:             # the tour (R15.18)
                 a["msvcrt"] = True
             a["msvcrtMissing"] = bool(a.get("msvcrt") and (a["url"] in demo_rt or not runtime))
             a["iconTone"] = icon_tone(a["icon"])
@@ -313,7 +313,7 @@ class Backend(QObject):
 
     def _demo_channel_installs(self) -> None:
         """DEV ONLY (APPKATA_DEMO_CHANNELS, or the tour's demoChannels): show some apps as installed
-        from a package channel, from the demo file, without touching the database (requirement 16)."""
+        from a package channel, from the demo file, without touching the database (R16)."""
         from appkata_core.autoupdate import Detection
         det = Detection.from_dict(self.ch.fake.get("autoupdate") or {})
         for url, ov in self.ch.fake["installs"].items():
@@ -385,7 +385,7 @@ class Backend(QObject):
 
     @Slot(str)
     def selectTag(self, t: str) -> None:
-        """A tag chip clicked on a tile or review: filter the Catalog by it (requirement 12.2)."""
+        """A tag chip clicked on a tile or review: filter the Catalog by it (R12.2)."""
         self._tag = t
         self.changed.emit()
 
@@ -463,7 +463,7 @@ class Backend(QObject):
         from appkata_core.platform import OS
         dates = catalog.release_dates(releases)
         shown = a["installed"] if a["installed"] and a["state"] != "foreign" else (a["version"] or None)
-        same = []           # (Trust, SHA-256, Flatpak commit, version) from each review's Details (10.3.4)
+        same = []           # (Trust, SHA-256, Flatpak commit, version) from each review's Details (R10.3.4)
         for r in sorted(rows, key=catalog.trust_order):
             auths = [authority_view(x) for x in catalog.authorities(self.db, r["trust_id"], include_pending=False) if x["enabled"]]
             chain = catalog.review_chain(r, OS, dates)
@@ -489,10 +489,10 @@ class Backend(QObject):
         irec = json.loads(irow["record"] or "{}") if irow else {}
         if irec.get("verified") == "signed":
             verify, signer = "signed", irec.get("signer", "")
-        if a.get("ch"):            # checked by flatpak, apt or dnf against the repository's keys (requirement 16.3.6)
+        if a.get("ch"):            # checked by flatpak, apt or dnf against the repository's keys (R16.3.6)
             verify, signer = "signed", ""
         size = asset.get("size") or 0
-        # versions (requirement 5.7.5): stable releases, plus the installed one if it's a prerelease
+        # versions (R5.7.5): stable releases, plus the installed one if it's a prerelease
         include_pre = bool(self.db.get("prereleases", False))
         vers = [r for r in releases if include_pre or not r.get("prerelease") or r["version"] == a["installed"]]
         newest = a["updateTo"] or a["version"]
@@ -505,9 +505,9 @@ class Backend(QObject):
         inst_i = next((i for i, v in enumerate(versions) if v["installed"]), -1)
         new_i = next((i for i, v in enumerate(versions) if v["newest"]), 0)
         mine = {}
-        if a["installed"] and a["state"] != "foreign" and not a.get("self"):    # the installed version's score (10.6.5)
+        if a["installed"] and a["state"] != "foreign" and not a.get("self"):    # the installed version's score (R10.6.5)
             mine = {"trust": a["installedTrust"], "rating": a["installedRating"], "vetoed": a["installedVetoed"]}
-        # the file or Flatpak commit a reviewer had is the one here (requirement 10.3.4)
+        # the file or Flatpak commit a reviewer had is the one here (R10.3.4)
         mine_sha = mine_commit = ""
         if a["installed"] and a["state"] != "foreign":
             irow2 = self.db.one("SELECT asset FROM installs WHERE url=?", (url,)) or {}
@@ -635,7 +635,7 @@ class Backend(QObject):
             if self._prefs.get("notifications", True) and self.updateCount > before:
                 names = [a["name"] for a in self.installedItems if a["state"] == "update"]
                 self.notify.emit(f"{len(names)} app update{'s' if len(names) != 1 else ''} available", ", ".join(names[:4]))
-            if self._prefs.get("notifications", True):        # an installed version newly avoided (10.6.5)
+            if self._prefs.get("notifications", True):        # an installed version newly avoided (R10.6.5)
                 for a in self._apps:
                     if a.get("installedVetoed") and avoided.get(a["url"]) != a["installed"]:
                         self.notify.emit(f"A trusted reviewer says to avoid {a['name']} {a['installed']}", (a.get("avoid") or {}).get("note", ""))
@@ -682,7 +682,7 @@ class Backend(QObject):
     @Slot(str)
     def install(self, url: str) -> None:
         """Install, or update. The first install probes the release and asks only when there's a
-        real choice to make (requirement 4.9); later installs reuse the saved choice."""
+        real choice to make (R4.9); later installs reuse the saved choice."""
         a = self._app(url)
         if not a:
             return
@@ -719,7 +719,7 @@ class Backend(QObject):
         p = self.portable()
         for ch in candidates(assets, OS, arch(), linux_family()):
             ek = ""
-            if ch.kind == "exe":        # look inside the file for an installer's markers (requirement 4.2.1)
+            if ch.kind == "exe":        # look inside the file for an installer's markers (R4.2.1)
                 ek = exe_type(ch.asset.name, install.head_bytes(ch.asset.url), [x.name for x in assets])
             cat = category(ch.kind, ek)
             from appkata_core.windows import scopes
@@ -730,9 +730,9 @@ class Backend(QObject):
                           "dmg": "disk image", "pkg": ".pkg installer"}.get(ch.kind, ch.kind),
                 "admin": cat == "system" and ch.kind not in ("flatpak",),
                 "manager": {"deb": "apt", "rpm": "dnf", "flatpak": "flatpak --user"}.get(ch.kind, "its installer")})
-            if ch.kind == "exe" and ek in ("squirrel", "electron"):       # updates itself (requirement 15.7.1)
+            if ch.kind == "exe" and ek in ("squirrel", "electron"):       # updates itself (R15.7.1)
                 out["candidates"][-1]["updatesItself"] = ek == "squirrel"
-        # package channels next to the release's files (requirement 16.3.1)
+        # package channels next to the release's files (R16.3.1)
         releases = json.loads((self.db.one("SELECT releases FROM apps WHERE url=?", (url,)) or {}).get("releases") or "[]")
         out["cards"] = self.ch.cards(url, out["candidates"], releases) if self.ch.enabled and OS == "linux" \
             else [{"channel": "release", **c} for c in out["candidates"]]
@@ -746,7 +746,7 @@ class Backend(QObject):
         if "unknown" in cats:
             out["reasons"].append("exe")
         if any(c["channel"] != "release" for c in out["cards"]):
-            out["reasons"].append("channels")      # 16.3.3
+            out["reasons"].append("channels")      # R16.3.3
         out["ask"] = bool(out["reasons"])
         want, want_ch = saved.get("kind"), saved.get("channel")
         out["chosen"] = next((i for i, c in enumerate(out["cards"]) if want_ch and c["channel"] == want_ch), None)
@@ -760,8 +760,8 @@ class Backend(QObject):
                            "command": self._app_id(url), "keep": p.keep,
                            "recommendedBy": rec.get("by", "") if not saved else ""}
         out["autoUpdate"], out["autoUpdateBy"] = bool(a.get("autoUpdate")), a.get("autoUpdateBy", "")
-        # the Sandbox card (17.3, C11): the chosen template, its live summary, and the disk cost of
-        # unpacking an AppImage when it's sandboxed (17.7).
+        # the Sandbox card (R17.3, C11): the chosen template, its live summary, and the disk cost of
+        # unpacking an AppImage when it's sandboxed (R17.7).
         chosen_card = out["cards"][out["chosen"]] if out["cards"] else {}
         if OS == "linux" and chosen_card.get("kind") in ("appimage", "tarball"):
             r = self._resolved_sandbox(url, kind=chosen_card["kind"]) or {}
@@ -777,7 +777,7 @@ class Backend(QObject):
                               "support": self._sb_support(), "sessionWarning": self._sb_session_warning(),
                               "freshWarning": self._fresh_warning(url),
                               "extractMb": round(img_mb * 2.5) if chosen_card["kind"] == "appimage" and sandbox.level_of(gs) != "off" else 0}
-            # the app's kind (17.3.3, review 2 F4): what the download showed, the user's own choice, and
+            # the app's kind (R17.3.3, review 2 F4): what the download showed, the user's own choice, and
             # the card as each kind would have it, so the dialog's kind choice moves the card live
             by_kind = {}
             for k in ("gui", "cli"):
@@ -795,15 +795,15 @@ class Backend(QObject):
                 "folderMe": install.Portable(folder=self._prefs.get("installDir") or "").root}
         return out
 
-    # the install dialog's own keys in app_settings.install: how to install (4.9.3) and the package
-    # channel (16.3). Everything else in that row — the sandbox pin, the "seen" marker, the user's
+    # the install dialog's own keys in app_settings.install: how to install (R4.9.3) and the package
+    # channel (R16.3). Everything else in that row — the sandbox pin, the "seen" marker, the user's
     # sandbox choice — belongs to other code and survives a dialog answer.
     _PORTABLE_KEYS = ("kind", "exeKind", "appMenu", "commandLink", "stableName", "autoUpdate", "scope", "motw", "cliKind")
     _CHANNEL_KEYS = ("channel", "updates")
 
     def _answer_install_dialog(self, url: str, answer: dict) -> None:
         """Replace the install dialog's keys in the app's settings row with this answer, keeping the
-        rest. Regression (decision 5, 17.11): the row was rewritten from the dialog's fields alone, so
+        rest. Regression (A1.12.5, R17.11): the row was rewritten from the dialog's fields alone, so
         re-saving Install options dropped `sandboxPinned`, `sandboxReviewSeen` and a `sandbox` choice
         the dialog didn't send (it only sends the card when it was touched), and the next install
         re-pinned from the current reviews — the silent widening the pin exists to prevent."""
@@ -815,21 +815,21 @@ class Backend(QObject):
 
     @Slot(str, "QVariant")
     def installWith(self, url: str, choice) -> None:
-        """The install dialog's answer: saved for updates, then installed (requirement 4.9.3)."""
+        """The install dialog's answer: saved for updates, then installed (R4.9.3)."""
         c = dict(_plain(choice))
-        if c.get("channel") in ("flatpak", "package"):        # a package channel (requirement 16.3)
+        if c.get("channel") in ("flatpak", "package"):        # a package channel (R16.3)
             self._choose_channel(url, c)
             return
         kind_was = self._is_cli(url)
-        before_options = self._resolved_sandbox(url)          # what the Audit compares a sandbox change with (17.16)
+        before_options = self._resolved_sandbox(url)          # what the Audit compares a sandbox change with (R17.16)
         saved = {k: c[k] for k in self._PORTABLE_KEYS if k in c and not (k == "cliKind" and c[k] not in ("cli", "gui"))}
         if c.get("sandbox") is not None and sandbox.config_error(c["sandbox"]):
             self._toast.emit("error", f"That sandbox choice can't be applied: {sandbox.config_error(c['sandbox'])}.")
             c.pop("sandbox")
-        if c.get("sandbox") is not None:         # the Sandbox card's choice, when the user changed it (17.11)
+        if c.get("sandbox") is not None:         # the Sandbox card's choice, when the user changed it (R17.11)
             saved["sandbox"] = dict(c["sandbox"])
             # the card shows "suggested by <reviewer>" beside the dropdown, so this choice was made
-            # knowing the suggestion: the review badge must not greet the user after the install (17.11)
+            # knowing the suggestion: the review badge must not greet the user after the install (R17.11)
             saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)
         self._answer_install_dialog(url, saved)
         a = self._app(url)
@@ -839,10 +839,10 @@ class Backend(QObject):
         if c.get("install", True):
             self._install(url, "", c)
         elif a and a.get("installed") and c.get("scope") and c["scope"] != self._installed_scope(url):
-            self._install(url, a["installed"], c, pin=False)     # for someone else now: reinstall it (15.4.1)
+            self._install(url, a["installed"], c, pin=False)     # for someone else now: reinstall it (R15.4.1)
         elif (a and a.get("installed") and not a.get("foreign") and c.get("sandbox") is None and kind_was != self._is_cli(url)
               and self._user_sandbox_config(url) is None):
-            # the user corrected the app's kind (17.3.3): with no sandbox of their own, the default for
+            # the user corrected the app's kind (R17.3.3): with no sandbox of their own, the default for
             # that kind applies now, as a choice in the dialog would (review 2, F4)
             before = self._resolved_sandbox(url)
             self._pin_sandbox(url, None)
@@ -854,14 +854,14 @@ class Backend(QObject):
             self.reload()
         elif c.get("sandbox") is not None and a and a.get("installed") and not a.get("foreign"):
             # Install options... on an installed app: the sandbox choice applies now, as the Sandbox
-            # dialog's does, and is audited like it (17.16). Round four, R4-3: it was saved and shown
+            # dialog's does, and is audited like it (R17.16). Round four, R4-3: it was saved and shown
             # in App Detail as in force while the launcher kept the old grants until the next update.
             self._regenerate_launcher(url)
             r = self._resolved_sandbox(url)
             self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
             self.reload()
 
-    # ---------------------------------------------------------------- package channels (requirement 16)
+    # ---------------------------------------------------------------- package channels (R16)
     def _choose_channel(self, url: str, c: dict) -> None:
         a = self._app(url)
         opt = dict(c.get("option") or {})
@@ -869,7 +869,7 @@ class Backend(QObject):
         self._answer_install_dialog(url, saved)
         self._audit("you", "app", "chose how to install", a["name"] if a else url, url,
                     {"as": c.get("label") or c["channel"], **({"updates": c["updates"]} if c.get("updates") else {})})
-        if not c.get("install", True):          # Install options…: who updates it (16.5.3)
+        if not c.get("install", True):          # Install options…: who updates it (R16.5.3)
             if a and a.get("ch") and c.get("updates"):
                 install.set_update_owner(self.db, url, c["updates"])
             self.reload()
@@ -879,12 +879,12 @@ class Backend(QObject):
 
     @Slot(str, "QVariant", str)
     def addFlathubAndInstall(self, url: str, option, updates: str) -> None:
-        """The answer to "Add Flathub?" (16.3.4)."""
+        """The answer to "Add Flathub?" (R16.3.4)."""
         self._install_channel(url, dict(_plain(option)), updates, add_flathub=True)
 
     @Slot(str, "QVariant", str)
     def installChannelConfirmed(self, url: str, option, updates: str) -> None:
-        """Install after the user confirmed a plan that changes other packages (16.3.5)."""
+        """Install after the user confirmed a plan that changes other packages (R16.3.5)."""
         self._install_channel(url, dict(_plain(option)), updates, confirmed=True)
 
     def _install_channel(self, url: str, option: dict, updates: str, confirmed: bool = False, add_flathub: bool = False,
@@ -956,7 +956,7 @@ class Backend(QObject):
 
     @Slot(str)
     def adopt(self, url: str) -> None:
-        """Track a copy installed outside AppKata that a channel matches exactly (16.4.2)."""
+        """Track a copy installed outside AppKata that a channel matches exactly (R16.4.2)."""
         a = self._app(url)
         try:
             rec = foreign.adopt(self.db, url)
@@ -978,12 +978,12 @@ class Backend(QObject):
 
     @Slot(str, str)
     def installVersion(self, url: str, version: str) -> None:
-        """Install a chosen (usually older) version, and pin it there (requirement 5.7.5)."""
+        """Install a chosen (usually older) version, and pin it there (R5.7.5)."""
         self._install(url, version)
 
     @Slot(str)
     def installReleaseConfirmed(self, url: str) -> None:
-        """Install a release's .deb or .rpm after confirming the packages it changes (16.3.5)."""
+        """Install a release's .deb or .rpm after confirming the packages it changes (R16.3.5)."""
         self._install(url, "", None, confirmed=True)
 
     def _install(self, url: str, version: str, choice=None, pin: bool = True, confirmed: bool = False,
@@ -991,12 +991,12 @@ class Backend(QObject):
         a = self._app(url)
         if not a or url in self._busy:
             return
-        if not asked and self._setup_prompt_needed(url, choice):     # the first need: ask before installing (17.10)
+        if not asked and self._setup_prompt_needed(url, choice):     # the first need: ask before installing (R17.10)
             self.sandboxSetupNeeded.emit({"url": url, "name": a["name"], "version": version, "choice": choice or {},
                                           "pin": pin, "confirmed": confirmed,
                                           "waitingNote": self._sb_support().get("waitingNote", "")})
             return
-        if a.get("self") and (not a.get("selfManaged") or a.get("trackOnly")):   # notify only (2.11.4, 2.11.6)
+        if a.get("self") and (not a.get("selfManaged") or a.get("trackOnly")):   # notify only (R2.11.4, R2.11.6)
             Qt_open = __import__("PySide6.QtGui", fromlist=["QDesktopServices"]).QDesktopServices
             from PySide6.QtCore import QUrl
             Qt_open.openUrl(QUrl(url + "/releases"))
@@ -1004,12 +1004,12 @@ class Backend(QObject):
         if a["foreign"]:
             self.toast.emit("error", f"{a['name']} is installed outside AppKata; uninstall that copy first.")
             return
-        if a.get("ch"):                    # installed from a package channel: update through it (16.5.5)
+        if a.get("ch"):                    # installed from a package channel: update through it (R16.5.5)
             self._install_channel(url, {}, "", update=True)
             return
         target = version or a["updateTo"] or a["version"]
         was = a["installed"]
-        had = self._sandbox_state(url)            # (a launcher, a fresh home): what this install may change (17.13)
+        had = self._sandbox_state(url)            # (a launcher, a fresh home): what this install may change (R17.13)
         self._cancel.discard(url)
         self._busy[url] = {"phase": "Waiting", "progress": 0.0, "got": 0, "total": 0, "speed": 0}
         self.busyChanged.emit()
@@ -1052,12 +1052,12 @@ class Backend(QObject):
                     from appkata_core.assets import exe_type
                     ek = exe_type(ch.asset.name, install.head_bytes(ch.asset.url), [x.name for x in assets])
                 port = self._app_options(url, choice)
-                sbx = self._sandbox_for_install(url, kind=ch.kind)    # the grant set to bake in (17.4, 17.11)
+                sbx = self._sandbox_for_install(url, kind=ch.kind)    # the grant set to bake in (R17.4, R17.11)
                 rec = {}
-                if pin and target in install.kept_versions(self.db, url):      # a kept version: no download (4.3.1.5)
+                if pin and target in install.kept_versions(self.db, url):      # a kept version: no download (R4.3.1.5)
                     install.switch_to(self.db, {**a, "sandbox": sbx}, target, port, rel["date"])
                 else:
-                    # the app's kind is known once its files are placed (17.3.3, review 2 F4): install()
+                    # the app's kind is known once its files are placed (R17.3.3, review 2 F4): install()
                     # asks for the grant set again with it, and drops a command-line tool's menu entry
                     # when that option was only Settings' default
                     ck = self._install_settings(url).get("cliKind")
@@ -1090,7 +1090,7 @@ class Backend(QObject):
                     self._toast.emit("info", f"AppKata {target} installed. Restart AppKata to use it.")
                 else:
                     self._toast.emit("info", f"{a['name']} {target} installed" + (" and pinned." if version else "."))
-            except PackageNeedsConfirmation as e:          # a .deb/.rpm that changes other packages (16.3.5)
+            except PackageNeedsConfirmation as e:          # a .deb/.rpm that changes other packages (R16.3.5)
                 self._planConfirm.emit({"url": url, "name": a["name"], "action": "install-release", "lines": list(e.lines)})
             except PackageRefused as e:
                 self._planConfirm.emit({"url": url, "name": a["name"], "action": "install-release", "lines": [str(e)], "refused": True})
@@ -1117,7 +1117,7 @@ class Backend(QObject):
 
     @Slot()
     def installMsvcrt(self) -> None:
-        """Microsoft's Visual C++ run-time, for every app that needs it (requirement 15.18.3)."""
+        """Microsoft's Visual C++ run-time, for every app that needs it (R15.18.3)."""
         def work():
             try:
                 meaning = install.install_msvcrt()
@@ -1133,7 +1133,7 @@ class Backend(QObject):
 
     @Slot(str)
     def cancelInstall(self, url: str) -> None:
-        """Stop a download (its partial file is deleted) or take a waiting app out of the queue (4.8.3)."""
+        """Stop a download (its partial file is deleted) or take a waiting app out of the queue (R4.8.3)."""
         if url in self._busy:
             self._cancel.add(url)
             if self._busy[url].get("phase") == "Waiting":
@@ -1153,22 +1153,22 @@ class Backend(QObject):
         if a and a["state"] == "system":
             self.toast.emit("info", f"{a['name']} is updated by {a['ch'].get('updatesBy') or 'the system'}.")
             return
-        if a and a.get("permsGrow"):           # asks first (requirement 16.6.3)
+        if a and a.get("permsGrow"):           # asks first (R16.6.3)
             self.permsNeeded.emit(url)
             return
         self.install(url)
 
     @Slot(str)
     def updateWithPermissions(self, url: str) -> None:
-        """The user accepted an update that asks for more permissions (16.6.3)."""
+        """The user accepted an update that asks for more permissions (R16.6.3)."""
         self.install(url)
 
     @Slot()
     def updateAll(self) -> None:
-        """Queues every update; they install one at a time (requirement 4.8.1). Apps that update
-        themselves aren't in it (4.10.1)."""
+        """Queues every update; they install one at a time (R4.8.1). Apps that update
+        themselves aren't in it (R4.10.1)."""
         for a in [x for x in self._apps if x["state"] == "update" and not x.get("trackOnly") and not x.get("updateAvoided")
-                  and not x.get("permsGrow")]:          # an update asking for more permissions asks first (16.6.3)
+                  and not x.get("permsGrow")]:          # an update asking for more permissions asks first (R16.6.3)
             self.install(a["url"])
 
     @Slot(str)
@@ -1185,10 +1185,10 @@ class Backend(QObject):
             try:
                 ver = a["installed"] if a else ""
                 install.uninstall(self.db, url, confirmed=confirmed, remove_sandbox=remove_home)
-                self._pin_sandbox(url, None)        # a reinstall resolves its sandbox afresh (17.11)
+                self._pin_sandbox(url, None)        # a reinstall resolves its sandbox afresh (R17.11)
                 self._audit("you", "app", "uninstalled", a["name"] if a else url, url, {"version": ver})
                 self._toast.emit("info", f"{a['name'] if a else 'App'} uninstalled.")
-            except NeedsConfirmation as e:          # it would remove other packages too (16.4.3)
+            except NeedsConfirmation as e:          # it would remove other packages too (R16.4.3)
                 self._planConfirm.emit({"url": url, "name": a["name"] if a else "", "action": "uninstall", "lines": list(e.lines)})
             except Refused as e:
                 self._planConfirm.emit({"url": url, "name": a["name"] if a else "", "action": "uninstall", "lines": [str(e)],
@@ -1224,7 +1224,7 @@ class Backend(QObject):
     def setPinned(self, url: str, on: bool) -> None:
         a = self._app(url)
         ver = a["installed"] if a else ""
-        if a and a.get("ch"):              # a Flatpak is masked; a package can't be pinned (16.5.6)
+        if a and a.get("ch"):              # a Flatpak is masked; a package can't be pinned (R16.5.6)
             try:
                 install.set_pinned(self.db, url, on)
             except install.InstallError as e:
@@ -1274,7 +1274,7 @@ class Backend(QObject):
 
     @Slot(str, bool, "QVariant")
     def addSourceWith(self, text: str, and_install: bool, settings) -> None:
-        """Add a Source, with the Source settings chosen in the Add source dialog (requirement 7.2)."""
+        """Add a Source, with the Source settings chosen in the Add source dialog (R7.2)."""
         try:
             repo = urls.parse(text)
         except ValueError as e:
@@ -1292,7 +1292,7 @@ class Backend(QObject):
         self.reload()
         threading.Thread(target=work, daemon=True).start()
 
-    # ---------------------------------------------------------------- Source settings (requirement 2.6)
+    # ---------------------------------------------------------------- Source settings (R2.6)
     @Slot(str, result="QVariant")
     def sourceSettings(self, url: str):
         """A Source's settings for the Source settings dialog, with what it means on this computer."""
@@ -1303,7 +1303,7 @@ class Backend(QObject):
         meta = self.db.one("SELECT forge FROM apps WHERE url=?", (url,)) or {}
         detected = (src or {}).get("forge") or meta.get("forge") or (self._preview_assets.get(url) or {}).get("forge") or ""
         key = f"{OS}-{arch()}"
-        rec, rec_by = catalog.recommended_for(self.db, url, OS)       # a Trust's recommendation (requirement 10.3.1)
+        rec, rec_by = catalog.recommended_for(self.db, url, OS)       # a Trust's recommendation (R10.3.1)
         pre_default = bool(self._prefs.get("prereleases"))
         return {"url": url, "exists": bool(src), "forge": st.get("forge", ""), "detected": forges.LABELS.get(detected, detected),
                 "trackOnly": bool(st.get("track_only", False)), "prereleases": st.get("prereleases"),
@@ -1316,7 +1316,7 @@ class Backend(QObject):
                 **self._channel_settings(url, st)}
 
     def _channel_settings(self, url: str, st: dict) -> dict:
-        """Source settings' Flatpak and Package fields (requirement 2.6.7, 16.1.3): yours, and what
+        """Source settings' Flatpak and Package fields (R2.6.7, R16.1.3): yours, and what
         applies without yours, with where it comes from and its check."""
         if not self.ch.enabled:
             return {"channels": False}
@@ -1347,14 +1347,14 @@ class Backend(QObject):
 
     @Slot(str, str, result="QVariant")
     def previewAssetFilter(self, url: str, rx: str):
-        """Which file the asset filter picks from the latest release (requirement 2.6.4)."""
+        """Which file the asset filter picks from the latest release (R2.6.4)."""
         from appkata_core.assets import choose
         from appkata_core.platform import OS, arch, linux_family
         assets = self._source_assets(url)
         if not assets:
             return {"file": "", "note": "No release files to try it on yet."}
         rec, rec_by = catalog.recommended_for(self.db, url, OS)
-        if not rx and rec.get("assetFilter"):           # empty: a Trust's recommended filter applies (10.3.1)
+        if not rx and rec.get("assetFilter"):           # empty: a Trust's recommended filter applies (R10.3.1)
             ch = catalog.choose_with({"assetFilter": rec["assetFilter"], "by": {"assetFilter": rec_by.get("assetFilter", "")}},
                                      assets, OS, arch(), linux_family())
             return {"file": ch.asset.name if ch.asset else "", "note": "" if ch.asset else ch.reason, "kind": ch.kind,
@@ -1407,7 +1407,7 @@ class Backend(QObject):
                               WHERE r.url=? AND t.own=0 AND t.enabled=1""", (url,))
         return [{"id": t["id"], "name": t["name"], "trust": t["trust"], "rating": t["rating"], "score": catalog.trust_score(t),
                  "avatars": [authority_view(x) for x in catalog.authorities(self.db, t["id"], False) if x["enabled"]][:1]}
-                for t in sorted(rows, key=catalog.trust_order)]          # Score, then name (requirement 7.6.7)
+                for t in sorted(rows, key=catalog.trust_order)]          # Score, then name (R7.6.7)
 
     # ---------------------------------------------------------------- trusts
     @Slot(str)
@@ -1450,7 +1450,7 @@ class Backend(QObject):
 
     @Slot(int, result="QVariant")
     def trustRemoval(self, tid: int):
-        """What removing a Trust affects (requirement 7.5): installed apps it is the only origin of."""
+        """What removing a Trust affects (R7.5): installed apps it is the only origin of."""
         t = self.db.one("SELECT name, url FROM trusts WHERE id=?", (tid,)) or {}
         alone = [{"url": a["url"], "name": a["name"], "installed": a["installed"]} for a in self._apps
                  if a["installed"] and not a["src"] and not a.get("self")
@@ -1461,7 +1461,7 @@ class Backend(QObject):
     @Slot(int, bool)
     def removeTrust(self, tid: int, keep_as_sources: bool = False) -> None:
         """Remove a Trust. With keep_as_sources, its installed apps that have no other origin become
-        Sources first, so they keep getting updates (requirement 7.5)."""
+        Sources first, so they keep getting updates (R7.5)."""
         info = self.trustRemoval(tid)
         if keep_as_sources:
             for a in info["alone"]:
@@ -1520,13 +1520,13 @@ class Backend(QObject):
             opts = json.loads(inst["record"] or "{}").get("options") or {}
         if not opts and a.get("installChoice"):
             opts = {k: a["installChoice"][k] for k in ("appMenu", "commandLink", "stableName") if k in a["installChoice"]}
-        if "autoUpdate" in (a.get("installChoice") or {}):         # only when you chose it (requirement 4.10.3)
+        if "autoUpdate" in (a.get("installChoice") or {}):         # only when you chose it (R4.10.3)
             opts = {**opts, "autoUpdate": bool(a["installChoice"]["autoUpdate"])}
         from appkata_core.platform import OS, arch
         src = self.db.one("SELECT settings FROM sources WHERE url=?", (url,))
         ss = json.loads(src["settings"] or "{}") if src else {}
-        # your Source settings for this app (requirement 2.6) are written too, the ones you set
-        if ss.get("forge"):        # Track only and pre-releases are personal, so they aren't written (10.3.1)
+        # your Source settings for this app (R2.6) are written too, the ones you set
+        if ss.get("forge"):        # Track only and pre-releases are personal, so they aren't written (R10.3.1)
             opts["forge"] = ss["forge"]
         if (ss.get("asset_filters") or {}).get(f"{OS}-{arch()}"):
             opts["assetFilter"] = ss["asset_filters"][f"{OS}-{arch()}"]
@@ -1541,9 +1541,9 @@ class Backend(QObject):
                 "autoPush": bool(self._prefs.get("autoPush")), "defaultDir": os.path.expanduser("~")}
 
     def _review_sandbox_lines(self, url: str) -> dict | None:
-        """The user's own sandbox for `url` as their review's lines (10.3.1, 8.4.7; review 2, F9): only a
+        """The user's own sandbox for `url` as their review's lines (R10.3.1, R8.4.7; review 2, F9): only a
         choice of their own, not one from the reviews or the default, as "Auto update" is written only
-        when chosen (4.10.3). {"settings": every Sandbox option, None for a line to drop, so the
+        when chosen (R4.10.3). {"settings": every Sandbox option, None for a line to drop, so the
         sandbox is written whole; "summary": what a reader gets, read back from those lines;
         "refused": [(what, why)] a review can't carry}. None when there is nothing of the user's."""
         r = self._resolved_sandbox(url)
@@ -1555,7 +1555,7 @@ class Backend(QObject):
                 "summary": sandbox.describe(opts["sandbox"], back), "refused": refused}
 
     def _review_versions(self, url: str, a: dict, cur: dict) -> dict:
-        """The review dialog's Version select (requirement 8.4.1.1) and Details (8.4.5.1): each choice
+        """The review dialog's Version select (R8.4.1.1) and Details (R8.4.5.1): each choice
         with the review it loads, or the values a new review of it starts from."""
         from appkata_core.platform import OS, arch
         meta = self.db.one("SELECT releases FROM apps WHERE url=?", (url,)) or {}
@@ -1620,8 +1620,8 @@ class Backend(QObject):
                 rd = self.reviewData(url)
                 meta = self.db.one("SELECT releases FROM apps WHERE url=?", (url,)) or {}
                 dates = catalog.release_dates(json.loads(meta.get("releases") or "[]"))
-                # this computer's options become the lines without a platform; other platforms' lines stay (10.3.1);
-                # a version review writes only what differs from the review before it (8.4.7)
+                # this computer's options become the lines without a platform; other platforms' lines stay (R10.3.1);
+                # a version review writes only what differs from the review before it (R8.4.7)
                 # and the user's own sandbox, whole, unless "Include my sandbox" is off (review 2, F9)
                 new = {**(rd.get("installSettings") or {}), **((rd.get("sandboxSettings") or {}) if include_sandbox else {})}
                 opts = trustfile.options_to_write(rd.get("full") or {}, version or "", new, OS, dates) or None
@@ -1650,7 +1650,7 @@ class Backend(QObject):
         self.reviewSaved.emit({"saved": True, "committed": res.committed[:7], "signed": res.signed, "pushed": False,
                                "error": res.error, "amended": True})
 
-    # ---------------------------------------------------------------- settings (requirement 11)
+    # ---------------------------------------------------------------- settings (R11)
     def portable(self) -> install.Portable:
         p = self._prefs
         from appkata_core.platform import command_dir_default
@@ -1661,7 +1661,7 @@ class Backend(QObject):
                                 folder_everyone=p.get("installDirEveryone") or "")
 
     def _recommended(self, url: str) -> dict:
-        """Install options recommended in the Trusts' AppKata.md files (requirement 10.3.1): for each
+        """Install options recommended in the Trusts' AppKata.md files (R10.3.1): for each
         option, yours first, then the highest-Score Trust's, then by name."""
         rows = self.db.all("""SELECT r.settings, t.name, t.own, t.score FROM reviews r JOIN trusts t ON t.id=r.trust_id
                               WHERE r.url=? AND t.enabled=1""", (url,))
@@ -1676,7 +1676,7 @@ class Backend(QObject):
 
     def _app_options(self, url: str, choice: dict | None = None) -> install.Portable:
         """The portable options for one app: its own (saved at install), else a Trust's recommendation,
-        else Settings (requirement 4.3.1.6)."""
+        else Settings (R4.3.1.6)."""
         p = self.portable()
         a = self._app(url) or {}
         own = dict(choice or {}) or a.get("installChoice") or {}
@@ -1687,7 +1687,7 @@ class Backend(QObject):
         p.stable_name = bool(pick("stableName", p.stable_name))
         from appkata_core.platform import command_dir_default
         p.command_dir = (self._prefs.get("commandDir") or command_dir_default()) if pick("commandLink", bool(p.command_dir)) else ""
-        # who it's for and Mark of the Web are about this computer: never a Trust's (requirement 15.4.1, 15.11.1)
+        # who it's for and Mark of the Web are about this computer: never a Trust's (R15.4.1, R15.11.1)
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         rec = json.loads(row["record"] or "{}") if row else {}
         p.scope = own.get("scope") or rec.get("scope") or p.scope
@@ -1695,7 +1695,7 @@ class Backend(QObject):
         return p
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:
-        """Copy the options an app was installed with into its own settings (requirement 4.3.1.6)."""
+        """Copy the options an app was installed with into its own settings (R4.3.1.6)."""
         row = self.db.one("SELECT install FROM app_settings WHERE url=?", (url,))
         cur = json.loads(row["install"] or "{}") if row and row["install"] else {}
         cur.update({"appMenu": port.app_menu, "commandLink": bool(port.command_dir), "stableName": port.stable_name,
@@ -1703,7 +1703,7 @@ class Backend(QObject):
         self.db.x("INSERT INTO app_settings(url, install) VALUES(?,?) ON CONFLICT(url) DO UPDATE SET install=excluded.install",
                   (url, json.dumps(cur)))
 
-    # ---------------------------------------------------------------- sandboxing (requirement 17)
+    # ---------------------------------------------------------------- sandboxing (R17)
     def _sb_session_warning(self) -> dict:
         if getattr(self, "_demo_sandbox", "") in ("x11", "setup"):
             return dict(sandbox.X11_WARNING)       # the product's own text (review 2, F7: the tour kept an old one)
@@ -1712,8 +1712,8 @@ class Backend(QObject):
         return sandbox.session_warning()
 
     def _sb_support(self) -> dict:
-        # `declined`: "Not now" was answered at an install, so installs don't ask (17.10); `waitingNote`:
-        # what the setup will sandbox, said before its password prompt (17.13; review 2, F13)
+        # `declined`: "Not now" was answered at an install, so installs don't ask (R17.10); `waitingNote`:
+        # what the setup will sandbox, said before its password prompt (R17.13; review 2, F13)
         st = {**sandbox.support_status(), "declined": bool(self._prefs.get("sandboxSetupDeclined"))}
         if getattr(self, "_demo_sandbox", "") == "setup":
             st = {**st, "status": "setup-needed", "tools": True}
@@ -1726,7 +1726,7 @@ class Backend(QObject):
         return st
 
     def _is_cli(self, url: str, eff: install.Portable | None = None) -> bool:
-        """A command-line tool (17.3.3): the user's own choice in Install options (`cliKind`), else
+        """A command-line tool (R17.3.3): the user's own choice in Install options (`cliKind`), else
         what the download showed (`appKind`, appkind.detect: a `.desktop` saying Terminal=true, or a
         program that links no display library), else an app. Review 2, F4: it was "a command link
         and no app-menu entry", which Settings' defaults never produced, so every tool ran Strict."""
@@ -1755,12 +1755,12 @@ class Backend(QObject):
         return install.app_id_of(json.loads(row["record"] or "{}") if row else {}, {"name": a.get("name", "app")})
 
     def _sandbox_kind(self, url: str) -> str:
-        """The portable kind for sandboxing (17.1), from the chosen asset or how it was installed."""
+        """The portable kind for sandboxing (R17.1), from the chosen asset or how it was installed."""
         a = self._app(url) or {}
         return (a.get("installKind") or (a.get("asset") or {}).get("kind") or "")
 
     def _review_sandbox_configs(self, url: str) -> list[dict]:
-        """Each enabled Trust's suggested sandbox config (17.3.2), highest Score first; only reviews
+        """Each enabled Trust's suggested sandbox config (R17.3.2), highest Score first; only reviews
         whose Settings carry a Sandbox line."""
         return [c for _, c in self._review_sandbox_named(url)]
 
@@ -1779,13 +1779,13 @@ class Backend(QObject):
 
     @staticmethod
     def _updates_itself(a: dict, sbx: dict | None) -> bool:
-        """Whether the install is laid out for an app that updates itself (4.10.2): not while it runs
-        sandboxed, where its own updater can't write its files and AppKata updates it (17.12; review
+        """Whether the install is laid out for an app that updates itself (R4.10.2): not while it runs
+        sandboxed, where its own updater can't write its files and AppKata updates it (R17.12; review
         2, F3). `sbx`: the grant set the launcher gets, None when it runs Off or can't be sandboxed."""
         return bool(a.get("autoUpdate")) and not (sbx and sandbox.level_of(sbx) != "off")
 
     def _suggests_off(self, url: str) -> bool:
-        """Whether the merged reviews suggest no sandbox (shown, never applied by itself, 17.3.2)."""
+        """Whether the merged reviews suggest no sandbox (shown, never applied by itself, R17.3.2)."""
         suggested, _ = self._suggestion(url)
         return suggested is not None and sandbox.level_of(suggested) == "off"
 
@@ -1795,7 +1795,7 @@ class Backend(QObject):
         return named[0][0] if named else ""
 
     def _user_sandbox_config(self, url: str) -> dict | None:
-        """The sandbox the user chose for this app (install options or App Detail), or None (17.11)."""
+        """The sandbox the user chose for this app (install options or App Detail), or None (R17.11)."""
         row = self.db.one("SELECT install FROM app_settings WHERE url=?", (url,))
         saved = json.loads(row["install"] or "{}") if row and row["install"] else {}
         cfg = saved.get("sandbox")
@@ -1805,7 +1805,7 @@ class Backend(QObject):
         return cfg
 
     def _resolved_sandbox(self, url: str, kind: str | None = None, is_cli: bool | None = None) -> dict | None:
-        """The grant set that applies and where it came from (17.11, :func:`sandbox.choose`): the user's
+        """The grant set that applies and where it came from (R17.11, :func:`sandbox.choose`): the user's
         choice, else the grants the installed app was pinned to, else merged reviews, else the default by
         kind. Returns {"source", "grants", "template"} or None when the app can't be sandboxed (not
         Linux, or not a portable AppImage/tarball)."""
@@ -1813,8 +1813,8 @@ class Backend(QObject):
         kind = kind if kind is not None else self._sandbox_kind(url)
         if OS != "linux" or kind not in ("appimage", "tarball"):
             return None
-        # AppKata itself, adopted as installed when it runs as an AppImage (2.11), is never sandboxed:
-        # it installs apps, runs package managers and pkexec, and writes the install folder (17.1).
+        # AppKata itself, adopted as installed when it runs as an AppImage (R2.11), is never sandboxed:
+        # it installs apps, runs package managers and pkexec, and writes the install folder (R17.1).
         # Review 3, R3-6: the heal pass gave it a Strict launcher with no network.
         if url == APPKATA_REPO:
             return None
@@ -1822,7 +1822,7 @@ class Backend(QObject):
         user = self._user_sandbox_config(url)
         installed = bool(self.db.one("SELECT 1 FROM installs WHERE url=?", (url,)))
         pinned = self._install_settings(url).get("sandboxPinned") if installed else None
-        # "Follow reviewers' suggestions" off (17.15) takes the reviews out of sandboxing altogether:
+        # "Follow reviewers' suggestions" off (R17.15) takes the reviews out of sandboxing altogether:
         # neither their Sandbox lines nor the reviewed baseline apply, so the user's own default for
         # the kind does. Round two, R6: the baseline still applied with the pref off.
         follow = bool(self._prefs.get("followReviewerSandbox", True))
@@ -1833,13 +1833,13 @@ class Backend(QObject):
                                            unreviewed_default=self._kind_default_config(is_cli))
         src, gs, template = sandbox.choose(user, pinned, reviews, default, is_cli)
         refused = []
-        if src == "reviews":            # a review can't grant a secret folder (17.3.1, review 2 F8)
+        if src == "reviews":            # a review can't grant a secret folder (R17.3.1, review 2 F8)
             gs, refused = sandbox.strip_secrets(gs)
         return {"source": src, "grants": sandbox.to_json(gs), "template": template, "refused": refused}
 
     def _suggestion(self, url: str) -> tuple[dict | None, list]:
         """The merged reviews' suggestion as a grant set, without the secret folders a review can't
-        grant, and those refused [(path, why)]; (None, []) when no review says anything (17.11)."""
+        grant, and those refused [(path, why)]; (None, []) when no review says anything (R17.11)."""
         reviews = self._review_sandbox_configs(url)
         if not reviews:
             return None, []
@@ -1847,7 +1847,7 @@ class Backend(QObject):
         return sandbox.strip_secrets(gs) if sandbox.level_of(gs) != "off" else (gs, [])
 
     def _suggested_template(self, url: str) -> str | None:
-        """The template the reviews suggest, when one review does; merged ones are "custom" (17.3.2)."""
+        """The template the reviews suggest, when one review does; merged ones are "custom" (R17.3.2)."""
         cfgs = self._review_sandbox_configs(url)
         return cfgs[0].get("template") if len(cfgs) == 1 else None
 
@@ -1860,7 +1860,7 @@ class Backend(QObject):
                   (url, json.dumps(saved)))
 
     def _pin_sandbox(self, url: str, r: dict | None) -> None:
-        """Record the grant set an installed app now runs with, so later reviews can't change it (17.11)."""
+        """Record the grant set an installed app now runs with, so later reviews can't change it (R17.11)."""
         saved = self._install_settings(url)
         if r:
             saved["sandboxPinned"] = {"grants": r["grants"], "template": r["template"]}
@@ -1869,14 +1869,14 @@ class Backend(QObject):
         self._set_install_settings(url, saved)
 
     def _kind_default_config(self, is_cli: bool) -> dict:
-        """The user's chosen default template for this kind (Settings → Sandbox, 17.15)."""
+        """The user's chosen default template for this kind (Settings → Sandbox, R17.15)."""
         key = "sandboxCliDefault" if is_cli else "sandboxGuiDefault"
         name = self._prefs.get(key) or ("cli-tool" if is_cli else "strict")
         return {"template": name, "overrides": {}}
 
     def _runs_sandboxed(self, url: str, rec: dict | None = None) -> bool:
-        """Whether the installed app runs sandboxed (17.4): its launcher is there. App Detail's pill,
-        the Apps list's 17.12 rule (catalog.build) and the empty-home warning all ask here. The tour
+        """Whether the installed app runs sandboxed (R17.4): its launcher is there. App Detail's pill,
+        the Apps list's R17.12 rule (catalog.build) and the empty-home warning all ask here. The tour
         stages a working system, healed: an installed app whose sandbox isn't Off runs sandboxed.
         Review 3, R3-27: the tour forced App Detail's answer alone, and the Apps list read only the
         record's launcher, so A09 showed Syncthing sandboxed and updating itself."""
@@ -1890,7 +1890,7 @@ class Backend(QObject):
 
     def _sandbox_state(self, url: str) -> tuple[bool, bool]:
         """(whether the installed app runs sandboxed, whether sandboxing it now would give it an empty
-        private home) -- before an install, an update or a heal changes it (17.13)."""
+        private home) -- before an install, an update or a heal changes it (R17.13)."""
         if self._runs_sandboxed(url):
             return True, False
         try:
@@ -1900,7 +1900,7 @@ class Backend(QObject):
 
     def _fresh_warning(self, url: str) -> str:
         """What the Sandbox dialog and Install options say above Save when a sandboxed choice would give
-        an installed app that runs unsandboxed its first private home (17.13; review 2, F13: a toast said
+        an installed app that runs unsandboxed its first private home (R17.13; review 2, F13: a toast said
         it after the change was made)."""
         a = self._app(url) or {}
         if not a.get("installed") or a.get("foreign") or self._sandbox_state(url) != (False, True):
@@ -1910,7 +1910,7 @@ class Backend(QObject):
 
     def _waiting_for_sandbox(self) -> list[tuple[str, str, bool]]:
         """(url, name, starts fresh) of each installed app that would run sandboxed but has no launcher
-        yet: what a setup, or tools installed since, will sandbox (17.10, 17.13)."""
+        yet: what a setup, or tools installed since, will sandbox (R17.10, R17.13)."""
         out = []
         for row in self.db.all("SELECT url, name FROM installs ORDER BY name"):
             a = self._app(row["url"])
@@ -1926,7 +1926,7 @@ class Backend(QObject):
     @staticmethod
     def _sandboxed_note(items: list[tuple[str, bool]], waiting: bool) -> str:
         """[(name, starts fresh)] said as setup entry points say what they will sandbox (`waiting`), or
-        as the notice once they are (17.13). Empty for none."""
+        as the notice once they are (R17.13). Empty for none."""
         if not items:
             return ""
         def both(xs):
@@ -1952,7 +1952,7 @@ class Backend(QObject):
 
     def _tell_sandboxed(self, items: list[tuple[str, str, bool]], actor: str) -> None:
         """A notice and an Audit entry for each installed app that has just been sandboxed for the
-        first time by something other than the user's own choice in a dialog (17.13, 17.16)."""
+        first time by something other than the user's own choice in a dialog (R17.13, R17.16)."""
         if not items:
             return
         for url, name, fresh in items:
@@ -1962,8 +1962,8 @@ class Backend(QObject):
 
     def _settle_sandbox(self, url: str, kind: str, had: tuple[bool, bool] | None) -> None:
         """After an install or update: pin the grant set it now runs with, with the kind the download
-        showed (17.11); and when this update sandboxed an app that ran unsandboxed (`had`, the state
-        before; None for a first install), say so (17.13)."""
+        showed (R17.11); and when this update sandboxed an app that ran unsandboxed (`had`, the state
+        before; None for a first install), say so (R17.13)."""
         self._pin_sandbox(url, self._resolved_sandbox(url, kind=kind))
         if had and not had[0] and self._sandbox_state(url)[0]:
             a = self._app(url) or {}
@@ -1973,7 +1973,7 @@ class Backend(QObject):
         """The grant set (as JSON) to bake into the launcher at install, or None for Off/unsupported.
         An app that has a launcher keeps one whatever the support check says now: an update, a
         rollback or a sandbox change on a broken host writes it, and a start that then fails is
-        reported (14.2.1), so only the user's own Off unsandboxes it (17.10; review 2, F16: the
+        reported (R14.2.1), so only the user's own Off unsandboxes it (R17.10; review 2, F16: the
         launcher was removed and the app ran with the real home until a later start healed it)."""
         r = self._resolved_sandbox(url, kind=kind, is_cli=is_cli)
         if not r or sandbox.level_of(r["grants"]) == "off":
@@ -1982,12 +1982,12 @@ class Backend(QObject):
         if row and json.loads(row["record"] or "{}").get("launcher"):
             return r["grants"]
         if not sandbox.have_tools() or sandbox.support_status()["status"] in ("setup-needed", "conflict"):
-            return None            # can't sandbox here yet: run Off (the UI warns, 17.10, 17.10.2)
+            return None            # can't sandbox here yet: run Off (the UI warns, R17.10, R17.10.2)
         return r["grants"]
 
     @Property("QVariant", notify=prefsChanged)
     def sandboxSupport(self):
-        """System support, defaults and the session warning for Settings → Sandbox (17.15, 17.9)."""
+        """System support, defaults and the session warning for Settings → Sandbox (R17.15, R17.9)."""
         st = self._sb_support()
         return {**st, "sessionWarning": self._sb_session_warning(), "busWarning": sandbox.bus_warning(),
                 "guiDefault": self._prefs.get("sandboxGuiDefault") or "strict",
@@ -1998,7 +1998,7 @@ class Backend(QObject):
 
     @Property("QVariant", constant=True)
     def sandboxTemplates(self):
-        """The built-in templates for the dropdowns (17.3)."""
+        """The built-in templates for the dropdowns (R17.3)."""
         return [{"key": n, "label": sandbox.TEMPLATE_LABELS[n], "blurb": sandbox.TEMPLATE_BLURB[n],
                  "chips": sandbox.summary_chips(sandbox.resolve_template(n), template=n),   # [label, icon, tone], as every chip
                  "folder": sandbox.FOLDER_TEMPLATES.get(n),          # made for a folder the user picks (F10)
@@ -2016,7 +2016,7 @@ class Backend(QObject):
     @Slot("QVariant", str, result="QVariantList")
     @Slot("QVariant", str, str, result="QVariantList")
     def summaryChips(self, grants, url: str = "", template: str = ""):
-        """Live summary chips for a grant set the Sandbox dialog is editing (17.3); `url` names the
+        """Live summary chips for a grant set the Sandbox dialog is editing (R17.3); `url` names the
         app, so a refused folder is judged against its install root, as the launcher does; `template`
         the template it is named after (a folder template says "No folder yet", F10)."""
         grants = _plain(grants)
@@ -2025,7 +2025,7 @@ class Backend(QObject):
 
     @Slot(str, result="QVariant")
     def sandboxInfo(self, url: str):
-        """Everything App Detail and the Sandbox dialog need for one app (17.3, 17.9, 17.11)."""
+        """Everything App Detail and the Sandbox dialog need for one app (R17.3, R17.9, R17.11)."""
         r = self._resolved_sandbox(url)
         if r is None:
             return {"applicable": False}
@@ -2035,7 +2035,7 @@ class Backend(QObject):
         suggested, srefused = self._suggestion(url)
         a = self._app(url) or {}
         # whether the app really runs sandboxed: its launcher exists. An app installed while the system
-        # couldn't sandbox runs Off until then, whatever its grants say (17.10).
+        # couldn't sandbox runs Off until then, whatever its grants say (R17.10).
         active = self._runs_sandboxed(url)
         return {"applicable": True, "source": r["source"], "template": r["template"], "active": active,
                 "level": sandbox.level_of(gs), "levelLabel": sandbox.LEVEL_LABELS[sandbox.level_of(gs)],
@@ -2050,17 +2050,17 @@ class Backend(QObject):
                 "templates": self.sandboxTemplates, "support": self._sb_support(),
                 "freshWarning": self._fresh_warning(url), "launcherHash": self._launcher_hash(url),
                 "sessionWarning": self._sb_session_warning(),
-                # only an app that has the network can reach an abstract session bus (17.9, R3-8)
+                # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
                 "busWarning": sandbox.bus_warning() if sandbox.normalize(gs)["network"] else {},
                 "reviewSuggests": sandbox.summary_chips(suggested, root, self._suggested_template(url)) + sandbox.refused_chips(srefused)
                                   if suggested is not None else [],
-                # a review's Off is a suggestion the user adopts with "Use theirs", never applied by itself (17.3.2)
+                # a review's Off is a suggestion the user adopts with "Use theirs", never applied by itself (R17.3.2)
                 "suggestsOff": suggested is not None and sandbox.level_of(suggested) == "off",
                 # the badge stands until the user acts on *this* suggestion: adopts it, keeps their own
-                # grants, or saves a choice of their own knowing it (17.11); a later, different suggestion
+                # grants, or saves a choice of their own knowing it (R17.11); a later, different suggestion
                 # raises it again. Without that, a user who deliberately chose otherwise had it forever.
                 # With "Follow reviewers' suggestions" off there is nothing to act on, so no badge; the
-                # dialog still shows what they suggest, and "Use theirs" stays an explicit choice (17.15).
+                # dialog still shows what they suggest, and "Use theirs" stays an explicit choice (R17.15).
                 "reviewBadge": bool(self._prefs.get("sandboxReviewBadge", True)
                                     and self._prefs.get("followReviewerSandbox", True) and suggested is not None
                                     and sandbox.summary(suggested, root) != sandbox.summary(gs, root)
@@ -2068,22 +2068,22 @@ class Backend(QObject):
                 # a suggestion that differs from what's in force: the dialog offers to adopt it
                 "hasSuggestion": suggested is not None and sandbox.summary(suggested, root) != sandbox.summary(gs, root),
                 "reviewBy": self._sandbox_reviewer(url),
-                # the badge's words: what the suggestion adds and removes, and what that means (17.11)
+                # the badge's words: what the suggestion adds and removes, and what that means (R17.11)
                 "reviewBadgeText": sandbox.suggestion_text(gs, suggested, self._sandbox_reviewer(url) or "A reviewer")
                                    if suggested is not None else "",
                 "appImage": self._sandbox_kind(url) == "appimage",
                 "home": sandbox.sandbox_home(self._app_id(url)),
-                # a private home on disk, at any level: the uninstall dialog offers to delete it (17.14)
+                # a private home on disk, at any level: the uninstall dialog offers to delete it (R17.14)
                 "hasHome": os.path.isdir(sandbox.sandbox_home(self._app_id(url))),
                 "installed": bool(a.get("installed")),
                 "selfUpdating": bool(a.get("autoUpdate")),
                 # Chromium/Electron apps run without their own sandbox where the system's bwrap
-                # profile forbids it inside AppKata's (17.10.2); App Detail says so for such an app
+                # profile forbids it inside AppKata's (R17.10.2); App Detail says so for such an app
                 "ownSandbox": self._brings_own_sandbox(url)}
 
     def _brings_own_sandbox(self, url: str) -> bool:
         """Whether the installed program brings Chromium's sandbox (chrome-sandbox or
-        chrome_crashpad_handler beside it): the launcher's test (17.10.2), made here on the files.
+        chrome_crashpad_handler beside it): the launcher's test (R17.10.2), made here on the files.
         An AppImage is known once it has been unpacked, at its first sandboxed launch."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         rec = json.loads(row["record"] or "{}") if row else {}
@@ -2097,15 +2097,15 @@ class Backend(QObject):
 
     def _launcher_hash(self, url: str) -> str:
         """The first 16 hex digits of the SHA-256 of the app's launcher text, or "" when it has none:
-        what the Audit records of a launcher (17.4; review 2, F11)."""
+        what the Audit records of a launcher (R17.4; review 2, F11)."""
         text = self.sandboxLaunchCommand(url)
         return hashlib.sha256(text.encode()).hexdigest()[:16] if text else ""
 
     def _sandbox_detail(self, url: str, before: dict | None, after: dict | None, **extra) -> dict:
-        """An Audit entry's detail for a sandbox change (17.16; review 2, F11: it said only the template
+        """An Audit entry's detail for a sandbox change (R17.16; review 2, F11: it said only the template
         and level, so a folder added read "set the sandbox of X · Custom · standard"): the template as
         the dialog names it, the level, what was added and removed, and the launcher it wrote: a hash
-        of its text and the set it was written for (17.4)."""
+        of its text and the set it was written for (R17.4)."""
         off = sandbox.resolve_template("off")
         bg, ag = (before or {}).get("grants") or off, (after or {}).get("grants") or off
         tpl = (after or {}).get("template") or "off"
@@ -2120,7 +2120,7 @@ class Backend(QObject):
 
     @Slot(str, result=str)
     def sandboxLaunchCommand(self, url: str) -> str:
-        """The generated launcher text, for "Show the launch command" (17.4)."""
+        """The generated launcher text, for "Show the launch command" (R17.4)."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         rec = json.loads(row["record"] or "{}") if row else {}
         lp = rec.get("launcher")
@@ -2134,7 +2134,7 @@ class Backend(QObject):
 
     @Slot(str, "QVariant")
     def setSandbox(self, url: str, config) -> None:
-        """Save the user's sandbox choice and, if installed, regenerate the launcher (17.4, 17.11, 17.16).
+        """Save the user's sandbox choice and, if installed, regenerate the launcher (R17.4, R17.11, R17.16).
 
         config: {"template": name|"off", "overrides": {...}} or {"custom": grant set}, or null to
         clear the user's choice and fall back to reviews/default.
@@ -2145,7 +2145,7 @@ class Backend(QObject):
         if cfg and (why := sandbox.config_error(cfg)):      # refused before anything is written (R4-1)
             self._toast.emit("error", f"That sandbox choice can't be applied: {why}.")
             return
-        if cfg and cfg.get("custom") is not None:      # a picked folder AppKata never shares (17.3.1)
+        if cfg and cfg.get("custom") is not None:      # a picked folder AppKata never shares (R17.3.1)
             kept, refused = sandbox.strip_protected(cfg["custom"], self._app_options(url).root)
             if refused:
                 cfg["custom"] = sandbox.to_json(kept)
@@ -2158,12 +2158,12 @@ class Backend(QObject):
         row = self.db.one("SELECT install FROM app_settings WHERE url=?", (url,))
         saved = json.loads(row["install"] or "{}") if row and row["install"] else {}
         before = self._resolved_sandbox(url)
-        if cfg is None:             # back to the reviewers' suggestion / the default: adopt it now (17.11)
+        if cfg is None:             # back to the reviewers' suggestion / the default: adopt it now (R17.11)
             saved.pop("sandbox", None)
             saved.pop("sandboxPinned", None)
         else:
             saved["sandbox"] = cfg
-        saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)      # chosen knowing it (17.11)
+        saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)      # chosen knowing it (R17.11)
         self._set_install_settings(url, saved)
         r = self._resolved_sandbox(url)
         if cfg is None and a and a.get("installed"):
@@ -2180,8 +2180,8 @@ class Backend(QObject):
 
     @Slot(str)
     def useSuggestion(self, url: str) -> None:
-        """"Use theirs" (17.11): adopt the reviewers' suggestion. A suggestion of Off becomes the user's
-        own choice, since a review never turns the sandbox off by itself (17.3.2, review 2 F8); any
+        """"Use theirs" (R17.11): adopt the reviewers' suggestion. A suggestion of Off becomes the user's
+        own choice, since a review never turns the sandbox off by itself (R17.3.2, review 2 F8); any
         other clears the user's choice and pins the merged reviews."""
         suggested, _ = self._suggestion(url)
         if suggested is not None and sandbox.level_of(suggested) == "off":
@@ -2191,7 +2191,7 @@ class Backend(QObject):
 
     @Slot(str)
     def keepSandbox(self, url: str) -> None:
-        """"Keep mine" on the review badge (17.11): the app keeps its grants and the badge clears for
+        """"Keep mine" on the review badge (R17.11): the app keeps its grants and the badge clears for
         this suggestion; a later, different one raises it again."""
         saved = self._install_settings(url)
         saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)
@@ -2202,7 +2202,7 @@ class Backend(QObject):
         self.reload()
 
     def _regenerate_launcher(self, url: str) -> None:
-        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (17.4)."""
+        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4)."""
         a = self._app(url)
         if not a:
             return
@@ -2221,7 +2221,7 @@ class Backend(QObject):
         try:
             sandbox.userns_works()
             # logs an older AppKata kept by name move to their install's id, before the heal pass
-            # rewrites the launchers that name them (14.2.1; review 2, F14)
+            # rewrites the launchers that name them (R14.2.1; review 2, F14)
             applog.adopt_name_logs([(install.app_id_of(json.loads(r["record"] or "{}"), {"name": r["name"]}), r["name"])
                                     for r in self.db.all("SELECT name, record FROM installs")])
             if self._heal_launchers():
@@ -2231,14 +2231,14 @@ class Backend(QObject):
 
     def _heal_launchers(self, actor: str = "system") -> list[str]:
         """Give every installed app that should be sandboxed, but was installed while this system
-        couldn't (AppArmor setup pending, or bwrap missing), its launcher now that it can (17.10) --
+        couldn't (AppArmor setup pending, or bwrap missing), its launcher now that it can (R17.10) --
         and every app whose launcher is not the one AppKata would write today (one an older AppKata
         wrote before a launcher fix, a hand-edited one, or one written before xdg-dbus-proxy was
-        installed) the current text (17.4; round four, R4-4: a launcher that existed was never looked
+        installed) the current text (R17.4; round four, R4-4: a launcher that existed was never looked
         at again). Returns the URLs
         regenerated. Nothing happens until sandboxing actually works here. An app installed outside
-        AppKata (foreign, 4.5) is left alone, as setSandbox leaves it. The apps sandboxed for the first
-        time are named in a notice and audited, by `actor` (17.13; review 2, F13: nothing said so)."""
+        AppKata (foreign, R4.5) is left alone, as setSandbox leaves it. The apps sandboxed for the first
+        time are named in a notice and audited, by `actor` (R17.13; review 2, F13: nothing said so)."""
         todo, undo = [], []
         for row in self.db.all("SELECT url, record FROM installs"):
             rec = json.loads(row["record"] or "{}")
@@ -2268,7 +2268,7 @@ class Backend(QObject):
             log.info("brought the launcher of %s up to today's text" if had else "sandboxed %s now that this system supports it", url)
             if not had and self._sandbox_state(url)[0]:
                 first.append((url, (self._app(url) or {}).get("name", url), fresh))
-            elif had:          # an older AppKata's launcher, or a hand-edited one: one entry per app (17.16, F11)
+            elif had:          # an older AppKata's launcher, or a hand-edited one: one entry per app (R17.16, F11)
                 r = self._resolved_sandbox(url)
                 self._audit(actor, "app", "rewrote the launcher of", (self._app(url) or {}).get("name", url), url,
                             {"by": f"AppKata {APPKATA_VERSION}", "launcher": self._launcher_hash(url),
@@ -2278,7 +2278,7 @@ class Backend(QObject):
 
     @Slot()
     def setupSandboxSupport(self) -> None:
-        """The one-time AppArmor setup behind a single pkexec prompt (17.10): Settings' Set up… and App
+        """The one-time AppArmor setup behind a single pkexec prompt (R17.10): Settings' Set up… and App
         Detail's Enable…. Asking for it clears a "Not now" given at an install (review 2, F12)."""
         self.setPref("sandboxSetupDeclined", False)
         threading.Thread(target=self._run_setup, daemon=True).start()
@@ -2300,7 +2300,7 @@ class Backend(QObject):
         return ok
 
     def _setup_prompt_needed(self, url: str, choice=None) -> bool:
-        """Whether installing `url` is the sandbox's first need (17.10; review 2, F12): a fresh install
+        """Whether installing `url` is the sandbox's first need (R17.10; review 2, F12): a fresh install
         that would run sandboxed, on a system that blocks bwrap until the one-time setup, and no "Not
         now" given at an earlier install."""
         a = self._app(url)
@@ -2313,7 +2313,7 @@ class Backend(QObject):
 
     @Slot("QVariant", bool)
     def answerSandboxSetup(self, info, now: bool) -> None:
-        """The first-need prompt's answer (17.10). "Set up now" runs the setup, then installs, sandboxed
+        """The first-need prompt's answer (R17.10). "Set up now" runs the setup, then installs, sandboxed
         if it worked. "Not now" installs it to run Off and is remembered, so later installs don't ask;
         Set up… and Enable… still can, and clear it. Either way the Audit says so."""
         info = dict(_plain(info))
@@ -2338,7 +2338,7 @@ class Backend(QObject):
     @Slot()
     def repairSandboxSupport(self) -> None:
         """Remove AppKata's AppArmor profile where the system now has its own for bwrap (an upgrade to
-        Ubuntu 25.04+, status "conflict", 17.10.2): with both loaded bwrap starts for no one."""
+        Ubuntu 25.04+, status "conflict", R17.10.2): with both loaded bwrap starts for no one."""
         def work():
             try:
                 others = sandbox.other_bwrap_profiles()
@@ -2355,7 +2355,7 @@ class Backend(QObject):
 
     @Slot(str, bool)
     def uninstallSandbox(self, url: str, remove_home: bool) -> None:
-        """Uninstall, optionally deleting the app's private sandbox home (17.14)."""
+        """Uninstall, optionally deleting the app's private sandbox home (R17.14)."""
         self._uninstall(url, False, remove_home=remove_home)
 
     @Slot(str, str)
@@ -2435,7 +2435,7 @@ class Backend(QObject):
     # ---------------------------------------------------------------- audit, explore, log
     @Slot(int, str, str, result="QVariant")
     def auditPage(self, before: int, kind: str, text: str):
-        """Requirement 13.4: pages of 100, newest first, loaded as the list scrolls."""
+        """R13.4: pages of 100, newest first, loaded as the list scrolls."""
         out = []
         for r in audit.page(self.db, before, 100, kind, text):
             try:
@@ -2452,7 +2452,7 @@ class Backend(QObject):
 
     @Property("QVariant", notify=changed)
     def exploreServices(self):
-        """Explore's picker: the forges, ngit, and on Linux Flathub and the distribution (7.7.1, 16.2.3)."""
+        """Explore's picker: the forges, ngit, and on Linux Flathub and the distribution (R7.7.1, R16.2.3)."""
         out = [{"key": k, "label": v, "enabled": True, "tip": ""} for k, v in explore.SERVICES]
         if self.ch.enabled:
             out.append({"key": "flathub", "label": "Flathub", "enabled": True, "tip": ""})
@@ -2479,7 +2479,7 @@ class Backend(QObject):
 
     @Slot()
     def showAppLog(self) -> None:
-        """Requirement 14.5: both log files, joined into a temp file, opened in the text editor."""
+        """R14.5: both log files, joined into a temp file, opened in the text editor."""
         log.info("showing the app log")
         try:
             applog.open_in_editor(applog.combined())
@@ -2495,7 +2495,7 @@ class Backend(QObject):
 
     @Slot(str)
     def demoMsvcrt(self, url: str) -> None:
-        """The tour: show an app as needing the Visual C++ run-time, which is missing (15.18)."""
+        """The tour: show an app as needing the Visual C++ run-time, which is missing (R15.18)."""
         want = {url} if url else set()
         if getattr(self, "_demo_msvcrt", set()) != want:
             self._demo_msvcrt = want
@@ -2508,7 +2508,7 @@ class Backend(QObject):
         screen, so none shows the machine running the tour), or "" (none)."""
         if getattr(self, "_demo_sandbox", "") != mode:
             self._demo_sandbox = mode
-            self.reload()               # the Apps list's 17.12 rule asks _runs_sandboxed too
+            self.reload()               # the Apps list's R17.12 rule asks _runs_sandboxed too
             self.prefsChanged.emit()
             self.changed.emit()
 
@@ -2528,7 +2528,7 @@ class Backend(QObject):
 
 
 def _same_digest(theirs: str, mine: str) -> bool:
-    """A digest from a review's Details, possibly shortened as "3c1f…9e07", is this one (10.3.4)."""
+    """A digest from a review's Details, possibly shortened as "3c1f…9e07", is this one (R10.3.4)."""
     theirs, mine = (theirs or "").strip().lower().removeprefix("sha256:"), (mine or "").strip().lower()
     if not theirs or not mine:
         return False
@@ -2540,7 +2540,7 @@ def _same_digest(theirs: str, mine: str) -> bool:
 
 
 def _clean_source_settings(st: dict, track_default: bool = False) -> dict:
-    """Source settings as stored (requirement 2.6): the asset filter is kept per platform; Track
+    """Source settings as stored (R2.6): the asset filter is kept per platform; Track
     only only when it differs from what applies anyway."""
     from appkata_core.platform import OS, arch
     out = {k: v for k, v in st.items() if k not in ("assetFilter", "trackOnly")}
@@ -2559,7 +2559,7 @@ def _clean_source_settings(st: dict, track_default: bool = False) -> dict:
         out.pop("track_only", None)
     if not out.get("asset_filters"):
         out.pop("asset_filters", None)
-    for k in ("flatpak", "package"):          # the user's own channel links (requirement 16.1.3)
+    for k in ("flatpak", "package"):          # the user's own channel links (R16.1.3)
         if k in out and not str(out[k] or "").strip():
             out.pop(k)
         elif k in out:

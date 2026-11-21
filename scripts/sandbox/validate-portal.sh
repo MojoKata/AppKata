@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of the app-sandboxing round-3 de-risking (docs/app-sandboxing.md). Run inside the Mint 22.1 session container.
+# Part of the app-sandboxing round-3 de-risking (A1.8.2). Run inside the Mint 22.1 session container.
 # #1 de-risk: does presenting a synthetic .flatpak-info make the document portal hand a picked file
 # (outside the private home) to the sandboxed app? Runs the client directly on the real bus so the
 # portal reads the app's own /.flatpak-info (the proxy filtering is a separate, already-validated concern).

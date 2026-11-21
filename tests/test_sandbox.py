@@ -1,4 +1,4 @@
-"""App sandboxing (requirement 17): grant-set resolution, overrides, the launcher, and the review lines."""
+"""App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
 import os
 import shlex
@@ -11,10 +11,10 @@ import pytest
 from appkata_core import sandbox as sb
 from appkata_core import trustfile
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 
-# ---------------------------------------------------------------- templates & resolution (17.3)
+# ---------------------------------------------------------------- templates & resolution (R17.3)
 
 def test_templates_resolve_to_normalized_grant_sets():
     for name in sb.TEMPLATE_ORDER:
@@ -59,7 +59,7 @@ def test_folder_only_if_all_trusts_grant_it():
 def test_user_choice_wins_and_unreviewed_defaults():
     src, gs = sb.resolve(user={"template": "strict", "overrides": {}})
     assert src == "user" and gs["level"] == "strict"
-    src, gs = sb.resolve(is_cli=False)                 # unreviewed GUI → strict (17.3.3)
+    src, gs = sb.resolve(is_cli=False)                 # unreviewed GUI → strict (R17.3.3)
     assert src == "default" and gs["level"] == "strict"
     src, gs = sb.resolve(is_cli=True)                  # unreviewed CLI → cli-tool, not Off
     assert src == "default" and "$cwd" in gs["folders"]
@@ -74,7 +74,7 @@ def test_default_template_by_kind_and_review_state():
 
 def test_user_default_applies_only_to_unreviewed_apps():
     # The Settings → Sandbox default is for apps "no Trust has reviewed"; reviewed apps follow their
-    # review (baseline Standard/cli-tool, 17.3.3). Regression: the backend passed the user's kind
+    # review (baseline Standard/cli-tool, R17.3.3). Regression: the backend passed the user's kind
     # default into default_template's reviewed branch, so a reviewed GUI app with no Sandbox line got
     # the user default (Strict) instead of the Standard baseline.
     user = {"template": "off", "overrides": {}}
@@ -121,7 +121,7 @@ def test_off_bypasses_the_sandbox():
     assert sb.uses_bus(gs) is False
 
 
-# ---------------------------------------------------------------- the launcher (17.4, 17.5, 17.7)
+# ---------------------------------------------------------------- the launcher (R17.4, R17.5, R17.7)
 
 def _valid_sh(text: str) -> bool:
     return subprocess.run(["sh", "-n"], input=text, text=True,
@@ -138,7 +138,7 @@ def test_launcher_is_valid_shell_for_every_template(template):
 def test_standard_launcher_has_proxy_and_private_home():
     gs = sb.resolve_template("messenger")
     text = sb.build_launcher("signal", "Signal", "/apps/signal/7", "AppRun", gs)
-    assert "xdg-dbus-proxy" in text                      # filtered session bus (17.5)
+    assert "xdg-dbus-proxy" in text                      # filtered session bus (R17.5)
     assert "--own=io.appkata.signal" in text             # app identity on the bus
     assert "--talk=org.kde.StatusNotifierWatcher" in text  # the tray capability
     assert "--share-net" in text                         # messenger has network
@@ -283,7 +283,7 @@ def test_strict_drops_every_grant_that_would_widen_it():
     # Regression (round three, R3-2): Strict only forced the network off. A Strict set with
     # overrides -- a review's `Sandbox: strict` plus a `Sandbox folders` line, or Strict customized
     # in the dialog -- had the folder and the sound sockets bound, while the chips also showed a
-    # network and services the launcher never gave. Strict now means 17.2's table everywhere.
+    # network and services the launcher never gave. Strict now means R17.2's table everywhere.
     gs = sb.apply_overrides(sb.resolve_template("strict"),
                             {"folders": {"+~/Documents": "rw"}, "network": True, "sound": ["play"],
                              "caps": ["notifications"], "devices": ["camera", "x11"], "write_app": True})
@@ -306,7 +306,7 @@ def test_appimage_launcher_extracts_lazily_and_sets_env():
     gs = sb.resolve_template("online-app")
     text = sb.build_launcher("obsidian", "Obsidian", "/apps/obsidian/1.5.extracted", "AppRun", gs,
                              appimage_path="/apps/obsidian/Obsidian.AppImage")
-    assert "--appimage-extract" in text                  # lazy extraction (17.7)
+    assert "--appimage-extract" in text                  # lazy extraction (R17.7)
     assert "squashfs-root" in text
     assert "--setenv APPIMAGE /apps/obsidian/Obsidian.AppImage" in text
     assert '--ro-bind-try "$img" "$img"' in text          # the .AppImage is visible so $APPIMAGE resolves
@@ -377,7 +377,7 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and "--talk=org.freedesktop.ScreenSaver" in chat
 
 
-# ---------------------------------------------------------------- the review lines (10.3.1)
+# ---------------------------------------------------------------- the review lines (R10.3.1)
 
 def test_trustfile_parses_sandbox_lines():
     section = ("## Zettlr::Settings\n\n- Trust: 4\n"
@@ -397,7 +397,7 @@ def test_trustfile_writes_sandbox_lines_for_linux_only():
     text = trustfile.format_settings("Signal", out)
     assert "- Sandbox (linux): messenger" in text
     assert "- Sandbox network (linux): yes" in text
-    # ignored on other platforms (17.1, 10.3.1)
+    # ignored on other platforms (R17.1, R10.3.1)
     assert trustfile.resolve_settings(parsed_only(out), "windows").get("sandbox") is None
 
 
@@ -411,7 +411,7 @@ def test_invalid_sandbox_template_is_ignored():
     assert "sandbox" not in trustfile.resolve_settings(parsed["opts"], "linux")
 
 
-# ---------------------------------------------------------------- install wiring (17.4)
+# ---------------------------------------------------------------- install wiring (R17.4)
 
 def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monkeypatch):
     from appkata_core import install
@@ -491,7 +491,7 @@ def test_proxy_args_are_names_xdg_dbus_proxy_accepts():
 
 
 def test_play_only_sound_is_not_shown_as_blocking_the_microphone():
-    # PipeWire/WirePlumber let a sandboxed client record through the sockets it plays through (17.8),
+    # PipeWire/WirePlumber let a sandboxed client record through the sockets it plays through (R17.8),
     # so the summary says so rather than implying play-only protects the microphone.
     assert "Sound · can also record" in sb.summary(sb.resolve_template("online-app"))
     assert "Sound and microphone" in sb.summary(sb.resolve_template("messenger"))
@@ -619,7 +619,7 @@ def test_removing_a_kept_appimage_version_drops_its_whole_cache(tmp_path):
     assert not any(os.path.exists(cache + e) for e in ("", ".stamp", ".lock"))
 
 
-# ---------------------------------------------------------------- the document portal & identity (17.6)
+# ---------------------------------------------------------------- the document portal & identity (R17.6)
 
 def test_standard_launcher_binds_the_apps_document_portal_view():
     # Regression: the launcher never bound the document portal's FUSE export, so the path a portal
@@ -627,7 +627,7 @@ def test_standard_launcher_binds_the_apps_document_portal_view():
     # folder grants all default Off, a Standard app couldn't open any user file at all.
     text = sb.build_launcher("web", "Web", "/apps/web/1", "bin/web", sb.resolve_template("online-app"))
     assert '--bind-try "$rt/doc/by-app/$id" "$rt/doc"' in text       # this app's documents only
-    assert "GTK_USE_PORTAL" not in text        # the app's own dialog shows that view (17.6.3, finding 0)
+    assert "GTK_USE_PORTAL" not in text        # the app's own dialog shows that view (R17.6.3, finding 0)
     # round six, R6-4: GTK 4.18 shows no dialog when the portal is denied; GDK_DEBUG=no-portals makes
     # GTK4 not ask, at every level, after --clearenv so it survives
     assert "--setenv GDK_DEBUG no-portals" in text and text.index("--clearenv") < text.index("GDK_DEBUG no-portals")
@@ -637,7 +637,7 @@ def test_standard_launcher_binds_the_apps_document_portal_view():
     assert "/doc" not in strict                                        # no bus, so no portals
 
 
-# ---------------------------------------------------------------- portals see a host caller (17.6.1, finding 0)
+# ---------------------------------------------------------------- portals see a host caller (R17.6.1, finding 0)
 
 def test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy(tmp_path, monkeypatch):
     # Regression (review finding 0): the bus proxy carried /.flatpak-info, and xdg-desktop-portal 1.18+
@@ -672,7 +672,7 @@ def test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy(tmp_p
 
 
 def test_the_hosts_desktop_entries_are_hidden_from_the_sandbox():
-    # Round three, R3-1 (17.4): GLib prefers a handler it can find over the OpenURI portal, and the
+    # Round three, R3-1 (R17.4): GLib prefers a handler it can find over the OpenURI portal, and the
     # host's /usr/share/applications is in view, so without this a GTK app opened links in the host's
     # browser started inside the sandbox. Every level gets the mask; only folders that exist are
     # masked (no --tmpfs-try, and a missing one under the read-only /usr can't be created).
@@ -685,7 +685,7 @@ def test_the_hosts_desktop_entries_are_hidden_from_the_sandbox():
 
 def test_a_sandboxed_app_gets_an_xdg_open_that_asks_the_host(tmp_path, monkeypatch):
     # xdg-open from the desktop would start the host's browser inside the sandbox; the app finds
-    # AppKata's first on its PATH, which goes through the OpenURI portal (17.6.3).
+    # AppKata's first on its PATH, which goes through the OpenURI portal (R17.6.3).
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     lp = sb.write_launcher("web", "Web", str(tmp_path / "apps"), "/apps/web/1", "bin/web", sb.resolve_template("online-app"))
     shim = os.path.join(sb.shims_dir(), "xdg-open")
@@ -734,7 +734,7 @@ def test_launcher_guards_every_mount_destination_under_home():
     subprocess.run(["sh", "-n"], input=text, text=True, check=True)
 
 
-# ---------------------------------------------------------------- protected folders (17.3.1)
+# ---------------------------------------------------------------- protected folders (R17.3.1)
 
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
@@ -829,7 +829,7 @@ def test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder(fake_
     assert '"$rt"' in words
 
 
-# ---------------------------------------------------------------- AppArmor setup (17.10)
+# ---------------------------------------------------------------- AppArmor setup (R17.10)
 
 def test_profile_names_the_bwrap_actually_installed(monkeypatch, tmp_path):
     # Regression: the profile hard-coded /usr/bin/bwrap, so with bwrap elsewhere it attached to nothing.
@@ -861,7 +861,7 @@ def test_setup_counts_only_when_bwrap_then_works(monkeypatch, works):
     assert ran and ran[0][:2] == ["pkexec", "/bin/sh"] and "apparmor_parser -r" in ran[0][-1]
 
 
-# ---------------------------------------------------------------- Ubuntu 25.04+: the system's own bwrap profile (17.10.2)
+# ---------------------------------------------------------------- Ubuntu 25.04+: the system's own bwrap profile (R17.10.2)
 
 # The header lines of Ubuntu 25.04's and 26.04's /etc/apparmor.d/bwrap-userns-restrict, and a profile
 # that only *names* bwrap in a rule (26.04's glycin.bwrap): only an attachment counts.
@@ -1108,7 +1108,7 @@ print(written)
     assert r.stdout.strip().splitlines()[-1] == "[True, False, False, False]", r.stdout
 
 
-# ---------------------------------------------------------------- the session warning (17.9)
+# ---------------------------------------------------------------- the session warning (R17.9)
 
 @pytest.mark.parametrize("display,session,desktop,expect", [
     ("x11", "x11", "X-Cinnamon", "x11"), ("x11", "x11", "GNOME", "x11"), ("x11", "", "", "x11"),
@@ -1170,7 +1170,7 @@ def test_the_display_leak_warning_clears_only_gnome_wayland(monkeypatch, tmp_pat
 ])
 def test_the_bus_warning_is_said_only_for_an_abstract_session_bus(monkeypatch, addr, warns):
     # Review 3, R3-8: with the network grant an app reaches every abstract socket on the host, and an
-    # abstract session bus is reached past the filtering proxy (17.9, 17.5)
+    # abstract session bus is reached past the filtering proxy (R17.9, R17.5)
     monkeypatch.setattr(sb, "OS", "linux")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", addr)
     w = sb.bus_warning()
@@ -1192,7 +1192,7 @@ def test_the_warning_is_quiet_with_no_display_and_off_linux(monkeypatch):
     assert sb.session_warning() == {}
 
 
-# ---------------------------------------------------------------- rewriting a launcher that is running (17.4)
+# ---------------------------------------------------------------- rewriting a launcher that is running (R17.4)
 
 def test_a_launcher_is_replaced_not_truncated_so_a_running_copy_keeps_its_text(tmp_path, monkeypatch):
     # Regression (round five, R5-3): write_launcher opened ~/bin/apps/<app>/run with "w", truncating the
@@ -1243,7 +1243,7 @@ def test_every_file_a_running_app_may_hold_open_is_replaced_never_truncated(tmp_
         assert not [p for p in os.listdir(os.path.dirname(path)) if p.endswith(".tmp")], name
 
 
-# ---------------------------------------------------------------- what a review may do on its own (17.3, review 2 F8)
+# ---------------------------------------------------------------- what a review may do on its own (R17.3, review 2 F8)
 
 def test_a_review_saying_off_is_only_a_suggestion_and_the_reviewed_baseline_applies():
     # Review 2, F8 (owner's decision): one Trust's `Sandbox: off` turned a fresh install's sandbox off
@@ -1282,7 +1282,7 @@ def test_ordinary_folders_are_no_secrets(fake_home):
 
 
 def test_the_user_folders_are_this_systems_own_names_and_only_those_that_exist(tmp_path, monkeypatch):
-    # Review 2, F10 (decision 4): one-click Documents, Downloads, Pictures, Videos and Music, under the
+    # Review 2, F10 (A1.12.4): one-click Documents, Downloads, Pictures, Videos and Music, under the
     # names this system gives them (a German desktop's Dokumente), from ~/.config/user-dirs.dirs
     home = tmp_path / "home"
     for d in ("Dokumente", "Bilder", "Musik", "Downloads"):
@@ -1313,7 +1313,7 @@ def test_a_folder_template_says_no_folder_yet_until_it_has_one(template):
 
 
 def test_the_review_badge_says_what_a_suggestion_adds_and_removes_and_what_that_means():
-    # Review 2's nit: 17.11 said the UI tells the app "may be partly non-functional until reviewed"; the
+    # Review 2's nit: R17.11 said the UI tells the app "may be partly non-functional until reviewed"; the
     # badge listed the whole suggestion and said nothing of the kind, and the sentence is only true one
     # way round: with less access suggested, the app works but has more than the reviewers think it needs
     r = sb.resolve_template

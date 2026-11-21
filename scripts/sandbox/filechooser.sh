@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # The file-chooser mechanism, tested directly via the document portal (what the chooser uses to hand a
 # file to a sandboxed app). Question: when the user picks ~/Documents/secret.txt — outside the bwrap
 # mount — can the app read it? And does marking the app as a Flatpak route it through the doc portal?

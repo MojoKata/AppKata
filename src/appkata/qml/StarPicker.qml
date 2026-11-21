@@ -3,7 +3,7 @@ import QtQuick.Shapes
 import "."
 import "Icons.js" as Icons
 
-// Click a symbol in "–★★★★★" (requirement 8.4.3, 8.4.4). value: null = no opinion, 0–5.
+// Click a symbol in "–★★★★★" (R8.4.3, R8.4.4). value: null = no opinion, 0–5.
 // For Trust, "–" is 0 = Avoid (a veto) and turns red; for Rating it's just 0 stars.
 Row {
     id: root

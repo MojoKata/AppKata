@@ -1,7 +1,7 @@
 # AppKata — Building
 
 How AppKata's release builds are made and finished for each platform. Requirements are in
-[`requirements.md`](requirements.md) (packaging: 1.6).
+[`requirements/`](requirements/README.md) (packaging: R1.6).
 
 Status: the Linux AppImage (`scripts/build-appimage.sh`, `scripts/test-appimage.sh`), the
 Windows installer (`scripts/build-windows.sh`, `scripts/test-windows-vm.sh`) and the
@@ -37,7 +37,7 @@ step unattended (`COWORKER_UNATTENDED=1`).
 
 Which tests run when, on which environment, and how long each takes is in [`testing.md`](testing.md).
 The sandbox's own runs are in containers and VMs (`scripts/test-sandbox.sh`; what each shows is in
-[`app-sandboxing.md`](app-sandboxing.md), "Tests, in four tiers"): `launcher` (Linux Mint 22.3),
+[the sandboxing record](reviews/app-sandboxing-build.md), "Tests, in four tiers"): `launcher` (Linux Mint 22.3),
 `launcher-lmde7` (LMDE 7), `launcher-vm` (Ubuntu 24.04 under KVM, the AppArmor profile applied),
 `launcher-vm26` (Ubuntu 26.04 under its own bwrap profile), and on Mint 22.3 `filedialogs`,
 `consumers`, `wayland`, `kwin` and `inputmethod`, with `filedialogs-lmde7` and `kwin-lmde7` on LMDE 7
@@ -49,7 +49,7 @@ environment words.
 
 `--tour DIR` drives the real UI through every screen of the mockups (`src/appkata/tour.py`) and
 saves `DIR/{dark,light}/<screen>.png`. It runs offscreen, so it works over SSH and in
-containers. Its window is at the design point (requirement 5.2.1): 1920 × 1040 offscreen and, on
+containers. Its window is at the design point (R5.2.1): 1920 × 1040 offscreen and, on
 Windows, what the screen leaves beside the taskbar (`test-windows-vm.sh` sets the VM's screen to
 1920 × 1080 for it). Tier 1's container prefers Nimbus Sans for sans-serif, the font the Linux
 screenshots were first taken with, and the screenshots come from it (`--shots`), so they're the
@@ -71,7 +71,7 @@ it also takes each claim `screenshots/README.md` makes about a screen's data (`P
 script), works out what the app shows on Linux and on Windows that day, and stops on a claim the
 data doesn't keep, apart from what `STILL_WRONG` lists (review 3, R3-24). Without a token, GitHub's API allows 60 requests
 an hour per IP address, shared with everything else on that address; when it runs out,
-AppKata reads releases from github.com's pages instead (requirement 2.4.1), so the sync still
+AppKata reads releases from github.com's pages instead (R2.4.1), so the sync still
 completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API throughout.
 
 ## Releasing
@@ -84,7 +84,7 @@ and what it prints: the owner's steps in [`RELEASE.md`](RELEASE.md), the agent's
 
 | Platform | Built on | Output | Finished on |
 |---|---|---|---|
-| Linux x86_64 | Linux, in an Ubuntu 22.04 container | AppImage, AppKata's only Linux form (1.6) | the same; tested in Mint/Ubuntu containers |
+| Linux x86_64 | Linux, in an Ubuntu 22.04 container | AppImage, AppKata's only Linux form (R1.6) | the same; tested in Mint/Ubuntu containers |
 | Windows 10 22H2, Windows 11 x64 | Linux (PyInstaller + Inno Setup under Wine, in Docker) | `AppKata-<version>-setup.exe` | the same; tested in a Windows 10 VM; signing needs a code-signing certificate |
 | macOS 13+ (universal2) | Linux: unsigned `AppKata.app` | `AppKata-<version>-macos-unsigned.tar.gz` | **a Mac** (an Intel MacBook is fine): `mac-sign.sh` → signed, notarized `AppKata-<version>.dmg` |
 
@@ -138,7 +138,7 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
 `build-appimage.sh`:
 
 1. Downloads the **python-build-standalone** CPython that `packaging/versions.env` pins
-   (`PYTHON_BUILD`, requirement 1.2) for x86_64 (glibc 2.17+), and checks it against the SHA-256
+   (`PYTHON_BUILD`, R1.2) for x86_64 (glibc 2.17+), and checks it against the SHA-256
    pinned there.
 2. Installs **PySide6-Essentials** and its `shiboken6` into it from PyPI, at the version pinned there,
    and adds the five xcb-util libraries Qt's X11 plugin needs and no Debian-family desktop installs
@@ -157,7 +157,7 @@ scripts/test-appimage.sh       # runs it in Mint containers, checks what it take
    `build/AppKata-<version>-untrimmed-x86_64.AppImage`, never to `releases/`.
 3. Copies `src/appkata` and `src/appkata_core`, precompiles everything, and adds `AppRun`
    (which sets `PYTHONDONTWRITEBYTECODE`), the desktop entry, the SVG icon and a 256 px PNG rendered
-   from it (for the first-start install, requirement 2.11.3.1).
+   from it (for the first-start install, R2.11.3.1).
 4. Writes the **license files** into `usr/share/licenses/appkata`: AppKata's `LICENSE` as
    `LICENSE.txt`, and `THIRD-PARTY-NOTICES.txt`, every part the AppImage carries that others made
    (Python and the libraries it is built with, Qt, PySide6, ICU, the xcb-util libraries) with its
@@ -174,13 +174,13 @@ on an input named by a tag or a release that moves (`continuous`, `latest`, an i
 digest, a pip install without `--no-deps` and a version for each package). Downloads are cached in
 `build/appimage-cache`. The build runs in an Ubuntu 22.04 container (`appkata-build-jammy`, from
 `JAMMY_IMAGE`): PySide6 6.10 and later need glibc 2.34, which an older build host lacks, and
-Ubuntu 22.04's 2.35 is the oldest 1.1 supports, so the result runs on every platform 1.1 names (it
+Ubuntu 22.04's 2.35 is the oldest R1.1 supports, so the result runs on every platform R1.1 names (it
 was built on Rocky Linux 9 until RPM support retired). Everything else the AppImage needs it takes
-from the desktop: the libraries in `packaging/appimage-host-libs.txt` (requirement 1.6).
+from the desktop: the libraries in `packaging/appimage-host-libs.txt` (R1.6).
 
 `test-appimage.sh` starts a Linux Mint 22.3 container offscreen, checks `--version`, runs part of the
 screenshot tour on the demo data (`build/tour-data`, or the folder given), then copies the AppImage
-to `/tmp` and runs `--install-self` (requirement 2.11.3.1): it checks the copy and its
+to `/tmp` and runs `--install-self` (R2.11.3.1): it checks the copy and its
 `AppKata.AppImage` link in `~/bin/apps/appkata/`, `appkata.desktop`, both icons, and that the
 installed copy starts. Screenshots land in `build/appimage-test/`. The tour runs offscreen, so two
 more steps check what a desktop session loads (review 3, R3-31, R3-32):
@@ -190,7 +190,7 @@ more steps check what a desktop session loads (review 3, R3-31, R3-32):
   everything they and the tour need from the host is in `packaging/appimage-host-libs.txt`, and that
   each listed one is still needed.
 - **desktops**: AppKata started as a user would, on X11 (Xvfb) and on Wayland (weston), in the
-  desktop package sets of the platforms 1.1 names: Ubuntu 22.04 and 24.04 (`ubuntu-desktop-minimal`),
+  desktop package sets of the platforms R1.1 names: Ubuntu 22.04 and 24.04 (`ubuntu-desktop-minimal`),
   Linux Mint 22.3 and LMDE 7 (`mint-meta-cinnamon`). Each must keep running, load the session's Qt
   plugin, show a window on X11, and load no host library that the desktop's own packages don't
   provide. The images (`appkata-desktop-*`, 2 to 4 GB each) are built once. Until RPM support
@@ -238,7 +238,7 @@ needs Flathub:
 | `ubuntu-pk` | ubuntu:24.04 | apt through PackageKit (`packagekitd` on a private system bus); adopting and uninstalling the distribution's `hello` |
 | `mint` | linuxmintd/mint22.3-amd64 | apt through the command line |
 
-The dnf runs (Fedora, Rocky Linux) retired with RPM support (requirement 1.1) and come back with it.
+The dnf runs (Fedora, Rocky Linux) retired with RPM support (R1.1) and come back with it.
 
 Package steps: install, a pending update, update, the metapackage refusal, the cascade
 confirmation, waiting for a held lock, adopting, uninstalling. Flatpak steps: install, a pending
@@ -247,7 +247,7 @@ AppKata recorded in the Audit, uninstall, adopting.
 
 ### No Flatpak
 
-AppKata isn't built as a Flatpak (requirement 1.6). To do its job from inside the sandbox it would
+AppKata isn't built as a Flatpak (R1.6). To do its job from inside the sandbox it would
 need the home folder (portable installs into `~/bin`), `--talk-name=org.freedesktop.Flatpak` (to run
 host commands with `flatpak-spawn --host`) and `--system-talk-name=org.freedesktop.PackageKit` (package
 channels, 16). That is the sandbox opened to the host, which Flathub is unlikely to accept and which
@@ -258,8 +258,8 @@ leaves the Flatpak no safer than the AppImage.
 A system package would put AppKata in the app menu with no first-run step. But it can't update
 itself without competing with the package manager, so AppKata would only notify about its own
 updates, unless it also published apt and dnf repositories. The AppImage carries everything AppKata
-needs, updates itself (requirement 2.11.3) and installs itself into the app menu on first start
-(2.11.3.1), so it is AppKata's only form on Linux (1.6).
+needs, updates itself (R2.11.3) and installs itself into the app menu on first start
+(R2.11.3.1), so it is AppKata's only form on Linux (R1.6).
 
 ### License files
 
@@ -294,7 +294,7 @@ scripts/build-windows.sh     # → releases/AppKata-<version>-setup.exe + .sha25
    builds the one-folder app `build/windows/dist/AppKata/appkata.exe` from
    `packaging/windows/appkata.spec`, with PyInstaller and its dependencies, PySide6-Essentials and
    `truststore` pinned in the script and installed with `--no-deps`. The script first checks that
-   the image's Python is `PYTHON_BUILD`'s version, the one the AppImage carries (requirement 1.2). `truststore` makes
+   the image's Python is `PYTHON_BUILD`'s version, the one the AppImage carries (R1.2). `truststore` makes
    Python check TLS certificates with Windows itself: Python's own check sees only the root
    certificates already in Windows' store, and downloads from GitHub's file host failed without it. It bundles every module of `appkata`
    and `appkata_core` and the QML files (`_internal/appkata/qml`). pip downloads are cached in
@@ -313,14 +313,14 @@ scripts/build-windows.sh     # → releases/AppKata-<version>-setup.exe + .sha25
    `THIRD-PARTY-NOTICES.txt` (Python, Qt, PySide6, truststore, PyInstaller's bootloader, the Visual
    C++ runtime; "License files", below). The build stops if a library in it is a part they don't give.
 3. **Inno Setup under Wine** (`amake/innosetup` by digest, `INNOSETUP_IMAGE`) builds the installer from
-   `packaging/windows/appkata.iss` (requirement 15.10):
+   `packaging/windows/appkata.iss` (R15.10):
    - **Just me** by default, with no UAC prompt, into `%LOCALAPPDATA%\Programs\AppKata`
      (`PrivilegesRequired=lowest`). The dialog, or `/ALLUSERS`, installs for **Everyone** into
      `Program Files`.
    - A Start-menu shortcut with the AppUserModelID `AppKata.AppKata`, and the `appkata://`
      handler (`Software\Classes\appkata`, in HKCU or HKLM to match).
    - Its Uninstall entry is `{8E3B9C51-6A2D-4F7E-B1C4-3D5A7E9F0B12}_is1`, which AppKata reads
-     to adopt its own installation (requirement 2.11.5). Don't change the `AppId`.
+     to adopt its own installation (R2.11.5). Don't change the `AppId`.
    - `/RELAUNCH=1` starts AppKata again when Setup finishes, even with `/VERYSILENT`; AppKata's
      own updates use it.
    - The uninstaller removes the start-at-login entry, offers to delete `%LOCALAPPDATA%\AppKata`
@@ -395,7 +395,7 @@ What these can't cover headless: a UAC prompt a person answers, SmartScreen's wa
 Mark of the Web on, Windows 11's Snap Layouts (only the hit test that enables them is checked),
 and Squirrel and `.msix` installs (no small FOSS release to test with).
 
-Windows on arm64 isn't supported (requirement 1.1).
+Windows on arm64 isn't supported (R1.1).
 
 ## macOS
 
@@ -519,7 +519,7 @@ What the tests need of the VM, and how this one was made:
   An evaluation's licensing service shuts Windows down an hour after each start once its 90 days
   are up, and a Windows 11 Enterprise evaluation build never finished installing.
 - **Held on Windows 10 22H2** by Windows Update's target-release policy (`TargetReleaseVersion` 1,
-  `ProductVersion` "Windows 10", `TargetReleaseVersionInfo` 22H2): 1.1's Windows 10 floor, with
+  `ProductVersion` "Windows 10", `TargetReleaseVersionInfo` 22H2): R1.1's Windows 10 floor, with
   Windows 11 never offered.
 - **OpenSSH Server** with key sign-in for an administrator account and PowerShell as its shell,
   and a signed-in console session for that account (the tour and the limited-token installs run

@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// Removing a Source (requirement 7.3).
+// Removing a Source (R7.3).
 Dialog {
     id: root
     property var src: ({})
@@ -17,7 +17,7 @@ Dialog {
         text: root.installed ? (root.src.name + " " + root.src.installed + " was installed by AppKata. You can uninstall it too, or keep it installed.")
                              : "It will no longer be one of your sources."
     }
-    Rectangle {     // requirement 7.3.2
+    Rectangle {     // R7.3.2
         visible: root.installed || root.trusts > 0
         width: parent.width; height: 44; radius: 11; color: root.trusts > 0 ? Theme.accentSoft : Theme.warnSoft
         Row {

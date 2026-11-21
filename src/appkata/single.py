@@ -1,4 +1,4 @@
-"""One AppKata at a time (requirement 1.9): a second start hands its arguments to the running
+"""One AppKata at a time (R1.9): a second start hands its arguments to the running
 AppKata over a per-user local socket, then exits."""
 
 from __future__ import annotations

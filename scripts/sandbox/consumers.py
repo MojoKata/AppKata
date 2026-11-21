@@ -1,4 +1,4 @@
-"""Real consumers of the sandbox's desktop integration, behind generated launchers (17.5.1, 17.6.3).
+"""Real consumers of the sandbox's desktop integration, behind generated launchers (R17.5.1, R17.6.3).
 
 Run by `scripts/test-sandbox.sh consumers` as the test user in the Mint 22.1 consumers container:
 Xvfb, a session bus with the real xdg-desktop-portal and its gtk backend, dunst as the
@@ -18,7 +18,7 @@ the run tests assert through proxy rules and stand-in services are done here wit
   reaches the host's text handler by its host path, with no chooser when that handler is the
   only one (the portal asks only between several candidates); a file in the private home is
   refused, since the portal can't locate it on the host (round five, R5-5 and R5-6: every file
-  claim in 17.6.3 rested on a stand-in portal before);
+  claim in R17.6.3 rested on a stand-in portal before);
 - Chromium opens a file chooser (a file input clicked with xdotool): its own GTK dialog as
   generated; with the Properties interface allowed it reads FileChooser's `version`, takes the
   portal road, is refused OpenFile and shows nothing; with FileChooser allowed too, the portal's
@@ -127,7 +127,7 @@ GTK4_LINK = """
 import sys
 import gi; gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
-app = Gtk.Application(application_id=sys.argv[1])        # the app's own identity: the one name the proxy lets it own (17.5)
+app = Gtk.Application(application_id=sys.argv[1])        # the app's own identity: the one name the proxy lets it own (R17.5)
 def act(a):
     w = Gtk.ApplicationWindow(application=a); w.present()
     Gtk.UriLauncher(uri="https://example.com/from-gtk4").launch(w, None, lambda l, r: print("launch:", "ok" if l.launch_finish(r) else "failed", flush=True))
@@ -250,7 +250,7 @@ print(f"gtk4 link online-app      -> {'the host handler ran: ' + on_host if on_h
       f"stderr: {(r.stderr.strip().splitlines() or [''])[-1][:120]})", flush=True)
 
 # 2c. a Qt app opens a link (QDesktopServices.openUrl: Qt calls the OpenURI portal itself when it sees
-# /.flatpak-info, xdg-open only as a fallback -- 17.6.3, read until round seven ran it)
+# /.flatpak-info, xdg-open only as a fallback -- R17.6.3, read until round seven ran it)
 mark_insideq = os.path.join(sb.sandbox_home("qtlink"), "appkata-test-handler-ran")
 for p in (mark_host, mark_insideq):
     if os.path.exists(p):

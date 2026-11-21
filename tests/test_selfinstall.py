@@ -1,4 +1,4 @@
-"""AppKata installing itself on the first start of a downloaded AppImage (requirement 2.11.3.1)."""
+"""AppKata installing itself on the first start of a downloaded AppImage (R2.11.3.1)."""
 
 import json
 import os

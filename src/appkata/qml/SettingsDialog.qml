@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import "."
 
-// Settings (requirement 11).
+// Settings (R11).
 Dialog {
     id: root
     scrollBody: false                  // its own Flickable scrolls the body
@@ -11,8 +11,8 @@ Dialog {
     dialogWidth: 760
     readonly property var p: backend.prefs
     readonly property var loc: backend.locations
-    readonly property var sb: backend.sandboxSupport     // system support, defaults, session warning (17.15)
-    signal confirmAction(string kind, var args)          // removals ask first (requirement 5.8)
+    readonly property var sb: backend.sandboxSupport     // system support, defaults, session warning (R17.15)
+    signal confirmAction(string kind, var args)          // removals ask first (R5.8)
     function show() { tokenHost.text = "github.com"; tokenValue.text = ""; relayField.text = ""; open(); flick.contentY = 0 }
     function scrollTo(section) {     // the tour
         const t = ({ portable: secPortable, sandbox: secSandbox, data: secData, accounts: secAccounts })[section]
@@ -147,7 +147,7 @@ Dialog {
             Text { width: col.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; bottomPadding: 4
                    text: (root.loc.windows ? "Portable .zip and .exe apps, which run without installing." : "AppImages, tarballs and other apps that run without installing.")
                          + " Changes apply to new installs and updates; apps already installed stay where they are." }
-            SettingRow { label: "Install apps for"; visible: !!root.loc.windows     // requirement 15.4
+            SettingRow { label: "Install apps for"; visible: !!root.loc.windows     // R15.4
                 hint: "Everyone on this computer, or just you. Each app can differ, in its Install options."
                 Select { anchors.right: parent.right
                          label: root.p.installFor === "everyone" ? "Everyone" : "Just me"
@@ -181,14 +181,14 @@ Dialog {
                                 Text { width: col.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; bottomPadding: 4
                        text: "Runs portable apps and AppImages in a sandbox (bubblewrap): their own home folder, their files read-only, and "
                              + "only the folders and network you allow. Flatpaks have their own sandbox." }
-                Rectangle {     // the session-type warning (17.9), shown prominently
+                Rectangle {     // the session-type warning (R17.9), shown prominently
                     visible: !!(root.sb.sessionWarning && root.sb.sessionWarning.text)
                     width: col.width; height: swTxt.height + 20; radius: 10; color: Theme.warnSoft
                     Icon { x: 12; y: 12; name: "warn"; size: 15; color: Theme.warn; lineWidth: 1.6 }
                     Text { id: swTxt; x: 38; y: 11; width: parent.width - 50; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                            text: (root.sb && root.sb.sessionWarning && root.sb.sessionWarning.text) || "" }
                 }
-                Rectangle {     // an abstract session bus: the network grant reaches it unfiltered (17.9, R3-8)
+                Rectangle {     // an abstract session bus: the network grant reaches it unfiltered (R17.9, R3-8)
                     visible: !!(root.sb.busWarning && root.sb.busWarning.text)
                     width: col.width; height: bwTxt.height + 20; radius: 10; color: Theme.warnSoft
                     Icon { x: 12; y: 12; name: "warn"; size: 15; color: Theme.warn; lineWidth: 1.6 }
@@ -196,7 +196,7 @@ Dialog {
                            text: (root.sb && root.sb.busWarning && root.sb.busWarning.text) || "" }
                 }
                 SettingRow { label: "System support"
-                    // 17.10, 17.10.2: "ok" under the system's own bwrap profile (Ubuntu 25.04+) means apps that
+                    // R17.10, R17.10.2: "ok" under the system's own bwrap profile (Ubuntu 25.04+) means apps that
                     // bring their own sandbox run without it; "conflict" is AppKata's profile left beside it
                     // A missing tool is named after the status: bubblewrap makes it "unsupported"; xdg-dbus-proxy
                     // only takes Standard apps' desktop services (review 2, F12: it said bubblewrap when only the proxy was)

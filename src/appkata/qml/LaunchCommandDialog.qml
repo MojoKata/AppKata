@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// "Show the launch command" (requirement 17.4; review 2, F11): the generated launcher's text, exactly
+// "Show the launch command" (R17.4; review 2, F11): the generated launcher's text, exactly
 // what runs when the app starts sandboxed, with the hash of it the Audit records at each change.
 Dialog {
     id: root

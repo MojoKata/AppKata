@@ -1,4 +1,4 @@
-"""Source URLs: normalizing (requirement 2.3) and recognizing releases links (2.5)."""
+"""Source URLs: normalizing (R2.3) and recognizing releases links (R2.5)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class Repo:
     kind: str           # "forge" | "nostr" | "local"
     host: str = ""
     path: str = ""      # owner/name, possibly with GitLab subgroups
-    releases_page: bool = False   # the given URL was a releases page (requirement 2.5)
+    releases_page: bool = False   # the given URL was a releases page (R2.5)
 
     @property
     def owner(self) -> str:
@@ -66,7 +66,7 @@ def parse(url: str) -> Repo:
 
 
 def normalize(url: str) -> str:
-    """The canonical form used to compare Sources and Trust rows (requirement 2.3)."""
+    """The canonical form used to compare Sources and Trust rows (R2.3)."""
     return parse(url).url
 
 

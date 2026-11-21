@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The App Detail panel (requirement 5.6, 5.7), shared by Apps and Catalog.
+// The App Detail panel (R5.6, R5.7), shared by Apps and Catalog.
 Rectangle {
     id: root
     property string url: ""
@@ -25,7 +25,7 @@ Rectangle {
     signal pickTag(string tag)
     signal installOptions(string url)
     signal openSandbox(string url)
-    signal showLaunchCommand(string url)          // 17.4's "Show the launch command" (review 2, F11)
+    signal showLaunchCommand(string url)          // R17.4's "Show the launch command" (review 2, F11)
     readonly property var sbx: (root.d.sandbox && root.d.sandbox.applicable) ? root.d.sandbox : null
     function refresh() { d = url ? backend.detail(url) : ({}); }
     onUrlChanged: { expanded = 0; refresh(); flick.contentY = 0; versionsShown = d.versionsShown || 6 }
@@ -33,7 +33,7 @@ Rectangle {
     readonly property var busy: backend.busy[url]
     readonly property bool installed: ["installed", "update", "held", "pinned", "selfupdating", "system"].indexOf(d.state) >= 0
     readonly property bool selfUpdating: d.state === "selfupdating"
-    readonly property var ch: d.ch || null          // installed from a package channel (requirement 16)
+    readonly property var ch: d.ch || null          // installed from a package channel (R16)
     readonly property bool systemUpdated: d.state === "system"
     color: Theme.surface
     Rectangle { width: 1; height: parent.height; color: Theme.border }
@@ -65,7 +65,7 @@ Rectangle {
                 menuWidth: 240; y: 36; x: -200
                 items: [
                     { key: "pin", icon: "pin", text: root.d.pinned ? "Unpin" : "Pin at " + (root.d.installed || ""),
-                      enabled: !(root.ch && root.ch.kind === "package"),          // 16.5.6
+                      enabled: !(root.ch && root.ch.kind === "package"),          // R16.5.6
                       note: root.ch && root.ch.kind === "package" ? "Pinning a package would change the whole system"
                             : root.d.pinned ? "Updates resume" : root.ch ? "Also stops the system's updates" : "No updates until unpinned" },
                     { key: "opts", icon: "gear", text: "Install options…",
@@ -88,12 +88,12 @@ Rectangle {
         contentHeight: col.height + 30; clip: true
         layer.enabled: contentY > 0       // vector icons ignore clipping in the software renderer; a layer clips them
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; x: flick.width + 6 }      // requirement 5.7
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; x: flick.width + 6 }      // R5.7
         Column {
             id: col
             width: flick.width
             spacing: 14
-            Rectangle {   // veto banner (requirement 12.6.1); for the version you have, who and why (10.6.5)
+            Rectangle {   // veto banner (R12.6.1); for the version you have, who and why (R10.6.5)
                 readonly property var av: root.d.avoid || null
                 visible: !!root.d.vetoed
                 width: parent.width; height: av ? avCol.height + 24 : 44; radius: 11; color: Theme.errSoft; border.color: Theme.err
@@ -110,7 +110,7 @@ Rectangle {
                               implicitHeight: 32; onClicked: backend.installVersion(root.url, root.d.avoidUpdateTo) }
                 }
             }
-            Rectangle {   // reviewers suggest a sandbox change; the update kept your grants (17.11, A22)
+            Rectangle {   // reviewers suggest a sandbox change; the update kept your grants (R17.11, A22)
                 visible: !!root.sbx && !!root.sbx.reviewBadge
                 width: parent.width; height: Math.max(rbCol.height, rbButtons.height + 4) + 24; radius: 11; color: Theme.accentSoft; border.color: Theme.accent
                 Icon { x: 14; y: 14; name: "shield"; color: Theme.accent; lineWidth: 1.7 }
@@ -122,9 +122,9 @@ Rectangle {
                     FButton { anchors.right: parent.right; text: "Review…"; primary: true; implicitHeight: 30; onClicked: root.openSandbox(root.url) }
                     FButton { anchors.right: parent.right; text: "Keep mine"; implicitHeight: 30; onClicked: backend.keepSandbox(root.url) } }
             }
-            // On a broken host an app that has a launcher keeps it (17.10, review 2 F16): it can't start,
+            // On a broken host an app that has a launcher keeps it (R17.10, review 2 F16): it can't start,
             // rather than run unsandboxed unasked, and the banners say which
-            Rectangle {   // AppKata's profile beside the system's own (an upgrade): no sandbox starts (17.10.2)
+            Rectangle {   // AppKata's profile beside the system's own (an upgrade): no sandbox starts (R17.10.2)
                 visible: !!root.sbx && root.sbx.support && root.sbx.support.status === "conflict" && root.installed
                 width: parent.width; height: cfCol.height + 24; radius: 11; color: Theme.warnSoft; border.color: Theme.warn
                 Icon { x: 14; y: 14; name: "warn"; color: Theme.warn; lineWidth: 1.7 }
@@ -137,7 +137,7 @@ Rectangle {
                 FButton { anchors.right: parent.right; anchors.rightMargin: 12; y: 14; text: "Repair…"; primary: true; implicitHeight: 30
                           onClicked: backend.repairSandboxSupport() }
             }
-            Rectangle {   // the system needs a one-time setup; running Off until then (17.10, A24)
+            Rectangle {   // the system needs a one-time setup; running Off until then (R17.10, A24)
                 visible: !!root.sbx && root.sbx.support && root.sbx.support.status === "setup-needed" && root.installed
                 width: parent.width; height: snCol.height + 24; radius: 11; color: Theme.warnSoft; border.color: Theme.warn
                 Icon { x: 14; y: 14; name: "warn"; color: Theme.warn; lineWidth: 1.7 }
@@ -151,7 +151,7 @@ Rectangle {
                 FButton { anchors.right: parent.right; anchors.rightMargin: 12; y: 14; text: "Enable…"; primary: true; implicitHeight: 30
                           onClicked: backend.setupSandboxSupport() }
             }
-            Item {        // hero image with the icon over its lower-left corner (requirement 5.7.2)
+            Item {        // hero image with the icon over its lower-left corner (R5.7.2)
                 width: parent.width; height: 150 + 36
                 Rectangle {
                     id: hero
@@ -190,7 +190,7 @@ Rectangle {
                 Text { text: root.d.name || ""; color: Theme.text; font.pixelSize: 24; font.bold: true; width: parent.width; elide: Text.ElideRight }
                 Text { text: (root.d.host || "") + "/" + (root.d.repo || ""); color: Theme.muted; font.pixelSize: 12; font.family: Theme.mono; width: parent.width; elide: Text.ElideMiddle }
             }
-            Flow {       // From: origins, linking to Source and Trusts (requirement 5.7.3, 2.9.5)
+            Flow {       // From: origins, linking to Source and Trusts (R5.7.3, R2.9.5)
                 width: parent.width; spacing: 6
                 Text { text: "From"; color: Theme.faint; font.bold: true; font.pixelSize: 12; height: 22; verticalAlignment: Text.AlignVCenter; width: 38 }
                 Rectangle {
@@ -213,43 +213,43 @@ Rectangle {
                     }
                 }
             }
-            Text {      // the installer's own record disagrees (requirement 15.8.3)
+            Text {      // the installer's own record disagrees (R15.8.3)
                 visible: !!root.d.reportedVersion; width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                 text: "Windows reports version " + (root.d.reportedVersion || "") + "."
             }
             Flow {      // chips
                 width: parent.width; spacing: 6
-                Pill { visible: root.d.verify === "signed"; text: "Verified" + (root.d.signer ? " · " + root.d.signer : "")       // Authenticode (requirement 15.11)
-                       tip: root.ch ? "Signed by " + (root.ch.kind === "flatpak" ? "Flathub" : root.ch.distro || "the distribution") : ""    // 16.3.6
+                Pill { visible: root.d.verify === "signed"; text: "Verified" + (root.d.signer ? " · " + root.d.signer : "")       // Authenticode (R15.11)
+                       tip: root.ch ? "Signed by " + (root.ch.kind === "flatpak" ? "Flathub" : root.ch.distro || "the distribution") : ""    // R16.3.6
                        icon: "shieldCheck"; color: Theme.okSoft; fg: Theme.ok; u: 0.92 }
                 Pill { visible: root.d.verify === "checksum"; text: "Checksum"; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
                 Pill { visible: root.d.verify === "unverified" && !!root.d.asset; text: "Unverified"; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
                 Pill { visible: !!root.d.foreign; text: "Installed outside AppKata"; icon: "info"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
-                Pill {      // the channel and who publishes it (requirement 16.6.1)
+                Pill {      // the channel and who publishes it (R16.6.1)
                     visible: !!root.ch; text: root.ch ? root.ch.label : ""; icon: root.ch && root.ch.verified ? "shieldCheck" : ""
                     color: root.ch && root.ch.verified ? Theme.okSoft : Theme.track; fg: root.ch && root.ch.verified ? Theme.ok : Theme.muted; u: 0.92 }
                 Pill { visible: !!root.ch && root.ch.kind === "flatpak"; text: "Flatpak"; color: Theme.track; fg: Theme.muted; u: 0.92 }
-                Pill {      // who updates it (requirement 16.5.1)
+                Pill {      // who updates it (R16.5.1)
                     visible: !!root.ch
                     text: !root.ch ? "" : root.ch.updates === "system" ? "Updated by the system" : root.ch.updates === "not-updated" ? "Not updated automatically"
                           : root.ch.updates === "held" ? "Held by the system" : "AppKata updates it"
                     icon: root.ch && root.ch.updates === "not-updated" ? "warn" : root.ch && root.ch.updates === "held" ? "pin" : "sync"
                     color: root.ch && root.ch.updates === "not-updated" ? Theme.warnSoft : Theme.track
                     fg: root.ch && root.ch.updates === "not-updated" ? Theme.warn : Theme.muted; u: 0.92 }
-                Pill { visible: !!root.ch && !!root.ch.extraData; text: "Downloads its program from " + (root.ch ? root.ch.extraData : "")    // 16.6.2
+                Pill { visible: !!root.ch && !!root.ch.extraData; text: "Downloads its program from " + (root.ch ? root.ch.extraData : "")    // R16.6.2
                        icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
-                Pill { visible: !!root.ch && root.ch.check === "mismatch"; text: "Doesn't match the project"; icon: "warn"     // 16.1.4
+                Pill { visible: !!root.ch && root.ch.check === "mismatch"; text: "Doesn't match the project"; icon: "warn"     // R16.1.4
                        tip: root.ch ? root.ch.checkDetail || "" : ""; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
-                Pill { visible: (root.d.sameFileAs || []).length > 0; icon: "check"; color: Theme.okSoft; fg: Theme.ok; u: 0.92     // 10.3.4
+                Pill { visible: (root.d.sameFileAs || []).length > 0; icon: "check"; color: Theme.okSoft; fg: Theme.ok; u: 0.92     // R10.3.4
                        text: "Same file as " + (root.d.sameFileAs || []).join(", ") + " reviewed" }
-                Pill {      // how it's (or it would be) installed (requirement 4.9.5)
+                Pill {      // how it's (or it would be) installed (R4.9.5)
                     visible: !root.ch && (!!root.d.asset || !!root.d.installKind)
                     readonly property string k: root.d.installKind || (root.d.asset ? root.d.asset.kind : "")
                     readonly property bool port: ["appimage", "tarball", "zip", "dmg"].indexOf(k) >= 0 || (!!root.d.asset && root.d.asset.exeKind === "portable")
                     text: k.replace("appimage", "AppImage").replace("tarball", "tar.gz") + " · " + (port ? "portable" : "system package")
                     color: Theme.track; fg: Theme.muted; u: 0.92 }
-                Pill { visible: root.installed && (root.d.scope === "everyone" || (!!root.ch && root.ch.system)); text: "For everyone"; color: Theme.track; fg: Theme.muted; u: 0.92 }   // 15.4
-                Pill {      // the Visual C++ run-time (requirement 15.18.2)
+                Pill { visible: root.installed && (root.d.scope === "everyone" || (!!root.ch && root.ch.system)); text: "For everyone"; color: Theme.track; fg: Theme.muted; u: 0.92 }   // R15.4
+                Pill {      // the Visual C++ run-time (R15.18.2)
                     visible: !!root.d.msvcrt; text: "MSVCRT"; tip: "Microsoft Visual C++ Run-time" + (root.d.msvcrtMissing ? ": not installed" : "")
                     icon: root.d.msvcrtMissing ? "warn" : ""; showTip: !!root.d.tourTip
                     color: root.d.msvcrtMissing ? Theme.warnSoft : Theme.track; fg: root.d.msvcrtMissing ? Theme.warn : Theme.muted; u: 0.92
@@ -258,13 +258,13 @@ Rectangle {
                 Pill { visible: !!root.d.pinned; text: "Pinned at " + root.d.pinned; icon: "pin"; color: Theme.track; fg: Theme.muted; u: 0.92 }
                 Pill { visible: !!root.d.trackOnly; text: "Track only"; color: Theme.track; fg: Theme.muted; u: 0.92 }
                 Pill { visible: root.selfUpdating; text: "Updates itself"; icon: "sync"; color: Theme.track; fg: Theme.muted; u: 0.92 }
-                Pill { visible: root.installed && !!root.sbx && root.sbx.level !== "off" && !!root.sbx.active      // 17.4
+                Pill { visible: root.installed && !!root.sbx && root.sbx.level !== "off" && !!root.sbx.active      // R17.4
                        text: "Sandboxed"; icon: "shieldCheck"; color: Theme.okSoft; fg: Theme.ok; u: 0.92 }
-                Pill { visible: root.installed && !!root.sbx && root.sbx.level !== "off" && !root.sbx.active     // runs Off (17.10)
+                Pill { visible: root.installed && !!root.sbx && root.sbx.level !== "off" && !root.sbx.active     // runs Off (R17.10)
                        text: "Not sandboxed"; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
                 Pill { visible: !!root.d.archived; text: "Archived"; color: Theme.track; fg: Theme.muted; u: 0.92 }
             }
-            Column {     // actions (requirement 5.7.4)
+            Column {     // actions (R5.7.4)
                 width: parent.width; spacing: 8
                 Row {
                     spacing: 8
@@ -272,7 +272,7 @@ Rectangle {
                               primary: !root.d.vetoed; danger: !!root.d.vetoed; enabledButton: !root.busy && !!root.d.asset && !root.d.trackOnly
                               onClicked: backend.install(root.url) }
                     FButton { visible: !!root.d.foreign && !root.d.adoptable; text: "Installed outside AppKata"; icon: "ban"; enabledButton: false }
-                    FButton { visible: !!root.d.foreign && !!root.d.adoptable; text: "Adopt"; icon: "check"; primary: true      // 16.4.2
+                    FButton { visible: !!root.d.foreign && !!root.d.adoptable; text: "Adopt"; icon: "check"; primary: true      // R16.4.2
                               tip: "Track this copy with AppKata, without reinstalling"; onClicked: backend.adopt(root.url) }
                     FButton { visible: root.d.state === "update"; text: root.busy ? Theme.busyLabel(root.busy) : "Update"; icon: "update"
                               primary: !root.d.updateAvoided; danger: !!root.d.updateAvoided
@@ -286,22 +286,22 @@ Rectangle {
                               enabledButton: !root.d.uninstallBlocker; tip: root.d.uninstallBlocker || ""; onClicked: root.confirmUninstall(root.url) }
                     FButton { visible: root.installed && !root.d.self && !root.busy; text: "Open"; icon: "open"; onClicked: backend.openApp(root.url) }
                 }
-                Rectangle {     // install progress (requirement 4.8.1)
+                Rectangle {     // install progress (R4.8.1)
                     visible: !!root.busy; width: parent.width; height: 5; radius: 2.5; color: Theme.track
                     Rectangle { width: parent.width * (root.busy ? root.busy.progress : 0); height: 5; radius: 2.5
                                 color: root.busy && root.busy.phase === "Waiting" ? Theme.faint : Theme.accent }
                 }
                 Text { visible: !!root.busy && Theme.busyDetail(root.busy) !== ""; text: Theme.busyDetail(root.busy); color: Theme.muted; font.pixelSize: 12 }
-                Text {      // the app updates itself (requirement 4.10)
+                Text {      // the app updates itself (R4.10)
                     visible: root.selfUpdating; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                     text: "AppKata only tracks its releases" + (root.d.newer ? " (" + root.d.version + " is out)" : "") + " and leaves updating to the app. "
                           + (root.d.autoUpdateBy === "you" ? "You marked it as updating itself in Install options." : root.d.autoUpdateBy ? root.d.autoUpdateBy + " says it updates itself; change this in Install options." : "")
                 }
-                Text {      // it would update itself, but runs sandboxed, so AppKata does (17.12, review 2 F3)
+                Text {      // it would update itself, but runs sandboxed, so AppKata does (R17.12, review 2 F3)
                     visible: !!root.d.sandboxedUpdates && !root.busy; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                     text: "It would update itself, but it runs sandboxed and can't change its own files, so AppKata updates it. Switched Off, it updates itself again."
                 }
-                Text {      // a channel install: who updates it, and versions (requirement 16.5, 16.7.2)
+                Text {      // a channel install: who updates it, and versions (R16.5, R16.7.2)
                     visible: !!root.ch && !root.busy; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                     text: !root.ch ? "" : [
                         root.ch.updates === "system" ? (root.ch.updatesBy || "The system") + " updates this " + (root.ch.kind === "flatpak" ? "Flatpak" : "package")
@@ -327,14 +327,14 @@ Rectangle {
                     text: "No download for this computer in " + (root.d.version || "") + "."
                 }
                 Text { visible: !!root.d.error; width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12; text: root.d.error || "" }
-                Text {      // AppKata itself (requirement 2.11)
+                Text {      // AppKata itself (R2.11)
                     visible: !!root.d.self; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                     text: root.d.restartNeeded ? "AppKata " + root.d.installed + " is installed. Restart to finish updating; you're running " + appVersion + "."
                           : root.d.selfManaged ? "AppKata updates itself like any portable app and keeps older versions for a quick rollback."
                           : "This AppKata wasn't installed as an AppImage, so it only tells you about new versions; Update opens the release page."
                 }
             }
-            Row {        // versions (requirement 5.7.5)
+            Row {        // versions (R5.7.5)
                 width: parent.width; spacing: 8
                 readonly property var boxes: root.installed
                     ? [[root.d.installed, "installed"], [root.d.updateTo || root.d.version || "—", root.d.updateTo ? "latest · " + Theme.shortDate(root.d.date) : "latest"],
@@ -354,7 +354,7 @@ Rectangle {
                     }
                 }
             }
-            Column {     // Flatpak permissions, and what an update adds (requirement 16.6.3)
+            Column {     // Flatpak permissions, and what an update adds (R16.6.3)
                 visible: !!root.ch && ((root.ch.perms || []).length > 0 || (root.ch.addedPerms || []).length > 0)
                 width: parent.width; spacing: 8
                 Text { text: "Permissions"; color: Theme.text; font.bold: true; font.pixelSize: 14 }
@@ -367,7 +367,7 @@ Rectangle {
                                       color: Theme.warnSoft; fg: Theme.warn; u: 0.92 } }
                 }
             }
-            Column {     // what the sandbox lets the app use (requirement 17, A20)
+            Column {     // what the sandbox lets the app use (R17, A20)
                 id: sandboxHead
                 visible: root.installed && !!root.sbx
                 width: parent.width; spacing: 10
@@ -390,7 +390,7 @@ Rectangle {
                                fg: modelData[2] === "ok" ? Theme.ok : modelData[2] === "warn" ? Theme.warn : Theme.muted }
                     }
                 }
-                Row {     // installed while this system couldn't sandbox, and still can't (17.10); or it keeps
+                Row {     // installed while this system couldn't sandbox, and still can't (R17.10); or it keeps
                           // its launcher and can't start (review 2, F16)
                     visible: root.installed && !!root.sbx && root.sbx.level !== "off"
                              && !!root.sbx.support && root.sbx.support.status === "unsupported"
@@ -400,7 +400,7 @@ Rectangle {
                            text: root.sbx && root.sbx.support && (root.sbx.active ? root.sbx.support.brokenHint : root.sbx.support.appToolsHint)
                                  || "Running unsandboxed: bubblewrap isn't installed. Install it and restart AppKata to sandbox it." }
                 }
-                Row {     // a Standard app with no xdg-dbus-proxy here runs with no session bus (17.10, review 2 F12)
+                Row {     // a Standard app with no xdg-dbus-proxy here runs with no session bus (R17.10, review 2 F12)
                     visible: root.installed && !!root.sbx && root.sbx.level === "standard" && !!root.sbx.active
                              && !!root.sbx.support && root.sbx.support.busFilter === false && !!root.sbx.support.appToolsHint
                     width: parent.width; spacing: 8
@@ -408,7 +408,7 @@ Rectangle {
                     Text { width: parent.width - 24; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12
                            text: root.sbx && root.sbx.support ? root.sbx.support.appToolsHint : "" }
                 }
-                Row {     // Chromium/Electron without their own sandbox under the system's bwrap profile (17.10.2)
+                Row {     // Chromium/Electron without their own sandbox under the system's bwrap profile (R17.10.2)
                     visible: !!root.sbx && root.sbx.level !== "off" && !!root.sbx.active && !!root.sbx.ownSandbox
                              && !!root.sbx.support && root.sbx.support.innerSandbox === false
                     width: parent.width; spacing: 8
@@ -416,14 +416,14 @@ Rectangle {
                     Text { width: parent.width - 24; wrapMode: Text.WordWrap; color: Theme.faint; font.pixelSize: 12
                            text: "Runs without its own Chromium sandbox here: this system's AppArmor profile for bubblewrap doesn't let an app inside AppKata's sandbox make one, so AppKata starts it with --no-sandbox. It is still inside AppKata's sandbox." }
                 }
-                Row {     // the X11 / wlroots caveat (17.9)
+                Row {     // the X11 / wlroots caveat (R17.9)
                     visible: !!root.sbx && root.sbx.level !== "off" && !!(root.sbx.sessionWarning && root.sbx.sessionWarning.text)
                     width: parent.width; spacing: 8
                     Icon { name: "info"; size: 14; color: Theme.faint; anchors.top: parent.top; anchors.topMargin: 1 }
                     Text { width: parent.width - 24; wrapMode: Text.WordWrap; color: Theme.faint; font.pixelSize: 12
                            text: (root.sbx && root.sbx.sessionWarning && root.sbx.sessionWarning.text) || "" }
                 }
-                Row {     // an abstract session bus, for an app with the network grant (17.9, R3-8)
+                Row {     // an abstract session bus, for an app with the network grant (R17.9, R3-8)
                     visible: !!root.sbx && root.sbx.level !== "off" && !!(root.sbx.busWarning && root.sbx.busWarning.text)
                     width: parent.width; spacing: 8
                     Icon { name: "warn"; size: 14; color: Theme.warn; anchors.top: parent.top; anchors.topMargin: 1 }
@@ -431,7 +431,7 @@ Rectangle {
                            text: (root.sbx && root.sbx.busWarning && root.sbx.busWarning.text) || "" }
                 }
             }
-            Column {     // the channels an app has, when it isn't installed from one (requirement 16.6.1)
+            Column {     // the channels an app has, when it isn't installed from one (R16.6.1)
                 visible: !root.ch && (root.d.channels || []).length > 0
                 width: parent.width; spacing: 8
                 Text { text: "Also available from"; color: Theme.text; font.bold: true; font.pixelSize: 14 }
@@ -449,7 +449,7 @@ Rectangle {
                     }
                 }
             }
-            Item {       // versions (requirement 5.7.5)
+            Item {       // versions (R5.7.5)
                 id: versionsHead
                 visible: (root.d.versions || []).length > 0
                 width: parent.width; height: 22
@@ -473,7 +473,7 @@ Rectangle {
                         model: (root.d.versions || []).slice(0, root.versionsShown)
                         Rectangle {
                             readonly property bool mine: modelData.installed
-                            opacity: modelData.avoided && !mine ? 0.55 : 1         // avoided versions dimmed (10.6.5)
+                            opacity: modelData.avoided && !mine ? 0.55 : 1         // avoided versions dimmed (R10.6.5)
                             width: vcol.width; height: 36; radius: 9
                             color: mine ? Theme.okSoft : vArea.containsMouse ? Theme.hover : "transparent"
                             Item {
@@ -487,7 +487,7 @@ Rectangle {
                                 Icon { visible: modelData.newest; name: "star"; size: 13; color: Theme.star; anchors.verticalCenter: parent.verticalCenter }
                                 Pill { visible: modelData.kept; text: "Kept"; color: Theme.track; fg: Theme.muted; u: 0.78; anchors.verticalCenter: parent.verticalCenter }
                             }
-                            Row {        // each version's combined Trust (10.6.5)
+                            Row {        // each version's combined Trust (R10.6.5)
                                 visible: modelData.trust !== null && modelData.trust !== undefined || !!modelData.avoided
                                 anchors.right: vdate.left; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; spacing: 4
                                 Icon { name: modelData.avoided ? "warn" : "shield"; size: 13; color: modelData.avoided ? Theme.err : Theme.ok; anchors.verticalCenter: parent.verticalCenter }
@@ -502,8 +502,8 @@ Rectangle {
                                 anchors.right: parent.right; anchors.rightMargin: 4; width: 76; height: parent.height
                                 Text { visible: modelData.installed; anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
                                        text: "Installed"; color: Theme.ok; font.bold: true; font.pixelSize: 12 }
-                                Row {      // icon-only (requirement 5.7.5.1)
-                                    visible: !modelData.installed && !root.d.foreign && !root.busy && !root.selfUpdating && !root.ch   // channels: 16.5.7
+                                Row {      // icon-only (R5.7.5.1)
+                                    visible: !modelData.installed && !root.d.foreign && !root.busy && !root.selfUpdating && !root.ch   // channels: R16.5.7
                                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 6
                                     TipButton {
                                         width: 28; height: 28
@@ -513,7 +513,7 @@ Rectangle {
                                         showTip: root.demoVersionTip === index * 2
                                         onClicked: modelData.newest ? backend.install(root.url) : backend.installVersion(root.url, modelData.version)
                                     }
-                                    TipButton {     // a kept older version can be removed (requirement 4.3.1.5)
+                                    TipButton {     // a kept older version can be removed (R4.3.1.5)
                                         visible: modelData.kept
                                         width: 28; height: 28; icon: "trash"; danger: true; tip: "Remove this version"
                                         showTip: root.demoVersionTip === index * 2 + 1
@@ -524,7 +524,7 @@ Rectangle {
                             MouseArea { id: vArea; anchors.fill: parent; hoverEnabled: true; z: -1 }
                         }
                     }
-                    Text {        // requirement 5.7.5.3
+                    Text {        // R5.7.5.1
                         visible: (root.d.versions || []).length > root.versionsShown
                         x: 30; height: 30; verticalAlignment: Text.AlignVCenter
                         text: "Show next " + Math.min(5, (root.d.versions || []).length - root.versionsShown) + " older"
@@ -537,7 +537,7 @@ Rectangle {
                    text: root.ch ? "The project's releases. " + (root.ch.kind === "flatpak" ? "Flathub builds them on its own schedule." : "The distribution decides which version it ships.")
                                  : "Installing an older version pins the app there until you unpin it. Kept versions reinstall without downloading."
                    color: Theme.faint; font.pixelSize: 11 }
-            Item {       // reviews (requirement 5.7.6)
+            Item {       // reviews (R5.7.6)
                 id: reviewsHead
                 width: parent.width; height: 26
                 Text { text: "Reviews"; color: Theme.text; font.bold: true; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
@@ -560,7 +560,7 @@ Rectangle {
                             text: modelData.name; color: modelData.own ? Theme.text : Theme.accent; font.bold: true; font.pixelSize: 13
                             MouseArea { anchors.fill: parent; enabled: !modelData.own; cursorShape: Qt.PointingHandCursor; onClicked: root.openTrust(modelData.trustId) }
                         }
-                        Text { id: rvVer; visible: !!modelData.reviewedVersion; text: "· reviewed " + modelData.reviewedVersion   // 10.6.5
+                        Text { id: rvVer; visible: !!modelData.reviewedVersion; text: "· reviewed " + modelData.reviewedVersion   // R10.6.5
                                color: Theme.faint; font.pixelSize: 12; anchors.baseline: parent.children[0].baseline }
                     }
                     Row {
@@ -593,7 +593,7 @@ Rectangle {
                             color: Theme.text; font.pixelSize: 13; linkColor: Theme.accent
                             onLinkActivated: l => Qt.openUrlExternally(l)
                         }
-                        Row {        // the Trust's other reviews of the app, collapsed (10.6.5)
+                        Row {        // the Trust's other reviews of the app, collapsed (R10.6.5)
                             visible: (modelData.others || []).length > 0; spacing: 6
                             Icon { name: rv.earlier ? "chevUp" : "chevDown"; size: 12; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: modelData.othersLabel || ""; color: Theme.accent; font.bold: true; font.pixelSize: 12
@@ -618,7 +618,7 @@ Rectangle {
                 }
             }
             Text { visible: (root.d.reviews || []).length === 0; text: "No trusted reviewer lists this app yet."; color: Theme.muted; font.pixelSize: 13 }
-            Column {     // release notes (requirement 5.7.7)
+            Column {     // release notes (R5.7.7)
                 visible: !!root.d.notes
                 width: parent.width; spacing: 6
                 property bool more: false
@@ -632,7 +632,7 @@ Rectangle {
                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: parent.parent.more = !parent.parent.more } }
             }
             Text { text: "About"; color: Theme.text; font.bold: true; font.pixelSize: 14 }
-            Text {      // README (requirement 3.4)
+            Text {      // README (R3.4)
                 width: parent.width
                 text: root.d.readme || root.d.summary || ""
                 textFormat: root.d.readme ? Text.MarkdownText : Text.PlainText

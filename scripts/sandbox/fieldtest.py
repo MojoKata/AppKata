@@ -135,7 +135,7 @@ class Probe:
 
 def _setup_questions(r: Report, interactive: bool) -> None:
     """The AppArmor setup's questions, only where AppKata's setup applies: the kernel restricts
-    unprivileged user namespaces and the system has no bwrap profile of its own (17.10, 17.10.2;
+    unprivileged user namespaces and the system has no bwrap profile of its own (R17.10, R17.10.2;
     review 3, R3-37); N/A elsewhere. A1-prompt asks what the first install showed (review 3, R3-38)."""
     if sb.userns_restricted() and not sb.other_bwrap_profiles():
         for cid, question in SETUP_QUESTIONS:
@@ -170,7 +170,7 @@ def main() -> int:
            f"gpu:      {' '.join(sorted(os.listdir('/dev/dri'))) if os.path.isdir('/dev/dri') else 'no /dev/dri'}\n")
     print("== environment ==\n" + env + "== checks ==")
 
-    # A. can AppKata sandbox here at all (17.10, 17.10.2)
+    # A. can AppKata sandbox here at all (R17.10, R17.10.2)
     status = st.get("status")
     if status == "ok":
         r.rec("PASS", "A-support", "AppKata's sandbox can run here",
@@ -230,7 +230,7 @@ def _checks(r: Report, p: Probe, warn: dict, a) -> None:
         call = 'gdbus call --session --dest {} --object-path {} --method org.freedesktop.DBus.Peer.Ping 2>&1; true'
         res = p.run("online-app", call.format("org.freedesktop.systemd1", "/org/freedesktop/systemd1"))
         r.rec("BLOCKED" if "()" not in res.stdout else "LEAK", "P-filter", "the bus filter refuses systemd1")
-        # the filter opens the portal per interface (17.5): Introspect is one it allows, Peer.Ping isn't
+        # the filter opens the portal per interface (R17.5): Introspect is one it allows, Peer.Ping isn't
         res = p.run("online-app", 'gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop 2>&1; true')
         ok = "org.freedesktop.portal.OpenURI" in res.stdout
         r.rec("PASS" if ok else "INFO", "P-portal", "the portal answers through the filter", "" if ok else res.stdout.strip()[-120:])
@@ -285,13 +285,13 @@ def _checks(r: Report, p: Probe, warn: dict, a) -> None:
 def _exposure(r: Report, p: Probe, templates: tuple) -> None:
     """Review 3's harness 3 on a real desktop: everything the probe can see from inside AppKata's
     launcher -- mounts, variables, devices, sockets, identifiers, network reach -- against
-    docs/sandbox-exposure.md. A container can't show a real session's sockets, GPU or resolver."""
+    docs/architecture/A2-sandbox-exposure.md. A container can't show a real session's sockets, GPU or resolver."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import exposure as ex
     try:
         rows = ex.load()
     except OSError:
-        r.rec("N/A", "EXP", "the exposure inventory", "docs/sandbox-exposure.md isn't beside this checkout")
+        r.rec("N/A", "EXP", "the exposure inventory", "docs/architecture/A2-sandbox-exposure.md isn't beside this checkout")
         return
     host = ex.parse(subprocess.run([sys.executable, "-c", ex.PROBE], capture_output=True, text=True, timeout=120).stdout)
     session = "wayland" if REAL["WAYLAND_DISPLAY"] else "x11"
@@ -311,7 +311,7 @@ def _exposure(r: Report, p: Probe, templates: tuple) -> None:
                "marker": None, "abstract_bus": REAL["DBUS_SESSION_BUS_ADDRESS"].startswith("unix:abstract=")}
         seen = ex.items(inside, host, ctx)
         extra = sorted(seen - ex.expected(rows, ex.facts_for(sb.resolve_template(name), session, False, False), ctx, host))
-        r.rec("FAIL" if extra else "PASS", f"EXP-{name}", f"{name}: everything it sees is listed in docs/sandbox-exposure.md",
+        r.rec("FAIL" if extra else "PASS", f"EXP-{name}", f"{name}: everything it sees is listed in docs/architecture/A2-sandbox-exposure.md",
               ("not listed: " + "; ".join(extra)) if extra else "")
         opened = sorted({row["stated"][6:] for row in rows for i in seen if i in row["items"] and row["stated"].startswith("open: ")})
         if opened:

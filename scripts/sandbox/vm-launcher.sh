@@ -9,12 +9,12 @@ echo "=====VMTEST BEGIN====="
 echo "Ubuntu $(. /etc/os-release; echo $VERSION_ID), kernel $(uname -r), bwrap $(bwrap --version 2>&1)"
 echo "resolv.conf -> $(readlink -f /etc/resolv.conf)"
 mkdir -p /opt/src && curl -sSf http://10.0.2.2:8000/src.tgz | tar -xz -C /opt/src
-# AppKata's code and the tests run on the Python the release carries (requirement 1.2); what the
+# AppKata's code and the tests run on the Python the release carries (R1.2); what the
 # launchers run on the host stays on the system's python3
 mkdir -p /opt/py && curl -sSf http://10.0.2.2:8000/py.tgz | tar -xz -C /opt/py && chmod -R a+rX /opt/py
 PY=/opt/py/python/bin/python3
 # As the one-time setup would: AppKata's profile only where the system has none of its own for bwrap
-# (Ubuntu 25.04+ ship bwrap-userns-restrict, and AppKata's beside it breaks bwrap, 17.10.2).
+# (Ubuntu 25.04+ ship bwrap-userns-restrict, and AppKata's beside it breaks bwrap, R17.10.2).
 others=$(PYTHONPATH=/opt/src/src $PY -c 'from appkata_core import sandbox; print(" ".join(sandbox.other_bwrap_profiles()))')
 if [ -z "$others" ]; then
   PYTHONPATH=/opt/src/src $PY -c 'from appkata_core import sandbox; print(sandbox.profile_text(), end="")' \

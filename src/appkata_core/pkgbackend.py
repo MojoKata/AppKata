@@ -1,6 +1,6 @@
-"""Installing, removing and updating the distribution's packages (requirement 16.3.5, 16.4.3,
-16.5.5, 16.8): through PackageKit when its service is there (16.8.1), else apt-get or dnf through
-pkexec (16.8.2). Every change is dry-run first, and the plan is reviewed before it runs."""
+"""Installing, removing and updating the distribution's packages (R16.3.5, R16.4.3,
+R16.5.5, R16.8): through PackageKit when its service is there (R16.8.1), else apt-get or dnf through
+pkexec (R16.8.2). Every change is dry-run first, and the plan is reviewed before it runs."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from . import applog, dbus
 from .platform import linux_family
 
-LOCK_WAIT = 600            # seconds (requirement 16.8.3)
+LOCK_WAIT = 600            # seconds (R16.8.3)
 
 
 class PackageError(Exception):
@@ -23,7 +23,7 @@ class PackageError(Exception):
 
 
 class Refused(PackageError):
-    """The plan touches something AppKata never changes (16.3.5)."""
+    """The plan touches something AppKata never changes (R16.3.5)."""
 
 
 # ---------------------------------------------------------------- plans
@@ -115,7 +115,7 @@ class Verdict:
 
 
 def review(plan: Plan, action: str, targets: list[str], facts: Facts) -> Verdict:
-    """Requirement 16.3.5 (install), 16.4.3 (remove), 16.5.5 (upgrade)."""
+    """R16.3.5 (install), R16.4.3 (remove), R16.5.5 (upgrade)."""
     tg = set(targets)
     bad = facts.blocked(plan.remove)
     if bad:
@@ -133,7 +133,7 @@ def review(plan: Plan, action: str, targets: list[str], facts: Facts) -> Verdict
     return Verdict(confirm=extra)
 
 
-# ---------------------------------------------------------------- locks (16.8.3)
+# ---------------------------------------------------------------- locks (R16.8.3)
 APT_LOCKS = ["/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]
 RPM_LOCKS = ["/var/lib/rpm/.rpm.lock", "/usr/lib/sysimage/rpm/.rpm.lock"]
 
@@ -251,7 +251,7 @@ class Backend:
         return apt_facts(names) if self.manager == "apt" else dnf_facts(names)
 
     def plan(self, action: str, names: list[str]) -> tuple[Plan, Verdict]:
-        """The dry run and its review (16.3.5, 16.4.3)."""
+        """The dry run and its review (16.3.5, R16.4.3)."""
         plan = self.simulate(action, names)
         targets = [os.path.basename(n) if os.path.sep in n else n for n in names]
         return plan, review(plan, action, targets, self.facts(plan.names() | set(targets)))
@@ -276,7 +276,7 @@ class NeedsConfirmation(PackageError):
 
 
 def _priv(cmd: list[str], env: dict | None = None) -> list[str]:
-    """For this action only (requirement 1.3)."""
+    """For this action only (R1.3)."""
     env_args = [f"{k}={v}" for k, v in (env or {}).items()]
     if os.geteuid() == 0:
         return ["env", *env_args, *cmd] if env_args else cmd
@@ -299,7 +299,7 @@ def _apt_progress(line: str):
 
 
 class Cli(Backend):
-    """apt-get or dnf on the command line (requirement 16.8.2)."""
+    """apt-get or dnf on the command line (R16.8.2)."""
     name = "cli"
 
     def __init__(self, manager: str | None = None):
@@ -337,7 +337,7 @@ class Cli(Backend):
                 cmd = _priv(["sh", "-c", f"apt-get update -qq && {inner}"], {"DEBIAN_FRONTEND": "noninteractive"})
         else:
             wait_for_lock(RPM_LOCKS, on_wait, cancel)
-            # packages left unneeded stay: that's the system's business (requirement 16.4.3)
+            # packages left unneeded stay: that's the system's business (R16.4.3)
             verb = {"install": ["install"], "remove": ["remove", "--noautoremove"], "upgrade": ["upgrade"]}[action]
             cmd = _priv(["dnf", "-y", *verb, *names])
         _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
@@ -375,7 +375,7 @@ def _stream(cmd: list[str], progress=None, cancel=None, parse=None) -> None:
         raise PackageError(_last(err) or f"{cmd[1] if cmd[0] == 'pkexec' else cmd[0]} failed (exit {p.returncode})")
 
 
-# ---------------------------------------------------------------- PackageKit (16.8.1)
+# ---------------------------------------------------------------- PackageKit (R16.8.1)
 PK = "org.freedesktop.PackageKit"
 PK_PATH = "/org/freedesktop/PackageKit"
 PK_TX = "org.freedesktop.PackageKit.Transaction"
@@ -508,14 +508,14 @@ class PackageKit(Backend):
 
 
 def backend() -> Backend:
-    """PackageKit when its service is there, else the command line (requirement 16.8)."""
+    """PackageKit when its service is there, else the command line (R16.8)."""
     t = PkTransport()
     if os.environ.get("APPKATA_NO_PACKAGEKIT") != "1" and t.available():
         return PackageKit(t)
     return Cli()
 
 
-# ---------------------------------------------------------------- reading (16.8.4)
+# ---------------------------------------------------------------- reading (R16.8.4)
 def installed_version(name: str, manager: str | None = None) -> str:
     manager = manager or ("apt" if linux_family() == "debian" else "dnf")
     if manager == "apt":
@@ -568,7 +568,7 @@ def parse_apt_releases(text: str) -> list[dict]:
 
 
 def apt_releases_for(name: str) -> list[dict]:
-    """The release fields of the repositories a package's new versions come from (16.5.2)."""
+    """The release fields of the repositories a package's new versions come from (R16.5.2)."""
     pol = parse_apt_policy(_text(["apt-cache", "policy", name]))
     allr = parse_apt_releases(_text(["apt-cache", "policy"]))
     srcs = set(pol["sources"])
@@ -597,7 +597,7 @@ def package_version_available(name: str, manager: str | None = None) -> str:
 
 
 def pending_updates(names: list[str], manager: str | None = None) -> dict[str, str]:
-    """name → newer version, without administrator rights (requirement 16.5.5)."""
+    """name → newer version, without administrator rights (R16.5.5)."""
     manager = manager or ("apt" if linux_family() == "debian" else "dnf")
     out = {}
     if not names:

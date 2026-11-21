@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of the app-sandboxing round-3 de-risking (docs/app-sandboxing.md). Run inside the Mint 22.1 session container.
+# Part of the app-sandboxing round-3 de-risking (A1.8.2). Run inside the Mint 22.1 session container.
 # Capstone: a full Standard-profile launcher with ALL the pieces composed, running a real GUI app.
 # identity marker + filtered dbus-proxy (portals + own-name + a capability) + theme/font binds +
 # a folder grant + network + X11 display + sound. Confirms the whole thing starts a real app.

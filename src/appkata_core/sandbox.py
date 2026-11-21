@@ -1,18 +1,18 @@
-"""App sandboxing on Linux (requirement 17).
+"""App sandboxing on Linux (R17).
 
 Limits the harm a portable app or AppImage can do once installed, using **bubblewrap** (`bwrap`) and
 **xdg-dbus-proxy** — no root, no daemon, no setuid helper of AppKata's own. This module holds:
 
-- the **grant-set** model and the seven built-in **templates** (17.2, 17.3);
+- the **grant-set** model and the seven built-in **templates** (R17.2, R17.3);
 - resolving several Trusts' reviews and the user's choice into one grant set, least-privilege
-  (17.3.2, validated as `scripts/sandbox/merge.py`);
+  (R17.3.2, validated as `scripts/sandbox/merge.py`);
 - **AppArmor** detection and the one-time pkexec setup where the kernel restricts unprivileged user
-  namespaces (17.10);
+  namespaces (R17.10);
 - generating the per-app **launcher** `~/bin/apps/<app>/run` with the resolved grants baked in, the
   filtered **D-Bus proxy**, the `.flatpak-info` **identity** marker, and sandboxed AppImage
-  extraction (17.4–17.9).
+  extraction (R17.4–R17.9).
 
-The launcher/proxy shape matches `docs/local-proxy-test-plan.md` and the commands validated by
+The launcher/proxy shape matches A1.2.3 and the commands validated by
 `scripts/sandbox/field-test.sh`.
 """
 
@@ -31,12 +31,12 @@ from .platform import OS, data_dir
 
 log = logging.getLogger("appkata.sandbox")
 
-# -------------------------------------------------------------------------- grant-set model (17.2)
+# -------------------------------------------------------------------------- grant-set model (R17.2)
 
 LEVELS = ["off", "standard", "strict"]          # strictness order; "off" is least restrictive
 LEVEL_LABELS = {"off": "Off", "standard": "Standard", "strict": "Strict"}
 
-# desktop-services capabilities (17.5.1) and devices (17.2.1), for the UI and the proxy mapping
+# desktop-services capabilities (R17.5.1) and devices (R17.2.1), for the UI and the proxy mapping
 CAP_LABELS = {"notifications": "Notifications", "inhibit": "Screensaver inhibit", "tray": "Tray icon",
               "mpris": "Media keys", "secrets": "Secrets (use)", "secrets-provide": "Secrets (provide)"}
 DEVICE_LABELS = {"camera": "Camera", "x11": "X11 apps (XWayland)"}
@@ -55,7 +55,7 @@ def blank_grants(level: str = "standard") -> dict:
 def normalize(gs: dict) -> dict:
     """A grant set with every key present and the set-valued ones as real sets (JSON gives lists).
 
-    Strict means what 17.2's table says -- a private home only, no network, no bus and so no desktop
+    Strict means what R17.2's table says -- a private home only, no network, no bus and so no desktop
     services, the install folder read-only -- so at that level the grants that would widen it are
     dropped here, where every reader of a grant set passes: the launcher, the chips, the badge
     comparisons and the identity marker then agree. (Round three, R3-2: a review saying `Sandbox:
@@ -71,7 +71,7 @@ def normalize(gs: dict) -> dict:
     out["devices"] = set(gs.get("devices") or []) & ({"x11"} if strict else set(gs.get("devices") or []))
     out["caps"] = set() if strict else set(gs.get("caps") or [])
     out["exec_deny"] = bool(gs.get("exec_deny", True))
-    out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (17.7.1)
+    out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (R17.7.1)
     return out
 
 
@@ -83,11 +83,11 @@ def to_json(gs: dict) -> dict:
                 exec_deny=gs["exec_deny"], write_app=gs["write_app"])
 
 
-# -------------------------------------------------------------------------- templates (17.3)
+# -------------------------------------------------------------------------- templates (R17.3)
 
 # Each built-in template, as a normalized grant set. folders: {path: "ro"|"rw"}; the actual folder a
-# template like offline-editor or developer binds is supplied by the user/review as an override (17.3.1).
-# devices "x11": on a Wayland session, also give XWayland, for apps that can't use Wayland (17.9) — on
+# template like offline-editor or developer binds is supplied by the user/review as an override (R17.3.1).
+# devices "x11": on a Wayland session, also give XWayland, for apps that can't use Wayland (R17.9) — on
 # by default so ordinary apps open; turning it off keeps the app off X11 entirely there.
 TEMPLATES: dict[str, dict] = {
     "strict":         dict(level="strict",   folders={},             network=False, ports=None, sound=set(),               devices={"x11"},        caps=set(),                                 exec_deny=True),
@@ -118,13 +118,13 @@ TEMPLATE_BLURB = {
 }
 
 
-# The templates made for a folder the user picks (17.3): its mode, and the user folders (XDG names)
+# The templates made for a folder the user picks (R17.3): its mode, and the user folders (XDG names)
 # offered in one click for it. They come with none: which folder is the user's to say (review 2, F10:
 # the table promised one and the dialog never asked).
 FOLDER_TEMPLATES = {"offline-editor": {"mode": "rw", "suggest": ["DOCUMENTS", "PICTURES"]},
                     "media-player": {"mode": "ro", "suggest": ["MUSIC", "VIDEOS"]},
                     "developer": {"mode": "rw", "suggest": []}}
-# The user folders the Files group offers in one click (17.2.1), by their XDG names
+# The user folders the Files group offers in one click (R17.2.1), by their XDG names
 USER_FOLDERS = ("DOCUMENTS", "DOWNLOAD", "PICTURES", "VIDEOS", "MUSIC")
 
 
@@ -139,7 +139,7 @@ GRANT_KEYS = ("level", "folders", "network", "ports", "sound", "devices", "caps"
 
 
 def as_overrides(template: str, gs: dict) -> dict:
-    """The overrides that make built-in `template` into grant set `gs` (17.3.1): what a customization
+    """The overrides that make built-in `template` into grant set `gs` (R17.3.1): what a customization
     is saved as, so the app keeps its template's name ("Offline editor · customized", Reset to
     template) rather than becoming "Custom" (review 2, F10). Normalized,
     grants_from_config({"template": template, "overrides": as_overrides(template, gs)}) is gs."""
@@ -164,16 +164,16 @@ def _closest_template(gs: dict) -> str:
 
 
 def as_review(template: str, gs: dict) -> tuple[dict, list[tuple[str, str]]]:
-    """The user's own sandbox as a review's Settings options (10.3.1; review 2, F9): {"sandbox":
+    """The user's own sandbox as a review's Settings options (R10.3.1; review 2, F9): {"sandbox":
     template, "sandboxFolders": "+~/Notes, -$cwd", ...}, each line only where the set differs from
     the template, and [(what, why)] for what a review can't carry (a secret folder, the keyring).
     A merged or bespoke set ("custom") is written as the closest template at its level. The
-    Landlock extras (exec_deny, ports) aren't enforced in v1 (17.18), so they aren't written."""
+    Landlock extras (exec_deny, ports) aren't enforced in v1 (R17.18), so they aren't written."""
     n = normalize(gs)
     if n["level"] == "off":
         return {"sandbox": "off"}, []
     kept, refused = strip_secrets(n)
-    kept, never = strip_protected(kept)          # never shared, whoever asks (17.3.1)
+    kept, never = strip_protected(kept)          # never shared, whoever asks (R17.3.1)
     refused += never
     if template not in TEMPLATES or TEMPLATES[template]["level"] != kept["level"]:
         template = _closest_template(kept)
@@ -246,7 +246,7 @@ def describe(template: str, gs: dict) -> str:
 
 
 def suggestion_text(current: dict, suggested: dict, who: str = "A reviewer") -> str:
-    """The review badge's words (17.11; review 2's nit: it listed the whole suggestion and never said
+    """The review badge's words (R17.11; review 2's nit: it listed the whole suggestion and never said
     what the difference means): what the suggestion adds and removes, then, with more access, that
     the app may not work fully until reviewed, and with less, that it may have more than it needs."""
     a, b = normalize(current), normalize(suggested)
@@ -277,7 +277,7 @@ def customized(template: str, gs: dict) -> bool:
 def user_folders(home: str | None = None) -> list[dict]:
     """The user's Documents, Downloads, Pictures, Videos and Music folders, as this system names them
     (`~/.config/user-dirs.dirs`, in the user's language; the English names where it says nothing),
-    those that exist and aren't the home itself: [{"key", "label", "path"}], path from `~` (17.2.1)."""
+    those that exist and aren't the home itself: [{"key", "label", "path"}], path from `~` (R17.2.1)."""
     home = home or os.path.expanduser("~")
     named = {}
     try:
@@ -298,7 +298,7 @@ def user_folders(home: str | None = None) -> list[dict]:
     return out
 
 
-# -------------------------------------------------------------------------- overrides (17.3.1)
+# -------------------------------------------------------------------------- overrides (R17.3.1)
 
 def parse_folders(spec: str) -> dict:
     """A `Sandbox folders` value → a folders-override map for :func:`apply_overrides`.
@@ -328,7 +328,7 @@ def parse_folders(spec: str) -> dict:
 
 
 def apply_overrides(gs: dict, ov: dict) -> dict:
-    """Overrides on a resolved grant set. `folders` entries may be `+path`/`-path`/`path` (17.3.1);
+    """Overrides on a resolved grant set. `folders` entries may be `+path`/`-path`/`path` (R17.3.1);
     other keys replace outright."""
     gs = normalize(gs)
     for k, v in (ov or {}).items():
@@ -343,7 +343,7 @@ def apply_overrides(gs: dict, ov: dict) -> dict:
                 else:
                     gs["folders"][path] = mode
         elif k in ("sound", "devices", "caps"):
-            if isinstance(v, dict):          # "+x"/"-x" entries change the template's set (10.3.1, F9)
+            if isinstance(v, dict):          # "+x"/"-x" entries change the template's set (R10.3.1, F9)
                 cur = set(gs[k])
                 for e in v:
                     if e.startswith("+"):
@@ -359,7 +359,7 @@ def apply_overrides(gs: dict, ov: dict) -> dict:
 
 
 def config_from_review(opts: dict) -> dict | None:
-    """A Trust's resolved Settings (10.3.1) → a sandbox config `{"template", "overrides"}`, or None
+    """A Trust's resolved Settings (R10.3.1) → a sandbox config `{"template", "overrides"}`, or None
     when the review says nothing about the sandbox. `off` is a template name here."""
     name = (opts or {}).get("sandbox")
     if not name:
@@ -381,7 +381,7 @@ def config_from_review(opts: dict) -> dict | None:
     return {"template": name, "overrides": overrides}
 
 
-# The words a review uses for the set-valued grants (10.3.1; review 2, F9), each → the grant. Services
+# The words a review uses for the set-valued grants (R10.3.1; review 2, F9), each → the grant. Services
 # take the names the dialog shows, and the internal ones too.
 LINE_NAMES = {
     "sound": {"play": "play", "record": "record"},
@@ -438,7 +438,7 @@ def grants_from_config(config: dict) -> dict:
     return apply_overrides(gs, config.get("overrides", {}))
 
 
-# -------------------------------------------------------------------------- protected folders (17.3.1)
+# -------------------------------------------------------------------------- protected folders (R17.3.1)
 
 def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a grant may never share, nor anything inside or above
@@ -481,7 +481,7 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
              (h(".gnupg"), "GPG keys"),
              (os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "the session's runtime folder")]
     # the files a shell or the session reads at login: a "folder" grant binds a file as readily as
-    # a folder, and a line appended to one of these runs as the user at the next login (17.3.1)
+    # a folder, and a line appended to one of these runs as the user at the next login (R17.3.1)
     roots += [(h(f), "your shell's startup files") for f in (
         ".bashrc", ".bash_profile", ".bash_login", ".profile", ".bash_logout",
         # what the distributions' default .bashrc sources in turn: Ubuntu's and Mint's ~/.bash_aliases,
@@ -499,10 +499,10 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
 
 
 def protected_folder(path: str, apps_root: str | None = None) -> str:
-    """Why a folder grant for `path` is refused, or "" when it may be shared (17.3.1): a protected
+    """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
     since sharing a parent shares everything beneath it. Reviews and the Customize picker both go
-    through this; the CLI tool's `$cwd` has its own run-time rule (17.3.3)."""
+    through this; the CLI tool's `$cwd` has its own run-time rule (R17.3.3)."""
     if path == "$cwd":
         return ""
     # bwrap resolves a bind source from the host's root, realpath() below from AppKata's own working
@@ -526,14 +526,14 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     return ""
 
 
-# -------------------------------------------------------------------------- secrets (17.3.1, review 2 F8)
+# -------------------------------------------------------------------------- secrets (R17.3.1, review 2 F8)
 
 def _secret_roots() -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a *review* may not grant, nor anything inside or above
     them: browsers' and mail clients' profiles, other sandboxes' data (Flatpak's and Snap's apps
     keep theirs here, as AppKata's keep theirs in folders already never shared), credentials for
     clouds, forges and registries, and password stores. The user's own picker may grant them, with
-    a warning; a review can't (17.3.1). The goals promise "secrets stay private"; the never-shared
+    a warning; a review can't (R17.3.1). The goals promise "secrets stay private"; the never-shared
     list covered ~/.ssh and ~/.gnupg alone (review 2, F8)."""
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
@@ -565,14 +565,14 @@ def secret_folder(path: str) -> str:
     return ""
 
 
-# The capabilities in the secrets class (17.3.1, review 2 F8): what a review can never grant
+# The capabilities in the secrets class (R17.3.1, review 2 F8): what a review can never grant
 SECRET_CAPS = {"secrets": ("Saved passwords", "a review can't grant the keyring, which holds every saved password"),
                "secrets-provide": ("Password service", "a review can't make an app the password service")}
 
 
 def strip_secrets(gs: dict) -> tuple[dict, list[tuple[str, str]]]:
     """A review's grant set without its secret folders and keyring capabilities, and [(what, why)] for
-    each dropped (17.3.1)."""
+    each dropped (R17.3.1)."""
     gs = normalize(gs)
     refused = [(p, f"a review can't grant {why}") for p in sorted(gs["folders"]) if (why := secret_folder(p))]
     for p, _ in refused:
@@ -597,7 +597,7 @@ def strip_protected(gs: dict, apps_root: str | None = None) -> tuple[dict, list[
     return gs, refused
 
 
-# -------------------------------------------------------------------------- resolving sources (17.3.2)
+# -------------------------------------------------------------------------- resolving sources (R17.3.2)
 
 def _intersect_ports(ap, bp):
     """Least-privilege port combination. `None` means unrestricted (all ports), so intersecting it
@@ -612,7 +612,7 @@ def _intersect_ports(ap, bp):
 
 
 def intersect(a: dict, b: dict) -> dict:
-    """The least-privilege combination of two grant sets, across Trusts (17.3.2): strictest level; a
+    """The least-privilege combination of two grant sets, across Trusts (R17.3.2): strictest level; a
     folder only if both grant it (read-write only if both do); network/sound/devices/caps the
     intersection; execute-deny if either denies.
 
@@ -641,10 +641,10 @@ def intersect(a: dict, b: dict) -> dict:
 
 
 def default_template(is_cli: bool, reviewed: bool, unreviewed_default: dict | None = None) -> dict:
-    """The default sandbox config by app kind and review state (17.3.3). A reviewed app with no
+    """The default sandbox config by app kind and review state (R17.3.3). A reviewed app with no
     `Sandbox` line of its own uses the fixed baseline — `standard` for a GUI app, `cli-tool` for a
     CLI tool. An unreviewed app uses `unreviewed_default` (the user's Settings → Sandbox default for
-    the kind, 17.15) when given, else `strict` for a GUI app and `cli-tool` for a CLI tool.
+    the kind, R17.15) when given, else `strict` for a GUI app and `cli-tool` for a CLI tool.
 
     `unreviewed_default` applies only to unreviewed apps: a user's chosen default never overrides the
     reviewed baseline, matching "Reviewed apps follow their review" in Settings → Sandbox.
@@ -658,7 +658,7 @@ def default_template(is_cli: bool, reviewed: bool, unreviewed_default: dict | No
 
 def resolve(reviews: list[dict] | None = None, user: dict | None = None,
             is_cli: bool = False) -> tuple[str, dict]:
-    """The grant set that applies and where it came from (17.3.2, 17.11): the user's own choice wins;
+    """The grant set that applies and where it came from (R17.3.2, R17.11): the user's own choice wins;
     else the merged reviews (least-privilege across Trusts); else the default template by app kind.
 
     `reviews`: each Trust's sandbox config (from :func:`config_from_review`). `user`: a config the
@@ -677,15 +677,15 @@ def resolve(reviews: list[dict] | None = None, user: dict | None = None,
 
 def choose(user: dict | None, pinned: dict | None, reviews: list[dict], default: dict,
            is_cli: bool = False) -> tuple[str, dict, str]:
-    """Which grant set applies to an app, as (source, grant set, template name) (17.11):
+    """Which grant set applies to an app, as (source, grant set, template name) (R17.11):
 
     1. `user` — the config the user chose (install options or App Detail);
     2. `pinned` — the grant set the installed app has been running with (`{"grants", "template"}`).
        Reviews **never** change an installed app's grants on their own: a newer or changed review only
        raises the review badge, and an update keeps the pinned grants, so access is never silently
-       widened (decision 5);
+       widened (A1.12.5);
     3. `reviews` — each Trust's sandbox config, merged least-privilege (a fresh install);
-    4. `default` — the default config by app kind and review state (17.3.3).
+    4. `default` — the default config by app kind and review state (R17.3.3).
     """
     if user is not None:
         return "user", grants_from_config(user), user.get("template", "custom")
@@ -696,7 +696,7 @@ def choose(user: dict | None, pinned: dict | None, reviews: list[dict], default:
         _, gs = resolve(reviews=reviews, is_cli=is_cli)
         # A review narrows freely, but never turns the sandbox off by itself: where the merged reviews
         # say Off, the reviewed baseline (`default`) applies and the dialogs offer "Use theirs"
-        # (17.3.2; review 2, F8: one Trust's `Sandbox: off` ran a fresh install unsandboxed).
+        # (R17.3.2; review 2, F8: one Trust's `Sandbox: off` ran a fresh install unsandboxed).
         if gs["level"] != "off":
             return "reviews", gs, (reviews[0].get("template", "custom") if len(reviews) == 1 else "custom")
     return "default", grants_from_config(default), default.get("template", "strict")
@@ -726,16 +726,16 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
         out.append(["No folder yet", "folder", "warn"])
     for path, mode in sorted(gs["folders"].items()):
         nice = "The folder it's run in" if path == "$cwd" else path
-        if why := protected_folder(path, apps_root):     # never shared, whoever asked (17.3.1)
+        if why := protected_folder(path, apps_root):     # never shared, whoever asked (R17.3.1)
             out.append([f"{nice} · refused: {why}", "ban", "warn"])
             continue
-        if secret_folder(path):                          # the user's own grant of a secret (17.3.1): said plainly
+        if secret_folder(path):                          # the user's own grant of a secret (R17.3.1): said plainly
             out.append([nice + ("" if mode == "rw" else " · read-only") + " · holds passwords or tokens", "warn", "warn"])
             continue
         out.append([nice + ("" if mode == "rw" else " · read-only"), "folder", "track"])
     out.append(["Network", "globe", "track"] if gs["network"] else ["No network", "ban", "track"])
     # Any sound grant binds the PipeWire/Pulse sockets, and neither stops a client from recording
-    # (17.8): play-only is said plainly, not shown as protection it isn't.
+    # (R17.8): play-only is said plainly, not shown as protection it isn't.
     if "record" in gs["sound"]:
         out.append(["Sound and microphone", "play", "track"])
     elif gs["sound"]:
@@ -766,7 +766,7 @@ def level_of(gs: dict) -> str:
 
 PROFILE_PATH = "/etc/apparmor.d/appkata-sandbox"
 # bwrap needs the `userns` carve-out where AppArmor restricts unprivileged user namespaces
-# (Ubuntu 24.04 / Mint 22). flags=(unconfined) so the profile only grants, never confines (17.10).
+# (Ubuntu 24.04 / Mint 22). flags=(unconfined) so the profile only grants, never confines (R17.10).
 # An AppArmor profile attaches to one executable path, so it names the bwrap that is really installed
 # (resolved through symlinks); a profile for /usr/bin/bwrap does nothing for one in /usr/local/bin.
 _PROFILE_TEMPLATE = (
@@ -814,7 +814,7 @@ def have_tools() -> bool:
 
 
 def have_bus_filter() -> bool:
-    """Whether xdg-dbus-proxy is here to give a Standard app its filtered session bus (17.5)."""
+    """Whether xdg-dbus-proxy is here to give a Standard app its filtered session bus (R17.5)."""
     return bool(shutil.which("xdg-dbus-proxy"))
 
 
@@ -828,7 +828,7 @@ def missing_tools() -> list[str]:
 
 
 def tools_hints(missing: list[str]) -> dict:
-    """What Settings → Sandbox ("system") and App Detail say about missing tools (17.10): every
+    """What Settings → Sandbox ("system") and App Detail say about missing tools (R17.10): every
     sandbox needs bubblewrap; a Standard app's desktop services need xdg-dbus-proxy. Each names only
     what is missing, with the command that installs it. "app" is for an app that runs unsandboxed
     for it, "broken" for one that keeps its launcher and so can't start (review 2, F16). Empty when
@@ -852,7 +852,7 @@ def tools_hints(missing: list[str]) -> dict:
 
 
 def userns_restricted() -> bool:
-    """Whether this kernel restricts unprivileged user namespaces (the AppArmor case, 17.10)."""
+    """Whether this kernel restricts unprivileged user namespaces (the AppArmor case, R17.10)."""
     try:
         with open(_RESTRICT_FLAG) as f:
             return f.read().strip() not in ("", "0")
@@ -861,7 +861,7 @@ def userns_restricted() -> bool:
 
 
 def userns_works(refresh: bool = False) -> bool:
-    """A one-off `bwrap --unshare-user` probe: whether bwrap can create a user namespace (17.10). A
+    """A one-off `bwrap --unshare-user` probe: whether bwrap can create a user namespace (R17.10). A
     success stands for the session; a failure is asked again once PROBE_RETRY_S have passed, so one
     timeout doesn't stand for it (review 2, F16), while the UI's many reads of it stay cheap."""
     global _userns_cache, _userns_failed_at
@@ -886,7 +886,7 @@ def userns_works(refresh: bool = False) -> bool:
 
 def nested_userns_works(refresh: bool = False) -> bool:
     """Whether a program *inside* bwrap can make a user namespace of its own -- what Chromium's and
-    Electron's own sandbox needs (17.10.2). Ubuntu 25.04 and later confine bwrap's children with
+    Electron's own sandbox needs (R17.10.2). Ubuntu 25.04 and later confine bwrap's children with
     `unpriv_bwrap`, which denies them that, so there it is False (review 2, F2: shown on 26.04, where
     `unshare --user` inside a generated launcher failed). True wherever bwrap itself can't run, or the
     probe can't be made: nothing to adapt to then."""
@@ -911,7 +911,7 @@ def nested_userns_works(refresh: bool = False) -> bool:
 
 def other_bwrap_profiles(bwrap: str | None = None) -> list[str]:
     """The AppArmor profiles other than AppKata's that attach to a bwrap, by file name: Ubuntu's own
-    `bwrap-userns-restrict` since 25.04 (17.10.2). Two profiles on one path don't combine -- with
+    `bwrap-userns-restrict` since 25.04 (R17.10.2). Two profiles on one path don't combine -- with
     AppKata's loaded beside Ubuntu's, bwrap could create no user namespace at all, live and after a
     reboot (review 2, F2, shown on 26.04) -- so AppKata never installs its own beside one, and removes
     its own when one has arrived (an upgrade). Profiles a `disable/` link switches off don't count."""
@@ -940,13 +940,13 @@ def other_bwrap_profiles(bwrap: str | None = None) -> list[str]:
 
 
 def support_status() -> dict:
-    """System support for sandboxing, for Settings → Sandbox (17.15) and the per-app indicator.
+    """System support for sandboxing, for Settings → Sandbox (R17.15) and the per-app indicator.
 
     status: "ok" (works), "setup-needed" (restricted and the probe fails — needs the profile),
     "conflict" (AppKata's profile sits beside the system's own bwrap profile, as after an upgrade to
-    Ubuntu 25.04+, and bwrap can't start: it needs removing, 17.10.2), "unsupported" (no bwrap),
+    Ubuntu 25.04+, and bwrap can't start: it needs removing, R17.10.2), "unsupported" (no bwrap),
     "n/a" (not Linux). `innerSandbox`: whether an app's own sandbox (Chromium, Electron) can run
-    inside AppKata's here (17.10.2). `busFilter`: whether xdg-dbus-proxy is here; `missing` and
+    inside AppKata's here (R17.10.2). `busFilter`: whether xdg-dbus-proxy is here; `missing` and
     `toolsHint`/`appToolsHint`/`brokenHint`: the tools that aren't, and what the UI says of them
     (review 2, F12, F16)."""
     if OS != "linux":
@@ -973,7 +973,7 @@ def is_profile_installed() -> bool:
 
 
 # The Wayland compositor known to withhold screen capture, the clipboard and input injection from an
-# ordinary client: GNOME's mutter (17.9; shown in the session image, nothing of the kind advertised).
+# ordinary client: GNOME's mutter (R17.9; shown in the session image, nothing of the kind advertised).
 # KDE's kwin hides screencast and fake input from untrusted clients but offers zwlr_data_control --
 # the clipboard -- to every client (round seven, R7-1: kwin 5.27, a sandboxed app read what the user
 # had copied), so a KDE session gets its own warning. Every other Wayland session gets the full one:
@@ -985,7 +985,7 @@ _WLROOTS = ("sway", "hyprland", "wlroots", "river", "wayfire", "labwc", "niri") 
 
 
 def given_display(env=None) -> str:
-    """The display the launcher gives an app in this environment (17.9): "wayland" when
+    """The display the launcher gives an app in this environment (R17.9): "wayland" when
     $WAYLAND_DISPLAY names a socket in the runtime folder -- the launcher's own test, `[ -e
     "$rt/$WAYLAND_DISPLAY" ]` -- else "x11" when $DISPLAY is set, else "". The warning asks this, not
     $XDG_SESSION_TYPE: a compositor started from a console keeps logind's "tty" there, and sway sets
@@ -999,7 +999,7 @@ def given_display(env=None) -> str:
 
 
 # The Wayland globals that let an ordinary client capture the screen, read and change the clipboard,
-# or inject input (17.9). A compositor that offers one leaks it, whatever the desktop's name says:
+# or inject input (R17.9). A compositor that offers one leaks it, whatever the desktop's name says:
 # Budgie's and Phosh's sessions list GNOME but run wlroots compositors (review 2, F7).
 LEAKING_GLOBALS = {
     "zwlr_screencopy_manager_v1": "capture", "ext_image_copy_capture_manager_v1": "capture",
@@ -1011,9 +1011,9 @@ LEAKING_GLOBALS = {
 
 def compositor_globals(env=None, timeout: float = 2.0) -> set[str] | None:
     """The interfaces the Wayland compositor offers an ordinary client, from one registry round trip
-    on the socket the launcher binds (17.9; review 2, F7: the desktop's name was used instead). None
+    on the socket the launcher binds (R17.9; review 2, F7: the desktop's name was used instead). None
     when there's no Wayland socket or it doesn't answer. AppKata asks as an ordinary client itself,
-    which is what a sandboxed app is to the compositor until the security-context protocol (17.18)."""
+    which is what a sandboxed app is to the compositor until the security-context protocol (R17.18)."""
     import socket as _socket
     import struct
     env = os.environ if env is None else env
@@ -1065,7 +1065,7 @@ X11_WARNING = {"session": "x11",
 
 
 def session_warning() -> dict:
-    """The display-leak warning for the display a sandboxed app is given (17.9): on X11, and on any
+    """The display-leak warning for the display a sandboxed app is given (R17.9): on X11, and on any
     Wayland compositor other than GNOME/mutter, a sandboxed app can still screenshot, read the
     clipboard and inject input; on KDE the clipboard alone. The desktop's name gives the verdict;
     the compositor's globals can only add to it, never clear one (review 2, F7: Budgie:GNOME and
@@ -1104,11 +1104,11 @@ def session_warning() -> dict:
 
 
 def bus_warning() -> dict:
-    """The abstract session-bus warning (17.9; review 3, R3-8), or {} when there's nothing to say.
+    """The abstract session-bus warning (R17.9; review 3, R3-8), or {} when there's nothing to say.
     The network grant shares the host's network namespace, and an abstract-namespace socket belongs
     to it: where dbus is 1.12 (Mint 21.3, Ubuntu 22.04, RHEL 9), a session bus started with
     dbus-run-session or dbus-launch is one, and an app with the network grant reaches it directly,
-    past the filtering proxy (17.5). A desktop's own login uses systemd's user bus, a path."""
+    past the filtering proxy (R17.5). A desktop's own login uses systemd's user bus, a path."""
     if OS != "linux":
         return {}
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
@@ -1128,7 +1128,7 @@ def _bwrap_probe_words(bwrap: str) -> str:
 
 
 def setup_script(bwrap: str | None = None) -> str:
-    """What the one-time setup runs as root behind pkexec (17.10): write and load the profile, then
+    """What the one-time setup runs as root behind pkexec (R17.10): write and load the profile, then
     run the bwrap probe *as the user who asked* (pkexec sets PKEXEC_UID) -- loading a profile is not
     the goal, bwrap working for the user is. If it doesn't, the profile is unloaded and removed in the
     same run, so a failed setup leaves nothing behind (review 2, F2: on Ubuntu 26.04 a profile loaded
@@ -1166,10 +1166,10 @@ def _run_privileged(script: str, what: str) -> None:
 
 
 def install_profile() -> bool:
-    """Write and load the AppArmor profile behind a single pkexec prompt (17.10). Returns True on
+    """Write and load the AppArmor profile behind a single pkexec prompt (R17.10). Returns True on
     success. Raises SandboxError on failure (declined, no pkexec, parser error, the user's bwrap
     still refused -- then nothing is left installed), and refuses outright where the system has its
-    own profile for bwrap (Ubuntu 25.04+, 17.10.2): AppKata's beside it would break bwrap."""
+    own profile for bwrap (Ubuntu 25.04+, R17.10.2): AppKata's beside it would break bwrap."""
     if OS != "linux":
         raise SandboxError("AppArmor setup is only needed on Linux")
     if others := other_bwrap_profiles():
@@ -1185,7 +1185,7 @@ def install_profile() -> bool:
 
 def remove_profile() -> bool:
     """Unload and delete AppKata's AppArmor profile behind a single pkexec prompt: the repair for
-    status "conflict", AppKata's profile left beside the system's own after an upgrade (17.10.2)."""
+    status "conflict", AppKata's profile left beside the system's own after an upgrade (R17.10.2)."""
     if OS != "linux":
         raise SandboxError("AppArmor setup is only needed on Linux")
     p = shlex.quote(PROFILE_PATH)
@@ -1199,27 +1199,27 @@ class SandboxError(Exception):
     pass
 
 
-# -------------------------------------------------------------------------- identity & homes (17.6, 17.14)
+# -------------------------------------------------------------------------- identity & homes (R17.6, R17.14)
 
 def sandboxes_root() -> str:
     return os.path.join(data_dir(), "sandboxes")
 
 
 def sandbox_home(app_id: str) -> str:
-    """The app's private home, mounted over $HOME (17.4)."""
+    """The app's private home, mounted over $HOME (R17.4)."""
     return os.path.join(sandboxes_root(), app_id)
 
 
 def runs_sandboxed(rec: dict) -> bool:
     """Whether an installed app runs sandboxed: its install record names a launcher, and the
-    launcher is there (17.4). App Detail and the Apps list's 17.12 rule ask it through
+    launcher is there (R17.4). App Detail and the Apps list's R17.12 rule ask it through
     Backend._runs_sandboxed (review 3, R3-27: one read the file, the other only the record)."""
     lp = (rec or {}).get("launcher")
     return bool(lp and os.path.exists(lp))
 
 
 def app_identity(app_id: str) -> str:
-    """The app's stable identity, `io.appkata.<app>` (17.6). It is also a D-Bus well-known name
+    """The app's stable identity, `io.appkata.<app>` (R17.6). It is also a D-Bus well-known name
     (`--own`) and the document portal's `by-app/<id>` folder, and a bus-name element may not start
     with a digit: xdg-dbus-proxy refuses `--own=io.appkata.7zip` and exits, leaving the app no bus
     at all. Such a slug gets a leading underscore (`io.appkata._7zip`); hyphens are accepted by both."""
@@ -1236,11 +1236,11 @@ def identity_path(app_id: str) -> str:
 
 
 def write_flatpak_info(app_id: str, network: bool = False) -> str:
-    """The `.flatpak-info` identity marker (17.6), written at launcher generation and bound in the
-    *app's* root only. PipeWire/WirePlumber read it there (the app is a sandboxed client, 17.8), and
+    """The `.flatpak-info` identity marker (R17.6), written at launcher generation and bound in the
+    *app's* root only. PipeWire/WirePlumber read it there (the app is a sandboxed client, R17.8), and
     GLib reads it to use the portals and -- from `[Context] shared=network` -- to report the network
     as available, so `network` says whether the app has it. The portals never see it: they look at
-    the bus proxy's root, which has no marker, so the app is a host caller to them (17.6.1).
+    the bus proxy's root, which has no marker, so the app is a host caller to them (R17.6.1).
 
     Written to a temporary file and renamed over the target, so a symlink at the target is replaced
     rather than followed. A marker left in the private home by an older AppKata is removed (unlinked,
@@ -1270,7 +1270,7 @@ def flatpak_info_text(app_id: str, network: bool = False) -> str:
 
 def remove_identity(app_id: str) -> None:
     """Remove the app's identity marker: it belongs with the launcher, not with the private home, so
-    an uninstall that keeps the home (17.14) leaves nothing behind in `.identity/` (round two, R10)."""
+    an uninstall that keeps the home (R17.14) leaves nothing behind in `.identity/` (round two, R10)."""
     if os.path.lexists(identity_path(app_id)):
         os.unlink(identity_path(app_id))
 
@@ -1282,8 +1282,8 @@ def home_owner_path(app_id: str) -> str:
 
 
 def record_home_owner(app_id: str, url: str) -> None:
-    """Say that the private home of `app_id` belongs to the app at `url` (17.6). It outlives the
-    install when an uninstall keeps the home (17.14), so a later app with the same name can tell the
+    """Say that the private home of `app_id` belongs to the app at `url` (R17.6). It outlives the
+    install when an uninstall keeps the home (R17.14), so a later app with the same name can tell the
     home is not its own (review 2, F19)."""
     path = home_owner_path(app_id)
     try:
@@ -1314,14 +1314,14 @@ def home_belongs_to_another(app_id: str, url: str) -> bool:
 
 
 def remove_sandbox_home(app_id: str) -> None:
-    """Remove the app's private home on uninstall (17.14), its identity marker and its owner record."""
+    """Remove the app's private home on uninstall (R17.14), its identity marker and its owner record."""
     shutil.rmtree(sandbox_home(app_id), ignore_errors=True)
     remove_identity(app_id)
     if os.path.lexists(home_owner_path(app_id)):
         os.unlink(home_owner_path(app_id))
 
 
-# -------------------------------------------------------------------------- D-Bus proxy (17.5)
+# -------------------------------------------------------------------------- D-Bus proxy (R17.5)
 
 # A tray icon's bus name is org.kde.StatusNotifierItem-<pid>-<n>. xdg-dbus-proxy only accepts a
 # trailing `.*` as a wildcard (`StatusNotifierItem-*` is rejected as an invalid name and the proxy
@@ -1340,7 +1340,7 @@ def _portal_call(interface: str, obj: str = _PORTAL_PATH) -> str:
     return f"--call={_PORTAL}=org.freedesktop.portal.{interface}.*@{obj}"
 
 
-# capability → the extra xdg-dbus-proxy arguments it adds (local-proxy-test-plan.md). Where a portal
+# capability → the extra xdg-dbus-proxy arguments it adds (A1.2.3.14). Where a portal
 # covers the need, the capability opens *both* roads -- the portal interface, which GLib/GTK apps
 # take when they see /.flatpak-info, and the direct name the others use -- so the capability is the
 # one switch, and an app without it has neither (round three, R3-6: the Notification and Inhibit
@@ -1355,14 +1355,14 @@ CAP_PROXY_ARGS = {
     "secrets-provide": ["--own=org.freedesktop.secrets"],
 }
 
-# The portal interfaces a sandboxed app may call (17.5). The portals see the app as a *host* caller
-# (the proxy's root carries no .flatpak-info, 17.6.1), and some portals trust a host caller with
+# The portal interfaces a sandboxed app may call (R17.5). The portals see the app as a *host* caller
+# (the proxy's root carries no .flatpak-info, R17.6.1), and some portals trust a host caller with
 # things a sandbox must not get: Background writes the caller's command into ~/.config/autostart,
 # DynamicLauncher installs desktop entries, Camera/ScreenCast/RemoteDesktop/Screenshot/Location
 # hand over devices and sessions without the sandbox's consent, Documents could export and share
 # files, Realtime acts on any of the user's threads, Account reads the user's name and avatar.
 # FileChooser is left out too: for a host caller it returns real paths the sandbox cannot open, so
-# the app's own dialog is used instead, showing exactly what the sandbox sees (17.6.3). What
+# the app's own dialog is used instead, showing exactly what the sandbox sees (R17.6.3). What
 # remains acts on the caller's behalf only, with the user in the loop where it matters, and is what
 # a Flatpak app gets too -- except Notification and Inhibit, which come with their capabilities
 # (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep screen awake" chips are the truth.
@@ -1400,7 +1400,7 @@ INPUT_METHOD_PORTALS = ("org.freedesktop.portal.IBus", "org.freedesktop.portal.F
 
 def proxy_args(gs: dict, app_id: str) -> list[str]:
     """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal, the
-    input-method portals and the app's own name, plus each granted capability (17.5, 17.5.1)."""
+    input-method portals and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
     args = ["--filter", *portal_rules(), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
     for cap in sorted(normalize(gs)["caps"]):
         args += CAP_PROXY_ARGS.get(cap, [])
@@ -1408,11 +1408,11 @@ def proxy_args(gs: dict, app_id: str) -> list[str]:
 
 
 def uses_bus(gs: dict) -> bool:
-    """Whether the level uses the session bus (Standard does; Strict adds no bus proxy, 17.4)."""
+    """Whether the level uses the session bus (Standard does; Strict adds no bus proxy, R17.4)."""
     return normalize(gs)["level"] == "standard"
 
 
-# -------------------------------------------------------------------------- terminal injection (17.4)
+# -------------------------------------------------------------------------- terminal injection (R17.4)
 
 # A classic-BPF seccomp filter, handed to bwrap with --seccomp, that refuses the two ioctls a sandboxed
 # program could use to type into the user's terminal (CVE-2017-5226): TIOCSTI (push input) and
@@ -1486,9 +1486,9 @@ def write_seccomp_filter() -> str | None:
     return path
 
 
-# -------------------------------------------------------------------------- file arguments (17.6.2)
+# -------------------------------------------------------------------------- file arguments (R17.6.2)
 
-# Runs on the host, from the launcher, when the app was given arguments (17.6.2). An argument naming a
+# Runs on the host, from the launcher, when the app was given arguments (R17.6.2). An argument naming a
 # file or folder -- a path, a file:// URI, or an option's value (`--file=PATH`, `-oPATH` with a full
 # path) -- becomes the path the app finds it at: inside a granted folder, the folder's own mount path
 # plus the rest, unless the argument already resolves there (a CLI tool's relative paths in its shared
@@ -1496,7 +1496,7 @@ def write_seccomp_filter() -> str | None:
 # portal's re-export of it (Documents.Add + GrantPermissions for a file, AddFull with the
 # export-directory flag for a folder, what the file chooser portal does for a pick), at
 # $XDG_RUNTIME_DIR/doc/<id>/<name>, where the launcher binds the app's by-app view. Done from the host
-# side, it works whatever the portal makes of the sandbox's marker (17.6.1). Review 2, F6: a relative
+# side, it works whatever the portal makes of the sandbox's marker (R17.6.1). Review 2, F6: a relative
 # path or `.` from a granted folder reached the private home; review 3, R3-17: a link outside the
 # granted folders to a file inside one was passed by the link's path, which the app can't see; R3-16:
 # option values and folders were never handed over. Prints the new arguments shell-quoted, one line;
@@ -1619,7 +1619,7 @@ def write_forward_helper() -> str:
     return path
 
 
-# -------------------------------------------------------------------------- opening things on the host (17.6.3)
+# -------------------------------------------------------------------------- opening things on the host (R17.6.3)
 
 # `xdg-open` as a sandboxed app sees it, first on its PATH. The desktop's own xdg-open would start the
 # host's browser or viewer *inside* the sandbox -- a second Firefox with an empty profile, or nothing
@@ -1628,14 +1628,14 @@ def write_forward_helper() -> str:
 # it points to with a host program, asking the user which one as it does for a Flatpak app. That
 # works for a file in a granted folder or the hand-over view, which have the same path on both
 # sides; a file in the private home reaches the portal as $HOME/<x> -- the private home is mounted
-# over $HOME -- where the host has no such file, so the portal refuses it (17.6.3). GLib-based apps
+# over $HOME -- where the host has no such file, so the portal refuses it (R17.6.3). GLib-based apps
 # reach the same portal on their own (they read /.flatpak-info) -- but only because the launcher
-# hides the host's desktop entries from them (17.4): GLib prefers any handler it can find and asks
+# hides the host's desktop entries from them (R17.4): GLib prefers any handler it can find and asks
 # the portal when there is none. Qt calls the portal itself when it sees the marker. This covers the
 # rest -- Electron and anything else that runs xdg-open. Options go to the real xdg-open (usage,
 # --version).
 XDG_OPEN_SHIM = """#!/bin/sh
-# Written by AppKata for its sandboxed apps (requirement 17.6.3): opens links and files on the host
+# Written by AppKata for its sandboxed apps (R17.6.3): opens links and files on the host
 # through the OpenURI portal, instead of starting a host program inside the sandbox.
 set -u
 case "${1:-}" in ""|-*) exec /usr/bin/xdg-open "$@" ;; esac
@@ -1718,7 +1718,7 @@ def write_shims() -> str:
     return d
 
 
-# -------------------------------------------------------------------------- the launcher (17.4)
+# -------------------------------------------------------------------------- the launcher (R17.4)
 
 # environment variables passed through from the host (theming, locale, session), set only when present
 _ENV_PASSTHROUGH = (
@@ -1742,7 +1742,7 @@ _PROXY_PASSTHROUGH = ("http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no
 # (below). Passing the host address through would point the app at the real (unfiltered) bus address.
 
 _LAUNCHER_HEADER = """#!/bin/sh
-# Generated by AppKata for {name}. Do not edit — regenerated on update / settings change (req 17.4).
+# Generated by AppKata for {name}. Do not edit — regenerated on update / settings change (R17.4).
 set -eu
 id={id}
 rt="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
@@ -1754,7 +1754,7 @@ exe={exe}
 # nothing below can work -- the proxy socket, the display sockets and the document view all live
 # there -- so say which folder is missing rather than fail on the first mkdir.
 mkdir -p "$home" "$rt/appkata" || {{ echo "AppKata: can't use the session's runtime folder $rt (XDG_RUNTIME_DIR); the sandbox needs a logged-in session." >&2; exit 1; }}
-# Where stderr goes (requirement 14.2). Started by AppKata's Open, it is already this app's log.
+# Where stderr goes (R14.2). Started by AppKata's Open, it is already this app's log.
 # Started from the app menu, a file manager or a shortcut -- the desktop entry passes the word
 # --appkata-menu first -- there is no terminal, so nothing would show a refused launch: stderr is
 # appended to that same log, rotated at 2 MB like AppKata's own, under a dated line. Started any
@@ -1774,26 +1774,26 @@ elif [ "${{1:-}}" = --appkata-menu ]; then
   fi
 fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
-# way unasked (17.10; review 2, F16), so say so rather than leave the shell's "not found".
+# way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || {{ printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\\n" {qname} >&2; exit 1; }}
 {cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
 set -- -- "$appdir/$exe" "$@"
 """
 
-# File arguments (17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
+# File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
 # {visible}: the granted folders (and, for a CLI tool, the directory it runs in), where a file is
 # already in view and keeps its real path.
 _FORWARD_BLOCK = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
-# a document portal the arguments pass through unchanged (requirement 17.6.2).
+# a document portal the arguments pass through unchanged (R17.6.2).
 if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
   if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then eval "set -- $fwd"; fi
 fi
 """
 
-# Lazy, sandboxed AppImage extraction (17.7): run the publisher's own runtime inside a Strict bwrap
+# Lazy, sandboxed AppImage extraction (R17.7): run the publisher's own runtime inside a Strict bwrap
 # that can write only a staging dir. Redone when $appdir (the derived cache) is missing or was made from
 # a different file: "$appdir.stamp" records the .AppImage's size, mtime and inode, since the cache is
 # named by version only and an .AppImage can be replaced in place (a fixed-name app, a reinstall).
@@ -1833,7 +1833,7 @@ fi
 # Electron's too -- needs one; an AppImage's chrome-sandbox isn't setuid to fall back on, so the app
 # would refuse to start. There the launcher passes --no-sandbox to a program that brings Chromium's
 # sandbox (chrome-sandbox or chrome_crashpad_handler beside it): it stays inside AppKata's sandbox and
-# loses only its inner one (17.10.2; review 2, F2, owner's decision). Decided after the AppImage is
+# loses only its inner one (R17.10.2; review 2, F2, owner's decision). Decided after the AppImage is
 # unpacked, before anything is prepended: "$@" is still `-- program args`.
 _INNER_BLOCK = """d=$(dirname "$appdir/$exe")
 for f in "$appdir/chrome-sandbox" "$appdir/chrome_crashpad_handler" "$d/chrome-sandbox" "$d/chrome_crashpad_handler"; do
@@ -1847,8 +1847,8 @@ done
 
 
 # A Strict app sees its private home alone: a file or folder named on its command line isn't in view,
-# and nothing hands it over (no bus, 17.6.2). Started from a terminal with arguments, it says so,
-# rather than a tool failing on every argument in silence (17.3.3; review 2, F4: shown with a Strict
+# and nothing hands it over (no bus, R17.6.2). Started from a terminal with arguments, it says so,
+# rather than a tool failing on every argument in silence (R17.3.3; review 2, F4: shown with a Strict
 # tool run from a project folder). Not said where nothing shows stderr.
 _STRICT_NOTE = """if [ $# -gt 0 ] && [ -t 2 ]; then
   printf 'AppKata: %s runs Strict: it sees only its own private home, so files and folders named here are not visible to it (App Detail > Sandbox to change that).\\n' {qname} >&2
@@ -1905,7 +1905,7 @@ _GUARD_FN = """guard() {
 }
 """
 
-# The CLI-tool template's "$cwd" grant (17.3.3): the directory the tool is run in, except where that
+# The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
 # home, or the whole filesystem at /), or AppKata's own areas (installed apps, other apps' private
 # homes). There the tool runs in its private home instead and says why. Paths are compared physically
@@ -1942,7 +1942,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None, apps_root: str | None = None,
                    seccomp: str | None = None, log_path: str | None = None, forward: str | None = None,
                    shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True) -> str:
-    """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (17.4). The launcher
+    """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (R17.4). The launcher
     does no run-time policy resolution; its text is exactly what runs (shown in App Detail, audited).
 
     `appdir`: the app's current version folder (the extracted dir for an AppImage). `exec_rel`: the
@@ -1955,9 +1955,9 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     are passed through as they are. `shims`: the folder of programs the app finds first on its PATH
     (:func:`write_shims`, the portal-aware xdg-open); without one the app gets the desktop's.
     `inner_sandbox`: whether an app's own sandbox (Chromium, Electron) can run inside this one here
-    (:func:`nested_userns_works`); where it can't, such an app is started with --no-sandbox (17.10.2).
+    (:func:`nested_userns_works`); where it can't, such an app is started with --no-sandbox (R17.10.2).
     `bus_filter`: whether xdg-dbus-proxy is here (:func:`have_bus_filter`); without it a Standard app
-    runs with no session bus, and the files it is given still reach it (17.10; review 2, F12).
+    runs with no session bus, and the files it is given still reach it (R17.10; review 2, F12).
     """
     from . import applog
     gs, refused = strip_protected(gs, apps_root)
@@ -1972,7 +1972,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     bus = standard and bus_filter
     cwd = ""
     if cli:
-        # The same folders a grant may never share (17.3.1), plus the private homes and the runtime
+        # The same folders a grant may never share (R17.3.1), plus the private homes and the runtime
         # folder as the launcher sees it: "$rt" holds the real session bus, and a bind of it would land
         # after the proxy socket's and put the unfiltered bus back.
         roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]
@@ -1993,7 +1993,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                                    info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
                                    log=q(log_path or applog.app_log_path(app_id)), cwd=cwd, forward=fwd, note=note), _GUARD_FN]
     for path, why in refused:            # said in the launcher itself, which App Detail can show
-        out.append(f"# Refused folder grant {c(path)}: {c(why)} (requirement 17.3.1).")
+        out.append(f"# Refused folder grant {c(path)}: {c(why)} (R17.3.1).")
     if appimage_path is not None:
         out.append(_EXTRACT_BLOCK.format(img=q(appimage_path)))
     if not inner_sandbox:
@@ -2005,7 +2005,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:
         out.append("# No session bus: xdg-dbus-proxy isn't installed here, so this Standard app gets none,\n"
-                   "# and no desktop services, until it is (requirement 17.10).\n")
+                   "# and no desktop services, until it is (R17.10).\n")
     if bus:
         pargs = " ".join(shlex.quote(a) for a in proxy_args(gs, app_id))
         # The socket is named by a hash of the id: a Unix socket path holds 107 bytes, and an id is the
@@ -2017,15 +2017,15 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# Read the host bus with a default so `set -u` can\'t abort the launcher when it is unset.\n'
             'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"\n'
             '# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n'
-            '# launcher (the P1 gotcha, resolved — local-proxy-test-plan.md). It carries *no*\n'
+            '# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*\n'
             '# /.flatpak-info: the portals judge the caller by the proxy\'s root, and xdg-desktop-portal\n'
-            '# 1.18+ refuses a marked caller that is not a running Flatpak (requirement 17.6.1), so the\n'
+            '# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the\n'
             '# app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'
             '# Its own pid namespace ends it with bwrap: killing bwrap kills the namespace\'s first\n'
             '# process (bwrap\'s, which keeps --die-with-parent), and with it everything inside. The\n'
             '# proxy\'s own death signal is not enough: the kernel clears it at an exec that changes\n'
             '# the security domain, as entering Ubuntu 25.04+\'s unpriv_bwrap does, and every launch\n'
-            '# there left its proxy running (review 2, F2; requirement 17.10.2).\n'
+            '# there left its proxy running (review 2, F2; R17.10.2).\n'
             'bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
             '  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
             '  --bind "$rt" "$rt" --unshare-pid --die-with-parent -- \\\n'
@@ -2041,7 +2041,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '  exit 1\n'
             'fi\n')
 
-    # Display: the Wayland socket if present, else X11 with XAUTHORITY (17.9), decided at run time.
+    # Display: the Wayland socket if present, else X11 with XAUTHORITY (R17.9), decided at run time.
     # On Wayland, X11 (XWayland) is added too when the "x11" device grant allows it, so an app that
     # only speaks X11 still opens; one that speaks Wayland keeps preferring it. The --setenv words land
     # after --clearenv, like everything prepended to "$@".
@@ -2073,7 +2073,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '  *) if [ -e "$rc" ]; then set -- --ro-bind "$rc" "$rc" "$@"; fi ;;\n'
             'esac\n')
 
-    # The host's desktop entries, hidden (17.6.3). GLib opens a link or file with the default handler
+    # The host's desktop entries, hidden (R17.6.3). GLib opens a link or file with the default handler
     # it finds and asks the OpenURI portal only when it finds none; /usr is in view, so on a desktop
     # it found firefox.desktop and xed.desktop and started them *inside* the sandbox (round three,
     # R3-1, shown with GLib 2.80). A Flatpak runtime has no desktop entries; an empty tmpfs over each
@@ -2114,7 +2114,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         "  --symlink usr/bin /bin --symlink usr/sbin /sbin --ro-bind /etc /etc \\",
         "  --ro-bind-try /var/cache/fontconfig /var/cache/fontconfig \\",
         '  --proc /proc --dev /dev --dev-bind-try /dev/dri /dev/dri --tmpfs /tmp --dir "$rt" \\',
-        # The document portal's hand-over (17.6): a file the user picks in a portal file chooser is
+        # The document portal's hand-over (R17.6): a file the user picks in a portal file chooser is
         # re-exported by xdg-document-portal on its FUSE mount, and the chooser returns the path
         # $rt/doc/<docid>/<name>. The portal's by-app/<id> view holds just this app's documents, so it is
         # bound at $rt/doc, as Flatpak does; without it the returned path doesn't exist in the sandbox
@@ -2138,7 +2138,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         '  --ro-bind-try "$HOME/.local/share/themes" "$HOME/.local/share/themes" \\',
     ]
     # Keep the .AppImage itself visible read-only, so an app that reads $APPIMAGE (set below) resolves
-    # it rather than a dangling path (17.7). $img is the extraction block's copy of appimage_path.
+    # it rather than a dangling path (R17.7). $img is the extraction block's copy of appimage_path.
     if appimage_path is not None:
         parts.append('  --ro-bind-try "$img" "$img" \\')
     # Camera: the V4L2 devices themselves, which Chromium/Electron and most apps open directly. Without
@@ -2148,14 +2148,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append('for d in /dev/video* /dev/media*; do\n'
                    '  if [ -c "$d" ]; then set -- --dev-bind "$d" "$d" "$@"; fi\n'
                    'done\n')
-    # Folder grants (baked). $cwd (the CLI-tool template) binds the current directory (17.3.3).
+    # Folder grants (baked). $cwd (the CLI-tool template) binds the current directory (R17.3.3).
     for path, mode in sorted(gs["folders"].items()):
         if path == "$cwd":           # added at run time by the working-directory block
             continue
         flag = "--bind-try" if mode == "rw" else "--ro-bind-try"
         p = q(os.path.expanduser(path))
         parts.append(f'  {flag} {p} {p} \\')
-    # Sound: the PipeWire and Pulse sockets, the app identified as sandboxed by .flatpak-info (17.8).
+    # Sound: the PipeWire and Pulse sockets, the app identified as sandboxed by .flatpak-info (R17.8).
     # PipeWire/WirePlumber don't stop such a client from recording (verified: WirePlumber 0.4.17,
     # PipeWire 1.0.5), so "play" and "record" bind the same sockets; enforcing the split is deferred.
     if gs["sound"]:
@@ -2166,12 +2166,12 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # has none (above), so the portals see a host caller. Nothing binds it at $rt/flatpak-info, which
     # is what GTK3, Qt up to 6.4 and xdg-open would read to switch to the portal file chooser; GTK4,
     # Qt 6.5+ and Chromium read this one and then ask the FileChooser portal, which the proxy denies,
-    # so each keeps its own dialog (17.6.3, PORTAL_INTERFACES).
+    # so each keeps its own dialog (R17.6.3, PORTAL_INTERFACES).
     parts.append('  --ro-bind "$info" /.flatpak-info \\')
     if bus:
         parts.append('  --bind "$sock" "$rt/bus" \\')
     if shims:
-        # xdg-open that asks the host through the OpenURI portal (17.6.3), first on PATH below. At
+        # xdg-open that asks the host through the OpenURI portal (R17.6.3), first on PATH below. At
         # every level: a Strict app has no bus and so nothing to ask, and the shim says so and fails --
         # the desktop's own xdg-open, found in /usr, would start the host's browser inside the sandbox
         # under a desktop it doesn't know (round five, R5-4: shown with a fake firefox and no
@@ -2184,7 +2184,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     parts.append(f'  --clearenv --setenv HOME "$HOME" --setenv PATH {path_in} \\')
     parts.append('  --setenv XDG_RUNTIME_DIR "$rt" \\')
     # GTK4 reads /.flatpak-info and takes the portal road for its file dialog; the proxy denies the
-    # FileChooser portal (for a host caller it returns paths the sandbox can't open, 17.6.3). GTK 4.14
+    # FileChooser portal (for a host caller it returns paths the sandbox can't open, R17.6.3). GTK 4.14
     # fell back to its own dialog when refused; GTK 4.18 shows *no dialog at all* (round six, R6-4,
     # Ubuntu 25.04), and GTK_USE_PORTAL=0 doesn't stop a marked process from asking. GDK_DEBUG=no-portals
     # does: GTK4 then never asks and uses its own dialog, which shows exactly what the sandbox sees.
@@ -2195,7 +2195,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # Point the app at the filtered proxy, set *after* --clearenv (and keepenv) so bwrap keeps it.
     # Emitted before --clearenv it was wiped; via the env passthrough it took the host bus address.
     # GTK_USE_PORTAL is deliberately not set either: the portal file chooser would answer a host
-    # caller with real paths the sandbox cannot open, so apps use their own dialogs (17.6.3). An
+    # caller with real paths the sandbox cannot open, so apps use their own dialogs (R17.6.3). An
     # app whose own AppRun sets GTK_USE_PORTAL=1 loses its GTK3 file dialog.
     # With no bus (Strict) the address is set all the same, and leads nowhere: unset, with a display,
     # GLib and libdbus *autolaunch* a bus through dbus-launch (dbus-x11, on every Mint and Ubuntu
@@ -2225,7 +2225,7 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and three facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
-    run inside, 17.10.2, and whether xdg-dbus-proxy is here, 17.10), and the startup pass can tell a
+    run inside, R17.10.2, and whether xdg-dbus-proxy is here, R17.10), and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""
@@ -2245,7 +2245,7 @@ def helpers_current(app_id: str, gs: dict) -> bool:
     write today: the app's identity marker, the xdg-open shim (and its exec bit), the file-argument
     helper and the seccomp filter. Their contents aren't in the launcher's text, so comparing that
     alone left an older AppKata's shim or marker in place for good (review 2, F5; round four R4-4's
-    class). The startup pass rewrites the launcher, and with it these, when any differs (17.4)."""
+    class). The startup pass rewrites the launcher, and with it these, when any differs (R17.4)."""
     want: list[tuple[str, bytes]] = [
         (identity_path(app_id), flatpak_info_text(app_id, _marker_network(gs)).encode()),
         (os.path.join(shims_dir(), "xdg-open"), XDG_OPEN_SHIM.encode()),
@@ -2265,7 +2265,7 @@ def helpers_current(app_id: str, gs: dict) -> bool:
 def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None) -> str:
     """Write `<apps_root>/<app>/run`, the identity marker and the shared helpers it calls, and return
-    the launcher path (17.4)."""
+    the launcher path (R17.4)."""
     write_flatpak_info(app_id, network=_marker_network(gs))
     write_seccomp_filter()
     write_forward_helper()
@@ -2285,16 +2285,16 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     return path
 
 
-# -------------------------------------------------------------------------- AppImage extraction (17.7)
+# -------------------------------------------------------------------------- AppImage extraction (R17.7)
 
 def extracted_dir(appdir_parent: str, version: str) -> str:
-    """Where a sandboxed AppImage is extracted: beside the kept `.AppImage` (17.7). Derived cache."""
+    """Where a sandboxed AppImage is extracted: beside the kept `.AppImage` (R17.7). Derived cache."""
     from .install import _safe
     return os.path.join(appdir_parent, _safe(version) + ".extracted")
 
 
 def appimage_exec(extracted: str) -> str:
-    """The program to run from an extracted AppImage, relative to the extracted dir (17.7). The
+    """The program to run from an extracted AppImage, relative to the extracted dir (R17.7). The
     AppImage spec puts `AppRun` at the root of squashfs-root, so it's always that. Extraction is
     lazy, in the launcher itself (`_EXTRACT_BLOCK`), so `extracted` need not exist yet."""
     return "AppRun"

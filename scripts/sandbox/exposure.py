@@ -1,4 +1,4 @@
-"""What a sandboxed app can see, checked against docs/sandbox-exposure.md (review 3, harness 3).
+"""What a sandboxed app can see, checked against docs/architecture/A2-sandbox-exposure.md (review 3, harness 3).
 
 Shared by tests/test_sandbox_exposure.py and the field test. PROBE runs inside a generated launcher,
 and on the host for the values an identifier is compared with, and prints what it can see as JSON:
@@ -18,7 +18,7 @@ import os
 import re
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-INVENTORY = os.path.join(ROOT, "docs", "sandbox-exposure.md")
+INVENTORY = os.path.join(ROOT, "docs", "architecture", "A2-sandbox-exposure.md")
 
 PROBE = r'''
 import json, os, socket, stat, sys
@@ -127,7 +127,7 @@ def load(path: str = INVENTORY) -> list[dict]:
     with open(path, encoding="utf-8") as f:
         text = f.read()
     rows = []
-    for line in text[text.index("\n## The inventory"):].split("\n"):
+    for line in text[text.index("\n## A2.1. The inventory"):].split("\n"):
         m = re.match(r"^\| (`.+?) \| (.+?) \| (.+?) \|$", line)
         if m:
             rows.append({"items": re.findall(r"`([^`]+)`", m.group(1)), "when": m.group(2).strip(),

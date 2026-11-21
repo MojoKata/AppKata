@@ -56,7 +56,7 @@ def test_the_check_finds_a_name_however_it_is_written(monkeypatch):
 
 
 def test_the_repository_address_is_appkata_core_s():
-    """AppKata's own repository is written in one place, APPKATA_REPO (requirement 2.11.1): it was a
+    """AppKata's own repository is written in one place, APPKATA_REPO (R2.11.1): it was a
     placeholder until the real one was chosen, and the placeholder had been copied into the installer,
     the tour, the demo data and the mockups. Every address of AppKata's repository in a tracked file is
     APPKATA_REPO's, and the placeholder is nowhere."""

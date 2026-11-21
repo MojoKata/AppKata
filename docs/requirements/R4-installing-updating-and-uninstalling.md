@@ -1,0 +1,249 @@
+# R4. Installing, updating and uninstalling
+
+R4.1. AppKata manages only the apps it installed. Each install is recorded with:
+
+- Its Source and version.
+- The asset it came from.
+- Its install type (R4.3).
+- Everything needed to uninstall it.
+
+R4.2. **Choosing an asset.** For the current OS and architecture:
+
+1. The Source's asset filter (R2.6.4), if set.
+2. Otherwise the manifest (R2.7).
+3. Otherwise the asset file names are matched to the platform's formats in order of
+   preference, then to the architecture. A name with `x86_64`, `x86-64`, `amd64`, `x64`, `win64` or
+   `64bit` is this computer's. A file named for another architecture (`aarch64`, `arm64` or `armv8`;
+   `i386` to `i686`, a 32-bit `x86` or `win32`; `armhf`, `armv7`, `armel`, `ppc64le`, `s390x`,
+   `riscv64`, `loong64`, `mips`) is passed over, unless its name also gives this computer's. A file
+   named for this computer's architecture comes before one marked `universal`, `all-arch` or
+   `noarch`, which comes before one that names none.
+   A filter is applied only if it narrows the list without emptying it.
+
+Format order on Linux:
+
+1. AppImage
+2. Flatpak bundle
+3. `.deb` (Debian-family) or `.rpm` (Fedora-family)
+4. `.tar.gz` / `.tar.xz`
+
+A Linux package wrapped in a `.zip` isn't looked inside: [G#56](https://github.com/MojoKata/AppKata/issues/56).
+
+On Windows, portable first (R15.3): a portable `.zip`, a portable `.exe`, `.msi`, a `.exe`
+installer, `.msix`. Only x64 files are chosen.
+
+R4.2.1. **Portable or system package.** AppKata decides from the file, without asking:
+
+| File | Install |
+|---|---|
+| AppImage, `.tar.*` with a program inside, Windows `.zip` with a `.exe` inside | Portable (R4.3.1) |
+| `.deb`, `.rpm`, Flatpak bundle, `.msi`, `.msix` | System package (R4.3.2, R4.3.3) |
+| Windows `.exe` | Probed: AppKata reads the file's first megabyte (a ranged download) for Inno Setup, NSIS, WiX and InstallShield markers, which also give the silent-install arguments (R4.3.3). Otherwise its name decides (`portable`, `standalone` → portable; `setup`, `installer` → installer). If neither does, it's **unknown** and the install dialog asks (R4.9). |
+
+R4.3. **Install types.**
+
+R4.3.1. **Portable** (AppImage, tarball, portable `.zip`). Each app gets its own
+folder, `<install folder>/<app>/`, holding its versions side by side: an AppImage as its
+versioned file (`LocalSend-1.18.2-x86_64.AppImage`), an archive unpacked into a folder named
+after its version (`2.1/`). The install folder is a setting (R11.1.4); by default it is:
+
+- `~/bin/apps` on Linux, with command links (R4.3.1.3) directly in `~/bin`. Ubuntu, Debian and
+  Mint put `~/bin` on the PATH at login when it exists.
+- On Windows, by who the app is for (R15.4): `%LOCALAPPDATA%\Programs` for **Just me** (the
+  default), `C:\Programs` for **Everyone**. Neither needs administrator rights.
+
+No elevation is needed. Changing the install folder applies to new installs and updates; apps
+already installed stay where they are until they're updated or reinstalled.
+
+R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desktop` entry on
+Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a
+command-line tool (R17.3.3) gets none unless the user or a Trust chose the option for it.
+
+R4.3.1.2. **Stable name.** When on (the default), the current version also gets a link with a
+stable name next to it: `LocalSend.AppImage` → `LocalSend-1.18.2-x86_64.AppImage`, or
+`current` → `2.1/` for an unpacked archive. Launchers and command links point at the stable
+name, so they keep working across updates; for a sandboxed app they point at its launcher,
+`~/bin/apps/<app>/run`, which runs the current version (17.4). (On Windows, `current` is a directory junction,
+which needs no extra rights, R15.5.)
+
+R4.3.1.3. **Command links.** When on (the default), AppKata puts a link named after the app
+(`localsend`) in the command links folder (default `~/bin`), so the app can be started
+from a terminal. AppKata never replaces a file there that isn't a link it made; the install
+stops with an error instead. On Windows a command link is a `<app>.cmd` file (R15.6).
+
+R4.3.1.4. Uninstalling removes the app's folder (every version), its launcher and its links.
+
+R4.3.1.5. **Older versions.** After an update, AppKata keeps up to *N* previous versions in the
+app's folder (Keep older versions, R11.1.4; default 2) and removes older ones. A kept version
+reinstalls instantly, without downloading (R5.7.5.1); the user can also remove a kept version
+from the version list.
+
+R4.3.1.6. **Per-app options.** The three options above (app menu, stable name, command link) are
+copied into each app's own settings when it's installed, so changing Settings later doesn't
+change apps already installed. An app's options can be changed from **Install options…** (R4.9.5).
+For a new install the starting values are, in order: the app's own saved options, the options a
+Trust recommends for it (R10.3.1, yours first), then Settings.
+
+R4.3.2. **Flatpak bundle.** Installed with `flatpak install --user`.
+
+R4.3.3. **System packages** (`.deb`, `.rpm`, `.msi`, `.exe` installers, `.msix`).
+These need elevation (R1.3). Installers run silently when the installer type is recognized:
+
+| Installer | Silent arguments |
+|---|---|
+| MSI | `msiexec /i … /qn` |
+| Inno Setup | `/VERYSILENT /SUPPRESSMSGBOXES` |
+| NSIS | `/S` |
+| WiX Burn bundle | `/quiet /norestart` |
+| InstallShield | `/s` |
+| Squirrel | `--silent` |
+| Unrecognized | Runs interactively |
+
+On Windows, who an installer installs for, elevation, exit codes and uninstalling are in R15.4,
+R15.7 and R15.8.
+
+R4.4. **Verifying downloads.** Before installing, AppKata:
+
+1. Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest, when one
+   exists.
+2. Checks a minisign or GPG signature, or a sigstore bundle, when one exists.
+3. Reads Windows' code-signing status, Authenticode (R15.11).
+
+The App Detail panel shows the result as a chip: **Verified** (a signature checked),
+**Checksum** (a checksum only), or **Unverified**. Unverified downloads can still be
+installed. A failed check blocks the install and explains why.
+
+R4.5. **Foreign installs.** An app is **foreign-installed** when AppKata finds it on the system
+but didn't install it. AppKata looks for it in:
+
+- The package database (dpkg, rpm, flatpak).
+- On Windows, the places listed in R15.12.
+- `/Applications` (by bundle ID).
+- The Start menu or `.desktop` entries.
+
+The match uses the manifest's IDs, the AppStream ID, or the app name.
+
+R4.5.1. Foreign-installed apps are flagged with an **Installed outside AppKata** badge
+wherever they appear: Catalog tiles, the App Detail panel, and Source rows. The badge's
+tooltip says where the install was found, and its version if known.
+
+R4.5.2. Foreign-installed apps are never listed in the Apps view (R6) and are never managed by
+AppKata, unless the user adopts one that a package channel matches exactly (R16.4.2).
+
+R4.5.3. AppKata does not install on top of a foreign install. The Install button is replaced
+by a disabled **Installed outside AppKata** button with the note "Uninstall the existing copy
+first to manage it with AppKata." When a package channel matches it exactly, the button is
+**Adopt** instead (R16.4.2).
+
+R4.5.4. Adding a Source for a foreign-installed app is allowed, and the row is flagged
+(R7.1.1).
+
+R4.6. **Updating** installs the new version using the same install type, and keeps the
+previous version's files until the update succeeds.
+
+R4.7. **Uninstalling** reverses what AppKata recorded at install (R4.1), after a confirmation.
+User data in the home folder is kept.
+
+R4.8. **Install progress.**
+
+R4.8.1. **Phases**: Waiting, Downloading, Verifying, Installing. One install runs at a time;
+**Update all** and further installs queue behind it as "Waiting". The progress shows:
+
+- **Apps row**: the phase ("Downloading 45%", "Verifying…", "Waiting") above a progress bar,
+  with "41.4 MB of 92.0 MB · 3.4 MB/s" beside it when the row is wide enough. The Update and
+  Uninstall buttons give way to an icon-only **Cancel** (✕; for a waiting app, "Remove from the
+  queue").
+- **App Detail panel**: the Install or Update button shows the phase and percentage, followed by
+  a **Cancel** button, a progress bar, and the size and speed.
+- **Catalog tile**: the state mark becomes "Installing 45%".
+- **Header bar**: a turning sync icon in the Apps segment while anything installs.
+
+R4.8.2. **Resuming.** Downloads go to `<data folder>/downloads/<app>/<file>.part`. If the
+connection breaks, AppKata retries up to three times, continuing from where it stopped with a
+Range request, as long as the server still has the same file (`If-Range` with its ETag or
+Last-Modified date). Otherwise it starts over. A download that still fails, or that was
+interrupted by quitting, is kept and resumed the next time the app is installed or updated.
+The checksum (R4.4) is always checked over the whole file. A complete file that fails its
+checksum or its install is deleted.
+
+R4.8.3. **Cancelling** is possible until the Installing phase starts. It deletes the partial
+download and installs nothing.
+
+R4.9. **Install options on the first install.** The first time an app is installed, AppKata
+probes the release's files for this computer (R4.2, R4.2.1) and shows a dialog only when a choice
+is needed to get the app's settings right:
+
+R4.9.1. **When it asks:** the app also has a package channel on Linux (R16.3.3), or the release has both a portable file and a system package (for
+example an AppImage and an `.rpm`), or a Windows `.exe` it couldn't classify. Otherwise it
+installs straight away with the preferred file.
+
+R4.9.2. **The dialog**, titled "Install <App> <version>":
+
+- One card per kind of file, in order of preference, the first marked **Recommended**. On Linux,
+  one card per package channel too (R16.3.1). Each
+  shows the kind (AppImage, `.rpm` package…), a **Portable** or **System package** chip, what it
+  means ("Runs from your install folder; no admin password. Updates replace the file." or
+  "Installed for all users with dnf; needs your admin password."), the file name and its size.
+- For an unclassified `.exe`: "This file is **A portable program** / **An installer**"; Install
+  stays disabled until one is picked.
+- For a portable choice: where it will go (`<install folder>/<app>`), and this app's **Add to
+  the app menu** and **Command `<app>` in `<folder>`** checkboxes, starting from Settings (R11.1.4).
+  On Linux, **It is**: "As the download shows" (or "Decide from the download" before it's known), "An
+  app with a window" or "A command-line tool" (R17.3.3); choosing one moves the Sandbox card with it.
+- On Windows, **Install for**: **Just me** or **Everyone on this computer** (R15.4), when the file
+  supports both; otherwise a note saying which one it does.
+- On Linux, for an AppImage or a tarball, the **Sandbox** card: the template the app will run under
+  and its summary chips, **Change…** (the Sandbox dialog, R17.3), the reviewers' suggestion with
+  **Use theirs** when it differs (R17.3.2, R17.11), and for an AppImage the cost of unpacking it (R17.7).
+- **This app updates itself** (R4.10), checked when a Trust says so, with "<Trust> says it updates
+  itself", and the hint "AppKata installs it and shows new releases, but leaves updating to the
+  app. AppKata can't turn an app's own updater off." — with, when it will run sandboxed, "While it
+  runs sandboxed it can't update itself, so AppKata updates it." (R4.10.5)
+- "You can change this later from the app's ⋯ menu.", **Cancel** and **Install**.
+
+R4.9.3. **The answer is saved** with the app (the kind of file, what an `.exe` is, the two
+portable options, on Linux the app's kind and the sandbox when the card was changed, and on Windows
+who it's for) and recorded in the Audit. Updates use it without asking; if a later release
+lacks that kind of file, the preferred one is used.
+
+R4.9.4. Apps installed before a choice was saved keep to the kind of file they were installed
+from.
+
+R4.9.5. The App Detail panel shows how the app is, or would be, installed: a chip such as
+"AppImage · portable" or ".rpm · system package". For installed apps, the ⋯ menu has **Install
+options…**, which opens the same dialog with **Save** instead of Install; changes apply from the
+next update, except the Sandbox card's, which applies at once (R17.13).
+
+R4.9.6. On Windows, AppKata uninstalls apps installed by their own installer with the uninstall
+command it recorded at install (R15.8).
+
+R4.10. **Apps that update themselves.** Some apps download and install their own updates
+(electron-updater, Sparkle, their own updaters), on some or all platforms.
+
+R4.10.1. AppKata still finds, installs, tracks and uninstalls them. It doesn't update them: their
+state is **Updates itself** (a chip on the Apps row and in the App Detail panel, with "<version>
+is out" when a newer release exists), they have no Update button, **Update all** skips them, and
+older versions can't be installed from the Versions list.
+
+R4.10.2. A portable app that updates itself is installed as `<install folder>/<app>/<App>.AppImage`
+(or an `app` folder for archives), with no version folders, kept versions or `current` link, since
+the app replaces its own files.
+
+R4.10.3. **Whether an app updates itself** is a statement about the app, not a switch: AppKata
+can't turn an app's own updater on or off, it only steps back. Unticking it means "this app
+doesn't update itself", and AppKata then updates it. It comes from, in order: the app's own setting (the **This
+app updates itself** checkbox in the install dialog and Install options…, R4.9), then the
+`Auto update` option of the highest-Score Trust that sets one for this platform, as its review for the installed or latest version has it (R10.3.3; its
+`(<platform>)` line, else its line without one; R10.3.1, R7.6.8).
+The App Detail panel says where it came from ("Kenji's app reviews says it updates itself; change
+this in Install options.", or "You marked it as updating itself in Install options.").
+
+R4.10.4. Turning off an app's own updater from outside (Syncthing's `STNOUPGRADE`, VSCodium's
+`update.mode`, Joplin's preference) so AppKata can update it instead isn't supported; it would need
+a recipe per app.
+
+R4.10.5. **While it runs sandboxed** (R17), an app that updates itself can't: its files, and an
+AppImage's own file, are read-only. AppKata then updates it as if it didn't update itself — it has
+the Update button, Update all includes it, and its next update moves it from the fixed-name layout
+of R4.10.2 to version folders — and App Detail and the install dialog say why (R17.12). Switched to
+Off, it updates itself again.

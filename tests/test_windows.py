@@ -1,4 +1,4 @@
-"""Windows decisions (requirement 15), tested on any OS: installer arguments and scopes, exit
+"""Windows decisions (R15), tested on any OS: installer arguments and scopes, exit
 codes, Uninstall entries, command links, PATH, folder permissions, names, and file order."""
 
 import os
@@ -204,7 +204,7 @@ def _tool_zip(root, version: str) -> str:
 
 @on_windows
 def test_portable_zip_for_me(winenv, server, tmp_path):
-    """Junction, Start-menu shortcut, .cmd command link on the PATH, files in use, uninstall (15.5, 15.6, 15.9)."""
+    """Junction, Start-menu shortcut, .cmd command link on the PATH, files in use, uninstall (R15.5, R15.6, R15.9)."""
     import subprocess
     import time
     from appkata_core import install
@@ -252,7 +252,7 @@ def test_portable_zip_for_me(winenv, server, tmp_path):
 
 @on_windows
 def test_portable_zip_for_everyone(winenv, server, tmp_path):
-    """The everyone folder and the app's folder are locked down; the all-users shortcut (15.4.3, 15.5)."""
+    """The everyone folder and the app's folder are locked down; the all-users shortcut (R15.4.3, R15.5)."""
     from appkata_core import install
     root, base = server
     p = install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone", app_menu=True, command_dir="")
@@ -312,7 +312,7 @@ def test_uninstall_entries_are_read():
     assert entries and all({"hive", "key"} <= set(e) for e in entries.values())
 
 
-# ---------------------------------------------------------------- the Visual C++ run-time (requirement 15.18)
+# ---------------------------------------------------------------- the Visual C++ run-time (R15.18)
 def make_pe(path, dlls, delay=(), pe32plus=True):
     """A minimal Windows program whose import tables name `dlls` (and delay-loaded `delay`)."""
     import struct

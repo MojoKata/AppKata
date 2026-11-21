@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Install options (requirement 4.9): shown on an app's first install when the release offers both
+// Install options (R4.9): shown on an app's first install when the release offers both
 // portable and system-package files, a Windows .exe AppKata can't classify, or, on Linux, package
-// channels (Flathub, the distribution; 16.3). The answer is saved for updates. Also opens from the
+// channels (Flathub, the distribution; R16.3). The answer is saved for updates. Also opens from the
 // App Detail ⋯ menu ("Install options…").
 Dialog {
     id: root
@@ -14,13 +14,13 @@ Dialog {
     property bool appMenu: true
     property bool commandLink: true
     property bool stableName: true
-    property bool autoUpdate: false     // the app updates itself: a fact AppKata records, not a switch (requirement 4.10)
+    property bool autoUpdate: false     // the app updates itself: a fact AppKata records, not a switch (R4.10)
     property bool change: false        // opened from "Install options…": saves without installing
-    property string scope: "me"        // Windows: "me" or "everyone" (requirement 15.4)
-    property bool motw: false          // Windows: Mark of the Web (requirement 15.11.1)
-    property string sandboxTpl: ""     // the chosen sandbox template (17.3), "" = follow the plan's default/reviews
+    property string scope: "me"        // Windows: "me" or "everyone" (R15.4)
+    property bool motw: false          // Windows: Mark of the Web (R15.11.1)
+    property string sandboxTpl: ""     // the chosen sandbox template (R17.3), "" = follow the plan's default/reviews
     property bool sandboxTouched: false
-    // the app's kind (17.3.3, review 2 F4): "" = as the download shows (an app until it's known), or the
+    // the app's kind (R17.3.3, review 2 F4): "" = as the download shows (an app until it's known), or the
     // user's "gui"/"cli"; an untouched Sandbox card follows it
     property string appKindChoice: ""
     readonly property string effKind: appKindChoice || (plan.kind ? plan.kind.detected : "") || "gui"
@@ -50,7 +50,7 @@ Dialog {
     readonly property var scopes: !win ? [] : (cur.category === "unknown" && exeAs === "portable") ? ["me", "everyone"] : (cur.scopes || [])
     readonly property var cands: plan.cards || (plan.candidates || []).map(c => Object.assign({ channel: "release" }, c))
     readonly property bool chan: cur.channel === "flatpak" || cur.channel === "package"
-    property string updates: "system"       // who updates a channel install (requirement 16.5.3)
+    property string updates: "system"       // who updates a channel install (R16.5.3)
     readonly property bool hasPortable: cands.some(c => c.channel === "release" && c.category === "portable")
     onCurChanged: updates = plan.updates || (cur.updater ? "system" : "appkata")
     readonly property var cur: cands[sel] || ({})
@@ -72,7 +72,7 @@ Dialog {
         const ke = p.sandbox && p.sandbox.byKind ? p.sandbox.byKind[effKind] : null
         sandboxTpl = !(p.sandbox && p.sandbox.applicable) ? "" : ke ? (ke.level === "off" ? "off" : ke.template)
                      : (p.sandbox.level === "off" ? "off" : p.sandbox.template)
-        if (cur.updatesItself && !p.autoUpdateBy) autoUpdate = true       // Squirrel apps update themselves (15.7.1)
+        if (cur.updatesItself && !p.autoUpdateBy) autoUpdate = true       // Squirrel apps update themselves (R15.7.1)
         updates = p.updates || (cur.updater ? "system" : "appkata")
         open()
     }
@@ -140,10 +140,10 @@ Dialog {
                               : "A Windows program: either portable or an installer."
                     }
                     Text { visible: !card.isCh; text: card.c.name || ""; color: Theme.faint; font.pixelSize: 11; font.family: Theme.mono; width: parent.width; elide: Text.ElideMiddle }
-                    Text {      // how far behind the project (16.7.2)
+                    Text {      // how far behind the project (R16.7.2)
                         visible: card.c.channel === "package" && (card.c.behind || 0) > 0
                         text: card.c.behind + " release" + (card.c.behind > 1 ? "s" : "") + " behind the project"; color: Theme.faint; font.pixelSize: 12 }
-                    Text {      // who recommends it, who updates it, the link check (16.1.4, 16.3.2, 16.5.2)
+                    Text {      // who recommends it, who updates it, the link check (R16.1.4, R16.3.2, R16.5.2)
                         visible: text !== ""; width: parent.width; wrapMode: Text.WordWrap; textFormat: Text.StyledText; font.pixelSize: 12; color: Theme.accent
                         text: [card.c.recommendedBy ? "Recommended by " + card.c.recommendedBy : "",
                                card.c.channel === "flatpak" && card.c.updater ? "<font color='" + Theme.warn + "'>" + card.c.updater + " updates Flatpaks automatically</font>" : "",
@@ -156,7 +156,7 @@ Dialog {
             }
         }
     }
-    Row {       // an unclassified .exe (requirement 4.2.1)
+    Row {       // an unclassified .exe (R4.2.1)
         visible: root.cur.category === "unknown"
         spacing: 10
         Text { text: "This file is"; color: Theme.text; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
@@ -170,7 +170,7 @@ Dialog {
             }
         }
     }
-    Rectangle {     // who updates a channel install (requirement 16.5.3)
+    Rectangle {     // who updates a channel install (R16.5.3)
         visible: root.chan
         width: parent.width; height: updCol.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -202,7 +202,7 @@ Dialog {
         visible: root.chan && root.hasPortable && !root.change
         text: "Portable options appear when you choose the AppImage."; color: Theme.faint; font.pixelSize: 12
     }
-    Rectangle {     // portable options for this app (requirement 4.3.1)
+    Rectangle {     // portable options for this app (R4.3.1)
         visible: root.portableChoice && !root.chan
         width: parent.width; height: popts.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -235,7 +235,7 @@ Dialog {
                                         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                         text: "<b>Command</b> <tt>" + ((root.plan.portable || {}).command || "") + "</tt> in " + root.home((root.plan.portable || {}).commandDir) } }
             }
-            Row { spacing: 10; visible: !!root.plan.kind     // the app's kind (17.3.3)
+            Row { spacing: 10; visible: !!root.plan.kind     // the app's kind (R17.3.3)
                 Text { text: "It is"; color: Theme.text; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                 Select {
                     objectName: "kindSelect"
@@ -253,7 +253,7 @@ Dialog {
                    text: "Options recommended by " + ((root.plan.portable || {}).recommendedBy || "") }
         }
     }
-    Rectangle {     // the Sandbox card (requirement 17.3, C11)
+    Rectangle {     // the Sandbox card (R17.3, C11)
         visible: !!root.sbx && root.portableChoice && !root.chan
         width: parent.width; height: sbxCol.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -274,7 +274,7 @@ Dialog {
                        text: "suggested by " + (root.sbx ? root.sbx.recommendedBy : ""); color: Theme.accent; font.pixelSize: 12
                        anchors.verticalCenter: parent.verticalCenter }
             }
-            Text {      // a review's Off is a suggestion, applied only by the user's click (17.3.2, review 2 F8)
+            Text {      // a review's Off is a suggestion, applied only by the user's click (R17.3.2, review 2 F8)
                 visible: !!root.sbx && !!root.sbx.suggestsOff && root.sandboxTpl !== "off"
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.accent; font.pixelSize: 12; objectName: "useTheirsOff"
                 text: (root.sbx && root.sbx.recommendedBy ? root.sbx.recommendedBy : "A reviewer") + " suggests running it with no sandbox. Use theirs"
@@ -298,11 +298,11 @@ Dialog {
                    text: root.sbx && root.sbx.support && root.sbx.support.declined
                          ? "This system needs a one-time setup before the sandbox can run; until then the app runs unsandboxed. Set it up in Settings → Sandbox."
                          : "This system needs a one-time setup before the sandbox can run; installing asks whether to set it up now." }
-            Text {     // Install options on an installed app that runs unsandboxed (17.13, review 2 F13)
+            Text {     // Install options on an installed app that runs unsandboxed (R17.13, review 2 F13)
                 visible: !!root.sbx && !!root.sbx.freshWarning && root.change && root.sandboxTouched && root.sandboxTpl !== "off"
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                 text: root.sbx ? root.sbx.freshWarning || "" : "" }
-            Text {     // a template made for a folder the user picks, with none yet (17.3, review 2 F10)
+            Text {     // a template made for a folder the user picks, with none yet (R17.3, review 2 F10)
                 visible: !!root.sbxTplEntry && !!root.sbxTplEntry.folder && root.sandboxTpl !== "off"
                          && root.sbxChips.some(c => c[0] === "No folder yet")
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12
@@ -317,7 +317,7 @@ Dialog {
             }
         }
     }
-    Rectangle {     // who it's for, on Windows (requirement 15.4)
+    Rectangle {     // who it's for, on Windows (R15.4)
         visible: !!root.win
         width: parent.width; height: scopeCol.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -344,7 +344,7 @@ Dialog {
                          : "Only you can use it. No administrator rights are needed." }
         }
     }
-    Rectangle {     // Mark of the Web, in Install options (requirement 15.11.1)
+    Rectangle {     // Mark of the Web, in Install options (R15.11.1)
         visible: !!root.win && root.change
         width: parent.width; height: motwCol.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -358,7 +358,7 @@ Dialog {
                    text: "Windows SmartScreen then checks this app's installers and programs, as it does a browser download." }
         }
     }
-    Rectangle {     // requirement 4.10.3
+    Rectangle {     // R4.10.3
         visible: !root.chan
         width: parent.width; height: auCol.height + 24; radius: 12; color: Theme.input; border.color: Theme.border
         Column {
@@ -389,7 +389,7 @@ Dialog {
             enabledButton: root.cur.category !== "unknown" || root.exeAs !== ""
             onClicked: {
                 const c = root.cur
-                if (root.chan) {      // a package channel (requirement 16.3)
+                if (root.chan) {      // a package channel (R16.3)
                     const dflt = c.updater ? "system" : "appkata"
                     backend.installWith(root.plan.url, { channel: c.channel, label: c.label, option: c,
                                                          updates: root.updates === dflt && !root.plan.updates ? "" : root.updates,

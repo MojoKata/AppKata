@@ -7,7 +7,7 @@
 #   scripts/test-windows-vm.sh [--tests] [--e2e] [--shots] [--tour-only A01-apps,C01-catalog] [--keep-vm]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-. "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
+. "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (R1.2)
 # The VM is shared with the machine's other projects through the coworker protocol (the coworker/ submodule, MojoKata/coworker;
 # installed in ${COWORKER_HOME:-~/coworker}): "vms run" claims it with what .coworker/deps.json says
 # AppKata needs of it (Windows 10 Pro 22H2), waits for another project's run, starts it if it's down,
@@ -57,7 +57,7 @@ expect() {   # expect <output> <text>: fail unless the output contains the text
 
 PY=C:/Users/Public/appkata-py/python/python.exe
 if [ "$TESTS" = 1 ] || [ "$E2E" = 1 ]; then
-    # The tests run on the Python the release carries (requirement 1.2): python-build-standalone's
+    # The tests run on the Python the release carries (R1.2): python-build-standalone's
     # Windows build of PYTHON_BUILD, checked against PYTHON_WINDOWS_SHA256, with pytest as every tier
     # pins it, colorama (pytest's on Windows) and truststore as build-windows.sh pins it. The VM keeps
     # them, with what they were made from in pin.txt; a pin that moves makes them again.
@@ -186,7 +186,7 @@ PY
     ARGS=""; [ -n "$ONLY" ] && ARGS=",'--tour-only','$ONLY'"
     # the tour saves DIR/dark and DIR/light itself. It runs in the signed-in console session, as a
     # user would: the SSH session (session 0) has no real display, and dialogs land off-centre there.
-    # The screen is 1920 x 1080 while it runs, the design point (requirement 5.2.1), and the tour's
+    # The screen is 1920 x 1080 while it runs, the design point (R5.2.1), and the tour's
     # window takes what the taskbar leaves, as maximized. The screens show a neutral account's
     # folders, C:\Users\you, as the mockups do, not the VM's account: the tour gets that profile,
     # made for the run and removed after (a shared VM is left as it was found: the coworker protocol).

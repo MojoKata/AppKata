@@ -24,7 +24,7 @@ QUESTIONS = [
     ("U-enable", "Switching an installed app from Off to a sandbox: are you told it starts with fresh settings?"),
     ("E-native", "A password manager's browser integration (native messaging): does it still work?"),
 ]
-# asked only where AppKata's AppArmor setup is needed (17.10; docs/testing.md's table)
+# asked only where AppKata's AppArmor setup is needed (R17.10; docs/testing.md's table)
 SETUP_QUESTIONS = [
     ("A1-prompt", "Before the setup, did installing a first AppImage ask 'Set up the sandbox?', did Not now install it unsandboxed, and did a second install not ask again?"),
     ("A1-pkexec", "Did Settings > Sandbox > Set up... show ONE password prompt, then 'Ready'?"),

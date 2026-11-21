@@ -1,4 +1,4 @@
-"""Just enough Nostr for Explore (requirement 7.7): a minimal WebSocket client (RFC 6455) to ask
+"""Just enough Nostr for Explore (R7.7): a minimal WebSocket client (RFC 6455) to ask
 relays for ngit repository announcements (NIP-34, kind 30617), and NIP-19 encodings for links."""
 
 from __future__ import annotations

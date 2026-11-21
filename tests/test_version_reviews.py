@@ -1,4 +1,4 @@
-"""Version reviews in AppKata.md (requirement 10.3, 10.6.5, 8.5)."""
+"""Version reviews in AppKata.md (R10.3, R10.6.5, R8.5)."""
 
 import json
 
@@ -94,7 +94,7 @@ def test_unplaceable_versions_and_dates():
 
 
 def test_app_review_fallbacks():
-    # no app-review values: the earliest version review's, else the table row's (10.3.3)
+    # no app-review values: the earliest version review's, else the table row's (R10.3.3)
     s = {"_versions": [{"v": "5.6.0", "text": "", "details": [], "opts": {}, "verdict": {"trust": 0}},
                        {"v": "5.6.2", "text": "", "details": [], "opts": {}, "verdict": {"trust": 4}}]}
     chain = trustfile.reviews_over_versions(s, {"trust": 4, "rating": 4, "tags": ["foss"]}, "linux")
@@ -155,7 +155,7 @@ Untouched.
     tf = trustfile.parse(out)
     assert tf.warnings == []
     s = tf.settings["Zettlr"]
-    assert s["_app"] == {"trust": 4, "rating": 4, "tags": ["foss"]}            # the app review kept its values (8.5)
+    assert s["_app"] == {"trust": 4, "rating": 4, "tags": ["foss"]}            # the app review kept its values (R8.5)
     assert s["appMenu"] is True and tf.sections["Zettlr"] == "Good editor."
     (v,) = s["_versions"]
     assert v["text"] == "Now signed." and v["details"] == [["Date", "2026-09-14"], ["SHA-256", "abc"]]

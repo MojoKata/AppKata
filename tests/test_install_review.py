@@ -1,4 +1,4 @@
-"""Installing from a local web server (requirement 4), and writing reviews with git (requirement 8)."""
+"""Installing from a local web server (R4), and writing reviews with git (R8)."""
 
 import hashlib
 import http.server
@@ -101,7 +101,7 @@ def test_review_commit_and_push_rules(tmp_path):
     path = str(repo / "AppKata.md")
     st = review.repo_state(path)
     assert st.in_repo and st.remote == str(bare) and not st.signs
-    # unsigned: committed, never pushed (requirement 8.5)
+    # unsigned: committed, never pushed (R8.5)
     r = review.save(path, "LocalSend", "https://github.com/localsend/localsend", ["foss"], 4, 5, "Good.", commit=True, push=True)
     assert r.committed and not r.signed and not r.pushed and "isn't signed" in r.error
     assert review.current(path, "LocalSend", "https://github.com/localsend/localsend")["trust"] == 4
@@ -122,7 +122,7 @@ def test_review_commit_and_push_rules(tmp_path):
 
 @linux_only
 def test_portable_options(env, server, tmp_path):
-    """Install folder, stable name, app-menu entry and command link (requirement 4.3.1)."""
+    """Install folder, stable name, app-menu entry and command link (R4.3.1)."""
     root, base = server
     data = b"\x7fELF v2"
     (root / "Demo.Tool-2.0-x86_64.AppImage").write_bytes(data)
@@ -176,7 +176,7 @@ def test_zip_install(env, server, tmp_path):
 
 @linux_only
 def test_versions_kept_side_by_side(env, server, tmp_path):
-    """~/bin/apps/<app>/ holds each version; older ones are kept up to the setting (req 4.3.1.5)."""
+    """~/bin/apps/<app>/ holds each version; older ones are kept up to the setting (R4.3.1.5)."""
     root, base = server
     p = install.Portable(folder=str(tmp_path / "apps"), app_menu=False, command_dir=str(tmp_path / "bin"), keep=2)
     for v in ("1.0", "1.1", "1.2", "1.3"):
@@ -216,7 +216,7 @@ def test_tarball_versions_and_current_link(env, server, tmp_path):
 
 
 def test_retention_never_deletes_an_adopted_file(tmp_path):
-    # AppKata's own AppImage, adopted rather than placed (requirement 2.11.3)
+    # AppKata's own AppImage, adopted rather than placed (R2.11.3)
     paths = [tmp_path / n for n in ("new", "a", "adopted")]
     for p in paths:
         p.write_text("x")
@@ -265,7 +265,7 @@ def range_server():
 
 
 def test_download_resumes_after_a_break(range_server, tmp_path, monkeypatch):
-    # requirement 4.8.2: the second request asks only for the rest, and the digest covers the whole file
+    # R4.8.2: the second request asks only for the rest, and the digest covers the whole file
     monkeypatch.setattr(install.time, "sleep", lambda s: None)
     dest = tmp_path / "file.bin"
     seen = []
@@ -283,7 +283,7 @@ def test_cancelled_download_leaves_nothing(range_server, tmp_path):
 
 
 def test_app_that_updates_itself_has_no_version_folders(env, server, tmp_path):
-    # requirement 4.10.2: one file under a stable name, nothing kept, no "current" link
+    # R4.10.2: one file under a stable name, nothing kept, no "current" link
     root, base = server
     p = install.Portable(folder=str(tmp_path / "apps2"), app_menu=False, stable_name=True, keep=2)
     for v in ("1.0", "2.0"):
@@ -296,10 +296,10 @@ def test_app_that_updates_itself_has_no_version_folders(env, server, tmp_path):
     assert open(folder / "DemoTool.AppImage", "rb").read() == b"\x7fELF 2.0"
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox is Linux-only (17.1)")
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox is Linux-only (R17.1)")
 def test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it(env, server, tmp_path):
     # Review 2, F3: a sandboxed app can't update itself (its files are read-only), so AppKata updates
-    # it as if it didn't (17.12). Its first such update leaves the fixed-name layout of 4.10.2: the
+    # it as if it didn't (R17.12). Its first such update leaves the fixed-name layout of R4.10.2: the
     # old <App>.AppImage sat exactly where the versioned layout's stable-name link goes, and _link()
     # refused to replace "a file AppKata didn't make" -- the update would have stopped there.
     root, base = server

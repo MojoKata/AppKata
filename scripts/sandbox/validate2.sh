@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of the app-sandboxing round-3 de-risking (docs/app-sandboxing.md). Run inside the Mint 22.1 session container.
+# Part of the app-sandboxing round-3 de-risking (A1.8.2). Run inside the Mint 22.1 session container.
 # De-risk the design-sweep items: theme/font binding, D-Bus own-name + capabilities, and the
 # write-beside-itself grant. Runs in the session container.
 set -u

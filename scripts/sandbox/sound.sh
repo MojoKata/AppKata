@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # Sound: what the PipeWire and PulseAudio sockets give a sandboxed app, besides playing sound.
 . /x/session.sh; . /x/lib.sh
 H=$HOME/.local/share/appkata/sandboxes/snd

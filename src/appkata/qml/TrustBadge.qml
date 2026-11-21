@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// Combined Trust (shield) and Rating (stars) with the reviewer count; "Avoid" or "Unreviewed" (requirement 12.4).
+// Combined Trust (shield) and Rating (stars) with the reviewer count; "Avoid" or "Unreviewed" (R12.4).
 Item {
     id: root
     property var app: ({})

@@ -1,4 +1,4 @@
-"""Package channels (requirement 16.1): which Flatpak and which distribution package an app has,
+"""Package channels (R16.1): which Flatpak and which distribution package an app has,
 whether each link checks out against the project, how a package's version maps to the project's,
 and which way to install is recommended."""
 
@@ -21,7 +21,7 @@ MATCHES, UNCHECKED, MISMATCH = "matches", "unchecked", "mismatch"
 
 def in_own_flatpak() -> bool:
     """AppKata runs inside a Flatpak sandbox (there's no Flatpak of AppKata, but it can be run in one):
-    channels are off there (requirement 16.10)."""
+    channels are off there (R16.10)."""
     return os.path.exists("/.flatpak-info")
 
 
@@ -36,7 +36,7 @@ def manager() -> str:
 
 
 def distro_name() -> str:
-    """"Ubuntu", "Fedora", "Linux Mint"… for labels (16.2.3, 16.3.1)."""
+    """"Ubuntu", "Fedora", "Linux Mint"… for labels (R16.2.3, R16.3.1)."""
     from .autoupdate import os_release
     name = os_release().get("NAME", "").replace(" GNU/Linux", "").strip()
     if name.endswith(" Linux") and not name.startswith("Linux"):        # "Fedora Linux" → "Fedora"
@@ -44,11 +44,11 @@ def distro_name() -> str:
     return name or "Distribution"
 
 
-# ---------------------------------------------------------------- Trusts' lines (10.3.1)
+# ---------------------------------------------------------------- Trusts' lines (R10.3.1)
 def _trusts_for(db: DB, url: str) -> list[dict]:
     """Trusts' channel lines for an app (`Flatpak`, `Debian package`, `Fedora package`, `Channel`, as
     trustfile parses them), for the installed version, else the newest review (10.3.3); yours first,
-    then Score, then name (requirement 16.1.3)."""
+    then Score, then name (R16.1.3)."""
     from . import trustfile
     rows = db.all("""SELECT r.settings, t.name, t.own, t.score FROM reviews r JOIN trusts t ON t.id=r.trust_id
                      WHERE r.url=? AND t.enabled=1 AND (t.own=1 OR t.verified_commit IS NOT NULL)""", (url,))
@@ -69,7 +69,7 @@ def _trusts_for(db: DB, url: str) -> list[dict]:
     return sorted(out, key=lambda r: (not r["own"], -(5 if r["own"] else int(r["score"] or 3)), (r["name"] or "").lower()))
 
 
-# ---------------------------------------------------------------- links (16.1.3)
+# ---------------------------------------------------------------- links (R16.1.3)
 @dataclass
 class Link:
     kind: str                 # "flatpak" | "package"
@@ -92,8 +92,8 @@ def _flatpak_value(v: str) -> tuple[str, str]:
 
 def links(db: DB, url: str, catalog=None, mgr: str | None = None, ignore_mine: bool = False) -> dict[str, Link]:
     """The app's Flatpak and package, the first that applies of: yours (Source settings), a Trust's
-    lines, AppStream (requirement 16.1.3). A name match alone never links. `ignore_mine`: what would
-    apply without yours (Source settings' placeholders, 2.6.7)."""
+    lines, AppStream (R16.1.3). A name match alone never links. `ignore_mine`: what would
+    apply without yours (Source settings' placeholders, R2.6.7)."""
     mgr = manager() if mgr is None else mgr
     out: dict[str, Link] = {}
     src = None if ignore_mine else db.one("SELECT settings FROM sources WHERE url=?", (url,))
@@ -129,14 +129,14 @@ def links(db: DB, url: str, catalog=None, mgr: str | None = None, ignore_mine: b
 
 
 def recommended_channel(db: DB, url: str) -> tuple[str, str]:
-    """(channel, Trust name) from the first Trust with a `Channel` line (16.3.2), or ("", "")."""
+    """(channel, Trust name) from the first Trust with a `Channel` line (R16.3.2), or ("", "")."""
     for t in _trusts_for(db, url):
         if t["channel"]:
             return t["channel"], t["name"]
     return "", ""
 
 
-# ---------------------------------------------------------------- link checks (16.1.4, 16.1.5)
+# ---------------------------------------------------------------- link checks (R16.1.4, R16.1.5)
 def get_check(db: DB, url: str, kind: str, value: str) -> dict:
     return db.one("SELECT * FROM channel_checks WHERE url=? AND kind=? AND value=?", (url, kind, value)) or \
         {"url": url, "kind": kind, "value": value, "state": UNCHECKED, "detail": "", "verified": None, "etag": "",
@@ -189,7 +189,7 @@ def parse_manifest(text: str) -> list[dict]:
 
 def _verified_flag(http: Http, app_id: str, etag: str) -> tuple[bool | None, str]:
     """Flathub's verified flag as a conditional request: (flag, etag); flag None when unchanged or
-    unreachable (16.1.5)."""
+    unreachable (R16.1.5)."""
     try:
         data, hdr, _ = http.request(f"{FLATHUB_API}/verification/{app_id}/status",
                                     headers={"If-None-Match": etag} if etag else None)
@@ -212,7 +212,7 @@ def _manifest(http: Http, app_id: str) -> str:
 
 
 def check_flatpak(db: DB, http: Http, url: str, app_id: str, remote_commit: str = "", metainfo_id: str = "") -> dict:
-    """Requirement 16.1.4: the metainfo ID, Flathub's verified flag (every sync), and the build
+    """R16.1.4: the metainfo ID, Flathub's verified flag (every sync), and the build
     manifest's sources (only when the remote's commit changed)."""
     c = get_check(db, url, "flatpak", app_id)
     flag, c["etag"] = _verified_flag(http, app_id, c.get("etag") or "")
@@ -283,7 +283,7 @@ def spec_urls(spec: str) -> list[str]:
 
 
 def check_package(db: DB, http: Http, url: str, name: str, version: str, catalog=None, mgr: str | None = None) -> dict:
-    """Requirement 16.1.4 for a package: the AppStream URLs, then the packaging's own metadata
+    """R16.1.4 for a package: the AppStream URLs, then the packaging's own metadata
     (Debian's debian/upstream/metadata, Fedora's spec), read again only when the version changes."""
     mgr = manager() if mgr is None else mgr
     c = get_check(db, url, "package", name)
@@ -312,9 +312,9 @@ def check_package(db: DB, http: Http, url: str, name: str, version: str, catalog
     return _save_check(db, c)
 
 
-# ---------------------------------------------------------------- versions (16.7)
+# ---------------------------------------------------------------- versions (R16.7)
 def project_version(kind: str, version: str) -> str:
-    """A channel's version as the project's (requirement 16.7.1)."""
+    """A channel's version as the project's (R16.7.1)."""
     v = (version or "").strip()
     if kind in ("apt", "deb", "debian"):
         v = v.split(":", 1)[1] if re.match(r"^\d+:", v) else v
@@ -332,18 +332,18 @@ def project_version(kind: str, version: str) -> str:
 
 
 def releases_behind(releases: list[dict], version: str) -> int:
-    """How many of the project's stable releases are newer than `version` (requirement 16.7.2)."""
+    """How many of the project's stable releases are newer than `version` (R16.7.2)."""
     if not version:
         return 0
     return sum(1 for r in releases if not r.get("prerelease") and r.get("version")
                and versions.compare(r["version"], version) == 1)
 
 
-# ---------------------------------------------------------------- the install dialog's cards (16.3.1, 16.3.2)
+# ---------------------------------------------------------------- the install dialog's cards (R16.3.1, R16.3.2)
 def options(db: DB, url: str, release_files: list[dict], found: dict[str, Link], checks: dict[str, dict] | None = None,
             facts: dict[str, dict] | None = None) -> list[dict]:
     """Every way to install the app here, Recommended first. `release_files` are the release's cards
-    in the order of 4.2; `checks` the link checks by kind; `facts` what's known about each channel
+    in the order of R4.2; `checks` the link checks by kind; `facts` what's known about each channel
     (version, size…), passed through."""
     checks = checks or {}
     facts = facts or {}
@@ -379,7 +379,7 @@ def options(db: DB, url: str, release_files: list[dict], found: dict[str, Link],
     return cards
 
 
-# ---------------------------------------------------------------- who updates it (16.5.1)
+# ---------------------------------------------------------------- who updates it (R16.5.1)
 def update_state(rec: dict, det, releases: list[dict] | None = None) -> tuple[str, str]:
     """("system", who) | ("not-updated", "") | ("appkata", "") | ("held", "") for a channel install."""
     from . import autoupdate

@@ -10,7 +10,7 @@
 #         for that environment's sub-issue on GitHub: docs/testing.md, "Tracking the runs on GitHub")
 # Needs:  bwrap and xdg-dbus-proxy (it says so if sandboxing can't run here, and what to do), python3
 #         with python3-gi for what the launchers run on the host, and the Python the release carries
-#         (requirement 1.2): $APPKATA_PYTHON, else build/python-<series>, else fetched once;
+#         (R1.2): $APPKATA_PYTHON, else build/python-<series>, else fetched once;
 #         gdbus, pactl, glxinfo, grim / ImageMagick's import widen what it can check.
 # Safety: everything happens in a throwaway home it creates and removes; it never writes your real
 #         home. (Review 2, D1: the script this replaces wrote a canary into the tester's real
@@ -20,7 +20,7 @@ set -u
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 [ "${1:-}" != --issue-body ] || exec python3 "$HERE/scripts/sandbox/fieldtest_questions.py" "${2:?--issue-body ENVIRONMENT}"
 . "$HERE/packaging/versions.env"
-# AppKata's own code on the Python its release carries, not this desktop's python3 (requirement 1.2;
+# AppKata's own code on the Python its release carries, not this desktop's python3 (R1.2;
 # review 3, R3-21: Debian 12's 3.11.2 can't unpack a tarball the way AppKata does)
 PY=${APPKATA_PYTHON:-$HERE/build/python-$PY_SERIES/python/bin/python3}
 [ -x "$PY" ] || PY=$(sh "$HERE/scripts/python-standalone.sh") || { echo "couldn't fetch the Python AppKata runs on (above)" >&2; exit 1; }

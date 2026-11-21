@@ -33,7 +33,7 @@ def _read(rel):
 def booted() -> dict:
     """{environment: {kernel, restricted, setup}} from docs/testing.md's table: the kernel series
     as tested, whether unprivileged user namespaces are restricted, whether AppKata's AppArmor
-    setup is needed (17.10)."""
+    setup is needed (R17.10)."""
     text = _read("docs/testing.md")
     sec = text[text.index(HEADING + "\n") + len(HEADING):]
     end = re.search(r"^## ", sec, re.M)
@@ -101,6 +101,6 @@ def test_this_system_boots_what_testing_md_says():
     assert platform.release().startswith(row["kernel"] + "."), (name, platform.release(), row["kernel"])
     assert sb.userns_restricted() == row["restricted"], (name, "restricted" if sb.userns_restricted() else "allowed")
     # the setup is needed where the namespaces are restricted and the system has no bwrap profile of
-    # its own (17.10, 17.10.2): what support_status() decides, before any setup has run
+    # its own (R17.10, R17.10.2): what support_status() decides, before any setup has run
     others = sb.other_bwrap_profiles()
     assert (sb.userns_restricted() and not others) == row["setup"], (name, others)

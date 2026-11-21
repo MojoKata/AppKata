@@ -1,11 +1,11 @@
-"""What KDE's kwin gives a sandboxed app (round seven, R7-1; requirement 17.9).
+"""What KDE's kwin gives a sandboxed app (round seven, R7-1; R17.9).
 
 Run by `scripts/test-sandbox.sh kwin` as the test user in a Mint 22.1 container with kwin-wayland
 (5.27), after a session bus and `kwin_wayland --virtual` are up. A generated `online-app` launcher
 runs: a registry listing (which of the capture, clipboard and injection protocols kwin offers an
 ordinary client), `wl-paste` against text a host client copied, and -- where kwin's Xwayland
 starts -- an unauthenticated X11 connection over the abstract socket. Exits 1 when a verdict is
-not the expected one; LEAKED for the clipboard is what 17.9 now states.
+not the expected one; LEAKED for the clipboard is what R17.9 now states.
 """
 import os
 import subprocess
@@ -19,7 +19,7 @@ from appkata_core import sandbox as sb   # noqa: E402
 EXPECTED = {"kwin offers the clipboard-manager protocol to a sandboxed app": "LEAKED",
             "kwin hides screencast, fake input and virtual keyboard from it": "BLOCKED",
             "a sandboxed app reads what the user copied (wl-paste)": "LEAKED",
-            "what AppKata reads from kwin's globals for the warning (17.9, F7)": "clipboard"}
+            "what AppKata reads from kwin's globals for the warning (R17.9, F7)": "clipboard"}
 VERDICTS = {}
 WATCH = ("data_control", "screencopy", "screencast", "virtual_keyboard", "virtual_pointer", "fake_input", "security_context", "image_copy")
 
@@ -51,7 +51,7 @@ r = subprocess.run([install("clip", 'timeout 5 wl-paste 2>&1\n')], capture_outpu
 say("LEAKED" if "the-users-secret-clipboard" in r.stdout else "BLOCKED", "a sandboxed app reads what the user copied (wl-paste)", r.stdout.strip()[:60])
 copier.terminate()
 leaks = sb.compositor_leaks()
-say("unread" if leaks is None else ",".join(sorted(leaks)) or "nothing", "what AppKata reads from kwin's globals for the warning (17.9, F7)",
+say("unread" if leaks is None else ",".join(sorted(leaks)) or "nothing", "what AppKata reads from kwin's globals for the warning (R17.9, F7)",
     f"{len(sb.compositor_globals() or ())} globals")
 bad = [f"{k}: wanted {v}, got {VERDICTS.get(k)}" for k, v in EXPECTED.items() if VERDICTS.get(k) != v]
 print("EXPECTED:", "ok" if not bad else "FAILED -- " + "; ".join(bad), flush=True)

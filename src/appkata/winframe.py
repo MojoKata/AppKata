@@ -1,4 +1,4 @@
-"""The window on Windows (requirement 15.13). AppKata draws its own header bar, so the frameless
+"""The window on Windows (R15.13). AppKata draws its own header bar, so the frameless
 window gets back what a normal window has: the minimize, maximize and resize styles (taskbar
 clicks, Win+arrow keys, Aero Snap), no visible frame, a maximized size that fits the screen, and
 Windows 11's Snap Layouts when the pointer rests on the Maximize button."""

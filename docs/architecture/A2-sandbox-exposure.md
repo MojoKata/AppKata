@@ -1,4 +1,4 @@
-# What a sandboxed app can see
+# A2. What a sandboxed app can see
 
 Everything of the host a sandboxed app can see: each mount, environment variable, device, socket,
 identifier and network reach a generated launcher gives it, when, and which sentence of the
@@ -32,7 +32,7 @@ anything unlisted.
 - `always`;
 - `bus`: Standard, which gets the filtered bus;
 - `network`, `sound`, `camera`, `folder-ro` and `folder-rw`: the grant;
-- `cli`: a CLI tool run from a folder it may share, 17.3.3;
+- `cli`: a CLI tool run from a folder it may share, R17.3.3;
 - `write_app`;
 - `appimage`;
 - `wayland`: a Wayland session;
@@ -45,7 +45,7 @@ launch, a GPU, an identifier.
 **Stated in** is either a requirement and a phrase from it, `no host data` (something private to
 the sandbox), or `open:` and the finding that keeps it unstated.
 
-## The inventory
+## A2.1. The inventory
 
 | Seen inside | When | Stated in |
 |---|---|---|

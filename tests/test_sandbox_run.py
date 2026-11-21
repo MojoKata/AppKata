@@ -1,4 +1,4 @@
-"""App sandboxing (requirement 17): generated launchers, actually run under bwrap.
+"""App sandboxing (R17): generated launchers, actually run under bwrap.
 
 These execute `~/bin/apps/<app>/run` as AppKata writes it, with a tiny shell "app" that runs the
 snippet it's given, and check what the app can and can't reach. They need a bwrap new enough for the
@@ -133,7 +133,7 @@ def test_identity_marker_cannot_be_swapped_for_a_host_file(env):
     assert not os.path.lexists(os.path.join(sb.sandbox_home("evil"), ".flatpak-info"))
 
 
-# ---------------------------------------------------------------- the CLI tool's working directory (17.3.3)
+# ---------------------------------------------------------------- the CLI tool's working directory (R17.3.3)
 
 def _cli(env):
     return env.app("tool", sb.resolve_template("cli-tool"))
@@ -191,7 +191,7 @@ def test_cli_tool_never_gets_the_home_or_above_or_appkata_areas(env, where):
     assert "bwrap" not in r.stderr and r.stdout.strip().endswith(str(env.home))   # in its private home
 
 
-# ---------------------------------------------------------------- network (17.2)
+# ---------------------------------------------------------------- network (R17.2)
 
 def _host_resolves(name: str, wait: float = 60) -> bool:
     """Whether this machine resolves name, given up to wait seconds: a VM's resolver can take a while
@@ -292,7 +292,7 @@ def test_on_wayland_x11_apps_get_xwayland_only_with_the_grant(env, x11_grant):
 
 @pytest.mark.parametrize("network", [True, False])
 def test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one(env, network):
-    # Round four, R4-8 (17.9): the "X11 apps" grant withholds the socket file, DISPLAY and the
+    # Round four, R4-8 (R17.9): the "X11 apps" grant withholds the socket file, DISPLAY and the
     # cookie, but the X server's abstract-namespace socket lives in the network namespace, which
     # --share-net shares; so with the network an app can still connect to it, and only Xwayland's
     # cookie check (mutter, kwin; not wlroots) keeps it out. Documented rather than closed: there is
@@ -321,7 +321,7 @@ def test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one(env, 
     assert ("CONNECTED" in r.stdout.splitlines()) is network, (r.stdout, r.stderr)
 
 
-# ---------------------------------------------------------------- the session bus (17.5)
+# ---------------------------------------------------------------- the session bus (R17.5)
 
 @pytest.mark.parametrize("bus", ["unset", "dead"])
 def test_standard_apps_run_without_a_session_bus(env, bus):
@@ -488,7 +488,7 @@ def test_the_tray_capability_starts_the_proxy_and_lets_the_app_own_its_item_name
     assert "(uint32 1,)" not in out[2]                           # but can't impersonate the watcher
 
 
-# ---------------------------------------------------------------- devices (17.2.1)
+# ---------------------------------------------------------------- devices (R17.2.1)
 
 def test_the_camera_grant_binds_the_video_devices(env):
     # Regression: the camera device grant changed nothing in the launcher, so apps that open the camera
@@ -516,7 +516,7 @@ def test_gpu_nodes_can_be_identified_through_sys(env):
     assert "FOUND" in r.stdout, (r.stdout, r.stderr)
 
 
-# ---------------------------------------------------------------- terminals (17.3.3)
+# ---------------------------------------------------------------- terminals (R17.3.3)
 
 def _run_on_tty(env, launcher: str, snippet: str, cwd: str) -> str:
     """Run the launcher with a pseudo-terminal as its controlling terminal, as from an interactive shell."""
@@ -594,7 +594,7 @@ def test_no_launcher_file_descriptors_leak_into_the_app(env):
     assert r.stdout.split() == ["0", "1", "2", "3"], r.stdout     # stdio, plus ls's own directory fd
 
 
-# ---------------------------------------------------------------- lazy AppImage extraction (17.7)
+# ---------------------------------------------------------------- lazy AppImage extraction (R17.7)
 
 def _fake_appimage(path, says: str, hostile_link: str = "") -> None:
     """A stand-in AppImage: `--appimage-extract` unpacks an AppRun that prints `says` (or, hostile,
@@ -693,7 +693,7 @@ def test_an_appimage_cannot_swap_its_extraction_for_a_host_folder(env):
     assert r.returncode != 0 and not os.path.islink(appdir), (r.stdout, r.stderr)
 
 
-# ---------------------------------------------------------------- the document portal (17.6)
+# ---------------------------------------------------------------- the document portal (R17.6)
 
 _DOC_PORTAL = ("/usr/libexec/xdg-document-portal", "/usr/lib/xdg-desktop-portal/xdg-document-portal")
 
@@ -782,7 +782,7 @@ def test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus(env):
     assert r.returncode == 0 and "BUS" in r.stdout and "name=io.appkata._7zip" in r.stdout, (r.stdout, r.stderr)
 
 
-# ---------------------------------------------------------------- the portals see a host caller (17.6.1, finding 0)
+# ---------------------------------------------------------------- the portals see a host caller (R17.6.1, finding 0)
 
 _DESKTOP_PORTAL = ("/usr/libexec/xdg-desktop-portal", "/usr/lib/xdg-desktop-portal/xdg-desktop-portal")
 _CALL = ("gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop "
@@ -837,7 +837,7 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
              # up to 6.4 never ask (round four, R4-5, shown with real apps: test-sandbox.sh filedialogs).
              "gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop "
              "--method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.FileChooser version 2>&1; " +
-             # Round six, R6-2: the Camera portal is denied whatever the camera grant says -- 17.8 and the
+             # Round six, R6-2: the Camera portal is denied whatever the camera grant says -- R17.8 and the
              # hint used to promise "the camera portal, which asks you first"; nothing asks
              _CALL.format('Camera.AccessCamera "{}"') + "; " + _CALL.format("Camera.IsCameraPresent") + "; true")
     bus = _Bus(env)
@@ -903,7 +903,7 @@ GLib.MainLoop().run()
 
 @needs_proxy
 def test_links_and_files_an_app_opens_go_to_the_host_through_the_portal(env, tmp_path):
-    # The app's PATH starts with AppKata's xdg-open, which asks the OpenURI portal (17.6.3): a URL as
+    # The app's PATH starts with AppKata's xdg-open, which asks the OpenURI portal (R17.6.3): a URL as
     # it is, a file as a descriptor the portal resolves to its host path. GLib-based programs (`gio
     # open`) take the same road on their own, from /.flatpak-info -- when they find no handler of
     # their own first, which the next test is about. The file is in a granted folder:
@@ -955,7 +955,7 @@ def test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler
     # browser or editor *inside* the sandbox -- a second Firefox on the private home -- and the
     # portal saw nothing; the test above passed only because the test host registered no handler.
     # The launcher now hides the host's desktop entries under an empty tmpfs, as a Flatpak runtime
-    # has none (17.4). The harness registers a handler as root before the tests, so the host side of
+    # has none (R17.4). The harness registers a handler as root before the tests, so the host side of
     # this test is a real desktop's.
     if not os.path.exists(_TEST_HANDLER) or not shutil.which("gio"):
         pytest.skip("needs the test handler registered as root (scripts/sandbox/register-test-handler.sh) and gio")
@@ -1027,7 +1027,7 @@ def test_a_link_the_app_leaves_at_a_mount_point_is_not_followed(env, where):
     assert not any(os.path.islink(os.path.join(home, p)) for p in (".themes", ".Xauthority", "apps", "src"))
 
 
-# ---------------------------------------------------------------- protected folders (17.3.1)
+# ---------------------------------------------------------------- protected folders (R17.3.1)
 
 def test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them(env):
     # Regression: a review's `Sandbox folders: +~` (or the picker) was bound as asked, and since the
@@ -1057,7 +1057,7 @@ def test_the_field_test_checks_the_product_and_leaves_the_testers_home_alone(env
     try:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "sandbox", "field-test.sh")
         r = subprocess.run([script, "--non-interactive"], cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
-                           # on this test's own Python: the one the release carries (requirement 1.2)
+                           # on this test's own Python: the one the release carries (R1.2)
                            env={**env.env, "HOME": str(tester), "DBUS_SESSION_BUS_ADDRESS": bus.addr,
                                 "APPKATA_PYTHON": sys.executable})
     finally:
@@ -1073,7 +1073,7 @@ def test_the_field_test_checks_the_product_and_leaves_the_testers_home_alone(env
     assert list(tmp_path.glob("appkata-fieldtest-*.tar.gz"))
 
 
-# ---------------------------------------------------------------- an app's own sandbox inside ours (17.10.2)
+# ---------------------------------------------------------------- an app's own sandbox inside ours (R17.10.2)
 
 def test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher(env):
     # Review 2, F2 (class D): nested_userns_works() decides whether a Chromium/Electron app is started
@@ -1144,7 +1144,7 @@ def test_a_review_naming_a_relative_folder_never_opens_the_real_home(env, monkey
     assert (env.home / ".bashrc").read_text() == "# real bashrc\n"
 
 
-# ---------------------------------------------------------------- a refused launch leaves a trace (14.2, R4)
+# ---------------------------------------------------------------- a refused launch leaves a trace (R14.2, R4)
 
 def _fake_bwrap(env, message: str) -> dict:
     """A PATH whose bwrap prints `message` and exits 1 — the userns restriction come back, say."""
@@ -1160,7 +1160,7 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
     # there was invisible and unrecorded; only Open in AppKata captured it. The entry now passes
     # --appkata-menu first, and the launcher keeps its stderr in the app's log for that case.
     lp = env.app("menu", sb.resolve_template("strict"))
-    log = tmp_path / "home" / ".local" / "state" / "appkata" / "apps" / "menu.log"                # the install's id (14.2.1)
+    log = tmp_path / "home" / ".local" / "state" / "appkata" / "apps" / "menu.log"                # the install's id (R14.2.1)
     assert f"log={log}" in open(lp).read()
     refused = _fake_bwrap(env, "bwrap: setting up uid map: Permission denied")
     r = subprocess.run([lp, "--appkata-menu", "echo never"], cwd=str(env.home), env={**env.env, **refused},
@@ -1188,7 +1188,7 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
     assert "Permission denied" in r.stderr and not log.exists()
 
 
-# ---------------------------------------------------------------- file arguments (17.6.2, R7)
+# ---------------------------------------------------------------- file arguments (R17.6.2, R7)
 
 @needs_proxy
 def test_a_file_argument_is_handed_over_to_a_standard_app(env):
@@ -1543,7 +1543,7 @@ def test_a_missing_runtime_dir_refuses_the_launch_with_a_message(env):
 def test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through(env, tmp_path):
     # The forward helper calls Documents.Add with a timeout; a document portal that hangs (a stuck
     # FUSE mount) must cost that timeout and nothing more -- the launch goes on with the arguments as
-    # they were (17.6.2), the app runs, the status comes out.
+    # they were (R17.6.2), the app runs, the status comes out.
     import time
     (env.home / "Documents").mkdir()
     (env.home / "Documents" / "n.txt").write_text("x\n")
@@ -1634,8 +1634,8 @@ def test_an_appimage_whose_runtime_unpacks_nothing_is_refused_with_a_message(env
 def test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant(env, write_app):
     # "A self-updating app" was on the physical-desktop checklist since the PR's first version;
     # what it needs is a run, not a desktop. The app writes into its own version folder (what a
-    # self-updater does): read-only without the grant (17.4: EROFS, the app sees why), writable with
-    # it (17.7.1) -- and the files are the real ones, so the change is there at the next launch.
+    # self-updater does): read-only without the grant (R17.4: EROFS, the app sees why), writable with
+    # it (R17.7.1) -- and the files are the real ones, so the change is there at the next launch.
     gs = sb.resolve_template("online-app")
     gs["write_app"] = write_app
     lp = env.app("upd", gs)
@@ -1651,10 +1651,10 @@ def test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant(
 
 
 def test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself(env):
-    # 17.7: the .AppImage is canonical and the extracted folder a derived cache. With the writable
+    # R17.7: the .AppImage is canonical and the extracted folder a derived cache. With the writable
     # grant the app changes its unpacked copy (and keeps it: the stamp is the .AppImage's, unchanged),
     # but the .AppImage file is bound read-only whatever the grant says -- AppKata's own update is
-    # what replaces it (17.12).
+    # what replaces it (R17.12).
     (env.home / "apps" / "img").mkdir(parents=True)
     img = env.home / "apps" / "img" / "Img.AppImage"
     _fake_appimage(img, "v1")
@@ -1990,7 +1990,7 @@ def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):
 
 def test_the_gpu_renders_inside_the_sandbox_where_the_host_has_one(env):
     # "GPU acceleration" was on the physical-desktop checklist. The VM has a virtio GPU and the
-    # launcher binds /dev/dri and the /sys paths Mesa needs (17.4); eglinfo on the device platform
+    # launcher binds /dev/dri and the /sys paths Mesa needs (R17.4); eglinfo on the device platform
     # names the renderer without any display server. Hardware-accelerated means a renderer that is
     # not llvmpipe/softpipe; on this host that is virgl (tier 3) -- a container has no node and skips.
     if not os.path.isdir("/dev/dri") or not any(n.startswith("renderD") for n in os.listdir("/dev/dri")):
@@ -2022,7 +2022,7 @@ def _tarball(path, version: str) -> None:
 def test_a_real_install_update_rollback_and_uninstall_run_sandboxed_end_to_end(env, tmp_path, monkeypatch):
     # Every backend test composes install records by hand; nothing had driven install.install()
     # with a real archive, launched the result under bwrap through launch(), updated it, rolled it
-    # back and uninstalled it -- the product's own path (4.3.1, 17.4, 17.7, 17.14). A local HTTP
+    # back and uninstalled it -- the product's own path (R4.3.1, R17.4, R17.7, R17.14). A local HTTP
     # server serves two tarballs; the private home, the launcher, the menu entry, the command link,
     # the identity marker and the log are what the real path leaves, and what uninstall removes.
     import http.server
@@ -2048,7 +2048,7 @@ def test_a_real_install_update_rollback_and_uninstall_run_sandboxed_end_to_end(e
         return Asset(name=f"demo-{v}.tar.gz", url=f"http://127.0.0.1:{port}/demo-{v}.tar.gz")
 
     def run(expect: str):
-        logfile = applog.app_log_path("demo")                              # the install's id (14.2.1)
+        logfile = applog.app_log_path("demo")                              # the install's id (R14.2.1)
         before = os.path.getsize(logfile) if os.path.exists(logfile) else 0
         t = install.launch(db, url)
         t.join(timeout=60)

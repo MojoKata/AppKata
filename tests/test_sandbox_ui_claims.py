@@ -2,7 +2,7 @@
 
 Round five found three hints stating things that were not so, and round six a fourth (the camera
 portal "asks you first"). The dialog contract test drives behaviour, not wording, and the claims
-table in docs/app-sandboxing.md covers the spec, not the QML. This test reads every `hint:` string
+table in docs/architecture/A1-app-sandboxing/ covers the spec, not the QML. This test reads every `hint:` string
 in SandboxDialog.qml and requires a row for it in the design doc's "UI text and its evidence"
 table (matched on the hint's first words), so a new or changed hint without evidence fails here.
 """
@@ -11,7 +11,7 @@ import os
 import re
 
 QML = os.path.join(os.path.dirname(__file__), "..", "src", "appkata", "qml", "SandboxDialog.qml")
-DOC = os.path.join(os.path.dirname(__file__), "..", "docs", "app-sandboxing.md")
+DOC = os.path.join(os.path.dirname(__file__), "..", "docs", "architecture", "A1-app-sandboxing", "A1.10-ui-text.md")
 
 
 def hints() -> list[str]:
@@ -26,14 +26,14 @@ def hints() -> list[str]:
 
 def table_keys() -> list[str]:
     text = open(DOC).read()
-    section = text[text.index("## UI text and its evidence"):]
-    section = section[:section.index("\n## ", 10)] if "\n## " in section[10:] else section
+    section = text[text.index("# A1.10. UI text and its evidence"):]
+    section = section[:section.index("\n#", 10)] if "\n#" in section[10:] else section
     return [m.group(1) for m in re.finditer(r'^\| "([^"]+?)…?" \|', section, re.M)]
 
 
 def test_every_dialog_hint_has_a_row_in_the_evidence_table():
     keys = table_keys()
-    assert keys, "no 'UI text and its evidence' table in docs/app-sandboxing.md"
+    assert keys, "no 'UI text and its evidence' table in docs/architecture/A1-app-sandboxing/"
     missing = [h for h in hints() if not any(h.startswith(k) for k in keys)]
     assert not missing, "hints without an evidence row: " + "; ".join(repr(h[:60]) for h in missing)
 

@@ -1,4 +1,4 @@
-"""Trust verification against real git repositories (requirement 7.6, 10.7, 10.8)."""
+"""Trust verification against real git repositories (R7.6, R10.7, R10.8)."""
 
 import json
 import os
@@ -53,7 +53,7 @@ def test_ssh_trust_lifecycle(env):
     t = db.one("SELECT * FROM trusts WHERE id=?", (tid,))
     assert rows(db, tid)["LocalSend"]["trust"] == 4 and t["problem"] == ""
 
-    # an unsigned change is not applied, and flagged (10.8)
+    # an unsigned change is not applied, and flagged (R10.8)
     write(repo, TABLE + "| LocalSend | https://github.com/localsend/localsend | foss | 0 | 1 |\n")
     devtools.commit(repo, "sneaky", author="Eve", email="eve@x.org")
     sync.sync_trust(db, Http(), tid, root)
@@ -73,7 +73,7 @@ def test_new_signer_needs_approval(env):
     pend = db.one("SELECT * FROM authorities WHERE trust_id=? AND pending=1", (tid,))
     assert t["problem"] == "unknown-signer" and pend["email"] == "nadia@desk.coop" and pend["pending_commits"] == 1
     assert rows(db, tid)["Krita"]["trust"] == 5
-    sync.trust_signer(db, tid, pend["fingerprint"])           # requirement 7.6.6
+    sync.trust_signer(db, tid, pend["fingerprint"])           # R7.6.6
     sync.sync_trust(db, Http(), tid, root)
     assert rows(db, tid)["Krita"]["trust"] == 4
     assert db.one("SELECT problem FROM trusts WHERE id=?", (tid,))["problem"] == ""
@@ -137,7 +137,7 @@ def test_export_includes_trust_score(tmp_path):
 
 
 def test_appkata_itself_has_trust_5(tmp_path):
-    # requirement 10.6.4: you're running it, so a Trust's lower value (or a veto) doesn't apply
+    # R10.6.4: you're running it, so a Trust's lower value (or a veto) doesn't apply
     from appkata_core import APPKATA_REPO, catalog
     from appkata_core.db import DB, now
     db = DB(str(tmp_path / "a.db"))

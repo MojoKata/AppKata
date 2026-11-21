@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""What the AppImage takes from the host, against what requirement 1.6 names (review 3, R3-31).
+"""What the AppImage takes from the host, against what R1.6 names (review 3, R3-31).
 
-1.6 said the AppImage "carries everything AppKata needs". It carries its Python and Qt, and takes
+R1.6 said the AppImage "carries everything AppKata needs". It carries its Python and Qt, and takes
 the rest from the host: about 20 libraries, Kerberos's libgssapi_krb5 among them, which no
 requirement named and only the Mint images' full desktops happened to have. The class: a library
 the AppImage takes from the host that no requirement names and no tier shows present.
@@ -38,7 +38,7 @@ from appkata_core.appkind import elf_needed  # noqa: E402
 NAMED = os.path.join(HERE, "..", "packaging", "appimage-host-libs.txt")
 INSIDE = "/tmp/squashfs-root/"          # where test-appimage.sh extracts the AppImage in the container
 
-# What the AppImage takes from the host that 1.6 doesn't name yet, and the finding that keeps each:
+# What the AppImage takes from the host that R1.6 doesn't name yet, and the finding that keeps each:
 # reported, not failed. One that's named, or no longer needed, fails the check
 STILL_UNNAMED: dict = {}
 

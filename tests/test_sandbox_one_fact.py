@@ -16,8 +16,8 @@ against the truth where there is one:
 - what the compositor leaks -- the Wayland globals it offers an ordinary client, from the registry
   listings the `wayland`, `kwin` and `kwin6` harnesses take (H) -- against the warning's verdict,
   and the warnings' advice and the tour's copy of the text against the same truth;
-- whether a folder may be shared: the CLI tool's run-time rule in the launcher's shell (17.3.3)
-  against the grant check in Python (17.3.1), over one corpus of folders;
+- whether a folder may be shared: the CLI tool's run-time rule in the launcher's shell (R17.3.3)
+  against the grant check in Python (R17.3.1), over one corpus of folders;
 - whether an app brings Chromium's sandbox: the launcher's shell test against App Detail's;
 - whether this machine can sandbox an app, per level: support_status() against what the launchers
   do (tier 2).
@@ -44,25 +44,25 @@ from fake_wayland import OFFERS, FakeCompositor
 from test_sandbox_exposure import _recording_bwrap
 from test_sandbox_run import Env, _bwrap_ok, path_without
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 # Disagreements still open, and the finding that keeps each
 STILL_WRONG: dict = {}
 
-# What each compositor offers an ordinary client, of the globals that leak (17.9): screen capture
+# What each compositor offers an ordinary client, of the globals that leak (R17.9): screen capture
 # (zwlr_screencopy_manager_v1, ext_image_copy_capture), the clipboard (zwlr_data_control_manager_v1,
 # ext_data_control_manager_v1) and input injection (zwp_virtual_keyboard_manager_v1,
-# org_kde_kwin_fake_input). None: a compositor AppKata has never heard of, which 17.9 says is not
+# org_kde_kwin_fake_input). None: a compositor AppKata has never heard of, which R17.9 says is not
 # assumed safe.
 ALL = frozenset({"capture", "clipboard", "input"})
 COMPOSITORS = {
     "mutter": (frozenset(), "run: the `wayland` harness's registry listing (mutter 46)"),
-    "sway": (ALL, "run: the `wayland` harness (sway 1.9): screenshot, wl-paste and a typed key from a sandbox"),
+    "sway": (ALL, "run: the `wayland` harness (sway R1.9): screenshot, wl-paste and a typed key from a sandbox"),
     "kwin5": (frozenset({"clipboard"}), "run: the `kwin` harness (kwin 5.27), round seven R7-1"),
     "kwin6": (frozenset({"clipboard"}), "run: the `kwin6` harness (kwin 6.3)"),
     "labwc": (ALL, "read: wlroots, Budgie 10.10's Wayland session (review 2, F7)"),
     "phoc": (ALL, "read: wlroots, Phosh's compositor (review 2, F7)"),
-    "unknown": (None, "17.9: a compositor AppKata has never heard of is not assumed safe"),
+    "unknown": (None, "R17.9: a compositor AppKata has never heard of is not assumed safe"),
 }
 W, X = {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}, {"DISPLAY": ":0"}
 # A session as the user has it: its variables, and the compositor that really runs
@@ -74,7 +74,7 @@ SESSIONS = [
     ("KDE Plasma 5", {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "KDE", **W}, "kwin5"),
     ("KDE Plasma 6", {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "KDE", **W}, "kwin6"),
     ("sway from a display manager", {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "sway", **W}, "sway"),
-    # sway sets WAYLAND_DISPLAY, DISPLAY and SWAYSOCK and nothing else (run: sway 1.9, the session
+    # sway sets WAYLAND_DISPLAY, DISPLAY and SWAYSOCK and nothing else (run: sway R1.9, the session
     # image); a console login's XDG_SESSION_TYPE is logind's "tty"
     ("sway from a TTY", {"XDG_SESSION_TYPE": "tty", **W}, "sway"),
     ("sway from a TTY, no logind", {**W}, "sway"),
@@ -218,7 +218,7 @@ def test_every_copy_of_the_warning_says_what_the_product_does_but_the_listed(mon
     assert wrong == listed, f"wrong {sorted(wrong)}, listed {sorted(listed)}"
 
 
-# ------------------------------------------------------------------- may this folder be shared (17.3.1, 17.3.3)
+# ------------------------------------------------------------------- may this folder be shared (R17.3.1, R17.3.3)
 
 def _folders(env: Env) -> dict[str, str]:
     h = str(env.home)
@@ -281,7 +281,7 @@ def test_the_harness_catches_the_cli_tool_sharing_the_home_it_runs_from(tmp_path
     assert any(w.startswith("the home folder: the launcher shares it") for w in wrong), wrong
 
 
-# ------------------------------------------------------------------- does the app bring its own sandbox (17.10.2)
+# ------------------------------------------------------------------- does the app bring its own sandbox (R17.10.2)
 
 LAYOUTS = {  # files relative to the version folder, and the program
     "chrome-sandbox beside the program": (["app", "chrome-sandbox"], "app"),
@@ -322,7 +322,7 @@ def test_the_launcher_and_app_detail_agree_on_which_apps_bring_chromiums_sandbox
     assert not wrong, "\n".join(wrong)
 
 
-# ------------------------------------------------------------------- can this machine sandbox an app (17.10; tier 2)
+# ------------------------------------------------------------------- can this machine sandbox an app (R17.10; tier 2)
 
 @pytest.mark.skipif(not _bwrap_ok() or not shutil.which("xdg-dbus-proxy"), reason="needs bwrap and xdg-dbus-proxy (scripts/test-sandbox.sh launcher)")
 def test_the_support_status_matches_what_each_levels_launcher_does_but_the_listed(tmp_path, monkeypatch):

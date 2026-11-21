@@ -1,4 +1,4 @@
-"""Comparing release versions (requirement 9.4)."""
+"""Comparing release versions (R9.4)."""
 
 from __future__ import annotations
 

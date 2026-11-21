@@ -1,7 +1,7 @@
 #!/bin/sh
 # Inside a desktop image (scripts/test-appimage.sh): start the AppImage given as $1 as a user would,
 # on X11 (Xvfb) and on Wayland (a headless compositor), and check that it runs there with only the
-# desktop's own libraries (requirement 1.1, 1.6; review 3, R3-31, R3-32). The tour is no help here:
+# desktop's own libraries (R1.1, R1.6; review 3, R3-31, R3-32). The tour is no help here:
 # it runs offscreen, so it never loads the platform plugin a desktop session loads.
 #
 # For each session: AppKata still running after 20 s, Qt's plugin for that session loaded, on X11 a

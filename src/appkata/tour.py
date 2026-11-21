@@ -14,7 +14,7 @@ from . import layout
 # (name, step, delay ms); urls refer to the demo data (scripts/demo_data.py)
 GH = "https://github.com/"
 MB = 1_000_000
-# the design point (requirement 5.2.1): AppKata maximized on a 1920 x 1080 screen. On Windows the window
+# the design point (R5.2.1): AppKata maximized on a 1920 x 1080 screen. On Windows the window
 # takes what the screen leaves beside the taskbar, as maximized (scripts/test-windows-vm.sh sets the VM's
 # screen to 1920 x 1080 first); offscreen, with no taskbar or panel, the size that leaves
 DESIGN = (1920, 1040)
@@ -35,20 +35,20 @@ STEPS = [
                                                             "error": "Commit 4e1c9a2 isn't signed, so it wasn't pushed."}}}, 1500),
     ("A05-apps-detail-versions", {"view": "apps", "detail": GH + "Zettlr/Zettlr", "scrollDetail": "versions", "versionsMore": True, "versionTip": 5}, 1800),
     ("A06-appkata-restart", {"view": "apps", "detail": APPKATA_REPO, "selfUpdated": True}, 1800),
-    # installing (requirement 4.8): one download, the rest queued; the App Detail panel with Cancel
+    # installing (R4.8): one download, the rest queued; the App Detail panel with Cancel
     ("A07-apps-installing", {"view": "apps", "busy": BUSY}, 1500),
     ("A08-apps-detail-installing", {"view": "apps", "detail": GH + "localsend/localsend", "busy": BUSY}, 1800),
     ("A09-app-updates-itself", {"view": "apps", "detail": GH + "syncthing/syncthing"}, 1800),
     ("A10-confirm-uninstall", {"view": "apps", "confirm": ["uninstall", {"url": GH + "keepassxreboot/keepassxc"}]}, 1300),
-    # version reviews (requirement 10.6.5, 8.4.1.1): an installed version a Trust avoids; a new review of the installed version
+    # version reviews (R10.6.5, R8.4.1.1): an installed version a Trust avoids; a new review of the installed version
     ("A18-apps-version-avoided", {"view": "apps", "detail": GH + "tukaani-project/xz", "expanded": 0}, 1800),
     ("A19-review-dialog-version", {"view": "apps", "detail": GH + "localsend/localsend", "review": GH + "localsend/localsend",
                                    "reviewSet": {"text": "Still my pick for LAN transfers.", "autoCommit": True, "autoPush": True}}, 1500),
-    # package channels (requirement 16), from the demo data's channel facts (scripts/demo_data.py, demo-channels.json)
+    # package channels (R16), from the demo data's channel facts (scripts/demo_data.py, demo-channels.json)
     ("A17-apps-detail-system-updated", {"view": "apps", "detail": GH + "localsend/localsend", "channels": True}, 1800),
     ("A11-confirm-remove-version", {"view": "apps", "detail": GH + "Zettlr/Zettlr", "scrollDetail": "versions",
                                     "confirm": ["removeVersion", {"url": GH + "Zettlr/Zettlr", "version": "4.6.0"}]}, 1500),
-    # app sandboxing (requirement 17)
+    # app sandboxing (R17)
     ("A20-apps-detail-sandbox", {"view": "apps", "detail": GH + "keepassxreboot/keepassxc", "scrollDetail": "sandbox", "sandboxDemo": "x11"}, 1800),
     ("A21-sandbox-dialog", {"view": "apps", "detail": GH + "keepassxreboot/keepassxc", "sandbox": GH + "keepassxreboot/keepassxc", "sandboxDemo": "x11"}, 1800),
     ("A25-sandbox-advanced", {"view": "apps", "detail": GH + "keepassxreboot/keepassxc", "sandbox": GH + "keepassxreboot/keepassxc",
@@ -89,7 +89,7 @@ STEPS = [
     ("U02-audit-sandbox", {"view": "audit", "auditFilter": "app"}, 1500),
     ("X01-app-menu", {"view": "catalog", "appMenu": True}, 1300),
     ("X06-about", {"view": "apps", "about": True}, 1300),
-    ("X14-install-appkata", {"view": "catalog", "selfInstall": True}, 1500),     # first start of a downloaded AppImage (2.11.3.1)
+    ("X14-install-appkata", {"view": "catalog", "selfInstall": True}, 1500),     # first start of a downloaded AppImage (R2.11.3.1)
     ("X16-first-start", {"view": "apps", "selfInstall": True}, 1500),           # the same, as it is: FRESH below
     ("X03-settings", {"view": "catalog", "settings": "top"}, 1500),
     ("X04-settings-portable", {"view": "catalog", "settings": "portable"}, 1500),
@@ -106,7 +106,7 @@ STILL_OUTSIDE: dict = {}
 
 
 def shown_sandboxed(info: dict) -> bool:
-    """App Detail's "Sandboxed" pill (17.4), from its sandboxInfo."""
+    """App Detail's "Sandboxed" pill (R17.4), from its sandboxInfo."""
     return bool(info.get("applicable") and info["active"] and info["level"] != "off")
 
 
@@ -115,12 +115,12 @@ def shown_sandboxed(info: dict) -> bool:
 # sandboxed" alone, so A09 showed Syncthing sandboxed and updating itself. Each rule is (what's
 # wrong, test(row, info)) for an installed app: its row in the Apps list and App Detail's sandboxInfo.
 RULES = [
-    ("shown sandboxed, and updating itself (17.12)", lambda a, s: shown_sandboxed(s) and a["state"] == "selfupdating"),
-    ("AppKata updates it because it runs sandboxed, and it's shown not sandboxed (17.12)",
+    ("shown sandboxed, and updating itself (R17.12)", lambda a, s: shown_sandboxed(s) and a["state"] == "selfupdating"),
+    ("AppKata updates it because it runs sandboxed, and it's shown not sandboxed (R17.12)",
      lambda a, s: a["sandboxedUpdates"] and not shown_sandboxed(s)),
-    ("its sandbox Off, and run sandboxed (17.4: the launch command offered)",
+    ("its sandbox Off, and run sandboxed (R17.4: the launch command offered)",
      lambda a, s: bool(s.get("applicable") and s["level"] == "off" and s["active"])),
-    ("installed through a package channel, and sandboxed by AppKata (17.1)", lambda a, s: bool(a.get("ch")) and shown_sandboxed(s)),
+    ("installed through a package channel, and sandboxed by AppKata (R17.1)", lambda a, s: bool(a.get("ch")) and shown_sandboxed(s)),
 ]
 # Each rule an app still breaks somewhere in the tour, as "App: rule", with the finding that keeps
 # it: reported, not failed. One that no longer happens fails the whole tour, so the list shrinks
@@ -151,14 +151,14 @@ def step_keys(step: dict) -> list[str]:
     return list(step) + [f"reviewSet.{k}" for k in step.get("reviewSet") or {}]
 
 
-# Linux's only: the sandbox (requirement 17), package channels (16) and the AppImage's first start
-# (2.11.3.1). On Windows the tour leaves them out: there they'd show a half-empty Sandbox dialog and
+# Linux's only: the sandbox (R17), package channels (R16) and the AppImage's first start
+# (R2.11.3.1). On Windows the tour leaves them out: there they'd show a half-empty Sandbox dialog and
 # "Ubuntu 24.04"
 LINUX_ONLY = {"A17-apps-detail-system-updated", "A20-apps-detail-sandbox", "A21-sandbox-dialog", "A22-update-review-badge",
               "A23-confirm-uninstall-sandbox", "A24-sandbox-setup-needed", "A25-sandbox-advanced", "C10-install-channels",
               "C11-install-sandbox", "S17-explore-flathub", "U02-audit-sandbox", "X14-install-appkata", "X15-settings-sandbox",
               "X16-first-start"}
-if os.name == "nt":         # Windows only (requirement 15)
+if os.name == "nt":         # Windows only (R15)
     STEPS = [s for s in STEPS if s[0] not in LINUX_ONLY]
     STEPS += [
         ("W01-close-app", {"view": "apps", "confirm": ["inUse", {"url": GH + "keepassxreboot/keepassxc", "name": "KeePassXC",

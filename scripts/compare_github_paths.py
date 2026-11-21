@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read each GitHub project's releases through the API and through github.com's pages (the fallback
-when the API's hour runs out, requirement 2.4.1), and say where the two disagree: a release one has
+when the API's hour runs out, R2.4.1), and say where the two disagree: a release one has
 and the other hasn't, a prerelease flag, the latest version, a release's files (review 3, R3-23).
 
     scripts/compare_github_paths.py [owner/repo ...]    default: the demo data's projects

@@ -1,4 +1,4 @@
-"""Which file dialog a GTK3, GTK4 and Qt 6 app shows inside a generated launcher (requirement 17.6.3).
+"""Which file dialog a GTK3, GTK4 and Qt 6 app shows inside a generated launcher (R17.6.3).
 
 Run by `scripts/test-sandbox.sh filedialogs` as the test user in the Mint 22.1 dialogs container:
 Xvfb, a session bus with the real xdg-desktop-portal and its gtk backend, and three tiny apps --
@@ -64,7 +64,7 @@ QTimer.singleShot(4000, report)
 app.exec()
 """
 # What each (app, variant) must show (round six: a harness nobody asserts fails nothing); the script
-# exits 1 on a mismatch. Every app and variant shows its own dialog as generated (17.6.3; the launcher's
+# exits 1 on a mismatch. Every app and variant shows its own dialog as generated (R17.6.3; the launcher's
 # GDK_DEBUG=no-portals since round six, R6-4); only GTK4 with that flag removed and FileChooser allowed takes the portal's.
 EXPECTED = {("gtk4", "portals on, FileChooser allowed"): "the portal's dialog"}      # the only portal road left, and only with the launcher's flag removed
 VERDICTS = {}
@@ -146,7 +146,7 @@ for name, script, extra in APPS:
         time.sleep(1)
     for k in extra:
         del os.environ[k]
-# Links: Qt's own road to the host (17.6.3: Qt calls the OpenURI portal itself when it sees
+# Links: Qt's own road to the host (R17.6.3: Qt calls the OpenURI portal itself when it sees
 # /.flatpak-info, xdg-open only as a fallback). With the harness's handler registered on the host
 # (scripts/sandbox/register-test-handler.sh, run as root by the mode), QDesktopServices.openUrl from
 # a sandboxed Qt app must leave the handler's mark in the *host* home, not the sandbox's.

@@ -1,4 +1,4 @@
-"""The distribution's AppStream catalog (requirement 16.2.2): which repository packages, and which
+"""The distribution's AppStream catalog (R16.2.2): which repository packages, and which
 Flatpaks, are apps, with their names, summaries and project links. Read directly from the files
 apt and dnf keep (DEP-11 YAML, AppStream XML); appstreamcli isn't needed."""
 
@@ -37,11 +37,11 @@ class Component:
 
     @property
     def is_app(self) -> bool:
-        """An app, not part of the desktop (requirement 16.2.2)."""
+        """An app, not part of the desktop (R16.2.2)."""
         return self.type in APP_TYPES and not self.compulsory
 
     def project_urls(self) -> list[str]:
-        """Normalized forge project URLs among its links (requirement 16.1.3)."""
+        """Normalized forge project URLs among its links (R16.1.3)."""
         out = []
         for k in URL_KINDS:
             u = urls.try_normalize(self.urls.get(k, "")) if self.urls.get(k) else None
@@ -239,7 +239,7 @@ def xml_files(root: str = "/") -> list[str]:
 
 
 def flatpak_files(home: str | None = None, remote: str = "flathub") -> list[str]:
-    """A Flatpak remote's AppStream, which flatpak keeps once the remote is added (16.1.3)."""
+    """A Flatpak remote's AppStream, which flatpak keeps once the remote is added (R16.1.3)."""
     home = home or os.path.expanduser("~")
     pats = [os.path.join(home, ".local/share/flatpak/appstream", remote, "*", "active", "appstream.xml*"),
             os.path.join("/var/lib/flatpak/appstream", remote, "*", "active", "appstream.xml*")]
@@ -259,7 +259,7 @@ def _origin_from_name(path: str) -> str:
 
 
 class Catalog:
-    """Every app component found on this computer (requirement 16.2.2)."""
+    """Every app component found on this computer (R16.2.2)."""
 
     def __init__(self, components: list[Component] | None = None):
         self.components = [c for c in (components or []) if c.is_app]
@@ -317,7 +317,7 @@ class Catalog:
         return self._by_url.get(url, [])
 
     def search(self, text: str, flatpak: bool | None = None, limit: int = 50) -> list[Component]:
-        """Name, summary, ID and package matches, best first (requirement 16.2.3)."""
+        """Name, summary, ID and package matches, best first (R16.2.3)."""
         words = [w for w in (text or "").lower().split() if w]
         scored = []
         for c in self.components:
@@ -359,7 +359,7 @@ def load_cached(root: str = "/") -> Catalog:
 
 
 def is_snap_transitional(apt_show: str) -> bool:
-    """Ubuntu's packages that install a Snap (requirement 16.2.2): they depend on snapd and say
+    """Ubuntu's packages that install a Snap (R16.2.2): they depend on snapd and say
     they're transitional."""
     deps = " ".join(re.findall(r"^(?:Pre-)?Depends:\s*(.*)$", apt_show, re.M))
     desc = " ".join(re.findall(r"^Description(?:-\w+)?:\s*(.*)$", apt_show, re.M)).lower()

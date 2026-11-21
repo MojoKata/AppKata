@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh (docs/app-sandboxing.md).
+# Part of scripts/test-sandbox.sh (A1).
 # Inside Mint 22.1 as root: start Xvfb, then run a Qt AppImage (AppKata) and an Electron AppImage
 # (Obsidian) extracted and inside the Standard bwrap profile, and screenshot the display.
 set -u

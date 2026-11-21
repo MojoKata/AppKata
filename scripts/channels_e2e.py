@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package channels end to end (requirement 16), run as root inside a disposable container by
+"""Package channels end to end (R16), run as root inside a disposable container by
 scripts/test-channels.sh. Uses local repositories only (an apt or rpm repository it builds, and a
 Flatpak remote with a tiny runtime and app), plus one signed distribution package for adopting.
 Usage: channels_e2e.py --manager apt|dnf [--pkg hello] [--packagekit] [--no-flatpak]"""
@@ -93,12 +93,12 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
             rpm_repo_refresh(repo)
         a = app(db, "akdemo", {"package": "akdemo"})
         found = channels.links(db, a["url"], None, mgr)
-        ok("Source settings link the package (16.1.3)", found.get("package") and found["package"].value == "akdemo")
+        ok("Source settings link the package (R16.1.3)", found.get("package") and found["package"].value == "akdemo")
         opts = channels.options(db, a["url"], [], found)
         ok("a package card", opts and opts[0]["channel"] == "package")
         rec = install.install_channel(db, a, opts[0])
         row = db.one("SELECT * FROM installs WHERE url=?", (a["url"],))
-        ok("installed through the channel (16.3.5)", row and row["version"] == "1.0" and rec["manager"] == mgr, row)
+        ok("installed through the channel (R16.3.5)", row and row["version"] == "1.0" and rec["manager"] == mgr, row)
         # a newer version appears in the repository
         if mgr == "apt":
             deb(repo, "akdemo", "2.0-1")
@@ -107,13 +107,13 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
             rpm(repo, "akdemo", "2.0")
             rpm_repo_refresh(repo)
         pend = pkgbackend.pending_updates(["akdemo"], mgr)
-        ok("the pending update is found without root (16.5.5)", "akdemo" in pend, pend)
+        ok("the pending update is found without root (R16.5.5)", "akdemo" in pend, pend)
         sync.track_channel_installs(db)
         rec = json.loads(db.one("SELECT record FROM installs WHERE url=?", (a["url"],))["record"])
         ok("the sync records it as pending", rec.get("pending", {}).get("projectVersion") == "2.0", rec.get("pending"))
         install.update_channel(db, a["url"])
-        ok("updated (16.5.5)", db.one("SELECT version FROM installs WHERE url=?", (a["url"],))["version"] == "2.0")
-        # a desktop metapackage that depends on it: uninstalling is refused (16.4.3)
+        ok("updated (R16.5.5)", db.one("SELECT version FROM installs WHERE url=?", (a["url"],))["version"] == "2.0")
+        # a desktop metapackage that depends on it: uninstalling is refused (R16.4.3)
         meta = "task-akdemo-desktop"
         if mgr == "apt":
             deb(repo, meta, "1.0", "akdemo")
@@ -147,7 +147,7 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         install.uninstall(db, a["url"], confirmed=True)
         ok("uninstalled after confirming", not pkgbackend.installed_version("akdemo", mgr) and
            not db.one("SELECT 1 FROM installs WHERE url=?", (a["url"],)))
-        # busy package manager (16.8.3)
+        # busy package manager (R16.8.3)
         lockf = pkgbackend.APT_LOCKS[0] if mgr == "apt" else pkgbackend.RPM_LOCKS[0]
         if os.path.exists(lockf) or mgr == "apt":
             holder = subprocess.Popen(["flock", lockf, "sleep", "4"])
@@ -156,12 +156,12 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
             pkgbackend.wait_for_lock([lockf], on_wait=seen.append, limit=30)
             holder.wait()
             ok("waits while another program holds the lock, and names it", seen and seen[0] == "flock", seen)
-    # adopting a signed distribution package installed by hand (16.4.2)
+    # adopting a signed distribution package installed by hand (R16.4.2)
     sh(f"{'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq' if mgr == 'apt' else 'dnf -y -q install'} {distro_pkg} >/dev/null")
     b = app(db, distro_pkg, {"package": distro_pkg})
     foreign.scan(db)
     row = db.one("SELECT * FROM foreign_installs WHERE url=?", (b["url"],))
-    ok("found as adoptable (16.4.2)", row and row.get("adopt"), row)
+    ok("found as adoptable (R16.4.2)", row and row.get("adopt"), row)
     if row and row.get("adopt"):
         foreign.adopt(db, b["url"])
         ok("adopted", db.one("SELECT 1 FROM installs WHERE url=?", (b["url"],)) is not None)
@@ -207,22 +207,22 @@ def flatpaks(db: DB) -> None:
     found = channels.links(db, a["url"], None, "")
     ok("Source settings link the Flatpak with its remote", found.get("flatpak") and found["flatpak"].remote == "aktest")
     rec = install.install_channel(db, a, {"channel": "flatpak", "value": "org.appkata.Hello", "remote": "aktest"})
-    ok("installed per user (16.3.4)", "org.appkata.Hello" in flatpak.installed() and rec["perms"] == ["Network"], rec)
+    ok("installed per user (R16.3.4)", "org.appkata.Hello" in flatpak.installed() and rec["perms"] == ["Network"], rec)
     first = rec["commit"]
     build_flatpaks(repo, 2)
     sync.track_channel_installs(db)
     rec = json.loads(db.one("SELECT record FROM installs WHERE url=?", (a["url"],))["record"])
-    ok("a new build is pending, asking for more (16.6.3)", rec.get("pending", {}).get("addedPerms") == ["Home folder"],
+    ok("a new build is pending, asking for more (R16.6.3)", rec.get("pending", {}).get("addedPerms") == ["Home folder"],
        rec.get("pending"))
     rec = install.update_channel(db, a["url"])
     ok("updated to the new build", rec["commit"] != first and "Home folder" in rec["perms"], rec)
     log = flatpak.history_log("org.appkata.Hello", "aktest")
-    ok("its versions come from the remote's log (16.5.7)", len(log) >= 2, log)
+    ok("its versions come from the remote's log (R16.5.7)", len(log) >= 2, log)
     install.set_pinned(db, a["url"], True)
-    ok("pinned with flatpak mask (16.5.6)", "org.appkata.Hello" in sh("flatpak mask --user"))
+    ok("pinned with flatpak mask (R16.5.6)", "org.appkata.Hello" in sh("flatpak mask --user"))
     install.set_pinned(db, a["url"], False)
     ok("unpinned", "org.appkata.Hello" not in sh("flatpak mask --user"))
-    # updated outside AppKata (16.5.4): an older commit deployed by hand counts as a change
+    # updated outside AppKata (R16.5.4): an older commit deployed by hand counts as a change
     sh(f"flatpak update --user -y --noninteractive --commit={first} org.appkata.Hello >/dev/null")
     sync.track_channel_installs(db)
     ok("a change made elsewhere is in the Audit (actor System)",

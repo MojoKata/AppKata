@@ -1,9 +1,9 @@
 #!/bin/sh
-# Package channels end to end (requirement 16) in containers, one per package manager: installs,
+# Package channels end to end (R16) in containers, one per package manager: installs,
 # updates, refusals, adopting and uninstalling through apt (command line, and PackageKit in one
 # run), and a local Flatpak remote. Needs Docker; flatpak needs --privileged inside Docker
 # (bubblewrap makes namespaces). No test needs Flathub. The dnf runs (Fedora, Rocky) retired with
-# RPM support (requirement 1.1; docs/testing.md) and come back with it.
+# RPM support (R1.1; docs/testing.md) and come back with it.
 # Usage: scripts/test-channels.sh [ubuntu|ubuntu-pk|mint ...]   (default: all)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)

@@ -1,13 +1,13 @@
 import QtQuick
 import "."
 
-// A Source (requirement 7.1.1): icon, name, chips, URL, forge, version, error, ⋯ menu.
+// A Source (R7.1.1): icon, name, chips, URL, forge, version, error, ⋯ menu.
 Rectangle {
     id: root
     property var src: ({})
     property bool menuOpen: false
     property bool trustsHover: false
-    property bool highlighted: false        // opened from an app's "Source" pill (requirement 2.9.5)
+    property bool highlighted: false        // opened from an app's "Source" pill (R2.9.5)
     signal menu(Item anchor)
     signal trustsRequested(Item anchor)
     signal openTrust(int id)
@@ -32,7 +32,7 @@ Rectangle {
             model: root.chips
             Pill { text: modelData[0]; color: modelData[1]; fg: modelData[2]; icon: modelData[3]; u: 0.8; size: 13; anchors.verticalCenter: parent.verticalCenter }
         }
-        Rectangle {     // also listed by Trusts (requirement 2.9.4)
+        Rectangle {     // also listed by Trusts (R2.9.4)
             id: inTrusts
             objectName: "inTrusts"
             visible: (root.src.trusts || []).length > 0
@@ -47,7 +47,7 @@ Rectangle {
             }
             MouseArea { id: itArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onEntered: root.trustsRequested(inTrusts)
-                        // one Trust: open it; several: the popup lists them, each with Open (requirement 7.1.1)
+                        // one Trust: open it; several: the popup lists them, each with Open (R7.1.1)
                         onClicked: inTrusts.n === 1 ? root.openTrust(root.src.trusts[0].id) : root.trustsRequested(inTrusts) }
         }
     }

@@ -1,4 +1,4 @@
-"""The AppKata.md trust file: parsing (requirement 10.1–10.4) and editing a review (8.5)."""
+"""The AppKata.md trust file: parsing (R10.1–R10.4) and editing a review (8.5)."""
 
 from __future__ import annotations
 
@@ -30,9 +30,9 @@ TAG_MEANINGS = {
 }
 
 
-# "## <App>::Settings" and "### <App>[<version>]::Settings" (requirement 10.3.1): a review's Trust,
-# Rating and Tags, its recommended install options (4.3.1, 4.10), the Source settings that are about the
-# app rather than the user (forge and download filter, 2.6), and its package channels (16.1.3); Track only
+# "## <App>::Settings" and "### <App>[<version>]::Settings" (R10.3.1): a review's Trust,
+# Rating and Tags, its recommended install options (R4.3.1, R4.10), the Source settings that are about the
+# app rather than the user (forge and download filter, R2.6), and its package channels (R16.1.3); Track only
 # and pre-releases are personal, so not here. Each line is "- <Option>: <value>" or
 # "- <Option> (<platform>): <value>"; a platform line overrides the line without one there.
 SETTINGS_KEYS = {"app menu": "appMenu", "command link": "commandLink", "stable name link": "stableName",
@@ -51,14 +51,14 @@ SETTINGS_ORDER = ("appMenu", "commandLink", "stableName", "forge", "assetFilter"
                   "flatpak", "debianPackage", "fedoraPackage", "channel",
                   "sandbox", "sandboxFolders", "sandboxNetwork", "sandboxSound", "sandboxDevices", "sandboxServices",
                   "sandboxAppFolder")
-# The suggested sandbox template, and each kind of grant changed from it (17.3, 10.3.1); Linux-only.
+# The suggested sandbox template, and each kind of grant changed from it (R17.3, R10.3.1); Linux-only.
 # Kept equal to sandbox.TEMPLATE_ORDER (a test checks), without importing the sandbox module here.
 SANDBOX_TEMPLATES = ("strict", "standard", "offline-editor", "online-app", "messenger", "media-player", "developer", "cli-tool")
 # The words each sandbox set line knows, equal to sandbox.LINE_NAMES (a test checks), as above
 SANDBOX_SETS = {"sandboxSound": {"play", "record"}, "sandboxDevices": {"camera", "x11", "xwayland"},
                 "sandboxServices": {"notifications", "keep-awake", "inhibit", "tray", "media-keys", "mpris", "passwords",
                                     "secrets", "password-service", "secrets-provide"}}
-VERDICT = ("trust", "rating", "tags")          # a review's own values, never platform-specific (10.3.1)
+VERDICT = ("trust", "rating", "tags")          # a review's own values, never platform-specific (R10.3.1)
 CHANNELS = ("release", "flatpak", "package")
 FORGE_NAMES = {"github": "github", "github enterprise": "ghe", "ghe": "ghe", "gitlab": "gitlab", "forgejo": "forgejo",
                "codeberg": "forgejo", "gitea": "gitea"}
@@ -88,10 +88,10 @@ def _setting_value(key: str, raw: str):
     if key == "channel":
         v = raw.strip("`").strip().lower()
         return v if v in CHANNELS else None
-    if key == "sandbox":                 # a template name or "off" (17.3)
+    if key == "sandbox":                 # a template name or "off" (R17.3)
         v = raw.strip("`").strip().lower()
         return v if v in SANDBOX_TEMPLATES or v == "off" else None
-    if key == "sandboxFolders":          # kept as written; parsed by sandbox.parse_folders (17.3.1)
+    if key == "sandboxFolders":          # kept as written; parsed by sandbox.parse_folders (R17.3.1)
         v = raw.strip("`").strip()
         return v or None
     if key in SANDBOX_SETS:              # kept as written, its known words only; parsed by sandbox.parse_set
@@ -159,7 +159,7 @@ def _is_heading(line: str) -> bool:
 
 
 def _section_blocks(app: str, lines: list[str]) -> list[tuple[str, str, int, int]]:
-    """The parts of an app's section (requirement 10.3), the lines after its `# <App>` heading:
+    """The parts of an app's section (R10.3), the lines after its `# <App>` heading:
     (kind, version, start, end). Kinds: "app" (the app review's text), "appsettings", "version"
     (from its `## <App>[<version>]` heading), "details", "vsettings", and "text": other text after a
     Settings or Details list, which belongs to the review before it (its version, or "" for the app)."""
@@ -204,7 +204,7 @@ def _details_lines(lines: list[str]) -> list[list[str]]:
 
 
 def parse_section(app: str, section: str) -> tuple[dict, list[str]]:
-    """An app's section (requirement 10.3): ({"text": the app review's text, "opts": its options,
+    """An app's section (R10.3): ({"text": the app review's text, "opts": its options,
     "verdict": its own Trust/Rating/Tags, "versions": [{"v", "text", "details", "opts", "verdict"}]},
     parse warnings). Version reviews are in file order."""
     lines = (section or "").splitlines()
@@ -254,7 +254,7 @@ def parse_section(app: str, section: str) -> tuple[dict, list[str]]:
 
 
 def split_settings(app: str, section: str) -> tuple[str, dict]:
-    """(the app review's text, its options), without version reviews (requirement 10.3, 10.3.1)."""
+    """(the app review's text, its options), without version reviews (R10.3, R10.3.1)."""
     p, _ = parse_section(app, section)
     return p["text"], p["opts"]
 
@@ -268,14 +268,14 @@ def _resolve_block(settings: dict, os_name: str) -> dict:
 def resolve_settings(settings: dict, os_name: str, version: str | None = None, dates: dict | None = None) -> dict:
     """The options that apply on this platform ("linux", "windows", "macos"): a platform's own
     line wins over the line without one. With version reviews, the options carried to `version`
-    (the newest review when None; requirement 10.3.3, 10.3.5)."""
+    (the newest review when None; R10.3.3, R10.3.5)."""
     if (settings or {}).get("_versions"):
         return review_for(settings, None, version, os_name, dates)["opts"]
     return _resolve_block(settings, os_name)
 
 
 def _cmp(a: str, b: str, dates: dict | None) -> int | None:
-    """Two versions compared as in 9.4; a version that isn't semver-like by its release's date."""
+    """Two versions compared as in R9.4; a version that isn't semver-like by its release's date."""
     c = versions.compare(a, b)
     if c is None and dates and dates.get(a) and dates.get(b):
         c = (dates[a] > dates[b]) - (dates[a] < dates[b])
@@ -288,7 +288,7 @@ def ordered_versions(revs: list[dict], dates: dict | None = None) -> list[dict]:
 
 def reviews_over_versions(settings: dict, table: dict | None, os_name: str, dates: dict | None = None) -> list[dict]:
     """A Trust's reviews of an app, the app review first, then its version reviews in version order,
-    each with the Trust, Rating, Tags and options that apply from its version on (requirement 10.3.3):
+    each with the Trust, Rating, Tags and options that apply from its version on (R10.3.3):
     a review's own line, else the value carried from the review before it. The app review without
     its own Trust/Rating/Tags takes them from the earliest version review that has them, else the
     table row; the table row is the newest review's. table: {"trust", "rating", "tags"} or None."""
@@ -320,7 +320,7 @@ _NONE = object()
 
 def review_for(settings: dict, table: dict | None, version: str | None, os_name: str, dates: dict | None = None,
                chain: list[dict] | None = None) -> dict:
-    """A Trust's review that applies to `version` (requirement 10.3.5): its newest version review
+    """A Trust's review that applies to `version` (R10.3.5): its newest version review
     of that version or older, else its app review. A version that can't be placed matches only a
     review of exactly that version, else gets the newest review; None is the newest."""
     chain = chain or reviews_over_versions(settings, table, os_name, dates)
@@ -352,14 +352,14 @@ def verdict_lines(trust: int | None, rating: int | None, tags: list[str]) -> lis
 
 
 # options whose right value depends on the platform; the review dialog writes them for this one.
-# The Sandbox* lines are Linux-only (10.3.1), so they're written as this platform's lines too.
+# The Sandbox* lines are Linux-only (R10.3.1), so they're written as this platform's lines too.
 SANDBOX_KEYS = ("sandbox", "sandboxFolders", "sandboxNetwork", "sandboxSound", "sandboxDevices", "sandboxServices",
                 "sandboxAppFolder")
 PLATFORM_SPECIFIC = {"autoUpdate", "assetFilter", *SANDBOX_KEYS}
 
 
 def merge_settings(old: dict, new: dict, os_name: str) -> dict:
-    """The review dialog's options (this computer's, requirement 8.4.7) merged into the file's.
+    """The review dialog's options (this computer's, R8.4.7) merged into the file's.
     Auto update and the download filter depend on the platform, so they're written as this
     platform's lines; the others become lines without a platform, and this platform's lines for
     them are dropped so the new values apply here too. Everything else in the file is kept."""
@@ -383,9 +383,9 @@ def merge_settings(old: dict, new: dict, os_name: str) -> dict:
 
 
 def options_to_write(full: dict, version: str, new: dict, os_name: str, dates: dict | None = None) -> dict:
-    """The options for a review's Settings (requirement 8.4.7): this computer's options merged
+    """The options for a review's Settings (R8.4.7): this computer's options merged
     into the review's own lines; for a version review, only those that differ from the values
-    carried from the review before it (10.3.3)."""
+    carried from the review before it (R10.3.3)."""
     full = full or {}
     if not version:
         return merge_settings({k: v for k, v in full.items() if not k.startswith("_")}, new, os_name)
@@ -427,7 +427,7 @@ def format_settings(app: str, settings: dict, verdict: list[str] | None = None, 
 class Row:
     app: str
     source: str               # as written
-    url: str                  # normalized (requirement 2.3)
+    url: str                  # normalized (R2.3)
     tags: list[str]
     trust: int | None
     rating: int | None
@@ -439,7 +439,7 @@ class TrustFile:
     rows: list[Row] = field(default_factory=list)
     sections: dict[str, str] = field(default_factory=dict)
     # app → the app review's options, plus "_app" (its own Trust/Rating/Tags) and "_versions" (its
-    # version reviews: {"v", "text", "details", "opts", "verdict"}) when there are any (requirement 10.3)
+    # version reviews: {"v", "text", "details", "opts", "verdict"}) when there are any (R10.3)
     settings: dict[str, dict] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     has_table: bool = False
@@ -547,7 +547,7 @@ def parse(text: str) -> TrustFile:
             continue
         seen.add(app.lower())
         tf.rows.append(Row(app, source, url, list(dict.fromkeys(tags)), trust, rating, n + 1))
-    # sections: "# <App>" exactly matching an App cell (requirement 10.3)
+    # sections: "# <App>" exactly matching an App cell (R10.3)
     rows = {r.app: r for r in tf.rows}
     cur, buf = None, []
     def flush():
@@ -563,7 +563,7 @@ def parse(text: str) -> TrustFile:
                     opts["_versions"] = p["versions"]
                 if opts:
                     tf.settings[cur] = opts
-                # the table row is the newest review's Trust, Rating and Tags (10.3.3)
+                # the table row is the newest review's Trust, Rating and Tags (R10.3.3)
                 newest = ordered_versions(p["versions"])[-1]["verdict"] if p["versions"] else p["verdict"]
                 row = rows[cur]
                 differ = [k for k in VERDICT if k in newest and newest[k] != getattr(row, k)]
@@ -639,10 +639,10 @@ def _tidy(lines: list[str]) -> list[str]:
 def set_review(text: str, app: str, source: str, tags: list[str], trust: int | None, rating: int | None,
                section: str, settings: dict | None = None, version: str = "", details: list[list[str]] | None = None,
                dates: dict | None = None) -> str:
-    """Write one review, leaving the rest of the file as it was (requirement 8.5): the app review
+    """Write one review, leaving the rest of the file as it was (R8.5): the app review
     (`# <App>` text and `## <App>::Settings`), or with `version` that version review (its text,
     Details and Settings), added after the app's other version reviews in version order. The
-    Settings always hold the review's Trust, Rating and Tags (8.4.7); `settings` are its options.
+    Settings always hold the review's Trust, Rating and Tags (R8.4.7); `settings` are its options.
     The table row is updated when the review is the app's newest; adding the first version review
     first writes the table row's values into `## <App>::Settings` when it has none of its own.
     details: [[line, value]]; None keeps the review's Details."""
@@ -704,7 +704,7 @@ def set_review(text: str, app: str, source: str, tags: list[str], trust: int | N
             group += st.splitlines() + [""]
         rest[at:at] = [""] + group
         sec = rest
-        if not have and old_row:          # the first version review: the app review keeps its values (8.5)
+        if not have and old_row:          # the first version review: the app review keeps its values (R8.5)
             sb = _section_blocks(app, sec)
             aset = next((b for b in sb if b[0] == "appsettings"), None)
             own = _parse_block(sec[aset[2] + 1:aset[3]])[1] if aset else {}

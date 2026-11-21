@@ -1,5 +1,5 @@
 """Trust repositories: fetching them and checking that AppKata.md changes are signed by an
-Authority (requirement 7.6.2, 10.7, 10.8). Uses the system git; SSH signatures are checked in
+Authority (R7.6.2, R10.7, R10.8). Uses the system git; SSH signatures are checked in
 pure Python (sshsig), OpenPGP ones with gpg in a keyring that holds only the Trust's keys."""
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class Location:
 
 
 def locate(url: str) -> Location:
-    """A Trust URL is a repository or a file in one (requirement 7.6.1)."""
+    """A Trust URL is a repository or a file in one (R7.6.1)."""
     u = url.strip()
     if u.startswith("file://"):
         u = u[7:]
@@ -96,7 +96,7 @@ def fetch(loc: Location, dest: str) -> str:
 
 
 def find_file(repo: str, tip: str, hint: str) -> str:
-    """AppKata.md in the root or in docs/ (requirement 7.6.2)."""
+    """AppKata.md in the root or in docs/ (R7.6.2)."""
     files = set(git(repo, "ls-tree", "-r", "--name-only", tip).splitlines())
     for cand in ([hint] if hint else []) + ["AppKata.md", "docs/AppKata.md"]:
         if cand in files:
@@ -194,7 +194,7 @@ def check_commit(repo: str, commit: str, gpg_keys: list[str] | None = None) -> C
 
 
 def gpg_program() -> str:
-    """gpg on the PATH, else Git for Windows' own (requirement 15.15)."""
+    """gpg on the PATH, else Git for Windows' own (R15.15)."""
     found = shutil.which("gpg") or ""
     if not found and os.name == "nt":
         from .windows import git_gpg
@@ -278,12 +278,12 @@ class Authority:
     fingerprint: str
     key: str = ""
     enabled: bool = True
-    pending: bool = False      # a new signer the user hasn't approved: still unknown (requirement 7.6.6)
+    pending: bool = False      # a new signer the user hasn't approved: still unknown (R7.6.6)
 
 
 @dataclass
 class Advance:
-    """The result of checking new commits (requirement 10.8)."""
+    """The result of checking new commits (R10.8)."""
     verified: str                     # the last verified commit to apply
     checks: list[Check] = field(default_factory=list)
     stopped: Check | None = None      # first commit that couldn't be accepted

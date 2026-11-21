@@ -1,4 +1,4 @@
-"""The generated launcher, byte for byte, for a few representative grant sets (requirement 17.4).
+"""The generated launcher, byte for byte, for a few representative grant sets (R17.4).
 
 The launcher's text is the enforcement, and every change to it is a change to what every
 sandboxed app may do -- yet a change to build_launcher shows in review only as Python, with the
@@ -19,7 +19,7 @@ import pytest
 
 from appkata_core import install, sandbox as sb
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 GOLDEN = os.path.join(os.path.dirname(__file__), "data", "launchers")
 HOME = "/home/kata"
@@ -41,10 +41,10 @@ CASES = {
 def fixed_host(monkeypatch):
     """The same host for every run: the launcher embeds the home, the runtime dir, the log path and
     the helper paths, the seccomp filter exists only on some machines, and whether an app's own
-    sandbox can run inside, and whether xdg-dbus-proxy is here, are facts of the host too (17.10.2,
-    17.10; pinned to the common case)."""
+    sandbox can run inside, and whether xdg-dbus-proxy is here, are facts of the host too (R17.10.2,
+    R17.10; pinned to the common case)."""
     monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
-    monkeypatch.setattr(sb, "have_bus_filter", lambda: True)          # xdg-dbus-proxy is here (17.10)
+    monkeypatch.setattr(sb, "have_bus_filter", lambda: True)          # xdg-dbus-proxy is here (R17.10)
     monkeypatch.setenv("HOME", HOME)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):

@@ -1,4 +1,4 @@
-"""Flatpak as a channel (requirement 16.3.4, 16.4, 16.5, 16.6): per user, no elevation. Every
+"""Flatpak as a channel (R16.3.4, R16.4, R16.5, R16.6): per user, no elevation. Every
 command goes through `run`, so tests can replace it."""
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def has_remote(name: str = FLATHUB) -> bool:
 
 
 def add_flathub() -> None:
-    """Asked once, before the first Flathub install (requirement 16.3.4)."""
+    """Asked once, before the first Flathub install (R16.3.4)."""
     p = run(["remote-add", "--user", "--if-not-exists", FLATHUB, FLATHUB_REPO])
     if p.returncode:
         raise _err(p, "couldn't add Flathub")
@@ -66,7 +66,7 @@ class Installed:
 
 
 def installed() -> dict[str, Installed]:
-    """Every installed app, user installs first (requirement 4.5, 16.4.1)."""
+    """Every installed app, user installs first (R4.5, R16.4.1)."""
     out: dict[str, Installed] = {}
     for scope in ("--user", "--system"):
         p = run(["list", "--app", scope, "--columns=application,version,origin,branch,active"])
@@ -97,13 +97,13 @@ def info(app_id: str, system: bool = False) -> dict:
 
 # ---------------------------------------------------------------- remote facts
 def remote_info(app_id: str, remote: str = FLATHUB, system: bool = False) -> dict:
-    """The newest build on the remote: version, commit, date (16.1.5, 16.5.5)."""
+    """The newest build on the remote: version, commit, date (R16.1.5, R16.5.5)."""
     p = run(["remote-info", _scope(system), remote, app_id])
     return parse_info(p.stdout) if p.returncode == 0 else {}
 
 
 def parse_log(text: str) -> list[dict]:
-    """`flatpak remote-info --log` → [{"commit", "subject", "date"}], newest first (16.5.7)."""
+    """`flatpak remote-info --log` → [{"commit", "subject", "date"}], newest first (R16.5.7)."""
     out, cur = [], None
     for line in text.splitlines():
         m = re.match(r"^\s*(Commit|Subject|Date|History):\s*(.*)$", line)
@@ -124,7 +124,7 @@ def history_log(app_id: str, remote: str = FLATHUB) -> list[dict]:
 
 
 def metadata(app_id: str, remote: str = FLATHUB, commit: str = "") -> str:
-    """The app's metadata keyfile (its permissions, extra data) from the remote (16.6)."""
+    """The app's metadata keyfile (its permissions, extra data) from the remote (R16.6)."""
     args = ["remote-info", "--user", "--show-metadata", remote, app_id]
     if commit:
         args[3:3] = [f"--commit={commit}"]
@@ -137,7 +137,7 @@ def installed_metadata(app_id: str, system: bool = False) -> str:
     return p.stdout if p.returncode == 0 else ""
 
 
-# ---------------------------------------------------------------- permissions (16.6.3) and extra data (16.6.2)
+# ---------------------------------------------------------------- permissions (R16.6.3) and extra data (R16.6.2)
 _FS_WORDS = {"host": "Whole file system", "host-os": "System files", "host-etc": "System settings",
              "home": "Home folder", "xdg-download": "~/Downloads", "xdg-documents": "~/Documents",
              "xdg-music": "~/Music", "xdg-pictures": "~/Pictures", "xdg-videos": "~/Videos",
@@ -161,7 +161,7 @@ def _keyfile(text: str) -> configparser.RawConfigParser:
 
 
 def permissions(meta: str) -> list[str]:
-    """Plain words for what the app may reach, in a stable order (requirement 16.6.3)."""
+    """Plain words for what the app may reach, in a stable order (R16.6.3)."""
     cp = _keyfile(meta)
     out: list[str] = []
 
@@ -204,12 +204,12 @@ def permissions(meta: str) -> list[str]:
 
 
 def added_permissions(old: list[str], new: list[str]) -> list[str]:
-    """What an update asks for that the installed version didn't have (16.6.3)."""
+    """What an update asks for that the installed version didn't have (R16.6.3)."""
     return [p for p in new if p not in old]
 
 
 def extra_data_host(meta: str) -> str:
-    """The host an extra-data Flatpak downloads its program from, or "" (16.6.2)."""
+    """The host an extra-data Flatpak downloads its program from, or "" (R16.6.2)."""
     cp = _keyfile(meta)
     if not cp.has_section("Extra Data"):
         return ""
@@ -251,14 +251,14 @@ def install(app_id: str, remote: str = FLATHUB, progress=None, cancel=None) -> I
 
 
 def uninstall(app_id: str, system: bool = False) -> None:
-    """The app's data in ~/.var/app is kept (requirement 16.4.3)."""
+    """The app's data in ~/.var/app is kept (R16.4.3)."""
     p = run(["uninstall", _scope(system), "--noninteractive", "-y", app_id])
     if p.returncode and "not installed" not in (p.stderr or "").lower():
         raise _err(p, f"couldn't uninstall {app_id}")
 
 
 def update(app_id: str, system: bool = False, commit: str = "", progress=None, cancel=None) -> dict:
-    """Update to the newest build, or to `commit` (an older version, 16.5.7)."""
+    """Update to the newest build, or to `commit` (an older version, R16.5.7)."""
     args = ["update", _scope(system), "--noninteractive", "-y"] + ([f"--commit={commit}"] if commit else []) + [app_id]
     p = _stream(args, progress, cancel)
     if p.returncode:
@@ -267,7 +267,7 @@ def update(app_id: str, system: bool = False, commit: str = "", progress=None, c
 
 
 def mask(app_id: str, system: bool = False) -> None:
-    """Pinning (requirement 16.5.6): stops every updater, the desktop's store included."""
+    """Pinning (R16.5.6): stops every updater, the desktop's store included."""
     p = run(["mask", _scope(system), app_id])
     if p.returncode:
         raise _err(p, f"couldn't pin {app_id}")
@@ -290,12 +290,12 @@ def parse_updates(text: str) -> dict[str, dict]:
 
 
 def updates(system: bool = False) -> dict[str, dict]:
-    """Apps with a newer build on their remote (requirement 16.5.5)."""
+    """Apps with a newer build on their remote (R16.5.5)."""
     p = run(["remote-ls", "--updates", _scope(system), "--app", "--columns=application,version,commit"])
     return parse_updates(p.stdout) if p.returncode == 0 else {}
 
 
-# ---------------------------------------------------------------- history (16.5.4)
+# ---------------------------------------------------------------- history (R16.5.4)
 @dataclass
 class Change:
     time: str

@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// An installed app (requirement 6.1–6.3, 6.6): icon, name, versions, origin, icon-only Update and Uninstall.
-// While it installs: the phase, progress and an icon-only Cancel (requirement 4.8).
+// An installed app (R6.1–R6.3, R6.6): icon, name, versions, origin, icon-only Update and Uninstall.
+// While it installs: the phase, progress and an icon-only Cancel (R4.8).
 Rectangle {
     id: root
     property var app: ({})
@@ -27,7 +27,7 @@ Rectangle {
         Text { visible: root.upd; text: "→"; color: Theme.accent; font.pixelSize: 12 }
         Text { visible: root.upd; text: root.app.updateTo || ""; color: Theme.accent; font.pixelSize: 12; font.bold: true; font.family: Theme.mono }
     }
-    Row {     // origin (requirement 2.9.3)
+    Row {     // origin (R2.9.3)
         x: root.width * 0.42; y: 13; spacing: 6
         Origin { id: originMark; app: root.app; ring: root.color; anchors.verticalCenter: parent.verticalCenter }
         Text {
@@ -49,7 +49,7 @@ Rectangle {
         id: statusRow
         anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter
         spacing: 8
-        Column {        // install progress (requirement 4.8.1)
+        Column {        // install progress (R4.8.1)
             visible: !!root.busy; spacing: 5; anchors.verticalCenter: parent.verticalCenter
             Row { spacing: 8; anchors.right: parent.right
                 Text { text: Theme.busyDetail(root.busy); visible: !!root.busy && root.busy.phase === "Downloading" && root.width > 900; color: Theme.faint; font.pixelSize: 11 }
@@ -60,18 +60,18 @@ Rectangle {
                             color: root.busy && root.busy.phase === "Waiting" ? Theme.faint : Theme.accent }
             }
         }
-        Pill {      // the Visual C++ run-time (requirement 15.18.2)
+        Pill {      // the Visual C++ run-time (R15.18.2)
             visible: !!root.app.msvcrt && !root.busy; text: "MSVCRT"; tip: "Microsoft Visual C++ Run-time" + (root.app.msvcrtMissing ? ": not installed" : "")
             icon: root.app.msvcrtMissing ? "warn" : ""; u: 0.9; anchors.verticalCenter: parent.verticalCenter
             color: root.app.msvcrtMissing ? Theme.warnSoft : Theme.track; fg: root.app.msvcrtMissing ? Theme.warn : Theme.muted
             onClicked: if (root.app.msvcrtMissing) backend.msvcrtNeeded({ url: root.app.url, name: root.app.name })
         }
-        Pill {      // a trusted reviewer avoids the installed version (requirement 10.6.5)
+        Pill {      // a trusted reviewer avoids the installed version (R10.6.5)
             visible: !!root.app.installedVetoed && !root.busy; text: "Avoid this version"; icon: "warn"; u: 0.9; anchors.verticalCenter: parent.verticalCenter
             color: Theme.errSoft; fg: Theme.err; tip: root.app.avoid ? (root.app.avoid.own ? "You" : root.app.avoid.by) + " · Avoid" + (root.app.avoid.from ? " from " + root.app.avoid.from : "") : ""
         }
         Pill { visible: root.upd && !root.busy && !root.app.installedVetoed; text: root.app.updateAvoided ? "Update · avoid " + root.app.updateTo : "Update available"; showDot: true; dot: Theme.accent; fg: Theme.accent; color: Theme.accentSoft; u: 0.9; anchors.verticalCenter: parent.verticalCenter }
-        Row {           // a channel install the system updates, or that nothing updates (requirement 16.5.1)
+        Row {           // a channel install the system updates, or that nothing updates (R16.5.1)
             visible: !!root.app.ch && !root.busy && root.app.state !== "update"
                      && ["system", "not-updated", "held"].indexOf(root.app.ch.updates) >= 0
             spacing: 8; anchors.verticalCenter: parent.verticalCenter
@@ -94,12 +94,12 @@ Rectangle {
                 }
             }
         }
-        Pill {          // an update that asks for more permissions (requirement 16.6.3)
+        Pill {          // an update that asks for more permissions (R16.6.3)
             visible: root.upd && !root.busy && !!root.app.permsGrow; text: "Asks for more"; icon: "warn"; u: 0.9
             color: Theme.warnSoft; fg: Theme.warn; anchors.verticalCenter: parent.verticalCenter
             tip: root.app.ch ? (root.app.ch.addedPerms || []).join(", ") : ""
         }
-        Row {           // the app updates itself (requirement 4.10)
+        Row {           // the app updates itself (R4.10)
             visible: root.app.state === "selfupdating" && !root.busy
             spacing: 8; anchors.verticalCenter: parent.verticalCenter
             Text { visible: !!root.app.newer; text: root.app.version + " is out"; color: Theme.faint; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
@@ -111,14 +111,14 @@ Rectangle {
             Icon { name: root.app.state === "pinned" ? "pin" : "clock"; size: 15; color: Theme.faint; anchors.verticalCenter: parent.verticalCenter }
             Text { text: root.app.state === "pinned" ? "Pinned at " + root.app.pinned : root.app.held; color: Theme.faint; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter; rightPadding: 8 }
         }
-        Rectangle {    // icon-only Update (requirement 6.4.1)
+        Rectangle {    // icon-only Update (R6.6)
             visible: root.upd && !root.busy
             width: 32; height: 32; radius: 9; color: upArea.containsMouse ? Qt.lighter(Theme.accent, 1.08) : Theme.accent
             Icon { anchors.centerIn: parent; name: "update"; color: "#ffffff" }
             MouseArea { id: upArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.update(root.app.url) }
             ToolTip.visible: upArea.containsMouse; ToolTip.text: "Update"
         }
-        TipButton {    // icon-only Cancel while it installs (requirement 4.8.3)
+        TipButton {    // icon-only Cancel while it installs (R4.8.3)
             visible: !!root.busy && root.busy.phase !== "Installing"
             icon: "x"; tip: root.busy && root.busy.phase === "Waiting" ? "Remove from the queue" : "Cancel"
             anchors.verticalCenter: parent.verticalCenter; onClicked: backend.cancelInstall(root.app.url)

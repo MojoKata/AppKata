@@ -1,5 +1,5 @@
-"""Who updates an app installed from a channel (requirement 16.5): the updaters AppKata knows
-(16.5.2), and, afterwards, the package managers' history (16.5.4)."""
+"""Who updates an app installed from a channel (R16.5): the updaters AppKata knows
+(R16.5.2), and, afterwards, the package managers' history (R16.5.4)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _timer_enabled(name: str) -> bool:
     return _out(["systemctl", "is-enabled", name]).strip() in ("enabled", "static", "enabled-runtime")
 
 
-# ---------------------------------------------------------------- what's set up (16.5.2)
+# ---------------------------------------------------------------- what's set up (R16.5.2)
 @dataclass
 class Detection:
     flatpak: list[str] = field(default_factory=list)       # updaters that update Flatpaks automatically
@@ -81,7 +81,7 @@ def origin_matches(pattern: str, release: dict, distro_id: str = "", codename: s
 
 def apt_auto(det: Detection, releases: list[dict], distro_id: str = "", codename: str = "") -> bool:
     """unattended-upgrades updates this package: one of the repositories its new versions come from is
-    allowed, other than a security pocket (requirement 16.5.2: security-only doesn't count)."""
+    allowed, other than a security pocket (R16.5.2: security-only doesn't count)."""
     if not det.apt_unattended:
         return False
     for r in releases:
@@ -112,7 +112,7 @@ def os_release(root: str = "/") -> dict:
 
 
 def detect(root: str = "/", home: str | None = None) -> Detection:
-    """Read the settings of the updaters AppKata knows (requirement 16.5.2). Failures count as off."""
+    """Read the settings of the updaters AppKata knows (R16.5.2). Failures count as off."""
     home = home or os.path.expanduser("~")
     d = Detection()
     # unattended-upgrades
@@ -156,7 +156,7 @@ def detect(root: str = "/", home: str | None = None) -> Detection:
 
 
 def package_owner(det: Detection, manager: str, releases: list[dict] | None = None) -> str:
-    """The updater that updates a package automatically, or "" (16.5.1)."""
+    """The updater that updates a package automatically, or "" (R16.5.1)."""
     if det.packages:
         return det.packages[0]
     if manager == "apt":
@@ -171,7 +171,7 @@ def flatpak_owner(det: Detection) -> str:
     return det.flatpak[0] if det.flatpak else ""
 
 
-# ---------------------------------------------------------------- what happened (16.5.4)
+# ---------------------------------------------------------------- what happened (R16.5.4)
 @dataclass
 class Event:
     date: str
@@ -248,7 +248,7 @@ def apt_history(root: str = "/") -> list[Event]:
 
 
 def last_change(manager: str, package: str, version: str = "") -> tuple[str, str]:
-    """(who, date) of the newest change to a package, from the history (16.5.4); ("", "") if unknown."""
+    """(who, date) of the newest change to a package, from the history (R16.5.4); ("", "") if unknown."""
     if manager == "apt":
         for e in reversed(apt_history()):
             if package in e.packages and (not version or e.packages[package][1] == version):

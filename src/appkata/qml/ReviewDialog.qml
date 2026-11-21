@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import "."
 
-// Writing a review to the user's AppKata.md (requirement 8.2–8.5).
+// Writing a review to the user's AppKata.md (R8.2–R8.5).
 Dialog {
     id: root
     property string url: ""
@@ -15,7 +15,7 @@ Dialog {
     property bool autoPush: false
     property var result: null
     property bool saving: false
-    property string version: ""             // which review: a release, or "" for Any version (requirement 8.4.1.1)
+    property string version: ""             // which review: a release, or "" for Any version (R8.4.1.1)
     property bool includeDetails: false
     property bool includeSandbox: true      // write my own sandbox into the review (10.3.1; review 2, F9)
     readonly property var cur: (r.versionReviews || {})[version] || ({})
@@ -42,7 +42,7 @@ Dialog {
         autoCommit = r.inRepo && r.autoCommit; autoPush = r.inRepo && r.autoPush
         tabs.preview = false
     }
-    function loadVersion() {        // the chosen review, or a new one starting from the values in effect (10.3.3)
+    function loadVersion() {        // the chosen review, or a new one starting from the values in effect (R10.3.3)
         const c = (r.versionReviews || {})[version] || {}
         tags = (c.tags || []).slice(); trustValue = c.trust === undefined ? null : c.trust
         ratingValue = c.rating === undefined ? null : c.rating
@@ -55,7 +55,7 @@ Dialog {
             if (res.saved && !res.error && (!root.autoPush || res.pushed)) { root.close(); backend.toast("info", "Review saved" + (res.pushed ? " and pushed." : res.committed ? " and committed (" + res.committed + ")." : ".")) }
         }
     }
-    FileDialog {     // requirement 8.2: choose where AppKata.md lives (home folder by default)
+    FileDialog {     // R8.2: choose where AppKata.md lives (home folder by default)
         id: pathDialog
         title: "Where should your AppKata.md go?"
         fileMode: FileDialog.SaveFile
@@ -77,7 +77,7 @@ Dialog {
         Text { text: (root.r.path || "").replace(root.r.defaultDir, "~"); color: Theme.faint; font.pixelSize: 12; font.family: Theme.mono }
         Text { visible: !!root.cur.exists; text: "· editing your review" + (root.version ? " of " + root.version : ""); color: Theme.faint; font.pixelSize: 12 }
     }
-    // which review this is (requirement 8.4.1.1)
+    // which review this is (R8.4.1.1)
     Column {
         width: parent.width; spacing: 8
         Text { text: "Version"; color: Theme.muted; font.bold: true; font.pixelSize: 13 }
@@ -109,7 +109,7 @@ Dialog {
             }
         }
     }
-    // tags (requirement 8.4.2)
+    // tags (R8.4.2)
     Column {
         width: parent.width; spacing: 8
         Text { text: "Tags"; color: Theme.muted; font.bold: true; font.pixelSize: 13 }
@@ -145,7 +145,7 @@ Dialog {
             }
         }
     }
-    // trust and rating on one line (requirement 8.4.3, 8.4.4)
+    // trust and rating on one line (R8.4.3, R8.4.4)
     Row {
         width: parent.width; spacing: 28
         Column {
@@ -174,7 +174,7 @@ Dialog {
             Text { text: "How much you like it"; color: Theme.faint; font.pixelSize: 12 }
         }
     }
-    // the app's section (requirement 8.4.5)
+    // the app's section (R8.4.5)
     Item {
         width: parent.width; height: 26
         Text { text: "Review"; color: Theme.muted; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
@@ -220,7 +220,7 @@ Dialog {
             Text { width: parent.width; text: editorArea.text; textFormat: Text.MarkdownText; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 13 }
         }
     }
-    // what I have installed (requirement 8.4.5.1)
+    // what I have installed (R8.4.5.1)
     Column {
         id: detailsBox
         visible: !!root.version && root.version === root.r.installedVersion && (root.r.details || []).length > 0
@@ -238,8 +238,8 @@ Dialog {
                     Text { text: "- " + modelData[0] + ": " + (modelData[0] === "SHA-256" ? modelData[1].slice(0, 12) + "…" : modelData[1]); color: Theme.muted; font.pixelSize: 12; font.family: Theme.mono } } }
         }
     }
-    // the sandbox I chose for the app, written as the review's suggestion (10.3.1, 8.4.7; review 2, F9).
-    // Shown, unlike the other Settings lines (gaps.md 28): a sandbox can name personal folders.
+    // the sandbox I chose for the app, written as the review's suggestion (R10.3.1, R8.4.7; review 2, F9).
+    // Shown, unlike the other Settings lines (R8.4.7): a sandbox can name personal folders.
     Column {
         visible: !!root.r.sandboxLine
         width: parent.width; spacing: 4
@@ -254,7 +254,7 @@ Dialog {
                visible: cbSandbox.checked && (root.r.sandboxRefused || []).length > 0
                text: "Left out, since a review can't grant it: " + (root.r.sandboxRefused || []).map(x => x[0]).join(", ") + "." }
     }
-    // commit and push (requirement 8.3, 8.4.6)
+    // commit and push (R8.3, R8.4.6)
     Row {
         visible: !!root.r.inRepo
         spacing: 22
@@ -274,7 +274,7 @@ Dialog {
             Text { text: (root.r.branch || "") + (root.r.remote ? " → origin  " + root.r.remote.replace(/^https?:\/\//, "").replace(/^git@/, "").replace(/\.git$/, "") : " · no origin remote")
                    color: Theme.faint; font.pixelSize: 12 } }
     }
-    // signing status / result (requirement 8.5)
+    // signing status / result (R8.5)
     Rectangle {
         readonly property bool bad: !!root.result && !!root.result.error
         readonly property bool warnUnsigned: !root.result && root.autoCommit && !root.r.signs

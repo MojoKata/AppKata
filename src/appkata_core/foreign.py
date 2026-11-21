@@ -1,4 +1,4 @@
-"""Apps installed outside AppKata (requirement 4.5): found, flagged, never managed."""
+"""Apps installed outside AppKata (R4.5): found, flagged, never managed."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def inventory() -> dict[str, tuple[str, str]]:
 
 def adoptable(db: DB, urls_: list[str]) -> dict[str, dict]:
     """url → the channel link of an install a package channel matches exactly: the Flatpak app ID or
-    the package name (requirement 16.4.2). Name matches alone aren't adoptable."""
+    the package name (R16.4.2). Name matches alone aren't adoptable."""
     from . import appstream, channels, flatpak, pkgbackend
     if not channels.enabled():
         return {}
@@ -137,7 +137,7 @@ def scan(db: DB) -> None:
 
 
 def adopt(db: DB, url: str) -> dict:
-    """Track an install AppKata didn't make, without reinstalling it (requirement 16.4.2). Returns
+    """Track an install AppKata didn't make, without reinstalling it (R16.4.2). Returns
     the install record."""
     from . import audit, channels, flatpak
     row = db.one("SELECT * FROM foreign_installs WHERE url=?", (url,))

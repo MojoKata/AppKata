@@ -7,6 +7,8 @@ loaded at run time that nothing links."""
 import importlib.util
 import os
 
+import reqdocs
+
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 
@@ -66,16 +68,15 @@ def test_each_library_still_unnamed_names_its_finding():
 
 
 def test_requirement_1_6_names_each_group_of_the_listed_libraries():
-    """1.6 says what the AppImage takes from the host, by group; packaging/appimage-host-libs.txt
+    """R1.6 says what the AppImage takes from the host, by group; packaging/appimage-host-libs.txt
     lists each library with its group, and the check holds the AppImage to that list (R3-31)."""
     m = _mod()
     with open(m.NAMED, encoding="utf-8") as f:
         rows = [line.split("#") for line in f if line.strip() and not line.startswith("#")]
     groups = {comment.strip() for _, comment in rows}
     assert len(rows) == len(m.named()) and all(g for g in groups)
-    with open(os.path.join(ROOT, "docs", "requirements.md"), encoding="utf-8") as f:
-        req = f.read()
-    para = req[req.index("1.6. Distribution:"):req.index("- macOS: a signed")]
+    req = reqdocs.text()
+    para = req[req.index("R1.6. Distribution:"):req.index("- Windows: a signed Inno Setup")]
     para = " ".join(para.split())
     assert "packaging/appimage-host-libs.txt" in para
     assert [g for g in sorted(groups) if g not in para] == []

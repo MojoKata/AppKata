@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// "Install AppKata?" on the first start of a downloaded AppImage (requirement 2.11.3.1).
+// "Install AppKata?" on the first start of a downloaded AppImage (R2.11.3.1).
 // offer: {version, image, dest, folder}
 Dialog {
     id: root

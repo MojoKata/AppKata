@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// A signer's avatar: initials on a gradient from their key (requirement 10.9).
+// A signer's avatar: initials on a gradient from their key (R10.9).
 Rectangle {
     id: root
     property var person: ({})

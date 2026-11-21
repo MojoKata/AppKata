@@ -1,5 +1,5 @@
 """State transitions leave nothing behind: a snapshot of everything AppKata writes, before and
-after each change an app's sandbox can go through (requirement 17.4, 17.11, 17.14).
+after each change an app's sandbox can go through (R17.4, R17.11, R17.14).
 
 Two findings were leftovers of a transition (round two's R10: the identity marker after an
 uninstall that kept the home; round four's R4-7: the same marker after a switch to Off), and one
@@ -39,7 +39,7 @@ def snapshot(be, root):
     row = be.db.one("SELECT record FROM installs WHERE url=?", (URL,))
     files["<install record>"] = json.dumps(json.loads(row["record"]) if row else None, sort_keys=True)
     files["<settings row>"] = json.dumps(be._install_settings(URL), sort_keys=True)
-    # the audit table too (17.16: every sandbox change is recorded; round five's audit category)
+    # the audit table too (R17.16: every sandbox change is recorded; round five's audit category)
     files["<audit>"] = json.dumps([[r["kind"], r["action"], r["subject"]] for r in be.db.all("SELECT kind, action, subject FROM audit ORDER BY id")])
     return files
 
@@ -84,7 +84,7 @@ def test_saving_the_same_sandbox_twice_and_healing_twice_change_nothing(be, sand
     be.setSandbox(URL, {"template": "messenger", "overrides": {}})
     once = snapshot(be, sandboxed)
     be.setSandbox(URL, {"template": "messenger", "overrides": {}})
-    assert set(diff(once, snapshot(be, sandboxed))) == {"<audit>"}        # the same choice again is still a recorded choice (17.16)
+    assert set(diff(once, snapshot(be, sandboxed))) == {"<audit>"}        # the same choice again is still a recorded choice (R17.16)
     twice = snapshot(be, sandboxed)
     assert be._heal_launchers() == []
     assert diff(twice, snapshot(be, sandboxed)) == {}
@@ -105,7 +105,7 @@ def test_resaving_install_options_untouched_changes_only_the_dialogs_own_keys(be
 
 @pytest.mark.parametrize("remove_home", [False, True])
 def test_uninstall_leaves_only_what_it_promises_to_keep(be, sandboxed, remove_home):
-    # 17.14: the private home is kept unless asked; nothing else of the app survives (R10). The
+    # R17.14: the private home is kept unless asked; nothing else of the app survives (R10). The
     # helpers under sandboxes/.identity/ (the xdg-open shim, the forwarding helper, the seccomp
     # filter) are AppKata's own, shared by every launcher, and stay.
     pristine = {k: v for k, v in snapshot(be, sandboxed).items() if "/apps/demo/" not in k and "/appkata-demo" not in k

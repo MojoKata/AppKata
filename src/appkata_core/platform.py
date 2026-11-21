@@ -39,7 +39,7 @@ def has(tool: str) -> bool:
 
 
 def data_dir() -> str:
-    """Database, caches and trust clones (requirement 1.8)."""
+    """Database, caches and trust clones (R1.8)."""
     if override := os.environ.get("APPKATA_DATA"):
         return os.path.abspath(override)
     if OS == "windows":
@@ -50,7 +50,7 @@ def data_dir() -> str:
 
 
 def apps_dir(scope: str = "me") -> str:
-    """Where portable apps are installed (requirement 4.3.1); on Windows for "me" or "everyone" (15.4)."""
+    """Where portable apps are installed (R4.3.1); on Windows for "me" or "everyone" (R15.4)."""
     if override := os.environ.get("APPKATA_APPS"):
         return os.path.abspath(override) if scope != "everyone" else os.path.abspath(override) + "-everyone"
     if OS == "windows":
@@ -62,7 +62,7 @@ def apps_dir(scope: str = "me") -> str:
 
 
 def command_dir_default() -> str:
-    """Where command links go (requirement 4.3.1.3, 15.6)."""
+    """Where command links go (R4.3.1.3, R15.6)."""
     if OS == "windows":
         from . import windows
         return windows.command_dir_default()
@@ -72,7 +72,7 @@ def command_dir_default() -> str:
 def use_system_certificates() -> None:
     """Verify TLS certificates with the operating system, as browsers do. On Windows, Python's own
     check sees only the root certificates already in Windows' store, while Windows fetches missing
-    ones on demand, so downloads from some hosts would fail (requirement 15)."""
+    ones on demand, so downloads from some hosts would fail (R15)."""
     if OS == "linux":
         return
     try:

@@ -1,4 +1,4 @@
-"""Windows specifics (requirement 15): elevation, who an app is for, installers and their Uninstall
+"""Windows specifics (R15): elevation, who an app is for, installers and their Uninstall
 entries, shortcuts, junctions, command links, permissions, Authenticode, Mark of the Web, and
 registering with Windows. The decisions are pure functions, tested on any OS; the calls into
 Windows (ctypes, winreg, PowerShell) are made only on Windows."""
@@ -30,7 +30,7 @@ ADMINS, SYSTEM, USERS, AUTH_USERS, CREATOR_OWNER, TRUSTED_INSTALLER = (
     "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
 
 
-# ---------------------------------------------------------------- folders (requirement 15.4)
+# ---------------------------------------------------------------- folders (R15.4)
 def local_appdata() -> str:
     return os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
 
@@ -48,7 +48,7 @@ def command_dir_default() -> str:
 
 
 def start_menu(scope: str) -> str:
-    """The Start menu's Programs folder: the user's, or all users' (requirement 15.5)."""
+    """The Start menu's Programs folder: the user's, or all users' (R15.5)."""
     if scope == "everyone":
         base = os.environ.get("ProgramData") or "C:\\ProgramData"
     else:
@@ -56,7 +56,7 @@ def start_menu(scope: str) -> str:
     return os.path.join(base, "Microsoft", "Windows", "Start Menu", "Programs")
 
 
-# ---------------------------------------------------------------- names and paths (requirement 15.16)
+# ---------------------------------------------------------------- names and paths (R15.16)
 RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$", re.I)
 
 
@@ -78,7 +78,7 @@ def long_path(path: str) -> str:
     return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
 
 
-# ---------------------------------------------------------------- installers (requirement 15.7)
+# ---------------------------------------------------------------- installers (R15.7)
 SILENT = {"inno": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "nsis": "/S", "electron": "/S",
           "wix": "/quiet /norestart", "installshield": "/s", "squirrel": "--silent"}
 SCOPE_ARGS = {      # exe kind → (just me, everyone); "" where the installer decides
@@ -100,7 +100,7 @@ def scopes(kind: str, exe_kind: str = "") -> list[str]:
 
 
 def installer_command(kind: str, exe_kind: str, file: str, scope: str, log_file: str = "") -> tuple[str, str, bool]:
-    """(program, arguments, elevate) to run an installer silently for a scope (requirement 15.7.2).
+    """(program, arguments, elevate) to run an installer silently for a scope (R15.7.2).
     An installer AppKata doesn't recognize runs interactively and decides for itself."""
     if kind == "msi":
         args = f'/i "{file}" /qn /norestart' + (f' /l*v "{log_file}"' if log_file else "")
@@ -135,7 +135,7 @@ def exit_meaning(code: int) -> str:
     return EXIT.get(code, "failed")
 
 
-# ---------------------------------------------------------------- Uninstall entries (requirement 15.8)
+# ---------------------------------------------------------------- Uninstall entries (R15.8)
 def uninstall_entries() -> dict[str, dict]:
     """Every Uninstall registry entry: HKCU, and HKLM in its 64-bit and 32-bit views."""
     if not IS_WINDOWS:
@@ -218,7 +218,7 @@ def split_command(cmd: str) -> tuple[str, str]:
 
 
 def uninstall_command(entry: dict, exe_kind: str = "") -> tuple[str, str, bool]:
-    """(program, arguments, elevate) that removes what an entry describes (requirement 15.8.2)."""
+    """(program, arguments, elevate) that removes what an entry describes (R15.8.2)."""
     elevate = entry.get("hive") == "HKLM"
     if entry.get("QuietUninstallString"):
         prog, args = split_command(entry["QuietUninstallString"])
@@ -243,7 +243,7 @@ def uninstall_command(entry: dict, exe_kind: str = "") -> tuple[str, str, bool]:
     return prog, (args + " " + extra).strip(), elevate
 
 
-# ---------------------------------------------------------------- running programs (requirement 15.2)
+# ---------------------------------------------------------------- running programs (R15.2)
 def shell_execute(program: str, args: str = "", elevate: bool = False, wait: bool = True, cwd: str = "",
                   show: int = 1, timeout: float = 3600) -> int:
     """Start a program through the shell, as Explorer does: Windows asks for administrator rights
@@ -308,8 +308,8 @@ def powershell(script: str, env: dict | None = None, timeout: float = 120) -> st
 
 
 def launch(program: str, args: list[str] | None = None, through_shell: bool = False) -> None:
-    """Start an app detached from AppKata, so it keeps running when AppKata quits (requirement 15.16)."""
-    if through_shell:           # Mark of the Web: let SmartScreen look at it (requirement 15.11.1)
+    """Start an app detached from AppKata, so it keeps running when AppKata quits (R15.16)."""
+    if through_shell:           # Mark of the Web: let SmartScreen look at it (R15.11.1)
         shell_execute(program, subprocess.list2cmdline(args or []), wait=False, cwd=os.path.dirname(program))
         return
     subprocess.Popen([program, *(args or [])], cwd=os.path.dirname(program) or None, close_fds=True,
@@ -318,7 +318,7 @@ def launch(program: str, args: list[str] | None = None, through_shell: bool = Fa
 
 
 def processes_in(folder: str) -> list[str]:
-    """Programs running from a folder (requirement 15.9): their paths."""
+    """Programs running from a folder (R15.9): their paths."""
     if not IS_WINDOWS:
         return []
     import ctypes
@@ -346,7 +346,7 @@ def processes_in(folder: str) -> list[str]:
     return out
 
 
-# ---------------------------------------------------------------- junctions, shortcuts, command links (15.5, 15.6)
+# ---------------------------------------------------------------- junctions, shortcuts, command links (R15.5, R15.6)
 def is_junction(path: str) -> bool:
     if hasattr(os.path, "isjunction"):
         return os.path.isjunction(path)
@@ -376,7 +376,7 @@ def remove_link(path: str) -> None:
 
 
 def make_shortcut(lnk: str, target: str, elevate: bool = False, description: str = "") -> None:
-    """A Start-menu .lnk with the program's own icon and folder (requirement 15.5). For the
+    """A Start-menu .lnk with the program's own icon and folder (R15.5). For the
     all-users Start menu, it's made in a temporary folder and copied there with administrator rights."""
     dest = lnk
     if elevate:
@@ -403,7 +403,7 @@ def remove_shortcut(lnk: str, elevate: bool = False) -> None:
 
 
 def shim_text(program: str) -> str:
-    """A command link (requirement 15.6): a .cmd file that runs the program with its arguments."""
+    """A command link (R15.6): a .cmd file that runs the program with its arguments."""
     return f'{SHIM_MARK}\r\n@"{program}" %*\r\n'
 
 
@@ -471,13 +471,13 @@ def _broadcast_environment() -> None:
     ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 0x0002, 5000, ctypes.byref(result))
 
 
-# ---------------------------------------------------------------- permissions (requirement 15.4.3)
+# ---------------------------------------------------------------- permissions (R15.4.3)
 WRITE_BITS = (0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000)
 APPEND_DATA = 0x4           # "create folders" on a folder
 
 
 def acl_problem(acl: dict, me: str, root: bool) -> str:
-    """Why a folder isn't protected, or "" (requirement 15.4.3). `acl` is what read_acl() returns:
+    """Why a folder isn't protected, or "" (R15.4.3). `acl` is what read_acl() returns:
     {owner, protected, rules: [{sid, rights, type, inh, prop}]}. Only you, Administrators, SYSTEM
     and (for subfolders) CREATOR OWNER may change it; on the Programs folder itself, Users may only
     create folders."""
@@ -514,7 +514,7 @@ def read_acl(path: str) -> tuple[dict, str]:
 
 
 def protect(path: str, me: str, root: bool) -> None:
-    """Set the permissions of requirement 15.4.3 on the Programs folder (root) or an app's folder."""
+    """Set the permissions of R15.4.3 on the Programs folder (root) or an app's folder."""
     if root:
         grants = [f"*{ADMINS}:(OI)(CI)F", f"*{SYSTEM}:(OI)(CI)F", f"*{CREATOR_OWNER}:(OI)(CI)(IO)F",
                   f"*{USERS}:(OI)(CI)RX", f"*{USERS}:(AD)"]
@@ -534,7 +534,7 @@ def protect(path: str, me: str, root: bool) -> None:
 
 def secure_folder(path: str, root: bool) -> None:
     """Create a folder for everyone's apps, or check one, so no other account can change what's in it.
-    A folder AppKata's user owns is (re)protected; anyone else's is refused (requirement 15.4.3)."""
+    A folder AppKata's user owns is (re)protected; anyone else's is refused (R15.4.3)."""
     created = not os.path.isdir(path)
     os.makedirs(path, exist_ok=True)
     acl, me = read_acl(path)
@@ -547,7 +547,7 @@ def secure_folder(path: str, root: bool) -> None:
         raise PermissionError(f"{path} isn't safe for apps for everyone: {problem}")
 
 
-# ---------------------------------------------------------------- Authenticode, Mark of the Web (15.11)
+# ---------------------------------------------------------------- Authenticode, Mark of the Web (R15.11)
 def authenticode(path: str) -> tuple[str, str]:
     """(status, signer) from Windows' signature check: Valid, NotSigned, HashMismatch, NotTrusted, …"""
     try:
@@ -574,7 +574,7 @@ def zone_identifier(url: str) -> str:
 
 
 def mark_of_web(path: str, url: str) -> None:
-    """Mark a file as downloaded from the internet, as a browser does (requirement 15.11.1)."""
+    """Mark a file as downloaded from the internet, as a browser does (R15.11.1)."""
     try:
         with open(path + ":Zone.Identifier", "w", newline="") as f:
             f.write(zone_identifier(url))
@@ -588,7 +588,7 @@ def mark_tree(folder: str, url: str) -> None:
             mark_of_web(os.path.join(dp, f), url)
 
 
-# ---------------------------------------------------------------- .msix (requirement 15.7.4)
+# ---------------------------------------------------------------- .msix (R15.7.4)
 def msix_name(file: str) -> str:
     """The package name in an .msix's AppxManifest.xml."""
     import zipfile
@@ -613,7 +613,7 @@ def msix_remove(full_name: str) -> None:
     powershell("Remove-AppxPackage -Package $env:AK_N", {"AK_N": full_name}, timeout=600)
 
 
-# ---------------------------------------------------------------- registering with Windows (15.14)
+# ---------------------------------------------------------------- registering with Windows (R15.14)
 def _hkcu_set(path: str, values: dict[str, str]) -> None:
     import winreg
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as k:
@@ -653,7 +653,7 @@ def scheme_get() -> str:
 
 
 def scheme_set(command: str) -> None:
-    """appkata:// links (requirement 11.3); command "" removes the handler."""
+    """appkata:// links (R11.3); command "" removes the handler."""
     import winreg
     if command:
         _hkcu_set(r"Software\Classes\appkata", {"": "URL:AppKata link", "URL Protocol": ""})
@@ -666,7 +666,7 @@ def scheme_set(command: str) -> None:
             pass
 
 
-# ---------------------------------------------------------------- what else is installed (requirement 15.12)
+# ---------------------------------------------------------------- what else is installed (R15.12)
 def inventory() -> dict[str, tuple[str, str]]:
     """normalized name → (where, version) for apps installed on this computer."""
     found: dict[str, tuple[str, str]] = {}
@@ -699,7 +699,7 @@ def inventory() -> dict[str, tuple[str, str]]:
     return found
 
 
-# ---------------------------------------------------------------- the Visual C++ run-time (requirement 15.18)
+# ---------------------------------------------------------------- the Visual C++ run-time (R15.18)
 MSVC_DLL = re.compile(r"^(vcruntime140(_\d+)?|msvcp140(_\w+)?|concrt140|vcomp140|vccorlib140)\.dll$", re.I)
 VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 VC_RUNTIME_KEY = r"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
@@ -790,7 +790,7 @@ def msvcrt_installed() -> str:
     return "present" if os.path.isfile(os.path.join(sysdir, "vcruntime140.dll")) else ""
 
 
-# ---------------------------------------------------------------- git's gpg (requirement 15.15)
+# ---------------------------------------------------------------- git's gpg (R15.15)
 def git_gpg() -> str:
     """gpg.exe from Git for Windows (its usr\\bin isn't on the PATH)."""
     try:

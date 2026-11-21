@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The Catalog perspective (requirement 12).
+// The Catalog perspective (R12).
 Item {
     id: root
     property string selected: ""
@@ -17,7 +17,7 @@ Item {
     readonly property real tileW: Math.min(600, (avail - 16 * (cols - 1)) / cols)
     readonly property real tileH: Math.max(206, 210 * Math.min(1.12, tileW / 300))
 
-    // title row (requirement 12.2)
+    // title row (R12.2)
     Text { id: title; x: 32; y: 30; text: "Catalog"; color: Theme.text; font.pixelSize: 28; font.bold: true }
     Text {
         anchors.left: title.right; anchors.leftMargin: 14; anchors.baseline: title.baseline
@@ -49,7 +49,7 @@ Item {
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: backend.setTag(modelData === "All" ? backend.tag : modelData) }
             }
         }
-        Rectangle {     // the rest of the tags (requirement 12.2)
+        Rectangle {     // the rest of the tags (R12.2)
             id: moreTags
             objectName: "moreTags"
             visible: backend.topTags.length > parent.shown.length
@@ -118,7 +118,7 @@ Item {
             visible: backend.vetoedShown > 0
             x: 32; anchors.top: flow.bottom; anchors.topMargin: 16; spacing: 8
             Icon { name: "info"; color: Theme.muted; anchors.verticalCenter: parent.verticalCenter }
-            Text {   // requirement 12.6.2
+            Text {   // R12.6.2
                 text: backend.vetoedShown === 1 ? "1 app hidden by a trusted reviewer is shown because it matches your search."
                       : backend.vetoedShown + " apps hidden by trusted reviewers are shown because they match your search."
                 color: Theme.muted; font.pixelSize: 13
@@ -126,7 +126,7 @@ Item {
         }
     }
 
-    // empty state (requirement 12.7)
+    // empty state (R12.7)
     Column {
         visible: root.items.length === 0 && !backend.search && backend.sourceItems.length === 0
         anchors.centerIn: parent; spacing: 14
@@ -147,7 +147,7 @@ Item {
         const i = root.items.findIndex(a => a.url === url)
         if (i >= 0) tagsPop.showFor(root.items[i], tiles.itemAt(i).moreButton)
     }
-    // all of an app's tags (requirement 12.4.1)
+    // all of an app's tags (R12.4.1)
     Popup {
         id: tagsPop
         property var app: ({})

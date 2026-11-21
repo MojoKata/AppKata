@@ -32,7 +32,7 @@ from appkata_core import sandbox as sb
 from test_sandbox_exposure import _recording_bwrap
 from test_sandbox_run import Env, _Bus, _bwrap_ok, _DocPortal, env, needs_proxy   # noqa: F401
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +46,7 @@ needs_bwrap = pytest.mark.skipif(not _bwrap_ok(), reason="needs a working bwrap 
 
 # Arguments still not reaching what the user meant, and the finding that keeps each
 STILL_FAILING = {
-    "a file still to be made": "R3-16",       # deferred by the owner to 17.18 (review 3, decisions)
+    "a file still to be made": "R3-16",       # deferred by the owner to R17.18 (review 3, decisions)
 }
 
 # The app: reads what it was given as a real one would -- its own options parsed, a URI decoded, a
@@ -165,7 +165,7 @@ PERSONAS = {
 }
 
 # Needs not met yet, and the finding that keeps each
-STILL_UNMET = {          # accessibility: stated as a limit in 17.17, its filtered proxy in 17.18 (the owner's decision)
+STILL_UNMET = {          # accessibility: stated as a limit in R17.17, its filtered proxy in R17.18 (the owner's decision)
     "a screen-reader user: mount $rt/at-spi": "R2-F15",
     "a screen-reader user: bus org.a11y.Bus": "R2-F15",
 }

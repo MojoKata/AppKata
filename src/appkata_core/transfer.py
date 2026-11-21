@@ -1,4 +1,4 @@
-"""Import and export (requirement 11.2): Sources, Trusts with their Authorities, and settings, as
+"""Import and export (R11.2): Sources, Trusts with their Authorities, and settings, as
 JSON. Tokens are never exported. A plain text list of URLs can be imported as Sources."""
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def apply(db: DB, http: Http, data: dict, root: str | None = None) -> dict:
 
 def _import_trust(db: DB, t: dict, root: str | None) -> str:
     """A Trust from an export keeps its Authorities: its current AppKata.md is accepted when the
-    commit that last changed it is signed by one of them (requirement 10.7)."""
+    commit that last changed it is signed by one of them (R10.7)."""
     loc = gitsig.locate(t["url"])
     dest = tempfile.mkdtemp(prefix="appkata-import-")
     try:

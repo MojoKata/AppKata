@@ -14,10 +14,10 @@ ApplicationWindow {
     flags: Qt.Window | Qt.FramelessWindowHint
     color: Theme.bg
     property bool hasTray: false
-    property bool windowButtons: false     // Windows: minimize and maximize in the header bar (requirement 15.13)
+    property bool windowButtons: false     // Windows: minimize and maximize in the header bar (R15.13)
     property rect maxButtonRect: Qt.rect(0, 0, 0, 0)    // where Maximize is, for Snap Layouts
     property bool maxHover: false
-    property string view: backend.installedItems.length > 0 ? "apps" : "catalog"      // requirement 5.1
+    property string view: backend.installedItems.length > 0 ? "apps" : "catalog"      // R5.1
     property string detailUrl: ""
     readonly property bool detailOpen: detailUrl !== "" && (view === "apps" || view === "catalog")
     property alias catalog: catalogView
@@ -37,15 +37,15 @@ ApplicationWindow {
         target: backend
         function onPrefsChanged() { if (!themeOverride) Theme.mode = backend.prefs.theme || "system" }
         function onToast(kind, text) { toast.show(kind, text) }
-        function onInUse(info) { win.show(); win.raise(); confirm.ask("inUse", info) }      // requirement 15.9
-        function onMsvcrtNeeded(info) { win.show(); win.raise(); confirm.ask("msvcrt", info) }    // requirement 15.18.3
-        function onFlathubNeeded(info) { win.show(); win.raise(); confirm.ask("flathub", info) }  // requirement 16.3.4
-        function onPermsNeeded(url) { win.show(); win.raise(); confirm.ask("perms", url) }      // requirement 16.6.3
-        function onPlanConfirm(info) { win.show(); win.raise(); confirm.ask("plan", info) }       // requirement 16.3.5, 16.4.3
-        function onSandboxSetupNeeded(info) { win.show(); win.raise(); confirm.ask("sandboxSetup", info) }  // requirement 17.10
+        function onInUse(info) { win.show(); win.raise(); confirm.ask("inUse", info) }      // R15.9
+        function onMsvcrtNeeded(info) { win.show(); win.raise(); confirm.ask("msvcrt", info) }    // R15.18.3
+        function onFlathubNeeded(info) { win.show(); win.raise(); confirm.ask("flathub", info) }  // R16.3.4
+        function onPermsNeeded(url) { win.show(); win.raise(); confirm.ask("perms", url) }      // R16.6.3
+        function onPlanConfirm(info) { win.show(); win.raise(); confirm.ask("plan", info) }       // R16.3.5, R16.4.3
+        function onSandboxSetupNeeded(info) { win.show(); win.raise(); confirm.ask("sandboxSetup", info) }  // R17.10
     }
-    function closeWindow() { if (hasTray) win.hide(); else requestQuit() }    // requirement 1.7.1
-    function requestQuit() {        // requirement 1.7.3: ask first while something installs
+    function closeWindow() { if (hasTray) win.hide(); else requestQuit() }    // R1.7.1
+    function requestQuit() {        // R1.7.3: ask first while something installs
         if (backend.installing) { win.show(); win.raise(); confirm.ask("quit", {}) } else Qt.quit()
     }
     Shortcut { sequence: Qt.platform.os === "osx" ? StandardKey.Quit : "Alt+Q"; context: Qt.ApplicationShortcut; onActivated: win.requestQuit() }
@@ -104,10 +104,10 @@ ApplicationWindow {
             url: win.detailOpen ? win.detailUrl : ""
             onClosed: win.detailUrl = ""
             onReview: url => reviewDialog.openFor(url)
-            onOpenSource: url => { win.detailUrl = ""; win.view = "sources"; sourcesView.showSource(url) }     // requirement 2.9.5
+            onOpenSource: url => { win.detailUrl = ""; win.view = "sources"; sourcesView.showSource(url) }     // R2.9.5
             onConfirmRemoveVersion: (url, v) => confirm.ask("removeVersion", { url: url, version: v })
             onPickTag: t => { win.view = "catalog"; backend.selectTag(t) }
-            onOpenTrust: id => { win.detailUrl = ""; win.view = "sources"; sourcesView.trustPanel.select(id) }     // requirement 2.9.5
+            onOpenTrust: id => { win.detailUrl = ""; win.view = "sources"; sourcesView.trustPanel.select(id) }     // R2.9.5
             onConfirmUninstall: url => confirm.ask("uninstall", url)
             onInstallOptions: url => installDialog.openWith(backend.planFor(url), true)
             onOpenSandbox: url => sandboxDialog.openFor(url)
@@ -125,7 +125,7 @@ ApplicationWindow {
     ExploreDialog { id: exploreDialog; onAddRequested: (url, link) => addSourceDialog.openWith(url, link) }
     ConfirmDialog { id: confirm }
     SelfInstallDialog { id: selfInstallDialog }
-    Timer {     // first start of a downloaded AppImage (requirement 2.11.3.1)
+    Timer {     // first start of a downloaded AppImage (R2.11.3.1)
         interval: 600; running: !tourMode; repeat: false
         onTriggered: { const o = backend.selfInstallOffer; if (o && o.ask) selfInstallDialog.openWith(o) }
     }
@@ -189,8 +189,8 @@ ApplicationWindow {
         backend.demoSelfUpdated(!!step.selfUpdated)
         backend.demoMsvcrt(step.msvcrt || "")
         backend.demoSelfInstall(step.selfInstall ? backend.locations.home + "/Downloads/AppKata-" + appVersion + "-x86_64.AppImage" : "")
-        backend.demoChannels(!!step.channels)          // DEV ONLY: package channels from the demo file (requirement 16)
-        backend.demoSandbox(step.sandboxDemo || "")    // DEV ONLY: force a sandbox state the offscreen tour can't show (17)
+        backend.demoChannels(!!step.channels)          // DEV ONLY: package channels from the demo file (R16)
+        backend.demoSandbox(step.sandboxDemo || "")    // DEV ONLY: force a sandbox state the offscreen tour can't show (R17)
         for (const d of [reviewDialog, addSourceDialog, removeSourceDialog, addTrustDialog, confirm, settingsDialog, exploreDialog, installDialog,
                          sourceSettingsDialog, addSourceDialog.settingsDialog, selfInstallDialog, sandboxDialog]) d.close()
         catalogView.allTagsPopup.close()
