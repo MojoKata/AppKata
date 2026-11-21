@@ -74,6 +74,13 @@ an hour per IP address, shared with everything else on that address; when it run
 AppKata reads releases from github.com's pages instead (R2.4.1), so the sync still
 completes. `GITHUB_TOKEN=… scripts/demo_data.py sync DIR` uses the API throughout.
 
+`scripts/demo_data.py snapshot DIR` keeps DIR's synced Catalog in the tree, as `tests/data/demo/`:
+each app's row as sync left it (its release list as JSON), the AppStream ids, the Sources' forges and
+the system's updaters in `catalog.json`, and the icons and hero images under `cache/`. `restore DIR`
+builds and finishes from it, as `remake` does from DIR's own Catalog, without the network: CI's
+fallback when GitHub can't be synced, and a way to try AppKata offline. Take a new snapshot when
+the screens' releases should move, from data that passed `check`.
+
 ## Releasing
 
 How a release is made, from the release pull request to publishing the draft, with each command
