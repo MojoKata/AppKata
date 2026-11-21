@@ -6,8 +6,8 @@ harm a **portable app or AppImage** can do to the rest of the computer once inst
 the experiments behind each decision, and the mockups are in [A1](../../architecture/A1-app-sandboxing/README.md);
 the launcher and the proxy are explained in A1.2.3; the human validation checklist is
 [`local-proxy-test-plan.md`](../../local-proxy-test-plan.md) (`scripts/sandbox/field-test.sh`); the launcher's
-exact text is the goldens in `tests/data/launchers/` (R17.4). Deferred
-items are listed at R17.18.
+exact text is the goldens in `tests/data/launchers/` (R17.4). What the
+sandbox doesn't do is R17.18.
 
 Each first-level item has a file of its own.
 
@@ -30,4 +30,4 @@ Each first-level item has a file of its own.
 | **R17.15** | [Settings → Sandbox](R17.15-settings-sandbox.md) |
 | **R17.16** | [The Audit](R17.16-the-audit.md) |
 | **R17.17** | [Limits](R17.17-limits.md) |
-| **R17.18** | [Deferred to later releases](R17.18-deferred.md) |
+| **R17.18** | [What the sandbox doesn't do](R17.18-what-the-sandbox-doesnt-do.md) |

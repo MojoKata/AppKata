@@ -14,7 +14,7 @@ differ from its list (review 3, harness B).
 - `claim` — a third-party fact, with its evidence in A1.11's claims table;
 - `open: <id>` — a finding that keeps it unshown (`R2-…` in `docs/reviews/app-sandboxing-2.md`,
   `R3-…` in `app-sandboxing-3.md`);
-- `deferred` — listed in R17.18; `statement` — explains, names a file or a limit, promises nothing
+- `deferred` — one of what the sandbox doesn't do, R17.18; `statement` — explains, names a file or a limit, promises nothing
   a test could show.
 
 **Sentence starts** is the sentence's opening words with Markdown emphasis and backticks dropped.
@@ -164,6 +164,7 @@ differ from its list (review 3, harness B).
 | R17.9 | A desktop's own login uses systemd's user bus | claim |
 | R17.9 | On X11, and on any Wayland compositor other | test_the_display_leak_warning_clears_only_gnome_wayland, harness:wayland, test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed, test_every_copy_of_the_warning_says_what_the_product_does_but_the_listed |
 | R17.9 | KDE/kwin is in between: it hides screen capture | harness:kwin, harness:kwin-lmde7, test_the_display_leak_warning_clears_only_gnome_wayland, test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed |
+| R17.9 | AppKata does not close this (the fix, the Wayland | deferred |
 | R17.9 | The session is the display the launcher gives the app: | test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed, test_the_display_leak_warning_clears_only_gnome_wayland |
 | R17.9 | Wayland when $WAYLAND_DISPLAY names a socket in the runtime folder | test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed, test_the_display_leak_warning_clears_only_gnome_wayland |
 | R17.9 | XDG_SESSION_TYPE doesn't decide it, since a compositor | test_the_display_leak_warning_clears_only_gnome_wayland, claim |
@@ -197,7 +198,7 @@ differ from its list (review 3, harness B).
 | R17.10.2 | The launcher starts a program that brings that | test_a_chromium_app_gets_no_sandbox_only_where_its_own_cannot_run, test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run, claim |
 | R17.10.2 | App Detail says so for such an app | test_app_detail_says_a_chromium_app_runs_without_its_own_sandbox_where_it_must |
 | R17.10.2 | Whether the inner sandbox can run is probed | test_an_upgrade_to_a_system_with_its_own_bwrap_profile_rewrites_launchers_at_start, test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher |
-| R17.10.2 | Restoring the inner sandbox there is deferred (R17.18). | deferred |
+| R17.10.2 | AppKata doesn't restore the inner sandbox there (R17.18). | deferred |
 | R17.11 | Where permissions come from. | statement |
 | R17.11 | In order: the user's per-app choice (install options | test_choose_precedence, test_user_choice_wins_and_unreviewed_defaults |
 | R17.11 | Reviews never change an app's grants on their | test_a_changed_review_never_changes_an_installed_apps_grants, test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_choice |
@@ -212,7 +213,7 @@ differ from its list (review 3, harness B).
 | R17.12 | Switched to Off, it updates itself again. | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed |
 | R17.12 | (Review 2, F3: an earlier draft named a | statement |
 | R17.13 | Enabling a sandbox after install warns that the | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
-| R17.13 | No automatic config import in v1 (R17.18). | deferred |
+| R17.13 | AppKata doesn't import the app's configuration (R17.18). | deferred |
 | R17.13 | The warning comes before the change: the Sandbox | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save |
 | R17.13 | Every way to set up system support (the | test_every_setup_entry_point_names_the_apps_it_will_sandbox, test_apps_sandboxed_by_appkata_are_named_before_and_after, test_the_waiting_note_tells_fresh_homes_from_kept_ones |
 | R17.13 | When AppKata itself sandboxes an installed app (at | test_apps_sandboxed_by_appkata_are_named_before_and_after, test_an_update_that_first_sandboxes_an_app_says_so, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
@@ -225,5 +226,16 @@ differ from its list (review 3, harness B).
 | R17.16 | The Audit (R13) records every change of a | test_each_sandbox_mutation_writes_exactly_its_audit_entry, test_the_system_setup_is_audited_once_it_really_worked, test_the_repair_removes_appkatas_profile_heals_and_is_audited, test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.17 | Limits, stated plainly in the UI and docs: | test_every_dialog_hint_has_a_row_in_the_evidence_table, test_the_bus_warning_is_said_only_for_an_abstract_session_bus |
 | R17.17 | Flatpak has the same property); a kernel exploit | statement |
-| R17.18 | Deferred to later releases (not v1): the Wayland | deferred |
-| R17.18 | The real-hardware validation still owed is the checklist | test_the_field_test_checks_the_product_and_leaves_the_testers_home_alone |
+| R17.18 | What the sandbox doesn't do. | statement |
+| R17.18 | It doesn't use the Wayland security-context protocol | deferred |
+| R17.18 | It has no Landlock layer as defense-in-depth | deferred |
+| R17.18 | There are no personal templates and no reviewer-defined | deferred |
+| R17.18 | Its seccomp filter is the terminal-injection one | deferred |
+| R17.18 | An AppImage is unpacked, not mounted with squashfuse | deferred |
+| R17.18 | Proprietary-NVIDIA device nodes aren't bound | deferred |
+| R17.18 | There is no capability-stripping AppArmor profile | deferred |
+| R17.18 | An app has no network of its own | deferred |
+| R17.18 | There is no filtered AT-SPI proxy | deferred |
+| R17.18 | A file still to be made isn't handed over | deferred |
+| R17.18 | App categories in the Catalog are a separate feature | statement |
+| R17.18 | What only a real desktop shows is the checklist | test_the_field_test_checks_the_product_and_leaves_the_testers_home_alone |
