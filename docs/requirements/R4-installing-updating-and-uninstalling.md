@@ -12,7 +12,12 @@ R4.2. **Choosing an asset.** For the current OS and architecture:
 1. The Source's asset filter (R2.6.4), if set.
 2. Otherwise the manifest (R2.7).
 3. Otherwise the asset file names are matched to the platform's formats in order of
-   preference, then to the architecture (`x86_64|amd64|x64`).
+   preference, then to the architecture. A name with `x86_64`, `x86-64`, `amd64`, `x64`, `win64` or
+   `64bit` is this computer's. A file named for another architecture (`aarch64`, `arm64` or `armv8`;
+   `i386` to `i686`, a 32-bit `x86` or `win32`; `armhf`, `armv7`, `armel`, `ppc64le`, `s390x`,
+   `riscv64`, `loong64`, `mips`) is passed over, unless its name also gives this computer's. A file
+   named for this computer's architecture comes before one marked `universal`, `all-arch` or
+   `noarch`, which comes before one that names none.
    A filter is applied only if it narrows the list without emptying it.
 
 Format order on Linux:

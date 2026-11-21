@@ -131,8 +131,10 @@ The `Sandbox*` lines are Linux-only; on other platforms they're ignored.
   Source settings (R2.6.7), with the same Trust order as the other options (R4.3.1.6): yours, then
   the highest Score, then name. They also apply to apps that only Trusts list. A recommended
   Download filter that matches no file here is ignored; your own isn't.
-- **Platforms** are `linux`, and `win` or `windows`, without case. AppKata writes `linux` and
-  `windows`.
+- **Platforms** are `linux`, and `win` or `windows`, without case; a line may also name `mac` or
+  `macos`. Such a line never applies on Linux or Windows, but AppKata keeps it: rewriting the file
+  writes it back, as `macos`, with the other platforms' lines. AppKata writes `linux`, `windows` and
+  `macos`.
 - **Which line applies:** within one Settings sub-section, the line for this platform if there is
   one, else the line without a platform. Across reviews, see R10.3.3. With no line at all,
   AppKata's own default applies (Settings, R11.1).
