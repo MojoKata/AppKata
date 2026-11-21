@@ -27,7 +27,7 @@ Format order on Linux:
 3. `.deb` (Debian-family) or `.rpm` (Fedora-family)
 4. `.tar.gz` / `.tar.xz`
 
-A Linux package wrapped in a `.zip` isn't looked inside: [G#?zipped-linux].
+A Linux package wrapped in a `.zip` isn't looked inside: [G#56](https://github.com/MojoKata/AppKata/issues/56).
 
 On Windows, portable first (R15.3): a portable `.zip`, a portable `.exe`, `.msi`, a `.exe`
 installer, `.msix`. Only x64 files are chosen.

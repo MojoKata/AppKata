@@ -4,8 +4,8 @@ AppKata should be one place to find, install and review apps, and still get alon
 distribution's own updates and app stores (GNOME Software, KDE Discover, Mint's Software Manager).
 This section adds Flatpak remotes and the distribution's repositories as ways to install an app.
 Containers test it (`scripts/test-channels.sh`). Installing an older Flatpak commit from the Versions
-list (R16.5.7) is a gap, [G#?flatpak-older-commit], and so is checking three facts on real systems,
-[G#?channels-real-systems].
+list (R16.5.7) is a gap, [G#57](https://github.com/MojoKata/AppKata/issues/57), and so is checking three facts on real systems,
+[G#58](https://github.com/MojoKata/AppKata/issues/58).
 
 R16.1. **Channels.**
 

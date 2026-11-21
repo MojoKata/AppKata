@@ -28,7 +28,9 @@ section's items are numbered within it: `R17.4` is item 4 of the app sandboxing 
    history, and the repository's README says where the build stands.
 4. **Questions, gaps and other issues** are GitHub issues, cited by number and linked to the
    issue: `[Q#n]` a question that waits on a decision (labelled `question`), `[G#n]` a gap, a
-   part not yet specified or built, and `[#n]` any other issue.
+   part not yet specified or built, and `[#n]` any other issue. The open ones are the
+   [issues labelled `gap`](https://github.com/MojoKata/AppKata/issues?q=is%3Aissue+is%3Aopen+label%3Agap)
+   and [`question`](https://github.com/MojoKata/AppKata/issues?q=is%3Aissue+is%3Aopen+label%3Aquestion).
 
 # 1. Platform and architecture
 

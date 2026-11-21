@@ -125,7 +125,7 @@ before the Source is saved (R7.2). It holds, as label-and-hint rows like Setting
 - **Cancel** and **Save**. Saving records the change in the Audit and syncs the Source again.
 
 The release-selection settings of R2.6.2 but **Include prereleases**, and generic HTML Sources (R2.6.3),
-are a gap: [G#?html-sources].
+are a gap: [G#55](https://github.com/MojoKata/AppKata/issues/55).
 
 R2.7. **AppKata manifest.** A project may include an optional `.appkata.toml` in its
 repository root. It may declare:
@@ -210,7 +210,7 @@ icon removes it, and the data folder (R1.8) stays until deleted.
 R2.11.4. **Run from source (development, R1.2) or from another build**, AppKata only notifies: the
 update shows as usual, and **Update** opens the project's releases page instead of installing.
 
-R2.11.5. **Installed with its Windows setup** (R15.10; the path end to end is [G#?windows-self-update]), AppKata adopts its installation on first
+R2.11.5. **Installed with its Windows setup** (R15.10; the path end to end is [G#61](https://github.com/MojoKata/AppKata/issues/61)), AppKata adopts its installation on first
 start, from its own Uninstall registry entry. It downloads and verifies the new
 `AppKata-<version>-setup.exe` like any update, then shows the same **Restart AppKata** button.
 Restarting runs the setup silently, for the same scope (R15.4), and starts the new version when it

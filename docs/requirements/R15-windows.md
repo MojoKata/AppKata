@@ -4,7 +4,7 @@ R15.1. AppKata runs on Windows 10 22H2 (fully updated), x64 only; Windows 11 isn
 collects what is specific to Windows. The sections it refers to still apply.
 
 R15.2. **Elevation.** AppKata runs without administrator rights (what a headless VM can't show of
-it is [G#?windows-by-hand]). It starts every installer and
+it is [G#59](https://github.com/MojoKata/AppKata/issues/59)). It starts every installer and
 uninstaller through the shell (`ShellExecuteEx`), as Explorer does, and waits for its exit code:
 an installer whose manifest needs administrator rights then gets the UAC prompt, and with the
 Mark of the Web (R15.11.1) SmartScreen checks it. When AppKata itself asks for administrator rights
@@ -142,7 +142,7 @@ uninstalling a portable app, AppKata checks for processes running from the app's
 are any, it shows "Close <App> to continue" with **Try again** and **Cancel**. AppKata never
 stops the app itself. Installers handle this themselves.
 
-R15.10. **AppKata's own setup** (R1.6; its signing certificate is [G#?windows-code-signing]) is built with Inno Setup, `PrivilegesRequired=lowest`, with
+R15.10. **AppKata's own setup** (R1.6; its signing certificate is [G#60](https://github.com/MojoKata/AppKata/issues/60)) is built with Inno Setup, `PrivilegesRequired=lowest`, with
 overrides allowed:
 
 - Just me by default, into `%LOCALAPPDATA%\Programs\AppKata`; or Everyone, into `Program Files`.
