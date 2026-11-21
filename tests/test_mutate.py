@@ -248,3 +248,130 @@ def test_main_names_every_command():
                        capture_output=True, text=True)  # fmt: skip
     for what in ("run", "summary", "check", "plan", "export", "gather", "record"):
         assert what in p.stdout
+
+
+# --- the commands, on made-up runs ------------------------------------------------------------------
+
+
+@pytest.fixture
+def work(tmp_path, monkeypatch):
+    """A work folder of its own, as APPKATA_MUTATE_WORK names one."""
+    w = tmp_path / "work"
+    monkeypatch.setattr(mutate, "WORK", w)
+    monkeypatch.setattr(mutate, "COPY", w / "copy")
+    monkeypatch.setattr(mutate, "MUTANTS", w / "copy" / "mutants")
+    monkeypatch.setattr(mutate, "USERBASE", w / "userbase")
+    (w / "copy" / "mutants").mkdir(parents=True)
+    return w
+
+
+def test_mutmut_and_its_metadata_alone_are_in_the_runs_user_site(tmp_path, work):
+    site = tmp_path / "site"
+    (site / "mutmut").mkdir(parents=True)
+    (site / "mutmut-3.8.1.dist-info").mkdir()
+    (site / "click").mkdir()
+    mutate.link_mutmut(site / "mutmut")
+    linked = mutate.user_site(work / "userbase")
+    assert sorted(p.name for p in linked.iterdir()) == ["mutmut", "mutmut-3.8.1.dist-info"]
+    assert linked.as_posix().endswith(f"/lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages")
+
+
+def test_the_logs_spinner_frames_fold_into_their_last():
+    text = "Generating mutants\n⠋ Running stats\r⠙ Running stats\r⠹ Running stats\nfailed to collect stats. runner returned 1\n"
+    assert mutate.log_lines(text) == ["Generating mutants", "⠹ Running stats", "failed to collect stats. runner returned 1"]
+    assert mutate.FIRST_PASS_FAILED.search(text)
+
+
+def test_a_module_no_area_holds_isnt_run(work, capsys):
+    assert mutate.main(["run", "src/appkata_core/nowhere.py"]) == 2
+    assert "nowhere.py" in capsys.readouterr().out
+
+
+def test_summary_counts_the_last_run_and_writes_each_survivors_change(work, monkeypatch, capsys):
+    assert mutate.main(["summary"]) == 1                    # no run yet
+    names = meta(work / "copy" / "mutants", "src/appkata_core/urls.py", [1, 0, 0], name="parse")
+    asked = {}
+    monkeypatch.setattr(mutate, "shown", lambda n, generate=False: asked.update(n) or {
+        k: "@@ -1 +1 @@\n-    return 1\n+    return 2" for k in n})
+    assert mutate.main(["summary"]) == 0
+    out = capsys.readouterr().out
+    assert "2 of    3  appkata_core.urls.x_parse" in out and "2 survivors" in out
+    assert asked == {n: "src/appkata_core/urls.py" for n in names[1:]}
+    assert (work / "survivors.txt").read_text() == "".join(f"# {n}\n-    return 1\n+    return 2\n" for n in names[1:])
+
+
+def test_export_keeps_the_outcomes_the_survivors_and_the_log(work, tmp_path, monkeypatch):
+    monkeypatch.setattr(mutate, "_mutmut_pids", lambda: [])
+    meta(work / "copy" / "mutants", "src/appkata_core/urls.py", [1, 0])
+    meta(work / "copy" / "mutants", "scripts/areas.py", [1])
+    (work / "mutmut.log").write_text("log\n")
+    # a run stopped before its summary: its survivors' changes can't be shown, their names are kept
+    monkeypatch.setattr(mutate, "shown", lambda n, generate=False: (_ for _ in ()).throw(OSError()))
+    out = tmp_path / "export"
+    assert mutate.main(["export", str(out), "--name", "sources-1", "--area", "sources",
+                        "--modules", "src/appkata_core/urls.py"]) == 0  # fmt: skip
+    assert json.loads((out / "job.json").read_text()) == {"name": "sources-1", "area": "sources",
+                                                          "modules": "src/appkata_core/urls.py"}  # fmt: skip
+    assert (out / "src/appkata_core/urls.py.meta").exists() and (out / "scripts/areas.py.meta").exists()
+    assert (out / "survivors.txt").read_text() == "# appkata_core.urls.x_f__mutmut_2\n"
+    assert (out / "mutmut.log").read_text() == "log\n"
+    # after a summary, its survivors.txt is the one kept
+    (work / "survivors.txt").write_text("# from the summary\n")
+    assert mutate.main(["export", str(out), "--name", "sources-1", "--area", "sources", "--modules", "x"]) == 0
+    assert (out / "survivors.txt").read_text() == "# from the summary\n"
+
+
+def test_check_runs_one_change_against_one_test_file(work, monkeypatch, capsys):
+    (work / "copy" / "mutants" / "tests").mkdir()
+    ran = {}
+
+    def fake_run(cmd, cwd, env):
+        ran.update(cmd=cmd, cwd=cwd, env=env)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(mutate.subprocess, "run", fake_run)
+    assert mutate.main(["check", "appkata_core.urls.x_parse__mutmut_2", "test_mutate.py"]) == 0
+    assert "caught" in capsys.readouterr().out
+    assert ran["env"]["MUTANT_UNDER_TEST"] == "appkata_core.urls.x_parse__mutmut_2"
+    assert "tests/test_mutate.py" in ran["cmd"] and ran["cwd"] == work / "copy" / "mutants"
+    assert (work / "copy" / "mutants" / "tests" / "test_mutate.py").exists()     # the test as it is now
+
+
+def test_record_and_gather_write_each_areas_baseline_of_one_commit(work, tmp_path, monkeypatch):
+    d, _ = job(tmp_path, "windows-1", "windows", ["src/appkata_core/windows.py"], {"src/appkata_core/windows.py": [1]})
+    got = {}
+    monkeypatch.setattr(mutate, "write_baselines", lambda dirs, made, commit, repo: got.update(
+        dirs=dirs, made=made, commit=commit, repo=repo) or 0)
+    monkeypatch.setattr(mutate, "_git", lambda *a: "c0ffee")
+    assert mutate.main(["record", "--from", str(d)]) == 0
+    assert got["made"] == {"repo": None, "runs": [], "commit": "c0ffee", "mutmut": mutate.mutmut_pin()}
+    assert got["dirs"] == [d]
+
+    monkeypatch.setattr(mutate, "downloaded", lambda run_id, repo: [d])
+    heads = {"1": "a", "2": "a", "3": "b"}
+    monkeypatch.setattr(mutate.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0, stdout=heads[cmd[3]] + "\n"))
+    assert mutate.main(["gather", "1", "2", "--repo", "o/r"]) == 0
+    assert got["made"] == {"repo": "o/r", "runs": [1, 2], "commit": "a", "mutmut": mutate.mutmut_pin()}
+    assert got["dirs"] == [d, d] and got["repo"] == "o/r"
+    assert mutate.main(["gather", "1", "3"]) == 1        # two commits don't add up
+
+
+def test_a_runs_artifacts_are_downloaded_once(work, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, check):
+        calls.append(cmd)
+        dest = __import__("pathlib").Path(cmd[cmd.index("-D") + 1])
+        (dest / "mutation-store-1").mkdir(parents=True)
+        (dest / "mutation-store-1" / "job.json").write_text("{}")
+
+    monkeypatch.setattr(mutate.subprocess, "run", fake_run)
+    first = mutate.downloaded("7", "o/r")
+    assert [p.name for p in first] == ["mutation-store-1"]
+    assert mutate.downloaded("7", "o/r") == first and len(calls) == 1
+    assert calls[0][:4] == ["gh", "run", "download", "7"] and "o/r" in calls[0]
+
+
+def test_the_watcher_finds_no_run_when_none_is_running(work):
+    assert mutate._mutmut_pids() == [] and mutate._workers() == {} and mutate._pss_gb() == 0.0

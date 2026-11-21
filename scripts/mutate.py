@@ -182,6 +182,28 @@ def make_copy() -> None:
             (MUTANTS / p.name).symlink_to(p)
 
 
+USERBASE = WORK / "userbase"  # PYTHONUSERBASE for the run: its user site holds mutmut alone
+
+
+def user_site(base: Path) -> Path:
+    """The user site Python reads under PYTHONUSERBASE=base (site.getusersitepackages, POSIX)."""
+    return base / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
+
+
+def link_mutmut(package: Path | None = None) -> None:
+    """mutmut's package and its metadata alone, linked into the run's user site (PYTHONUSERBASE, which the tests'
+    processes inherit). A changed module imports mutmut's trampoline (the standard library only),
+    and a test that starts Python with a PYTHONPATH of its own still finds it there."""
+    if package is None:
+        import importlib.util
+
+        package = Path(importlib.util.find_spec("mutmut").origin).parent
+    shutil.rmtree(USERBASE, ignore_errors=True)
+    user_site(USERBASE).mkdir(parents=True)
+    for p in [package, *package.parent.glob("mutmut-*.dist-info")]:  # its version is read from its metadata
+        (user_site(USERBASE) / p.name).symlink_to(p)
+
+
 def settings(mutate: list[str], selected: list[str], text: str, debug: bool = False) -> str:
     """pyproject.toml with mutmut's settings: the modules, the tests, PYTEST_ARGS; with `debug`,
     mutmut prints each pytest run's command and output (a first run that fails says which test)."""
@@ -286,9 +308,11 @@ def run(args) -> int:
     selected = tests()
     print(f"mutating {', '.join(args.modules)}, with {len(selected)} test files")
     make_copy()
+    link_mutmut()
     configure(only_mutate(args.modules), selected, args.debug)
     log = (WORK / "mutmut.log").open("w")
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}  # tier 1 checks skips; not here
+    env["PYTHONUSERBASE"] = str(USERBASE)
     proc = subprocess.Popen(mutmut_command(args), cwd=COPY, stdout=log, stderr=subprocess.STDOUT, env=env)  # noqa: S603
     peak, largest, stopped = 0.0, 0.0, threading.Event()
 
@@ -320,11 +344,44 @@ def run(args) -> int:
     print(f"mutmut exited {proc.returncode} after {int(time.monotonic() - started) // 60} min; peak memory "
           f"{peak:.1f} GB (PSS), a worker's own at most {largest:.1f} GB; log: {WORK / 'mutmut.log'}")  # fmt: skip
     if proc.returncode:
-        tail = (WORK / "mutmut.log").read_text(errors="replace").replace("\r", "\n")
-        tail = "\n".join(x for x in tail.splitlines() if x.strip() and "Running stats" not in x)
-        print("its log's last lines (--debug names a failing test):\n" + tail[-3000:])
+        text = (WORK / "mutmut.log").read_text(errors="replace")
+        print("its log's last lines:\n" + "\n".join(log_lines(text)[-30:]))
+        if FIRST_PASS_FAILED.search(text):
+            print("\nmutmut's first pass over the tests failed, and says no more; pytest on the copy:")
+            print(first_failure(selected))
     summary(None)
     return 1 if stopped.is_set() else proc.returncode
+
+
+# what mutmut says when a test fails in its first passes over the tests, without saying which
+FIRST_PASS_FAILED = re.compile(r"failed to collect stats|Failed to run clean test")
+
+
+def log_lines(text: str) -> list[str]:
+    """mutmut's log without its spinner's frames: the lines it redraws in place, but the last."""
+    lines = [x.strip() for x in text.replace("\r", "\n").splitlines() if x.strip()]
+    out = []
+    for x in lines:
+        if out and x[:1] in SPINNER and out[-1][:1] in SPINNER and x[1:].strip()[:12] == out[-1][1:].strip()[:12]:
+            out[-1] = x
+        else:
+            out.append(x)
+    return out
+
+
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def first_failure(selected: list[str]) -> str:
+    """The first failing test of a pass like mutmut's, in the copy, unmutated (no change chosen):
+    what mutmut's first pass stopped on, which it doesn't name."""
+    deselect = [x for t in sorted(UNFIT) for x in ("--deselect", t)]
+    cmd = [sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", "-p", "no:cacheprovider", *deselect, *selected]
+    env = {k: v for k, v in os.environ.items() if k not in ("APPKATA_SKIPS", "MUTANT_UNDER_TEST")}
+    env["PYTHONUSERBASE"] = str(USERBASE)
+    env["PYTHONPATH"] = os.pathsep.join([str(MUTANTS / "src"), str(MUTANTS), env.get("PYTHONPATH", "")])
+    r = subprocess.run(cmd, cwd=MUTANTS, env=env, capture_output=True, text=True)  # noqa: S603
+    return "\n".join((r.stdout + r.stderr).splitlines()[-60:])
 
 
 def _progress() -> str:
