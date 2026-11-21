@@ -4,8 +4,9 @@
 # modules in tier 1's container, on the release's Python and PySide6 (scripts/test-mutate.sh), and
 # keeps its outcomes, survivors and log as an artifact for `scripts/mutate.py gather RUN`, which
 # writes each area's baseline to docs/hardening/mutation/<area>.json. `jobs` runs only the named
-# jobs again (one stopped early, after a fix to the tools); gather takes a later run's job over the
-# earlier one's. A pull request that changes this file or the tools runs a trial on one small module.
+# jobs again (after a fix to the tools); `resume` goes on from an earlier run's outcomes, running
+# only the changes its jobs left unrun (a job out of time); gather takes a later run's outcome for a
+# change over the earlier one's. A pull request that changes this file or the tools runs a trial on one small module.
 # Each action is pinned by its commit SHA (tests/test_pinned_inputs.py).
 name: mutate
 
@@ -23,6 +24,9 @@ on:
         default: "14"
       jobs:
         description: "Only these jobs, by name (store-1 scripts-3), an earlier run's run again; every one by default"
+        default: ""
+      resume:
+        description: "Go on from this earlier run's outcomes (its id): each job runs only the changes its artifact there left unrun"
         default: ""
   pull_request:
     paths:
@@ -74,6 +78,9 @@ jobs:
     if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 350
+    permissions:
+      contents: read
+      actions: read     # the earlier run's artifacts, for resume
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.parallel || '14') }}
@@ -92,6 +99,15 @@ jobs:
             build/mutmut-*
           key: mutate-${{ hashFiles('packaging/versions.env') }}
       - run: COWORKER_UNATTENDED=1 coworker/bin/coworker status --no-network   # the coworker protocol (the coworker/ submodule): installed here, unattended
+      - name: the earlier run's outcomes, to go on from
+        if: inputs.resume != ''
+        continue-on-error: true     # a job the earlier run hadn't: it starts afresh
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: mutation-${{ matrix.name }}
+          path: build/mutate/resume/
+          run-id: ${{ inputs.resume }}
+          github-token: ${{ github.token }}
       - name: mutmut over ${{ matrix.modules }}
         env:
           MODULES: ${{ matrix.modules }}
@@ -100,8 +116,9 @@ jobs:
           # Out of time (124) keeps what finished, for gather; any other failure fails the job,
           # its artifact still kept.
           # shellcheck disable=SC2086 # the modules are words
-          mkdir -p build && rc=0
-          timeout 330m sh scripts/test-mutate.sh run $MODULES --workers 4 --limit 12 --worker-limit 3 2>&1 | tee build/ci-mutate.log || rc=$?
+          mkdir -p build && rc=0 && resume=
+          [ ! -d build/mutate/resume/src ] && [ ! -d build/mutate/resume/scripts ] || resume="--resume /work/resume"
+          timeout 330m sh scripts/test-mutate.sh run $MODULES --workers 4 --limit 12 --worker-limit 3 $resume 2>&1 | tee build/ci-mutate.log || rc=$?
           if [ "$rc" = 124 ]; then echo "out of time: what finished is kept"; else exit "$rc"; fi
       - if: failure()
         run: sh scripts/ci-tail.sh build/ci-mutate.log test-mutate.sh
