@@ -63,7 +63,8 @@ TESTS = {
              "tests/test_requirements_trace.py", "tests/test_public_text.py", "tests/test_doccheck.py"],
     "tooling": ["tests/test_coworker_calls.py", "tests/test_imports_on_windows.py", "tests/test_pinned_inputs.py",
                 "tests/test_scripts_executable.py", "tests/test_skip_lists.py", "tests/test_tier_args.py",
-                "tests/test_parts.py", "tests/test_areas.py", "tests/test_ci_times.py"],
+                "tests/test_parts.py", "tests/test_areas.py", "tests/test_ci_times.py",
+                "tests/test_mutate.py"],
 }
 
 
