@@ -1,0 +1,122 @@
+# Mutation testing (docs/testing.md, "Mutation testing"): every area's mutation run on GitHub's
+# runners, side by side, started by hand (Actions, mutate, Run workflow). The plan packs each area's
+# modules (scripts/areas.py) into jobs of about `size` code lines; each job runs mutmut over its
+# modules in tier 1's container, on the release's Python and PySide6 (scripts/test-mutate.sh), and
+# keeps its outcomes, survivors and log as an artifact for `scripts/mutate.py gather RUN`, which
+# writes each area's baseline to docs/hardening/mutation/<area>.json. `jobs` runs only the named
+# jobs again (one stopped early, after a fix to the tools); gather takes a later run's job over the
+# earlier one's. A pull request that changes this file or the tools runs a trial on one small module.
+# Each action is pinned by its commit SHA (tests/test_pinned_inputs.py).
+name: mutate
+
+on:
+  workflow_dispatch:
+    inputs:
+      areas:
+        description: "Areas to run, as globs (trust sources); every one by default"
+        default: "*"
+      size:
+        description: "Code lines per job"
+        default: "1000"
+      parallel:
+        description: "Jobs at once (the account runs 20; the rest are left for pull requests)"
+        default: "14"
+      jobs:
+        description: "Only these jobs, by name (store-1 scripts-3), an earlier run's run again; every one by default"
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/mutate.yml
+      - scripts/mutate.py
+      - scripts/mutate_plugin.py
+      - scripts/test-mutate.sh
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash      # bash -eo pipefail: a script piped through tee fails the step when it fails
+
+concurrency:
+  group: mutate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          AREAS: ${{ inputs.areas || '*' }}
+          SIZE: ${{ inputs.size || '1000' }}
+          JOBS: ${{ inputs.jobs && format('--jobs {0}', inputs.jobs) || '' }}
+          TRIAL: ${{ github.event_name == 'pull_request' && '--modules src/appkata_core/versions.py' || '' }}
+        run: |
+          set -f  # the areas are globs for plan, not for the shell
+          # shellcheck disable=SC2086 # the areas, jobs and trial are words
+          jobs=$(python3 scripts/mutate.py plan --areas $AREAS --size "$SIZE" $JOBS $TRIAL)
+          echo "$jobs" | python3 -c 'import json,sys; [print(j["name"], j["size"], j["modules"]) for j in json.load(sys.stdin)]'
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "count=$(echo "$jobs" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" >> "$GITHUB_OUTPUT"
+
+  # Each job's mutation run, stopped before the runner's six hours so what it found is kept.
+  mutate:
+    name: mutate ${{ matrix.name }} (${{ matrix.size }})
+    needs: plan
+    if: needs.plan.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.parallel || '14') }}
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true      # coworker/
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            build/appimage-cache
+            build/pyside-*
+            build/mutmut-*
+          key: mutate-${{ hashFiles('packaging/versions.env') }}
+      - run: COWORKER_UNATTENDED=1 coworker/bin/coworker status --no-network   # the coworker protocol (the coworker/ submodule): installed here, unattended
+      - name: mutmut over ${{ matrix.modules }}
+        env:
+          MODULES: ${{ matrix.modules }}
+          APPKATA_MUTATE_MEMORY: 14g      # of the runner's 16 GB; the run stops itself at 12 (--limit)
+        run: |
+          # Out of time (124) keeps what finished, for gather; any other failure fails the job,
+          # its artifact still kept.
+          # shellcheck disable=SC2086 # the modules are words
+          mkdir -p build && rc=0
+          timeout 330m sh scripts/test-mutate.sh run $MODULES --workers 4 --limit 12 --worker-limit 3 2>&1 | tee build/ci-mutate.log || rc=$?
+          if [ "$rc" = 124 ]; then echo "out of time: what finished is kept"; else exit "$rc"; fi
+      - if: failure()
+        run: sh scripts/ci-tail.sh build/ci-mutate.log test-mutate.sh
+      - name: the run's outcomes, survivors and log
+        if: always()
+        env:
+          NAME: ${{ matrix.name }}
+          AREA: ${{ matrix.area }}
+          MODULES: ${{ matrix.modules }}
+        run: sh scripts/test-mutate.sh export /work/export --name "$NAME" --area "$AREA" --modules "$MODULES"
+      - name: the run, for gather
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: mutation-${{ matrix.name }}
+          path: build/mutate/export/
+          if-no-files-found: error
+          retention-days: 90
