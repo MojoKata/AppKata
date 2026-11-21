@@ -74,12 +74,16 @@ def pytest_configure(config):
 
 
 def diffs(asked):
-    """{change: diff} of each change asked for, "" for one mutmut doesn't find."""
+    """{change: diff} of each change asked for, "" for one neither mutmut nor own_diff finds. With
+    "sources" ({path: text}), those files are written into the copy first: a module as a run
+    mutated it, changed since."""
     from pathlib import Path
 
     from mutmut.__main__ import copy_also_copy_files, copy_src_dir, create_mutants, setup_source_paths
     from mutmut.mutation.diff_apply import get_diff_for_mutant
 
+    for rel, text in (asked.get("sources") or {}).items():
+        Path(rel).write_text(text, encoding="utf-8")
     if asked.get("generate"):
         os.makedirs("mutants", exist_ok=True)
         copy_src_dir()
@@ -90,9 +94,40 @@ def diffs(asked):
     for name, path in asked["names"].items():
         try:
             out[name] = get_diff_for_mutant(name, path=Path(path))
-        except Exception:  # noqa: BLE001 - a change mutmut doesn't find has no diff
+        except Exception:  # noqa: BLE001 - a change mutmut doesn't find has no diff of its own
             out[name] = ""
+        out[name] = out[name] or own_diff(name, os.path.join("mutants", path))
     return out
+
+
+def own_diff(name, mutated):
+    """A change's diff read from mutmut's mutated file directly: its function's original copy
+    (`<key>__mutmut_orig`) against the change's (`<key>__mutmut_<n>`), each under the function's
+    own name. mutmut finds a function by the first "__mutmut_" in a change's name, so one whose own
+    name holds it (`_mutmut_pids`) had no diff; this splits at the last. "" when either is missing."""
+    import ast
+    import difflib
+    import textwrap
+
+    fn = name.rpartition(".")[2]
+    key = fn.rpartition("__mutmut_")[0]
+    try:
+        with open(mutated, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    funcs = {n.name: n for n in ast.walk(ast.parse(text)) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    orig, changed = funcs.get(f"{key}__mutmut_orig"), funcs.get(fn)
+    if orig is None or changed is None:
+        return ""
+    plain = key.rpartition("ǁ")[2] if "ǁ" in key else key.removeprefix("x_")
+    lines = text.splitlines()
+
+    def body(node):
+        code = textwrap.dedent("\n".join(lines[node.lineno - 1 : node.end_lineno]))
+        return code.replace(f"def {node.name}(", f"def {plain}(", 1).splitlines()
+
+    return "\n".join(difflib.unified_diff(body(orig), body(changed), mutated, mutated, lineterm=""))
 
 
 if __name__ == "__main__":

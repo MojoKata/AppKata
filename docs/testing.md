@@ -180,7 +180,9 @@ of its own, so a trust job reaches 7½ GB (PSS) at its peak, within the runner's
 `docs/hardening/mutation/baseline-<area>.json` and its survivors to
 `docs/hardening/mutation/survivors/<area>.json`; `record --from DIR...` does the same from a local
 run's `export` folders. Runs gathered together must be of one commit, and a later run's outcome for
-a change replaces an earlier one's, as a job run again in a later run replaces its tests left out. A fork's run (`--repo OWNER/NAME`) is recorded as a fork's,
+a change replaces an earlier one's, as a job run again in a later run replaces its tests left out.
+A survivor whose change no job kept is shown from mutmut's own mutants made again, with no test
+run, of its module as the run mutated it (its recorded blob; `remake`, in tier 1's container). A fork's run (`--repo OWNER/NAME`) is recorded as a fork's,
 without its name, and `--same-as COMMIT` records a commit of this repository whose code is the
 run's own (checked file by file) in place of the run's: a run started from a branch made only to
 start it, with a `push` trigger in its copy of the workflow (GitHub starts a `workflow_dispatch`

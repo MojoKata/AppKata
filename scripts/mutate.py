@@ -32,6 +32,8 @@ into jobs of about --size code lines, as JSON for the workflow's matrix; each jo
 baseline to docs/hardening/mutation/baseline-<area>.json (its outcomes, each file's content, its git
 blob, so a file changed since shows, and the tests its runs left out) and its survivors to
 docs/hardening/mutation/survivors/<area>.json, each with its function, line and change, one a line.
+A survivor whose change no job kept is shown from mutmut's mutants made again, with no test run,
+of its module as the run mutated it (`remake`, in the container).
 A later directory's outcome for a change wins over an earlier one's (a job run again).
 
 `stale` names each module whose content (its git blob) isn't what its area's latest record mutated,
@@ -45,6 +47,7 @@ import ast
 import contextlib
 import fnmatch
 import functools
+import importlib.util
 import json
 import os
 import re
@@ -619,10 +622,11 @@ def files_of(mutants: Path) -> dict[str, str]:
     return {n: rel for rel, keys in codes(mutants).items() for n in keys}
 
 
-def shown(names: dict[str, str], generate: bool = False) -> dict[str, str]:
-    """`mutmut show`'s diff of each change, in one process in the copy (mutate_plugin)."""
+def shown(names: dict[str, str], generate: bool = False, sources: dict[str, str] | None = None) -> dict[str, str]:
+    """`mutmut show`'s diff of each change, in one process in the copy (mutate_plugin); with
+    `generate`, of mutants made afresh, from `sources` ({path: text}) where given."""
     cmd = [sys.executable, str(ROOT / "scripts" / "mutate_plugin.py")]
-    asked = json.dumps({"generate": generate, "names": names})
+    asked = json.dumps({"generate": generate, "names": names, "sources": sources or {}})
     r = subprocess.run(cmd, cwd=COPY, input=asked, capture_output=True, text=True, check=True)  # noqa: S603
     return json.loads(r.stdout.strip().rsplit("\n", 1)[-1])
 
@@ -772,14 +776,55 @@ def source(blob: str) -> str:
     return _git("cat-file", "-p", blob)
 
 
-def survivor_entries(dirs: list[Path], content: dict[str, str]) -> list[dict]:
+def unshown(dirs: list[Path]) -> dict[str, str]:
+    """The survivors whose change no job kept (a job stopped before its summary, or a change mutmut
+    couldn't show), by file."""
+    kept = diffs(dirs)
+    return {n: rel for rel, keys in merged(dirs).items() for n, c in keys.items()
+            if outcome(c) == "survived" and not kept.get(n)}  # fmt: skip
+
+
+def remade(missing: dict[str, str], content: dict[str, str]) -> dict[str, list[str]]:
+    """The changes of survivors no job kept, from mutmut's own mutants made again, with no test run,
+    of each module as the run mutated it (its recorded blob): the same code and the same mutmut
+    name the same changes. In tier 1's container (scripts/test-mutate.sh remake), where mutmut is."""
+    asked = {n: rel for n, rel in missing.items() if rel in content}
+    if not asked:
+        return {}
+    sources = {rel: source(content[rel]) for rel in sorted(set(asked.values()))}
+    (WORK).mkdir(parents=True, exist_ok=True)
+    (WORK / "remake-in.json").write_text(json.dumps({"names": asked, "sources": sources}))
+    (WORK / "remake-out.json").unlink(missing_ok=True)
+    if importlib.util.find_spec("mutmut"):
+        remake(argparse.Namespace(file=str(WORK / "remake-in.json"), out=str(WORK / "remake-out.json")))
+    else:
+        cmd = ["sh", str(ROOT / "scripts" / "test-mutate.sh"), "remake", "/work/remake-in.json", "/work/remake-out.json"]
+        subprocess.run(cmd, check=True)  # noqa: S603 - our own script
+    got = json.loads((WORK / "remake-out.json").read_text())
+    print(f"{len(got)} of {len(asked)} survivors' changes made again from mutmut's mutants")
+    return got
+
+
+def remake(args) -> int:
+    """In the container: the changes named in a file {"names": {change: path}, "sources": {path:
+    text}}, from mutmut's mutants of those modules made afresh, written as {change: diff lines}."""
+    asked = json.loads(Path(args.file).read_text())
+    make_copy()
+    link_mutmut()
+    configure(only_mutate(sorted(asked["sources"])), [])
+    got = shown(asked["names"], generate=True, sources=asked["sources"])
+    Path(args.out).write_text(json.dumps({n: hunk(d) for n, d in got.items() if hunk(d)}))
+    return 0
+
+
+def survivor_entries(dirs: list[Path], content: dict[str, str], made: dict[str, list[str]] | None = None) -> list[dict]:
     """The surviving changes, each with its file, function, line and the lines it removed and
-    added, in each file's order."""
+    added, in each file's order; a change no job kept is taken from `made` (remade)."""
     by_name = {n: rel for rel, keys in merged(dirs).items() for n, c in keys.items() if outcome(c) == "survived"}
     kept = diffs(dirs)
     out = []
     for name, rel in by_name.items():
-        diff = kept.get(name, [])
+        diff = kept.get(name) or (made or {}).get(name, [])
         fn = function_of(name)
         out.append({
             "name": name, "file": rel, "function": fn,
@@ -851,8 +896,10 @@ def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, record
             continue
         content = {rel: blob_at(commit, rel, repo) for rel in held(ds)}
         record = baseline(area, ds, made, content)
+        missing = unshown(ds)
+        again = remade(missing, content) if missing else {}
         baseline_path(area, records).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        survivors_path(area, records).write_text(dump_survivors(survivor_entries(ds, content)), encoding="utf-8")
+        survivors_path(area, records).write_text(dump_survivors(survivor_entries(ds, content, again)), encoding="utf-8")
         dropped.update(record["dropped"])
         print(f"{area:12} {record['mutants']:8}" + "".join(f" {record[k]:9}" for k in COUNTED))
     if empty:
@@ -1004,9 +1051,12 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--from", dest="from_", nargs="+", required=True)
     k.add_argument("--commit", default="HEAD", help="the commit the runs ran")
     sub.add_parser("stale", help="the modules changed since their latest record, and those none covers")
+    rm = sub.add_parser("remake", help="survivors' changes from mutmut's mutants made afresh (in the container)")
+    rm.add_argument("file", help='{"names": {change: path}, "sources": {path: text}}')
+    rm.add_argument("out", help="where {change: diff lines} is written")
     args = p.parse_args(argv)
     commands = {"run": run, "summary": summary, "check": check, "plan": plan, "export": export,
-                "gather": gather, "record": record, "stale": stale}  # fmt: skip
+                "gather": gather, "record": record, "stale": stale, "remake": remake}  # fmt: skip
     return commands[args.what](args)
 
 

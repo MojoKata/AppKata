@@ -591,3 +591,59 @@ def test_stale_prints_each_module_and_what_holds_its_counts(monkeypatch, capsys)
     monkeypatch.setattr(mutate, "stale_modules", lambda: [])
     mutate.main(["stale"])
     assert "every module is as its latest record mutated it" in capsys.readouterr().out
+
+
+# --- a survivor's change made again -----------------------------------------------------------------
+
+
+def test_a_survivor_no_job_showed_is_found_and_made_again_from_its_modules_recorded_code(tmp_path, work, monkeypatch):
+    diff = "# appkata_core.urls.x_parse__mutmut_2\n def parse(x):\n-    return x + 1\n+    return x - 1\n"
+    d, keys = job(tmp_path, "sources-1", "sources", ["src/appkata_core/urls.py"],
+                  {"src/appkata_core/urls.py": [0, 0]}, diff + "# appkata_core.urls.x_parse__mutmut_1\n")  # fmt: skip
+    assert mutate.unshown([d]) == {"appkata_core.urls.x_parse__mutmut_1": "src/appkata_core/urls.py"}
+    monkeypatch.setattr(mutate, "source", lambda blob: f"def parse(x):  # {blob}\n    return x + 1\n")
+    monkeypatch.setattr(mutate.importlib.util, "find_spec", lambda name: None)
+    ran = []
+
+    def container(cmd, check):
+        ran.append(cmd)
+        asked = json.loads((work / "remake-in.json").read_text())
+        assert asked == {"names": {"appkata_core.urls.x_parse__mutmut_1": "src/appkata_core/urls.py"},
+                         "sources": {"src/appkata_core/urls.py": "def parse(x):  # b1\n    return x + 1\n"}}
+        (work / "remake-out.json").write_text(json.dumps({"appkata_core.urls.x_parse__mutmut_1": ["-a", "+b"]}))
+
+    monkeypatch.setattr(mutate.subprocess, "run", container)
+    got = mutate.remade(mutate.unshown([d]), {"src/appkata_core/urls.py": "b1"})
+    assert got == {"appkata_core.urls.x_parse__mutmut_1": ["-a", "+b"]}
+    assert ran[0][1].endswith("scripts/test-mutate.sh") and ran[0][2:] == ["remake", "/work/remake-in.json", "/work/remake-out.json"]
+    entries = mutate.survivor_entries([d], {"src/appkata_core/urls.py": "b1"}, got)
+    assert {e["name"]: (e["removed"], e["added"]) for e in entries}["appkata_core.urls.x_parse__mutmut_1"] == (["a"], ["b"])
+    assert mutate.remade({"x": "src/nowhere.py"}, {}) == {}
+
+
+def test_remake_makes_the_copy_of_the_modules_asked_and_keeps_the_diffs_lines(work, tmp_path, monkeypatch):
+    made = []
+    monkeypatch.setattr(mutate, "make_copy", lambda: made.append("copy"))
+    monkeypatch.setattr(mutate, "link_mutmut", lambda: made.append("link"))
+    monkeypatch.setattr(mutate, "configure", lambda mutate_, selected: made.append(("configure", mutate_)))
+    monkeypatch.setattr(mutate, "shown", lambda names, generate, sources: {
+        "a__mutmut_1": "--- f\n+++ f\n@@ -1 +1 @@\n-x\n+y", "a__mutmut_2": ""})
+    inp, out = tmp_path / "in.json", tmp_path / "out.json"
+    inp.write_text(json.dumps({"names": {"a__mutmut_1": "scripts/a.py", "a__mutmut_2": "scripts/a.py"},
+                               "sources": {"scripts/a.py": "def a(): pass\n"}}))  # fmt: skip
+    assert mutate.main(["remake", str(inp), str(out)]) == 0
+    assert made == ["copy", "link", ("configure", ["scripts/a.py"])]
+    assert json.loads(out.read_text()) == {"a__mutmut_1": ["-x", "+y"]}
+
+
+def test_own_diff_reads_a_change_whose_functions_name_holds_mutmuts_marker(tmp_path):
+    mutated = tmp_path / "m.py"
+    mutated.write_text(
+        "def x__mutmut_pids__mutmut_orig(a):\n    return a + 1\n\n"
+        "def x__mutmut_pids__mutmut_2(a):\n    return a - 1\n\n"
+        "class K:\n    def xǁKǁget__mutmut_orig(self):\n        return 1\n    def xǁKǁget__mutmut_1(self):\n        return 2\n")
+    lines = mutate.hunk(plugin.own_diff("scripts.mutate.x__mutmut_pids__mutmut_2", str(mutated)))
+    assert lines == [" def _mutmut_pids(a):", "-    return a + 1", "+    return a - 1"]
+    assert mutate.hunk(plugin.own_diff("m.xǁKǁget__mutmut_1", str(mutated))) == [" def get(self):", "-    return 1", "+    return 2"]
+    assert plugin.own_diff("m.x_gone__mutmut_1", str(mutated)) == ""
+    assert plugin.own_diff("m.x_gone__mutmut_1", str(tmp_path / "none.py")) == ""
