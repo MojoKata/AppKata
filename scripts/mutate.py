@@ -5,7 +5,7 @@ at a time and runs the tests that reach it; a change no test fails on survives.
     sh scripts/test-mutate.sh run MODULE... [--workers N] [--only NAME...] [--resume DIR]
     sh scripts/test-mutate.sh summary | check CHANGE TEST | export DIR --name N --area A --modules M
     scripts/mutate.py plan [--areas GLOB...] [--size LINES] [--jobs NAME...] [--modules PATH...]
-    scripts/mutate.py gather RUN... [--repo OWNER/NAME] | record --from DIR... [--commit REV]
+    scripts/mutate.py gather RUN... [--repo OWNER/NAME] | record --from DIR... [--commit REV] | stale
 
 `run`, `summary`, `check` and `export` need mutmut, and run in tier 1's container
 (scripts/test-mutate.sh); `plan`, `gather` and `record` run on any Python 3.
@@ -33,6 +33,9 @@ baseline to docs/hardening/mutation/baseline-<area>.json (its outcomes, each fil
 blob, so a file changed since shows, and the tests its runs left out) and its survivors to
 docs/hardening/mutation/survivors/<area>.json, each with its function, line and change, one a line.
 A later directory's outcome for a change wins over an earlier one's (a job run again).
+
+`stale` names each module whose content (its git blob) isn't what its area's latest record mutated,
+and each module an area holds that no record covers: the counts out of date, for the next run.
 """
 
 from __future__ import annotations
@@ -906,6 +909,60 @@ def record(args) -> int:
     return write_baselines([Path(d) for d in args.from_], made, commit, REPO)
 
 
+# --- what changed since its record --------------------------------------------------------------
+
+
+def blob(path: Path) -> str:
+    """A file's content as git names it (its blob id), without git."""
+    import hashlib
+
+    data = path.read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324 - git's own name for it
+
+
+def latest_records(records: Path = RECORDS) -> dict[str, tuple[str, dict]]:
+    """Each area's latest record, by its file's name: the settled one (<area>.json) where an area has
+    one, else its baseline (baseline-<area>.json)."""
+    out = {}
+    for path in sorted(records.glob("*.json")):
+        area = path.stem.removeprefix("baseline-")
+        if area not in out or not path.stem.startswith("baseline-"):
+            out[area] = (path.name, json.loads(path.read_text(encoding="utf-8")))
+    return out
+
+
+def stale_modules(root: Path = ROOT, records: Path = RECORDS) -> list[dict]:
+    """The modules an area holds whose content isn't what their latest record mutated ("changed
+    since"), and those no record covers ("no record"), each with its area and record."""
+    recs = latest_records(records)
+    out = []
+    for rel, (area, _) in modules(root).items():
+        name, record = recs.get(area, (None, {}))
+        ran = record.get("files", {}).get(rel)
+        if ran is None:
+            out.append({"area": area, "module": rel, "state": "no record", "record": name})
+        elif ran.get("content") != blob(root / rel):
+            out.append({"area": area, "module": rel, "state": "changed since", "record": name})
+    return out
+
+
+def stale(_args) -> int:
+    """The modules changed since their latest record, and those no record covers."""
+    found = stale_modules()
+    for f in found:
+        if f["state"] == "changed since":
+            what = f"changed since {f['record']}'s run"
+        else:
+            what = "in no record" + (f" ({f['record']} doesn't hold it)" if f["record"] else "")
+        print(f"{f['area']:12} {f['module']:44} {what}")
+    if found:
+        areas_ = sorted({f["area"] for f in found})
+        print(f"{len(found)} modules, in {len(areas_)} areas ({' '.join(areas_)}): their counts are out of date")
+    else:
+        print("every module is as its latest record mutated it")
+    return 0
+
+
 def mutmut_pin() -> str:
     text = (ROOT / "packaging" / "versions.env").read_text(encoding="utf-8")
     m = re.search(r"\bmutmut==([\w.]+)", text)
@@ -946,9 +1003,10 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("record", help="directories export wrote, as each area's baseline")
     k.add_argument("--from", dest="from_", nargs="+", required=True)
     k.add_argument("--commit", default="HEAD", help="the commit the runs ran")
+    sub.add_parser("stale", help="the modules changed since their latest record, and those none covers")
     args = p.parse_args(argv)
     commands = {"run": run, "summary": summary, "check": check, "plan": plan, "export": export,
-                "gather": gather, "record": record}  # fmt: skip
+                "gather": gather, "record": record, "stale": stale}  # fmt: skip
     return commands[args.what](args)
 
 

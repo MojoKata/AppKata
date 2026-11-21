@@ -201,6 +201,9 @@ Each area has two files in `docs/hardening/mutation/`. `baseline-<area>.json` ho
 `survivors/<area>.json` holds its survivors, one a line in each module's order: mutmut's name for the
 change (`check` takes it), its file, function and line, and the lines it `removed` and `added`.
 
+`scripts/mutate.py stale` names each module whose content (its git blob) isn't what its area's
+latest record mutated, and each module an area holds that no record covers. Their counts are out of date until the area runs again.
+
 The baseline records the survivors; it doesn't settle them. Each area's step of a hardening sweep
 settles its own: a test that fails on the change, a change to the code, or `# pragma: no mutate` on
 the line with the reason it can't be caught (an equivalent change, say). An area with more than

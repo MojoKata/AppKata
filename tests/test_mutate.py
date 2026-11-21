@@ -543,3 +543,51 @@ def test_a_tests_own_python_runs_mutmuts_first_pass_unchanged(tmp_path):
         code = mutate.USERCUSTOMIZE + "print(repr(os.environ['MUTANT_UNDER_TEST']))"
         r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
         assert r.stdout.strip() == repr(want)
+
+
+# --- stale ------------------------------------------------------------------------------------------
+
+
+def test_a_blob_is_gits_name_for_the_content(tmp_path):
+    f = tmp_path / "x.py"
+    f.write_text("X = 1\n")
+    assert mutate.blob(f) == "96766802bd555f14ace322a7f376c4551f1bf5b7"          # `git hash-object` of the same file
+
+
+def test_stale_names_the_modules_changed_since_their_latest_record_and_those_none_covers(tmp_path, capsys):
+    root, records = tmp_path / "repo", tmp_path / "records"
+    for rel, text in (("src/appkata_core/urls.py", "U = 1\n"), ("src/appkata_core/http.py", "H = 1\n"),
+                      ("src/appkata_core/review.py", "R = 1\n")):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    records.mkdir()
+    same = mutate.blob(root / "src/appkata_core/urls.py")
+
+    def keep(name, files):
+        (records / name).write_text(json.dumps({"files": {rel: {"content": c} for rel, c in files.items()}}))
+
+    keep("baseline-sources.json", {"src/appkata_core/urls.py": same, "src/appkata_core/http.py": "old"})
+    found = mutate.stale_modules(root, records)
+    assert {(f["module"], f["state"], f["record"]) for f in found} == {
+        ("src/appkata_core/http.py", "changed since", "baseline-sources.json"),
+        ("src/appkata_core/review.py", "no record", None)}
+    # a settled record (<area>.json) is an area's latest, over its baseline
+    keep("sources.json", {"src/appkata_core/urls.py": same, "src/appkata_core/http.py": mutate.blob(root / "src/appkata_core/http.py")})
+    assert [f["module"] for f in mutate.stale_modules(root, records)] == ["src/appkata_core/review.py"]
+    keep("trust.json", {"src/appkata_core/review.py": mutate.blob(root / "src/appkata_core/review.py")})
+    assert mutate.stale_modules(root, records) == []
+
+
+def test_stale_prints_each_module_and_what_holds_its_counts(monkeypatch, capsys):
+    monkeypatch.setattr(mutate, "stale_modules", lambda: [
+        {"area": "scripts", "module": "scripts/areas.py", "state": "changed since", "record": "baseline-scripts.json"},
+        {"area": "scripts", "module": "scripts/hardening.py", "state": "no record", "record": "baseline-scripts.json"},
+        {"area": "qmlx", "module": "x.py", "state": "no record", "record": None}])
+    assert mutate.main(["stale"]) == 0
+    out = capsys.readouterr().out
+    assert "changed since baseline-scripts.json's run" in out
+    assert "in no record (baseline-scripts.json doesn't hold it)" in out and out.count("in no record") == 2
+    assert "3 modules, in 2 areas" in out
+    monkeypatch.setattr(mutate, "stale_modules", lambda: [])
+    mutate.main(["stale"])
+    assert "every module is as its latest record mutated it" in capsys.readouterr().out
