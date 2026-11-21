@@ -794,11 +794,17 @@ def latest(dirs: list[Path]) -> dict[str, dict]:
     return {(j := json.loads((d / "job.json").read_text()))["name"]: j for d in dirs}
 
 
+def held(dirs: list[Path]) -> list[str]:
+    """The modules the jobs mutated, those a later run's job left out included: a job run again
+    for some of its modules keeps the earlier outcomes of the rest."""
+    return sorted({m for d in dirs for m in json.loads((d / "job.json").read_text())["modules"].split()})
+
+
 def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -> dict:
     """An area's baseline: how it was made, its outcomes, each file's with its content, and the tests
     its runs left out."""
     jobs = list(latest(dirs).values())
-    named = sorted({m for j in jobs for m in j["modules"].split()})
+    named = held(dirs)
     by_file, _, _ = counted(merged(dirs))
     files = {}
     for rel in named:
@@ -840,8 +846,7 @@ def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, record
         if len(ran) < len(by_name):
             empty += sorted(set(by_name) - set(ran))
             continue
-        named = sorted({m for j in latest(ds).values() for m in j["modules"].split()})
-        content = {rel: blob_at(commit, rel, repo) for rel in named}
+        content = {rel: blob_at(commit, rel, repo) for rel in held(ds)}
         record = baseline(area, ds, made, content)
         baseline_path(area, records).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         survivors_path(area, records).write_text(dump_survivors(survivor_entries(ds, content)), encoding="utf-8")

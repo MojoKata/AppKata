@@ -215,14 +215,16 @@ def test_a_job_run_again_later_is_the_later_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(mutate, "source", lambda blob: "")
     first, again = tmp_path / "1", tmp_path / "2"
     first.mkdir(), again.mkdir()
-    d1, _ = job(first, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1, 0]})
+    d1, _ = job(first, "store-1", "store", ["src/appkata_core/db.py", "src/appkata_core/audit.py"],
+                {"src/appkata_core/db.py": [1, 0], "src/appkata_core/audit.py": [0]})  # fmt: skip
     d2, _ = job(again, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1, 1]})
     j = json.loads((d1 / "job.json").read_text())
     (d1 / "job.json").write_text(json.dumps({**j, "dropped": {"tests/test_x.py::test_y": {"kind": "unknown"}}}))
     records = tmp_path / "records"
     assert mutate.write_baselines([d1, d2], {}, "c", "o/r", records) == 0
     got = json.loads((records / "baseline-store.json").read_text())
-    assert (got["killed"], got["survived"], got["dropped"]) == (2, 0, {})
+    assert (got["killed"], got["survived"], got["dropped"]) == (2, 1, {})
+    assert sorted(got["files"]) == ["src/appkata_core/audit.py", "src/appkata_core/db.py"]   # run again for db.py alone
 
 
 def test_an_area_whose_job_ran_nothing_isnt_written(tmp_path, monkeypatch, capsys):
