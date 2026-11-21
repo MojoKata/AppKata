@@ -3,7 +3,7 @@
 # modules (scripts/areas.py) into jobs of about `size` code lines; each job runs mutmut over its
 # modules in tier 1's container, on the release's Python and PySide6 (scripts/test-mutate.sh), and
 # keeps its outcomes, survivors and log as an artifact for `scripts/mutate.py gather RUN`, which
-# writes each area's baseline to docs/hardening/mutation/<area>.json. `jobs` runs only the named
+# writes each area's baseline to docs/hardening/mutation/ (baseline-<area>.json, survivors/<area>.json). `jobs` runs only the named
 # jobs again (after a fix to the tools); `resume` goes on from an earlier run's outcomes, running
 # only the changes its jobs left unrun (a job out of time); gather takes a later run's outcome for a
 # change over the earlier one's. A pull request that changes this file or the tools runs a trial on one small module.

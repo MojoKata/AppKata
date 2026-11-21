@@ -127,9 +127,12 @@ function. Code a test reaches only in a process it starts is out of mutmut's sig
 as **no tests**.
 
 mutmut stops at the first test that fails in that first pass, without naming it. A run then runs
-pytest over the copy itself, leaves out each test that fails there and starts mutmut again; the
-baseline names them (`dropped`), with pytest's reason. They are tests that read a module's source,
-which in the copy is mutmut's, such as `test_field_test_plan.py`'s, and run none of its code.
+pytest over the copy itself and runs each test that fails there once more on the checkout, as tier
+1 does. A test that fails on the checkout too is a real failure, and stops the run. The others are
+left out of the run, and mutmut starts again; the run's export and the area's baseline name each
+(`dropped`) with its short traceback and the kind of failure it looks like: reads the mutated source,
+git or links in the copy, leaks into processes tests start, or unknown. `summary` and `gather`
+print, for each one `UNFIT` doesn't name, the line to add there.
 Two things make the copy behave as the checkout for the rest (`scripts/mutate_plugin.py`): a script
 runs under the module name mutmut gives its changes (`scripts.areas`), whatever name a test imports
 it by, so its changes run at all; and a process a test starts runs the code unchanged during the
@@ -172,9 +175,10 @@ a change that makes the code allocate without end grows its worker until the run
 of its own, so a trust job reaches 7½ GB (PSS) at its peak, within the runner's 16.
 
 `scripts/mutate.py gather RUN...` downloads a run's artifacts and writes each area's baseline to
-`docs/hardening/mutation/<area>.json`; `record --from DIR...` does the same from a local run's
-`export` folders. Runs gathered together must be of one commit, and a later run's outcome for a
-change replaces an earlier one's. A fork's run (`--repo OWNER/NAME`) is recorded as a fork's,
+`docs/hardening/mutation/baseline-<area>.json` and its survivors to
+`docs/hardening/mutation/survivors/<area>.json`; `record --from DIR...` does the same from a local
+run's `export` folders. Runs gathered together must be of one commit, and a later run's outcome for
+a change replaces an earlier one's, as a job run again in a later run replaces its tests left out. A fork's run (`--repo OWNER/NAME`) is recorded as a fork's,
 without its name, and `--same-as COMMIT` records a commit of this repository whose code is the
 run's own (checked file by file) in place of the run's: a run started from a branch made only to
 start it, with a `push` trigger in its copy of the workflow (GitHub starts a `workflow_dispatch`
@@ -182,7 +186,7 @@ only from a workflow on the default branch).
 
 ### Reading a baseline
 
-`docs/hardening/mutation/<area>.json` holds:
+Each area has two files in `docs/hardening/mutation/`. `baseline-<area>.json` holds:
 
 - **`made`**: the repository, the workflow runs and the commit it was made from, and mutmut's version.
 - **The counts**: `mutants` (the changes), `killed`, `timeout` (a change that made the tests run past
@@ -190,9 +194,10 @@ only from a workflow on the default branch).
   (mutmut's "suspicious", a crash) and `not run` (a job stopped first).
 - **`files`**: the same counts by file, and each file's `content`, its git blob at that commit:
   a file whose blob differs from the checkout's has changed since, and its counts are out of date.
-- **`dropped`**: the tests left out of the area's runs, each with the reason it failed in the copy.
-- **`survivors`**, a line each: mutmut's name for the change (`check` takes it), its file, function
-  and line, and the lines it `removed` and `added`.
+- **`dropped`**: the tests left out of the area's runs, each with its traceback and kind; none, once settled.
+
+`survivors/<area>.json` holds its survivors, one a line in each module's order: mutmut's name for the
+change (`check` takes it), its file, function and line, and the lines it `removed` and `added`.
 
 The baseline records the survivors; it doesn't settle them. Each area's step of a hardening sweep
 settles its own: a test that fails on the change, a change to the code, or `# pragma: no mutate` on

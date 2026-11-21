@@ -29,9 +29,10 @@ The baseline (.github/workflows/mutate.yml): `plan` packs each area's modules (s
 into jobs of about --size code lines, as JSON for the workflow's matrix; each job is a `run` and an
 `export`, which keeps its outcomes, survivors and log in a directory for the job's artifact.
 `gather` downloads a run's artifacts and `record` reads such directories; both write each area's
-baseline to docs/hardening/mutation/<area>.json: its outcomes, each file's content (its git blob,
-so a file changed since shows), and its survivors, each with its function, line and change. A
-later directory's outcome for a change wins over an earlier one's (a job run again).
+baseline to docs/hardening/mutation/baseline-<area>.json (its outcomes, each file's content, its git
+blob, so a file changed since shows, and the tests its runs left out) and its survivors to
+docs/hardening/mutation/survivors/<area>.json, each with its function, line and change, one a line.
+A later directory's outcome for a change wins over an earlier one's (a job run again).
 """
 
 from __future__ import annotations
@@ -787,10 +788,16 @@ def survivor_entries(dirs: list[Path], content: dict[str, str]) -> list[dict]:
     return sorted(out, key=lambda e: (e["file"], e["line"] or 0, e["function"], number(e)))
 
 
+def latest(dirs: list[Path]) -> dict[str, dict]:
+    """Each job's job.json by its name, a later directory's over an earlier one's: a job run again
+    in a later run is that run's (its modules, its dropped tests)."""
+    return {(j := json.loads((d / "job.json").read_text()))["name"]: j for d in dirs}
+
+
 def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -> dict:
-    """An area's baseline: how it was made, its outcomes, each file's and its content, and its
-    survivors."""
-    jobs = [json.loads((d / "job.json").read_text()) for d in dirs]
+    """An area's baseline: how it was made, its outcomes, each file's with its content, and the tests
+    its runs left out."""
+    jobs = list(latest(dirs).values())
     named = sorted({m for j in jobs for m in j["modules"].split()})
     by_file, _, _ = counted(merged(dirs))
     files = {}
@@ -798,25 +805,33 @@ def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -
         c = by_file.get(rel, Counter())
         files[rel] = {"content": content.get(rel), "mutants": sum(c.values()), **{k: c[k] for k in COUNTED}}
     dropped = {t: as_kept(why) for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
-    return {"area": area, "made": made, **counts(by_file), "files": files, "dropped": dropped,
-            "survivors": survivor_entries(dirs, content)}  # fmt: skip
+    return {"area": area, "made": made, **counts(by_file), "files": files, "dropped": dict(sorted(dropped.items()))}
 
 
-def dump(record: dict) -> str:
-    """A baseline as JSON: a survivor a line, so a diff of two shows the changes that moved."""
-    head = json.dumps({k: v for k, v in record.items() if k != "survivors"}, indent=2, ensure_ascii=False)
-    lines = ",\n".join("    " + json.dumps(e, ensure_ascii=False) for e in record["survivors"])
-    return head.removesuffix("\n}") + (f',\n  "survivors": [\n{lines}\n  ]\n}}\n' if lines else ',\n  "survivors": []\n}\n')
+def dump_survivors(entries: list[dict]) -> str:
+    """An area's survivors as JSON, one a line in each module's order, so a diff of two shows the
+    changes that moved."""
+    lines = ",\n".join(json.dumps(e, ensure_ascii=False) for e in entries)
+    return f"[\n{lines}\n]\n" if entries else "[]\n"
+
+
+def baseline_path(area: str, records: Path = RECORDS) -> Path:
+    return records / f"baseline-{area}.json"
+
+
+def survivors_path(area: str, records: Path = RECORDS) -> Path:
+    return records / "survivors" / f"{area}.json"
 
 
 def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, records: Path = RECORDS) -> int:
-    """Each area's baseline from the jobs' directories; an area whose job ran nothing isn't written."""
+    """Each area's baseline from the jobs' directories, in baseline-<area>.json, and its survivors, in
+    survivors/<area>.json; an area whose job ran nothing isn't written."""
     by_area: dict[str, list[Path]] = defaultdict(list)
     for d in dirs:
         by_area[json.loads((d / "job.json").read_text())["area"]].append(d)
     print(f"{'area':12} {'mutants':>8}" + "".join(f" {k:>9}" for k in COUNTED))
-    empty = []
-    records.mkdir(parents=True, exist_ok=True)
+    empty, dropped = [], {}
+    (records / "survivors").mkdir(parents=True, exist_ok=True)
     for area, ds in sorted(by_area.items()):
         by_name: dict[str, list[Path]] = defaultdict(list)
         for d in ds:
@@ -825,13 +840,16 @@ def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, record
         if len(ran) < len(by_name):
             empty += sorted(set(by_name) - set(ran))
             continue
-        named = sorted({m for d in ds for m in json.loads((d / "job.json").read_text())["modules"].split()})
+        named = sorted({m for j in latest(ds).values() for m in j["modules"].split()})
         content = {rel: blob_at(commit, rel, repo) for rel in named}
         record = baseline(area, ds, made, content)
-        (records / f"{area}.json").write_text(dump(record), encoding="utf-8")
+        baseline_path(area, records).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        survivors_path(area, records).write_text(dump_survivors(survivor_entries(ds, content)), encoding="utf-8")
+        dropped.update(record["dropped"])
         print(f"{area:12} {record['mutants']:8}" + "".join(f" {record[k]:9}" for k in COUNTED))
     if empty:
         print(f"ran nothing, so their areas aren't written: {' '.join(sorted(empty))}")
+    print_unfit(dropped)
     return 1 if empty else 0
 
 
@@ -851,22 +869,24 @@ def gather(args) -> int:
     commit, so their outcomes add up. A fork's runs (--repo) are recorded as a fork's, without its
     name; with --same-as, a commit of this repository whose code is each run's own is recorded as
     theirs (runs on branches made only to start them, their workflow file changed)."""
-    dirs, commits = [], set()
+    dirs, ran = [], {}
     for run_id in args.run:
-        dirs += downloaded(run_id, args.repo)
+        these = downloaded(run_id, args.repo)
+        dirs += these
         view = ["gh", "run", "view", run_id, "-R", args.repo, "--json", "headSha", "-q", ".headSha"]
-        commits.add(subprocess.run(view, capture_output=True, text=True, check=True).stdout.strip())  # noqa: S603
-    if len(commits) != 1 and not args.same_as:
-        print(f"the runs are of {len(commits)} commits; a baseline is of one: {' '.join(sorted(commits))}")
+        head = subprocess.run(view, capture_output=True, text=True, check=True).stdout.strip()  # noqa: S603
+        ran.setdefault(head, []).extend(these)
+    if len(ran) != 1 and not args.same_as:
+        print(f"the runs are of {len(ran)} commits; a baseline is of one: {' '.join(sorted(ran))}")
         return 1
-    commit = sorted(commits)[0]
+    commit = sorted(ran)[0]
     if args.same_as:  # each run's code, module by module, is the commit's
         same = _git("rev-parse", args.same_as)
-        named = sorted({m for d in dirs for m in json.loads((d / "job.json").read_text())["modules"].split()})
-        for ran in sorted(commits):
-            differ = [m for m in named if blob_at(ran, m, args.repo) != blob_at(same, m, REPO)]
+        for head, these in sorted(ran.items()):
+            named = sorted({m for d in these for m in json.loads((d / "job.json").read_text())["modules"].split()})
+            differ = [m for m in named if blob_at(head, m, args.repo) != blob_at(same, m, REPO)]
             if differ:
-                print(f"{same} differs from the runs' {ran} in {' '.join(differ)}")
+                print(f"{same} differs from the runs' {head} in {' '.join(differ)}")
                 return 1
         commit = same
     where = args.repo if args.repo == REPO else "a fork"

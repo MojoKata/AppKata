@@ -194,18 +194,35 @@ def test_each_areas_baseline_keeps_its_outcomes_content_and_survivors(tmp_path, 
     records = tmp_path / "records"
     made = {"repo": "o/r", "runs": [1], "commit": "c", "mutmut": "3.8.1"}
     assert mutate.write_baselines([d1, d2], made, "c", "o/r", records) == 0
-    got = json.loads((records / "sources.json").read_text())
+    got = json.loads((records / "baseline-sources.json").read_text())
     assert (got["area"], got["made"], got["mutants"], got["killed"], got["survived"], got["timeout"]) == (
         "sources", made, 3, 1, 1, 1)
+    assert "survivors" not in got and got["dropped"] == {}
     # a module mutmut found nothing to change in is kept too, with its content
     assert got["files"]["src/appkata_core/http.py"] == {"content": "blob-src/appkata_core/http.py", "mutants": 0,
                                                        **{k: 0 for k in mutate.COUNTED}}  # fmt: skip
-    assert got["survivors"] == [{"name": "appkata_core.urls.x_parse__mutmut_2", "file": "src/appkata_core/urls.py",
+    text = (records / "survivors" / "sources.json").read_text()
+    assert json.loads(text) == [{"name": "appkata_core.urls.x_parse__mutmut_2", "file": "src/appkata_core/urls.py",
                                  "function": "parse", "line": 2, "removed": ["    return x + 1"],
                                  "added": ["    return x - 1"]}]  # fmt: skip
-    # a survivor a line
-    assert (records / "sources.json").read_text().count("\n    {\"name\"") == 1
-    assert json.loads((records / "trust.json").read_text())["survivors"] == []
+    assert text.startswith('[\n{"name"') and text.count("\n") == 3      # a survivor a line
+    assert (records / "survivors" / "trust.json").read_text() == "[]\n"
+    assert not (records / "sources.json").exists()     # the name a settled record takes later
+
+
+def test_a_job_run_again_later_is_the_later_runs(tmp_path, monkeypatch):
+    monkeypatch.setattr(mutate, "blob_at", lambda commit, rel, repo: "b")
+    monkeypatch.setattr(mutate, "source", lambda blob: "")
+    first, again = tmp_path / "1", tmp_path / "2"
+    first.mkdir(), again.mkdir()
+    d1, _ = job(first, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1, 0]})
+    d2, _ = job(again, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1, 1]})
+    j = json.loads((d1 / "job.json").read_text())
+    (d1 / "job.json").write_text(json.dumps({**j, "dropped": {"tests/test_x.py::test_y": {"kind": "unknown"}}}))
+    records = tmp_path / "records"
+    assert mutate.write_baselines([d1, d2], {}, "c", "o/r", records) == 0
+    got = json.loads((records / "baseline-store.json").read_text())
+    assert (got["killed"], got["survived"], got["dropped"]) == (2, 0, {})
 
 
 def test_an_area_whose_job_ran_nothing_isnt_written(tmp_path, monkeypatch, capsys):
@@ -213,22 +230,32 @@ def test_an_area_whose_job_ran_nothing_isnt_written(tmp_path, monkeypatch, capsy
     d1, _ = job(tmp_path, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [None, None]})
     records = tmp_path / "records"
     assert mutate.write_baselines([d1], {}, "c", "o/r", records) == 1
-    assert not (records / "store.json").exists()
+    assert not (records / "baseline-store.json").exists()
     assert "store-1" in capsys.readouterr().out
 
 
+def kept():
+    """The baselines committed, each with its survivors: (area, record, survivors)."""
+    for path in sorted(mutate.RECORDS.glob("baseline-*.json")):
+        area = path.stem.removeprefix("baseline-")
+        survivors = json.loads(mutate.survivors_path(area).read_text(encoding="utf-8"))
+        yield area, json.loads(path.read_text(encoding="utf-8")), survivors
+
+
 def test_the_baselines_kept_name_files_that_exist_and_add_up():
-    for path in sorted(mutate.RECORDS.glob("*.json")):
-        record = json.loads(path.read_text(encoding="utf-8"))
-        assert record["area"] == path.stem and path.stem in mutate.areas.AREAS
-        assert record["mutants"] == sum(record[k] for k in mutate.COUNTED), path.name
-        assert record["survived"] == len(record["survivors"]), path.name
+    assert list(kept()), "no baseline committed"
+    for area, record, survivors in kept():
+        assert record["area"] == area and area in mutate.areas.AREAS
+        assert record["mutants"] == sum(record[k] for k in mutate.COUNTED), area
+        assert record["survived"] == len(survivors), area
         for rel, c in record["files"].items():
-            assert os.path.exists(os.path.join(ROOT, rel)), (path.name, rel)
-            assert c["mutants"] == sum(c[k] for k in mutate.COUNTED), (path.name, rel)
-        assert {s["file"] for s in record["survivors"]} <= set(record["files"]), path.name
-        for test in record["dropped"]:
-            assert os.path.exists(os.path.join(ROOT, test.split("::")[0])), (path.name, test)
+            assert os.path.exists(os.path.join(ROOT, rel)), (area, rel)
+            assert c["mutants"] == sum(c[k] for k in mutate.COUNTED), (area, rel)
+        assert {s["file"] for s in survivors} <= set(record["files"]), area
+        order = [(s["file"], s["line"] or 0) for s in survivors]
+        assert order == sorted(order), area                     # each module's survivors in its order
+    on_disk = {p.stem for p in (mutate.RECORDS / "survivors").glob("*.json")}
+    assert on_disk == {a for a, _, _ in kept()}
 
 
 @pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, ".git")), reason="the copy isn't a checkout")

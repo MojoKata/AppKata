@@ -1,0 +1,101 @@
+{
+  "area": "install",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 7513,
+  "killed": 3343,
+  "timeout": 17,
+  "survived": 2560,
+  "no tests": 1593,
+  "other": 0,
+  "not run": 0,
+  "files": {
+    "src/appkata_core/appkind.py": {
+      "content": "451183b78208778a0d9b4bb28017fdd3b92673cc",
+      "mutants": 422,
+      "killed": 281,
+      "timeout": 0,
+      "survived": 141,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/assets.py": {
+      "content": "47f013b573ce305b5186d2c199327e97beaf0a48",
+      "mutants": 521,
+      "killed": 362,
+      "timeout": 0,
+      "survived": 159,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/autoupdate.py": {
+      "content": "7dc8ba3e113bdade3f684a0f1aa160cad4691805",
+      "mutants": 739,
+      "killed": 254,
+      "timeout": 0,
+      "survived": 210,
+      "no tests": 275,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/desktop.py": {
+      "content": "d5554fc12c34323bf0d2e15dfd5f3c94c6c28370",
+      "mutants": 236,
+      "killed": 87,
+      "timeout": 0,
+      "survived": 121,
+      "no tests": 28,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/foreign.py": {
+      "content": "525ce8f335348de8855c344bbb129b1e14115f22",
+      "mutants": 684,
+      "killed": 150,
+      "timeout": 7,
+      "survived": 251,
+      "no tests": 276,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/install.py": {
+      "content": "d5acbd863c365557f390f986207586b096d05803",
+      "mutants": 3896,
+      "killed": 1615,
+      "timeout": 6,
+      "survived": 1315,
+      "no tests": 960,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/selfinstall.py": {
+      "content": "efd22c4c4a6c937c2c786ba8cababfc603ab4d6b",
+      "mutants": 493,
+      "killed": 271,
+      "timeout": 0,
+      "survived": 168,
+      "no tests": 54,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/transfer.py": {
+      "content": "cb5c8b5387bdc4ab014692d156d250f9ced72c35",
+      "mutants": 522,
+      "killed": 323,
+      "timeout": 4,
+      "survived": 195,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}

@@ -1,0 +1,102 @@
+{
+  "area": "ui-backend",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 6515,
+  "killed": 1843,
+  "timeout": 1,
+  "survived": 2617,
+  "no tests": 2050,
+  "other": 4,
+  "not run": 0,
+  "files": {
+    "src/appkata/__init__.py": {
+      "content": "2365788b4924d23208a23e4a62990edb96ce0164",
+      "mutants": 0,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata/__main__.py": {
+      "content": "ac99fd17e580ed45b154d8d5f304e6846d69a167",
+      "mutants": 0,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata/app.py": {
+      "content": "b609171693fb275374d13f97c9bbd751bb75abd9",
+      "mutants": 523,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 523,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata/backend.py": {
+      "content": "4eadc5331710ea1e17573932b1e75a44d2def46a",
+      "mutants": 5269,
+      "killed": 1727,
+      "timeout": 1,
+      "survived": 2540,
+      "no tests": 997,
+      "other": 4,
+      "not run": 0
+    },
+    "src/appkata/layout.py": {
+      "content": "78b425f999c986f287625562073477e0d636b694",
+      "mutants": 158,
+      "killed": 90,
+      "timeout": 0,
+      "survived": 68,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata/tour.py": {
+      "content": "6b52733caa46bfbd9ece8ce180bbb8e8f778b536",
+      "mutants": 565,
+      "killed": 26,
+      "timeout": 0,
+      "survived": 9,
+      "no tests": 530,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {
+    "tests/test_docs_facts.py::test_a_booted_claim_naming_a_system_the_table_does_not_is_caught": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_docs_facts.py::test_every_fact_the_documents_state_is_what_the_code_says_but_the_listed": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_docs_facts.py::test_the_harness_catches_a_template_added_without_the_documents": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_docs_facts.py::test_the_harness_catches_setup_and_the_documents_naming_different_windows_10s": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_tour_rules.py::test_the_tour_stages_the_sandbox_only_through_the_deciders": {
+      "kind": "unknown",
+      "trace": ""
+    }
+  }
+}

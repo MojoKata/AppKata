@@ -1,0 +1,292 @@
+{
+  "area": "scripts",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 16146,
+  "killed": 4098,
+  "timeout": 14,
+  "survived": 2079,
+  "no tests": 9955,
+  "other": 0,
+  "not run": 0,
+  "files": {
+    "scripts/appimage_host_libs.py": {
+      "content": "91373a7cc43a56ed252ad716268d757d3cb991c7",
+      "mutants": 181,
+      "killed": 60,
+      "timeout": 1,
+      "survived": 11,
+      "no tests": 109,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/appimage_trim.py": {
+      "content": "a8ac7a217bd8ab303206b95bb9256852462d29e1",
+      "mutants": 385,
+      "killed": 266,
+      "timeout": 1,
+      "survived": 118,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/areas.py": {
+      "content": "0c8bb4531a8ef005ed2fae0bc0cae910f2184df1",
+      "mutants": 21,
+      "killed": 21,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/channels_e2e.py": {
+      "content": "093fae58d15c4c609fca91ebe062a12aa940e4a0",
+      "mutants": 1212,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 1212,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/ci_times.py": {
+      "content": "5e8b2383ded9f011c20fbad9c668cc297c178e10",
+      "mutants": 431,
+      "killed": 109,
+      "timeout": 0,
+      "survived": 14,
+      "no tests": 308,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/compare_github_paths.py": {
+      "content": "47934b9d7d1aa024bcb9cf26abc92302fcb6121c",
+      "mutants": 102,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 102,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/coverage_report.py": {
+      "content": "cc9b4e1c76cb6ffe7dc6a61b13b4b648e245d9e9",
+      "mutants": 829,
+      "killed": 353,
+      "timeout": 0,
+      "survived": 55,
+      "no tests": 421,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/demo_data.py": {
+      "content": "a982b1f114c4ac8dd9c5ade68395088d43476122",
+      "mutants": 3559,
+      "killed": 479,
+      "timeout": 0,
+      "survived": 555,
+      "no tests": 2525,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/doccheck.py": {
+      "content": "89ae7e3a7dd19590a50fb50ad758a37e27fe6f56",
+      "mutants": 489,
+      "killed": 291,
+      "timeout": 0,
+      "survived": 145,
+      "no tests": 53,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/make_appkata_md.py": {
+      "content": "2d8b1a349b619a660cef7e78aca2c885b4822b3b",
+      "mutants": 149,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 149,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/mutate.py": {
+      "content": "10396b0f6084d97d768b7519fda78bff855e95d6",
+      "mutants": 1999,
+      "killed": 1123,
+      "timeout": 7,
+      "survived": 584,
+      "no tests": 285,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/pins-newest.py": {
+      "content": "a1ac54c2b6c910ffea2bf492c5bd06e6c57a1631",
+      "mutants": 797,
+      "killed": 316,
+      "timeout": 0,
+      "survived": 256,
+      "no tests": 225,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/public_text.py": {
+      "content": "aab6e62791c8c469304b73a057510b6b497c3edb",
+      "mutants": 82,
+      "killed": 31,
+      "timeout": 0,
+      "survived": 2,
+      "no tests": 49,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/consumers.py": {
+      "content": "3c3bf2fd6f7cfd708afb729f3ba2347a1308eef4",
+      "mutants": 157,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 157,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/exposure.py": {
+      "content": "402dfcb5e9402def5ee2cfa1988f26ccf77124a3",
+      "mutants": 861,
+      "killed": 492,
+      "timeout": 5,
+      "survived": 203,
+      "no tests": 161,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/fieldtest.py": {
+      "content": "3a113bf9059c4df3016680ce7e95d7402e69ba22",
+      "mutants": 1969,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 1969,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/fieldtest_questions.py": {
+      "content": "b950bc388d504977540792d742901dc707156160",
+      "mutants": 77,
+      "killed": 67,
+      "timeout": 0,
+      "survived": 10,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/filedialogs.py": {
+      "content": "23b62d8df0fc756b315759dd8bf283de23c9fce5",
+      "mutants": 72,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 72,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/inputmethod.py": {
+      "content": "630a0c0829d332ead507cf674a0b6fa0d499dbaa",
+      "mutants": 59,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 59,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/kwin.py": {
+      "content": "96520548cbee5bdbbc1a3968c7c6964b145dd598",
+      "mutants": 46,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 46,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/merge.py": {
+      "content": "58a8893039b28a9865e1eadf5afbaa3b0f046e84",
+      "mutants": 200,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 200,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/typebox.py": {
+      "content": "3b502e86e8037726c758db47b12ce744975c680b",
+      "mutants": 0,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/sandbox/wayland.py": {
+      "content": "474265a1d4ea36d2c4325adc673cc0bfdedd69ad",
+      "mutants": 50,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 50,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/third_party_notices.py": {
+      "content": "97fe0bd295fee390e4b3901365a24599e6107dd8",
+      "mutants": 1937,
+      "killed": 490,
+      "timeout": 0,
+      "survived": 126,
+      "no tests": 1321,
+      "other": 0,
+      "not run": 0
+    },
+    "scripts/windows_e2e.py": {
+      "content": "d101630cd50a07150115a1157fd3f39dee7fa86a",
+      "mutants": 482,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 482,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {
+    "tests/test_field_test_plan.py::test_each_environments_checklist_is_what_the_field_test_asks_there": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_field_test_plan.py::test_the_harness_catches_a_question_or_a_check_added_to_one_side": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_field_test_plan.py::test_the_harness_reads_both_sides_whole": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_field_test_plan.py::test_the_plan_lists_every_check_and_question_the_field_test_has_and_no_other": {
+      "kind": "unknown",
+      "trace": ""
+    },
+    "tests/test_public_text.py::test_the_repository_address_is_appkata_core_s": {
+      "kind": "unknown",
+      "trace": ""
+    }
+  }
+}

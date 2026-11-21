@@ -1,0 +1,91 @@
+{
+  "area": "sources",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 5867,
+  "killed": 2090,
+  "timeout": 8,
+  "survived": 2467,
+  "no tests": 1302,
+  "other": 0,
+  "not run": 0,
+  "files": {
+    "src/appkata_core/explore.py": {
+      "content": "4b5c296855af83d124d7717900a56211956ee55c",
+      "mutants": 904,
+      "killed": 284,
+      "timeout": 5,
+      "survived": 615,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/forges.py": {
+      "content": "c2375f8da65fc43c5c15147dee8cf123dcfb5b56",
+      "mutants": 1696,
+      "killed": 512,
+      "timeout": 0,
+      "survived": 638,
+      "no tests": 546,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/http.py": {
+      "content": "e3ed8b4ec7d9b4c5877a4076aa79fd987e908878",
+      "mutants": 251,
+      "killed": 75,
+      "timeout": 2,
+      "survived": 162,
+      "no tests": 12,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/metadata.py": {
+      "content": "46f97029ee44cb588f14d025ab8559c319db1f8b",
+      "mutants": 615,
+      "killed": 356,
+      "timeout": 0,
+      "survived": 259,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/sync.py": {
+      "content": "84008c9ba8de561bcd608bf3878a885c52cf49ba",
+      "mutants": 2045,
+      "killed": 653,
+      "timeout": 1,
+      "survived": 647,
+      "no tests": 744,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/urls.py": {
+      "content": "9a2074fb3b71e8e3dd658891e0fc94e9fde25bb8",
+      "mutants": 195,
+      "killed": 99,
+      "timeout": 0,
+      "survived": 96,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/versions.py": {
+      "content": "8fc872d2d5313caedd2ce2086e1e661d4fbae751",
+      "mutants": 161,
+      "killed": 111,
+      "timeout": 0,
+      "survived": 50,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}
