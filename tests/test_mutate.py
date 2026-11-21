@@ -332,7 +332,7 @@ def test_summary_counts_the_last_run_and_writes_each_survivors_change(work, monk
 
 
 def test_export_keeps_the_outcomes_the_survivors_and_the_log(work, tmp_path, monkeypatch):
-    monkeypatch.setattr(mutate, "_mutmut_pids", lambda: [])
+    monkeypatch.setattr(mutate, "_run_pids", lambda: [])
     meta(work / "copy" / "mutants", "src/appkata_core/urls.py", [1, 0])
     meta(work / "copy" / "mutants", "scripts/areas.py", [1])
     (work / "mutmut.log").write_text("log\n")
@@ -417,7 +417,7 @@ def test_a_runs_artifacts_are_downloaded_once(work, monkeypatch):
 
 
 def test_the_watcher_finds_no_run_when_none_is_running(work):
-    assert mutate._mutmut_pids() == [] and mutate._workers() == {} and mutate._pss_gb() == 0.0
+    assert mutate._run_pids() == [] and mutate._workers() == {} and mutate._pss_gb() == 0.0
 
 
 def test_a_run_goes_on_from_an_earlier_ones_outcomes(work, tmp_path):

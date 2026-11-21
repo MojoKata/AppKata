@@ -275,7 +275,7 @@ def _cmdline(pid: str) -> str:
     return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
 
 
-def _mutmut_pids() -> list[int]:
+def _run_pids() -> list[int]:
     """This copy's mutmut and its workers, still running: they rename themselves
     `mutmut: <change>` (mutate_plugin) or are `python -m mutmut run`."""
     out = []
@@ -306,7 +306,7 @@ def _rollup(pid: int, *keys: str) -> float:
 def _pss_gb() -> float:
     """The run's memory: mutmut and its workers, each page shared counted once (PSS)."""
     total = 0.0
-    for pid in _mutmut_pids():
+    for pid in _run_pids():
         with contextlib.suppress(OSError):
             total += _rollup(pid, "Pss:")
     return total
@@ -315,7 +315,7 @@ def _pss_gb() -> float:
 def _workers() -> dict[int, tuple[str, float]]:
     """This run's change workers still running: each one's change and its own memory."""
     out = {}
-    for pid in _mutmut_pids():
+    for pid in _run_pids():
         try:
             cmd = _cmdline(str(pid))
             if cmd.startswith("mutmut: "):
@@ -660,7 +660,7 @@ def export(args) -> int:
     """The last run's outcomes (mutmut's .meta files), survivors and log, in `dir`. A run the
     job's time limit stopped is stopped here for good first; what it finished is kept, since mutmut
     saves each outcome as it comes."""
-    for pid in _mutmut_pids():
+    for pid in _run_pids():
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
     out = Path(args.dir)
