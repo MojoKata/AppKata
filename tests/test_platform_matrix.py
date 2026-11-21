@@ -23,6 +23,8 @@ import sys
 
 import pytest
 
+import reqdocs
+
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # Claimed platforms with no tier yet, and the finding that keeps each so
@@ -42,7 +44,7 @@ def _read(rel):
 
 def _platforms() -> list[str]:
     """1.1's Linux platforms, one bullet each, as written."""
-    req = _read("docs/requirements.md")
+    req = reqdocs.text()
     block = req[req.index("- Linux x86_64:"):req.index("\n- Windows")]
     return [" ".join(b.split()) for b in re.split(r"\n  - ", block)[1:]]
 
@@ -92,8 +94,7 @@ def test_every_platform_1_1_supports_has_a_sandbox_tier_but_the_listed():
 
 
 def test_17_1_says_where_the_sandbox_is_not_tested():
-    req = _read("docs/requirements.md")
-    scope = req[req.index("17.1. **Scope.**"):req.index("17.2. **Levels")]
+    scope = reqdocs.item("R17.1")
     assert all(p.removesuffix(" LTS") in " ".join(scope.split()) for p in without_sandbox())
 
 

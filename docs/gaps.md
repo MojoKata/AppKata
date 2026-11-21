@@ -1,6 +1,6 @@
 # AppKata — Gaps and proposals
 
-Gap analysis of [`requirements.md`](requirements.md), drawing on the Obtainium project
+Gap analysis of [`requirements.md`](requirements/README.md), drawing on the Obtainium project
 (<https://github.com/ImranR98/Obtainium>).
 Section references (e.g. "5.6") point into `requirements.md`. Decisions still needed are
 listed at the end.
@@ -366,7 +366,7 @@ Sources, Trusts and settings as JSON. A plain list of URLs can also be imported.
 
 ## 13. Decisions (resolved 2026-10-01)
 
-These answers are now part of [`requirements.md`](requirements.md).
+These answers are now part of [`requirements.md`](requirements/README.md).
 
 1. **Apps list scope:** AppKata manages only the apps it installed. Apps installed some other
    way are flagged wherever they are listed or added, and AppKata never installs on top of
@@ -385,7 +385,7 @@ These answers are now part of [`requirements.md`](requirements.md).
 
 ## 14. Second round (resolved 2026-10-01)
 
-These answers are now part of [`requirements.md`](requirements.md).
+These answers are now part of [`requirements.md`](requirements/README.md).
 
 1. **ngit releases:** use Zapstore's NIP-82 events:
    - Kind 32267, the software application.
@@ -429,7 +429,7 @@ These answers are now part of [`requirements.md`](requirements.md).
 
 ## 16. Third round (resolved 2026-10-01)
 
-These answers are now part of [`requirements.md`](requirements.md) (sections 5.7.5, 7.7, 8.4, 13, 14).
+These answers are now part of [`requirements.md`](requirements/README.md) (sections 5.7.5, 7.7, 8.4, 13, 14).
 
 1. **Audit scope:** both what you do and what AppKata does on its own, each labelled **You**
    or **Sync** (req 13.3).
@@ -756,7 +756,7 @@ Beyond the gaps above:
 
 ## 31. Windows decisions (2026-10-03)
 
-The answers to §30's decisions are now in [`requirements.md`](requirements.md): §15, and the
+The answers to §30's decisions are now in [`requirements.md`](requirements/README.md): §15, and the
 sections it changes (1.1, 1.6, 1.9, 2.11, 4.2, 4.3, 4.9, 5.3, 11.1.4).
 
 1. **Who an app is for:** a new per-app setting on Windows, **Just me** (the default, in
@@ -948,7 +948,7 @@ GitHub in the test VM, the unit tests under Python on Windows, and AppKata's own
 
 ## 16. App sandboxing (resolved 2026-10-09)
 
-These answers are now part of [`requirements.md`](requirements.md) (§17); the rationale, experiments
+These answers are now part of [`requirements.md`](requirements/README.md) (§17); the rationale, experiments
 (three rounds, `scripts/sandbox/`) and mockups are in [`app-sandboxing.md`](app-sandboxing.md), and the
 human validation checklist in [`local-proxy-test-plan.md`](local-proxy-test-plan.md).
 

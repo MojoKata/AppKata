@@ -14,7 +14,7 @@ maximized on a 1920 × 1080 screen. The mockups are drawn at 1280 × 800.
 Dark is the main design target. `mocks/dark` has every mockup, and `mocks/light` has the main
 ones. They use the app's own design tokens (`src/appkata/qml/Theme.qml`). Screens are
 named by perspective: **A** = Apps, **C** = Catalog, **S** = Sources, **U** = Audit, and **X** = app-wide
-screens (the ⋮ menu and the tray), and **W** = Windows only. Requirement numbers refer to [`../docs/requirements.md`](../docs/requirements.md).
+screens (the ⋮ menu and the tray), and **W** = Windows only. Requirement numbers refer to [`../docs/requirements/`](../docs/requirements/README.md).
 
 The channel screens (A17, C10, S17) use made-up channel facts written by `scripts/demo_data.py finish`
 (`demo-channels.json`, read only by the tour), since the machine that takes them has no Flatpak or apt.

@@ -10,6 +10,8 @@ real SSH key). These checks keep the retired identifiers out of them.
 
 import os
 
+import reqdocs
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DELEGATES = ["docs/local-proxy-test-plan.md", "scripts/sandbox/field-test.sh", "scripts/sandbox/fieldtest.py"]
 RETIRED = {
@@ -39,7 +41,7 @@ def test_the_documents_17_delegates_to_carry_no_retired_design():
 
 
 def test_17_points_at_the_goldens_and_the_field_test_runs_appkatas_own_code():
-    req = _read("docs/requirements.md")
+    req = reqdocs.text()
     assert "tests/data/launchers/" in req and "kept byte" in req
     py = _read("scripts/sandbox/fieldtest.py")
     assert "install.install(" in py and "rewrite_launcher(" in py           # the product's install path and launcher

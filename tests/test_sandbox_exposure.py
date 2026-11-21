@@ -34,6 +34,7 @@ import tempfile
 import pytest
 
 from appkata_core import sandbox as sb
+import reqdocs
 from test_requirements_trace import _finding_exists
 from test_sandbox_run import Env, _bwrap_ok, _listen
 
@@ -70,10 +71,7 @@ def _norm(s: str) -> str:
 
 
 def _requirement(rid: str) -> str:
-    with open(os.path.join(ROOT, "docs", "requirements.md"), encoding="utf-8") as f:
-        text = f.read()
-    m = re.search(rf"^{re.escape(rid)}\. (.*?)(?=^\d+\.\d+(?:\.\d+)*\. |^## )", text, re.M | re.S)
-    return _norm(m.group(1)) if m else ""
+    return _norm(reqdocs.item(rid))
 
 
 # ------------------------------------------------------------------------------------- the inventory
@@ -94,7 +92,7 @@ def test_every_row_names_known_things_and_where_each_is_stated():
         st = row["stated"]
         m = re.match(r'^(\d+(?:\.\d+)+) "(.+)"$', st)
         if m:
-            if _norm(m.group(2)) not in _requirement(m.group(1)):
+            if _norm(m.group(2)) not in _requirement("R" + m.group(1)):
                 bad.append(f"{row['items'][0]}: {m.group(1)} doesn't say {m.group(2)!r}")
         elif st.startswith("open: "):
             if not _finding_exists(st[6:]):
@@ -303,7 +301,7 @@ STRICT_ROW = {
 
 
 def test_17_2s_strict_row_is_what_the_strict_launcher_gives_but_the_listed(tmp_path, monkeypatch):
-    text = _requirement("17.2")
+    text = _requirement("R17.2")
     header = [c.strip() for c in re.search(r"\| Level \|(.+?)\|\s*\|-", text).group(1).split("|")]
     cells = [c.strip() for c in re.search(r"\| Strict \|(.+?)\| (?:17|$)", text + " 17").group(1).split("|")]
     row = dict(zip(header, cells))

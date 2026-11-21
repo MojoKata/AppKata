@@ -17,6 +17,8 @@ or dead code.
 import os
 import re
 
+import reqdocs
+
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # what is still open, and which finding keeps it so (each must exist in docs/reviews/)
@@ -35,23 +37,22 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.replace("*", "").replace("`", "")).strip()
 
 
-def section_units(text: str, number: int) -> list[tuple[str, str]]:
-    """(requirement id, unit) for every sentence and table row of section `number`: the split
-    docs/requirements-trace.md is written against."""
-    start = text.index(f"\n## {number}. ")
-    end = text.find("\n## ", start + 1)
-    sec = text[start:end if end > 0 else None]
+def section_units(sec: str, number: int) -> list[tuple[str, str]]:
+    """(requirement id, unit) for every sentence and table row of section `number` (its files'
+    text, reqdocs.section): the split docs/requirements-trace.md is written against."""
     out = []
-    for item in re.split(rf"\n(?={number}\.[0-9.]+ )", sec)[1:]:
-        rid = re.match(rf"({number}\.[0-9.]*[0-9])", item).group(1)
+    for item in re.split(rf"\n(?=R{number}\.[0-9.]+ )", sec)[1:]:
+        rid = re.match(rf"(R{number}\.[0-9.]*[0-9])", item).group(1)
         prose, rows = [], []
         for line in item.split("\n"):
+            if line.startswith("#"):                 # an item file's own heading
+                continue
             if line.startswith("|"):
                 if not re.match(r"^\|[-| ]+\|$", line) and not re.match(r"^\| (Level|Template) \|", line):
                     rows.append(_norm(line))
             else:
                 prose.append(line)
-        body = re.sub(rf"^{number}\.[0-9.]*[0-9]\.? ", "", _norm(" ".join(prose)))
+        body = re.sub(rf"^R{number}\.[0-9.]*[0-9]\.? ", "", _norm(" ".join(prose)))
         out += [(rid, s) for s in re.split(r"(?<=[.;:])\s+(?=[A-Z(*\"'])", body) if len(s) > 20]
         out += [(rid, r) for r in rows]
     return out
@@ -63,7 +64,7 @@ def trace_rows(text: str, number: int) -> list[tuple[str, str, list[str]]]:
     for line in sec.split("\n")[1:]:                 # after the section's own heading
         if line.startswith("## "):
             break
-        m = re.match(r"^\| ((?:\d+\.)+\d+) \| (.+?) \| (.+?) \|$", line)
+        m = re.match(r"^\| (R(?:\d+\.)+\d+) \| (.+?) \| (.+?) \|$", line)
         if m:
             out.append((m.group(1), m.group(2).replace("\\|", "|"), [t.strip() for t in m.group(3).split(",")]))
     return out
@@ -92,7 +93,7 @@ def _finding_exists(fid: str) -> bool:
 
 
 def test_every_sentence_of_17_has_a_row_and_every_row_its_sentence():
-    units = section_units(_read("docs/requirements.md"), 17)
+    units = section_units(reqdocs.section(17), 17)
     rows = trace_rows(_read("docs/requirements-trace.md"), 17)
     unmatched = [(rid, u[:70]) for rid, u in units
                  if not any(r == rid and u.startswith(_norm(a)) for r, a, _ in rows)]

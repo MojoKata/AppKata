@@ -1,7 +1,7 @@
 # AppKata — Building
 
 How AppKata's release builds are made and finished for each platform. Requirements are in
-[`requirements.md`](requirements.md) (packaging: 1.6).
+[`requirements/`](requirements/README.md) (packaging: 1.6).
 
 Status: the Linux AppImage (`scripts/build-appimage.sh`, `scripts/test-appimage.sh`), the
 Windows installer (`scripts/build-windows.sh`, `scripts/test-windows-vm.sh`) and the

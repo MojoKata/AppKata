@@ -7,6 +7,8 @@ loaded at run time that nothing links."""
 import importlib.util
 import os
 
+import reqdocs
+
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 
@@ -73,9 +75,8 @@ def test_requirement_1_6_names_each_group_of_the_listed_libraries():
         rows = [line.split("#") for line in f if line.strip() and not line.startswith("#")]
     groups = {comment.strip() for _, comment in rows}
     assert len(rows) == len(m.named()) and all(g for g in groups)
-    with open(os.path.join(ROOT, "docs", "requirements.md"), encoding="utf-8") as f:
-        req = f.read()
-    para = req[req.index("1.6. Distribution:"):req.index("- macOS: a signed")]
+    req = reqdocs.text()
+    para = req[req.index("R1.6. Distribution:"):req.index("- macOS: a signed")]
     para = " ".join(para.split())
     assert "packaging/appimage-host-libs.txt" in para
     assert [g for g in sorted(groups) if g not in para] == []

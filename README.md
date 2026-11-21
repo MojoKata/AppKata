@@ -6,7 +6,7 @@ signed by the Trust's Authorities. AppKata installs and updates apps from the pr
 own releases (GitHub, GitLab, Forgejo/Gitea), and you can publish your own reviews from a
 git repository.
 
-- Requirements: [`docs/requirements.md`](docs/requirements.md) (decisions in [`docs/gaps.md`](docs/gaps.md))
+- Requirements: [`docs/requirements/`](docs/requirements/README.md) (decisions in [`docs/gaps.md`](docs/gaps.md))
 - Building: [`docs/build.md`](docs/build.md); releasing, step by step with each command:
   [`docs/RELEASE.md`](docs/RELEASE.md); CI and the signed release:
   [`docs/github-workflows.md`](docs/github-workflows.md); how the repository and its release key were
@@ -57,7 +57,7 @@ is expected: the fingerprint is the check. Windows' installer isn't signed yet; 
 | Pinning, minimum age, held updates, background sync, notifications; install queue with progress, Cancel and resumable downloads; apps that update themselves | Done |
 | AppKata's own AppImage (the only Linux download: no Flatpak, `.deb` or `.rpm`, 1.6), installing itself on first start | Done: `scripts/build-appimage.sh`, tested on Mint 21.3 and 22.1 (`scripts/test-appimage.sh`) |
 | AppKata's Windows setup (per user by default, no UAC prompt) and its own updates | Done: `scripts/build-windows.sh`, tested by `scripts/test-windows-vm.sh`; signing needs a certificate |
-| App sandboxing on Linux (portable apps and AppImages in bubblewrap: Off/Standard/Strict, templates, per-app grants, filtered D-Bus, the AppArmor pkexec setup) | Implemented, reviewed ([`docs/reviews/`](docs/reviews/); [`docs/app-sandboxing.md`](docs/app-sandboxing.md), [req §17](docs/requirements.md); mechanisms validated in containers + a KVM VM, `scripts/sandbox/`; real-desktop checklist [`docs/local-proxy-test-plan.md`](docs/local-proxy-test-plan.md)) |
+| App sandboxing on Linux (portable apps and AppImages in bubblewrap: Off/Standard/Strict, templates, per-app grants, filtered D-Bus, the AppArmor pkexec setup) | Implemented, reviewed ([`docs/reviews/`](docs/reviews/); [`docs/app-sandboxing.md`](docs/app-sandboxing.md), [R17](docs/requirements/R17-app-sandboxing/README.md); mechanisms validated in containers + a KVM VM, `scripts/sandbox/`; real-desktop checklist [`docs/local-proxy-test-plan.md`](docs/local-proxy-test-plan.md)) |
 | macOS app and installers | Planned ([`docs/build.md`](docs/build.md)); the signing hand-off exists |
 | ngit / Nostr (Zapstore events), Nostr Trusts | Planned |
 | Version reviews in AppKata.md (`## <App>[<version>]` with Details and Settings), per-version scores, vetoes of an installed version, the review dialog's Version select | Done |

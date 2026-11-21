@@ -14,11 +14,13 @@ import re
 import sys
 
 from appkata_core import sandbox as sb, trustfile
+import reqdocs
 import test_booted as booted
 from test_requirements_trace import _finding_exists
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-COUNTED_DOCS = ("docs/requirements.md", "docs/app-sandboxing.md", "docs/gaps.md", "docs/local-proxy-test-plan.md", "README.md")
+REQ = "docs/requirements/"                 # every section file, as one text (reqdocs)
+COUNTED_DOCS = (REQ, "docs/app-sandboxing.md", "docs/gaps.md", "docs/local-proxy-test-plan.md", "README.md")
 WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 # Facts the documents still state wrongly, and the finding that keeps each
@@ -26,13 +28,14 @@ STILL_WRONG: dict = {}
 
 
 def _read(rel):
+    if rel == REQ:
+        return reqdocs.text()
     with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
         return f.read()
 
 
 def _req(rid: str) -> str:
-    m = re.search(rf"^{re.escape(rid)}\. (.*?)(?=^\d+\.\d+(?:\.\d+)*\. |^## )", _read("docs/requirements.md"), re.M | re.S)
-    return m.group(1) if m else ""
+    return reqdocs.item(rid, _read(REQ))
 
 
 def _gaps16() -> str:
@@ -75,10 +78,10 @@ SANDBOX_ACTIONS = {"set the sandbox of", "kept the sandbox of", "enabled system 
 def _facts() -> dict:
     """{fact: (what the document states, what the code says)}"""
     f = {}
-    m = re.search(r"(\w+) are built in", _req("17.3"))
+    m = re.search(r"(\w+) are built in", _req("R17.3"))
     f["17.3: how many templates are built in"] = (WORDS.get(m.group(1).lower()) if m else None, len(sb.TEMPLATES))
-    f["17.3: the templates in its table"] = (set(re.findall(r"^\| `([a-z-]+)` \|", _req("17.3"), re.M)), set(sb.TEMPLATE_ORDER))
-    row = re.search(r"^\| Sandbox \| a template name \((.*?)\) or `off`", _req("10.3.1"), re.M)
+    f["17.3: the templates in its table"] = (set(re.findall(r"^\| `([a-z-]+)` \|", _req("R17.3"), re.M)), set(sb.TEMPLATE_ORDER))
+    row = re.search(r"^\| Sandbox \| a template name \((.*?)\) or `off`", _req("R10.3.1"), re.M)
     f["10.3.1: the templates a review may name"] = (set(re.findall(r"`([a-z-]+)`", row.group(1))) if row else set(),
                                                     set(trustfile.SANDBOX_TEMPLATES))
     m = re.search(r"(\w+) built-in", _gaps_item(3))
@@ -96,40 +99,40 @@ def _facts() -> dict:
     rows = re.findall(r"^\| \*\*([^*]+)\*\* \|", table.group(1), re.M) if table else []
     f["app-sandboxing.md: the templates in its table"] = (_labels_to_keys(", ".join(r.split(" / ")[0] for r in rows)), set(sb.TEMPLATES))
 
-    m = re.search(r"allow (.*?) \(and the Request", re.sub(r"\s+", " ", _req("17.5")))
+    m = re.search(r"allow (.*?) \(and the Request", re.sub(r"\s+", " ", _req("R17.5")))
     f["17.5: the portal interfaces every app may call"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.PORTAL_INTERFACES))
     others = {re.search(r"=org\.freedesktop\.(?:portal\.)?([A-Za-z.]+)\.\*@", r).group(1) for r in sb.portal_rules() if r.startswith("--call=")}
     others -= set(sb.PORTAL_INTERFACES) | {"Request", "Session"}
-    said = {o for o in others if o.split(".")[-1] in _req("17.5")}
+    said = {o for o in others if o.split(".")[-1] in _req("R17.5")}
     f["17.5: nothing else on the portal's name"] = (said, others)
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
-    bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("17.5.1"))}
+    bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("R17.5.1"))}
     f["17.5.1: the capabilities"] = ({caps17[b] for b in bold if b in caps17}, set(sb.CAP_PROXY_ARGS) - {"secrets-provide"})
     plan = _read("docs/local-proxy-test-plan.md")
     rows = dict(re.findall(r"^\| ([A-Z][^|]+?) \| (.+?) \|", plan[plan.index("### Capability → proxy arguments"):], re.M))
     stated = {k for k, lab in sb.CAP_LABELS.items() if lab in rows and all(a.split("=", 1)[-1].split("@")[0].split(".")[-1].rstrip("*").rstrip(".")
                                                                            in rows[lab] for a in sb.CAP_PROXY_ARGS[k][:1])}
     f["local-proxy-test-plan.md: the capability table"] = (stated, set(sb.CAP_LABELS))
-    text = re.sub(r"\s+", " ", _req("17.17"))
+    text = re.sub(r"\s+", " ", _req("R17.17"))
     old = re.search(r"process (\d+) \(or (\d+)\)", text)                # the wording review 2 found
     new = re.search(r"processes (\d+) to (\d+)", text)
     pids = ({int(old.group(1)), int(old.group(2))} if old else set(range(int(new.group(1)), int(new.group(2)) + 1)) if new else set())
     f["17.17: the tray item's process ids"] = (pids,
                                                {int(re.search(r"-(\d+)-\d+$", o).group(1)) for o in sb._TRAY_OWNS})
-    order = [tuple(int(x) for x in n.split(".")) for n in re.findall(r"^(17\.[\d.]*\d)\. ", _read("docs/requirements.md"), re.M)]
+    order = [tuple(int(x) for x in n.split(".")) for n in re.findall(r"^R(17\.[\d.]*\d)\. ", _read(REQ), re.M)]
     f["17: its sub-sections in order"] = (order, sorted(order))
-    uninst = re.search(r"^(\d+\.\d+)\. \*\*Uninstalling\*\*", _read("docs/requirements.md"), re.M).group(1)
-    ref = re.search(r"like any app data \((\d+\.\d+)\)", _req("17.14"))
+    uninst = re.search(r"^R(\d+\.\d+)\. \*\*Uninstalling\*\*", _read(REQ), re.M).group(1)
+    ref = re.search(r"like any app data \((\d+\.\d+)\)", _req("R17.14"))
     f["17.14: where uninstalling is"] = ({ref.group(1)} if ref else set(), {uninst})
-    groups = {t.lower() for t in re.findall(r"^11\.1\.\d+\. \*\*([^*]+)\*\*", _read("docs/requirements.md"), re.M)}
+    groups = {t.lower() for t in re.findall(r"^R11\.1\.\d+\. \*\*([^*]+)\*\*", _read(REQ), re.M)}
     f["11.1: the Settings groups"] = (groups, {t.lower() for t in re.findall(r'Section \{[^}]*text: "([A-Z ]+)"', _read("src/appkata/qml/SettingsDialog.qml"))})
     # a fixed path (review 2's nit: "on /usr/bin/bwrap"), or the bwrap it names; profile_text() names the one installed
-    fixed = re.search(r"userns`? on `?/usr/bin/bwrap", _req("17.10.1")) is not None
+    fixed = re.search(r"userns`? on `?/usr/bin/bwrap", _req("R17.10.1")) is not None
     f["17.10.1: the bwrap the profile names"] = ("a fixed path" if fixed else "the one installed",
                                                  "the one installed" if "/opt/x/bwrap" in sb.profile_text("/opt/x/bwrap") else "a fixed path")
-    f["4.3.1.2: what a sandboxed app's entries point at"] = (bool(re.search(r"17\.4|/run\b", _req("4.3.1.2"))), True)
+    f["4.3.1.2: what a sandboxed app's entries point at"] = (bool(re.search(r"17\.4|/run\b", _req("R4.3.1.2"))), True)
 
-    audit = _req("13.3")
+    audit = _req("R13.3")
     actions = _audit_actions()
     unnamed = {a for _, a in actions if a not in AUDIT_WORDS}
     assert not unnamed, f"Audit actions with no words for 13.3 yet: {sorted(unnamed)}"
@@ -148,7 +151,7 @@ def _facts() -> dict:
 
     # 1.6: the AppImage is AppKata's only Linux form (R3-21's decision); README and build.md still said
     # ".deb/.rpm maybe later" after 1.6 dropped it
-    only = "no `.deb` or `.rpm`" in re.sub(r"\s+", " ", _req("1.6"))
+    only = "no `.deb` or `.rpm`" in re.sub(r"\s+", " ", _req("R1.6"))
     maybe = sorted(rel for rel in ("README.md", "docs/build.md")
                    if re.search(r"\.deb.{0,40}\bmaybe\b|\bmaybe\b.{0,40}\.rpm", re.sub(r"\s+", " ", _read(rel)), re.I))
     f["README and build.md: a .deb or .rpm of AppKata"] = (maybe, [] if only else None)
@@ -160,7 +163,7 @@ def _facts() -> dict:
                 "19045": "22H2"}
     row = re.search(r"^\| (Windows 10[^|]*)\|", _read("docs/build.md"), re.M)
     named = {where: (m.group(1) if (m := re.search(r"Windows 10 \(?(\w+)", text or "")) else None)
-             for where, text in (("1.1", _req("1.1")), ("15.1", _req("15.1")), ("15.10", _req("15.10")),
+             for where, text in (("1.1", _req("R1.1")), ("15.1", _req("R15.1")), ("15.10", _req("R15.10")),
                                  ("build.md's platform table", row and row.group(1)))}
     f["the Windows 10 release the documents name, and Setup's"] = (named, dict.fromkeys(named, releases.get(build.group(1)) if build else None))
     readme = next((l for l in _read("README.md").splitlines() if l.startswith("| App sandboxing")), "")
@@ -211,8 +214,8 @@ DISTRO = r"(?:Linux )?Mint \d+(?:\.\d+)?|LMDE \d+|Ubuntu \d\d\.\d\d(?: LTS)?|(?<
 # the systems the table says it of). Since R3-37's fix most places state the condition and name
 # none; a place that names one again is held to the table.
 BOOTED_CLAIMS = (
-    ("17.10's heading: where the setup is needed", "docs/requirements.md", r"17\.10\. \*\*AppArmor setup \(([^)]*)\)", booted.needs_setup),
-    ("17.10.2: a machine where the setup ran", "docs/requirements.md", r"— (an? [^—]*?machine where the setup ran)", booted.needs_setup),
+    ("17.10's heading: where the setup is needed", REQ, r"R17\.10\. \*\*AppArmor setup \(([^)]*)\)", booted.needs_setup),
+    ("17.10.2: a machine where the setup ran", REQ, r"— (an? [^—]*?machine where the setup ran)", booted.needs_setup),
     ("16.6: where the sandbox needs a profile", "docs/gaps.md", r"\*\*AppArmor:\*\* ([^;]+?) the sandbox needs a profile", booted.needs_setup),
     ("the Approach: where the privileged step is", "docs/app-sandboxing.md", r"One privileged step (.+?) \(found", booted.needs_setup),
     ("bubblewrap: where the privileged requirement is", "docs/app-sandboxing.md", r"\*\*One privileged requirement, ([^*]+)\.\*\*", booted.needs_setup),
@@ -237,8 +240,8 @@ def test_a_booted_claim_naming_a_system_the_table_does_not_is_caught(monkeypatch
     # R3-37's own shape, put back into 17.10's heading
     real = _read
     monkeypatch.setattr(sys.modules[__name__], "_read", lambda rel: real(rel).replace(
-        "AppArmor setup (where the kernel", "AppArmor setup (Ubuntu 24.04 / Mint 22; where the kernel") if rel == "docs/requirements.md" else real(rel))
-    stated, true = _facts()["docs/requirements.md, 17.10's heading: where the setup is needed"]
+        "AppArmor setup (where the kernel", "AppArmor setup (Ubuntu 24.04 / Mint 22; where the kernel") if rel == REQ else real(rel))
+    stated, true = _facts()[f"{REQ}, 17.10's heading: where the setup is needed"]
     assert (stated, true) == (["Mint 22", "Ubuntu 24.04"], ["Ubuntu 24.04"])
 
 

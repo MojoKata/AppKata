@@ -146,7 +146,7 @@ doc = f"""# AppKata picks
 {n_auto} update themselves on some or all platforms; their `Auto update` setting tells AppKata to
 install and track them there but leave the updating to the app.
 
-This is an AppKata [trust file](requirements.md#10-trust-and-the-appkatamd-file): add this
+This is an AppKata [trust file](requirements/R10-trust-and-the-appkata-md-file.md): add this
 repository as a Trust in AppKata (**Sources → Trusts → Add**) to see these apps in your Catalog.
 
 ## How the apps were chosen (2026-10-02)

@@ -1,7 +1,7 @@
 # App sandboxing (Linux)
 
 Status: **implemented and reviewed** — the design (Decisions 1–19) was agreed, written as formal
-requirements in [`requirements.md` §17](requirements.md) (decisions in [`gaps.md` §16](gaps.md),
+requirements in [requirements R17](requirements/R17-app-sandboxing/README.md) (decisions in [`gaps.md` §16](gaps.md),
 feature row in the [README](../README.md)), **built in `appkata_core`/`appkata` with tests and
 real-app screenshots**, and taken through nine review rounds and two reviews since
 ([`reviews/`](reviews/)), whose findings are fixed or held open by a harness's list. The experiments behind it were run on
