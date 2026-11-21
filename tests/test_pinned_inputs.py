@@ -19,7 +19,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # the files the builds and CI run (the local tiers' scripts aren't release inputs)
 FILES = ["packaging/versions.env", "scripts/build-appimage.sh", "scripts/build-windows.sh", "scripts/lib-python.sh",
-         "scripts/python-standalone.sh", "scripts/lib-tier1.sh", "scripts/test-tier1.sh"]
+         "scripts/python-standalone.sh", "scripts/lib-tier1.sh", "scripts/test-tier1.sh", "scripts/test-mutate.sh"]
 
 # what the test found when it was written, each to be pinned (item 7); the test fails on anything
 # new, and on a listed item that is gone, so the list only shrinks
