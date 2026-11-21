@@ -5,6 +5,11 @@
 # can override PY_SERIES and PYSIDE to try others. A skip tests/skips/tier1.txt doesn't list fails the
 # run (tests/conftest.py).
 #
+# CI runs it in parts, and measured (docs/github-workflows.md): APPKATA_PART=k/n runs part k of n
+# (tests/parts.py); APPKATA_COVERAGE=1 runs the tests under coverage.py (pyproject.toml,
+# [tool.coverage.run]), which writes its data to build/tier1/coverage/; APPKATA_DURATIONS=1 writes
+# what each test took to build/tier1/durations.json.
+#
 # When and where it runs (scripts/test-clock.sh; issue #13, tests that passed or failed by the hour):
 # APPKATA_CLOCK=HH:MM (the next time it's that, UTC) or 'YYYY-MM-DD HH:MM' (in the future) moves every
 # process's clock there (libfaketime, by an offset: the clock still runs, and the processes the tests
@@ -27,10 +32,18 @@ if [ -n "${APPKATA_CLOCK:-}" ]; then
     FAKETIME=+$((to - now))
     echo "== the clock at $(date -u -d "@$to" '+%Y-%m-%d %H:%M') UTC${APPKATA_TZ:+, TZ=$APPKATA_TZ}" >&2
 fi
-export FAKETIME APPKATA_TZ="${APPKATA_TZ:-}"
+export FAKETIME APPKATA_TZ="${APPKATA_TZ:-}" APPKATA_PART="${APPKATA_PART:-}" APPKATA_COVERAGE="${APPKATA_COVERAGE:-}" APPKATA_DURATIONS="${APPKATA_DURATIONS:-}"
+# what a measured run writes, in build/tier1/ (/out in the container): coverage/ and durations.json
+OUT="$HERE/build/tier1"
+mkdir -p "$OUT"
+[ -z "$APPKATA_COVERAGE" ] || { rm -rf "$OUT/coverage" && mkdir "$OUT/coverage"; }
 exec docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp/home -e QT_QPA_PLATFORM=offscreen -e PYTHONDONTWRITEBYTECODE=1 \
-    -e APPKATA_SKIPS="${APPKATA_SKIPS-tier1}" -e FAKETIME -e APPKATA_TZ \
-    -v "$HERE:/src:ro" -v "$SITE:/site:ro" "$IMG" sh -c \
+    -e APPKATA_SKIPS="${APPKATA_SKIPS-tier1}" -e FAKETIME -e APPKATA_TZ -e APPKATA_PART -e APPKATA_COVERAGE -e APPKATA_DURATIONS \
+    -v "$HERE:/src:ro" -v "$SITE:/site:ro" -v "$OUT:/out" "$IMG" sh -c \
     'if [ -n "$FAKETIME" ]; then export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1; else unset FAKETIME; fi
     if [ -n "$APPKATA_TZ" ]; then export TZ="$APPKATA_TZ"; fi
-    mkdir -p "$HOME" && cd /src && echo "Python $('"$CPY"' -c "import sys; print(sys.version.split()[0])"), PySide6 $(PYTHONPATH=/site '"$CPY"' -c "import PySide6; print(PySide6.__version__)")" && PYTHONPATH=/src/src:/site exec '"$CPY"' -m pytest -q -p no:cacheprovider tests/ "$@"' sh "$@"
+    [ -n "$APPKATA_PART" ] || unset APPKATA_PART
+    if [ -n "$APPKATA_DURATIONS" ]; then export APPKATA_DURATIONS=/out/durations.json; else unset APPKATA_DURATIONS; fi
+    run="-m pytest"
+    if [ -n "$APPKATA_COVERAGE" ]; then run="-m coverage run -m pytest" && export COVERAGE_FILE=/out/coverage/.coverage; fi
+    mkdir -p "$HOME" && cd /src && echo "Python $('"$CPY"' -c "import sys; print(sys.version.split()[0])"), PySide6 $(PYTHONPATH=/site '"$CPY"' -c "import PySide6; print(PySide6.__version__)")${APPKATA_PART:+, part $APPKATA_PART}${APPKATA_COVERAGE:+, measured}" && PYTHONPATH=/src/src:/site exec '"$CPY"' $run -q -p no:cacheprovider tests/ "$@"' sh "$@"

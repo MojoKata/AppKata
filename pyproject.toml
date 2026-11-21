@@ -10,6 +10,24 @@ dependencies = ["PySide6-Essentials>=6.8", "truststore>=0.10; sys_platform != 'l
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+# What tier 1 measures in CI (docs/github-workflows.md, "Coverage"): AppKata's code and its scripts,
+# lines and branches, in every Python process the tests start that inherits the environment. Each
+# process writes its own data file; the coverage job combines them. Tier 1 runs in a container with
+# the checkout at /src, so its paths are kept relative and /src's mapped back to the checkout's.
+[tool.coverage.run]
+source = ["src", "scripts"]
+branch = true
+parallel = true
+relative_files = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+include_namespace_packages = true      # scripts/ and scripts/sandbox/ have no __init__.py: their files count too
+
+[tool.coverage.paths]
+src = ["src/", "/src/src/"]
+scripts = ["scripts/", "/src/scripts/"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
