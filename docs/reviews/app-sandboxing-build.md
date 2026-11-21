@@ -6,7 +6,7 @@ A record of the sandboxing work as it stood when the design moved to
 ## Status and handoff
 
 Status: **implemented and reviewed** — the design (Decisions 1–19) was agreed, written as formal
-requirements in [requirements R17](../requirements/R17-app-sandboxing/README.md) (decisions in [`gaps.md` §16](../gaps.md),
+requirements in [requirements R17](../requirements/R17-app-sandboxing/README.md) (decisions in `gaps.md` §16, since folded into the requirements,
 feature row in the [README](../../README.md)), **built in `appkata_core`/`appkata` with tests and
 real-app screenshots**, and taken through nine review rounds and two reviews since
 ([`reviews/`]()), whose findings are fixed or held open by a harness's list. The experiments behind it were run on

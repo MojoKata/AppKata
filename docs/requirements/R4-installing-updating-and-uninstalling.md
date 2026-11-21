@@ -22,6 +22,8 @@ Format order on Linux:
 3. `.deb` (Debian-family) or `.rpm` (Fedora-family)
 4. `.tar.gz` / `.tar.xz`
 
+A Linux package wrapped in a `.zip` isn't looked inside: [G#?zipped-linux].
+
 On macOS: `.dmg`, `.pkg`, a zipped `.app`.
 
 On Windows, portable first (R15.3): a portable `.zip`, a portable `.exe`, `.msi`, a `.exe`

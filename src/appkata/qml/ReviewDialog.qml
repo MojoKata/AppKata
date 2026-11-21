@@ -239,7 +239,7 @@ Dialog {
         }
     }
     // the sandbox I chose for the app, written as the review's suggestion (R10.3.1, R8.4.7; review 2, F9).
-    // Shown, unlike the other Settings lines (gaps.md 28): a sandbox can name personal folders.
+    // Shown, unlike the other Settings lines (R8.4.7): a sandbox can name personal folders.
     Column {
         visible: !!root.r.sandboxLine
         width: parent.width; spacing: 4

@@ -64,4 +64,4 @@ Audit (R13).
 
 R11.3. **Deep links.** `appkata://add/<url-encoded source URL>` opens the Sources perspective and
 the Add Source dialog with the URL filled in. On Linux, **Open appkata:// links** registers
-AppKata as the desktop's handler for `appkata:` links; on Windows, see R15.14.
+AppKata as the desktop's handler for `appkata:` links; on Windows, see R15.14. A badge for project pages is [Q#?badge].

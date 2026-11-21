@@ -355,7 +355,7 @@ def test_every_setup_entry_point_names_the_apps_it_will_sandbox(ui, be, app):
 @pytest.mark.parametrize("include", [True, False])
 def test_the_review_dialog_shows_the_sandbox_it_will_write_and_writes_it_only_when_included(ui, be, app, tmp_path, monkeypatch, include):
     # Review 2, F9: the user's own sandbox is written into their review, shown first as one line with
-    # "Include my sandbox" (gaps.md 28's one exception: a sandbox can name personal folders)
+    # "Include my sandbox" (R8.4.7: a sandbox can name personal folders)
     from appkata_core import sync
     path = tmp_path / "AppKata.md"
     path.write_text("# My Trust\n")

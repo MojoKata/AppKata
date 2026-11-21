@@ -124,7 +124,8 @@ before the Source is saved (R7.2). It holds, as label-and-hint rows like Setting
   and the link check's result (R16.1.4).
 - **Cancel** and **Save**. Saving records the change in the Audit and syncs the Source again.
 
-The other release-selection settings (R2.6.2) and generic HTML Sources (R2.6.3) aren't built yet.
+The release-selection settings of R2.6.2 but **Include prereleases**, and generic HTML Sources (R2.6.3),
+are a gap: [G#?html-sources].
 
 R2.7. **AppKata manifest.** A project may include an optional `.appkata.toml` in its
 repository root. It may declare:
@@ -209,11 +210,13 @@ icon removes it, and the data folder (R1.8) stays until deleted.
 R2.11.4. **Run from source (development, R1.2) or from another build**, AppKata only notifies: the
 update shows as usual, and **Update** opens the project's releases page instead of installing.
 
-R2.11.5. **Installed with its Windows setup** (R15.10), AppKata adopts its installation on first
+R2.11.5. **Installed with its Windows setup** (R15.10; the path end to end is [G#?windows-self-update]), AppKata adopts its installation on first
 start, from its own Uninstall registry entry. It downloads and verifies the new
 `AppKata-<version>-setup.exe` like any update, then shows the same **Restart AppKata** button.
 Restarting runs the setup silently, for the same scope (R15.4), and starts the new version when it
 finishes.
 
 R2.11.6. **Track only** (R2.6.1) on AppKata's own Source turns this off on every platform: AppKata
-then only notifies, as in R2.11.4.
+then only notifies, as in R2.11.4. Track only and "updates itself" (R4.10) aren't opposites:
+both stop AppKata installing an app's updates, but Track only also means AppKata never installs the
+app, while an app that updates itself is installed by AppKata and left to update itself.

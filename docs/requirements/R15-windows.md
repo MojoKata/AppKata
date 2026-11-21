@@ -3,7 +3,8 @@
 R15.1. AppKata runs on Windows 10 22H2 (fully updated), x64 only; Windows 11 isn't tested yet (R1.1). This section
 collects what is specific to Windows. The sections it refers to still apply.
 
-R15.2. **Elevation.** AppKata runs without administrator rights. It starts every installer and
+R15.2. **Elevation.** AppKata runs without administrator rights (what a headless VM can't show of
+it is [G#?windows-by-hand]). It starts every installer and
 uninstaller through the shell (`ShellExecuteEx`), as Explorer does, and waits for its exit code:
 an installer whose manifest needs administrator rights then gets the UAC prompt, and with the
 Mark of the Web (R15.11.1) SmartScreen checks it. When AppKata itself asks for administrator rights
@@ -75,6 +76,9 @@ R15.6. **Command links** (R4.3.1.3) are `<app>.cmd` files: a first line `@rem ma
   then a `WM_SETTINGCHANGE` broadcast; terminals opened afterwards see it). When it removes the
   last one, it removes the folder from the PATH.
 - AppKata never replaces a `.cmd` it didn't write (one without that first line).
+- A `.cmd` has two known limits next to a small launcher `.exe`: Ctrl+C in a console app asks
+  "Terminate batch job (Y/N)?", and `cmd.exe` can expand a `%` in the arguments. Neither matters
+  much for the desktop apps AppKata mostly installs, and a `.cmd` needs no program of AppKata's own.
 
 R15.7. **Installers** (R4.3.3).
 
@@ -138,7 +142,7 @@ uninstalling a portable app, AppKata checks for processes running from the app's
 are any, it shows "Close <App> to continue" with **Try again** and **Cancel**. AppKata never
 stops the app itself. Installers handle this themselves.
 
-R15.10. **AppKata's own setup** (R1.6) is built with Inno Setup, `PrivilegesRequired=lowest`, with
+R15.10. **AppKata's own setup** (R1.6; its signing certificate is [G#?windows-code-signing]) is built with Inno Setup, `PrivilegesRequired=lowest`, with
 overrides allowed:
 
 - Just me by default, into `%LOCALAPPDATA%\Programs\AppKata`; or Everyone, into `Program Files`.

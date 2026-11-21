@@ -6,7 +6,7 @@ signed by the Trust's Authorities. AppKata installs and updates apps from the pr
 own releases (GitHub, GitLab, Forgejo/Gitea), and you can publish your own reviews from a
 git repository.
 
-- Requirements: [`docs/requirements/`](docs/requirements/README.md) (decisions in [`docs/gaps.md`](docs/gaps.md))
+- Requirements: [`docs/requirements/`](docs/requirements/README.md)
 - Building: [`docs/build.md`](docs/build.md); releasing, step by step with each command:
   [`docs/RELEASE.md`](docs/RELEASE.md); CI and the signed release:
   [`docs/github-workflows.md`](docs/github-workflows.md); how the repository and its release key were

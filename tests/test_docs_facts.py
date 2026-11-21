@@ -22,7 +22,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 REQ = "docs/requirements/"                 # every section file, as one text (reqdocs)
 A1 = "docs/architecture/A1-app-sandboxing/"  # the sandboxing design's files, as one text
 RECORD = "docs/reviews/app-sandboxing-build.md"
-COUNTED_DOCS = (REQ, A1, "docs/gaps.md", "docs/local-proxy-test-plan.md", "README.md")
+COUNTED_DOCS = (REQ, A1, "docs/local-proxy-test-plan.md", "README.md")
 WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 # Facts the documents still state wrongly, and the finding that keeps each
@@ -40,16 +40,6 @@ def _read(rel):
 
 def _req(rid: str) -> str:
     return reqdocs.item(rid, _read(REQ))
-
-
-def _gaps16() -> str:
-    t = _read("docs/gaps.md")
-    return t[t.index("## 16. App sandboxing"):]
-
-
-def _gaps_item(n: int) -> str:
-    m = re.search(rf"^{n}\. (.*?)(?=^\d+\. |^## |\Z)", _gaps16(), re.M | re.S)
-    return m.group(1) if m else ""
 
 
 def _labels_to_keys(text: str) -> set:
@@ -88,8 +78,6 @@ def _facts() -> dict:
     row = re.search(r"^\| Sandbox \| a template name \((.*?)\) or `off`", _req("R10.3.1"), re.M)
     f["R10.3.1: the templates a review may name"] = (set(re.findall(r"`([a-z-]+)`", row.group(1))) if row else set(),
                                                     set(trustfile.SANDBOX_TEMPLATES))
-    m = re.search(r"(\w+) built-in", _gaps_item(3))
-    f["gaps.md 16.3: how many templates are built in"] = (WORDS.get(m.group(1).lower()) if m else None, len(sb.TEMPLATES))
     hint = re.search(r'label: "Built-in templates"\s*hint: "([^"]*)\. Each app', _read("src/appkata/qml/SettingsDialog.qml"))
     f["Settings: the built-in templates row"] = (_labels_to_keys(hint.group(1)) if hint else set(), set(sb.TEMPLATE_ORDER))
     # every count of the templates, wherever a document states one (found fixing review 2: R17.3.4 and
@@ -178,27 +166,6 @@ def _facts() -> dict:
     rounds = 1 + len(re.findall(r"^## Round \w+", _read("docs/reviews/app-sandboxing-1.md"), re.M))
     m = re.search(r"taken through (\w+) review rounds", _read(RECORD))
     f["A1: how many review rounds"] = (WORDS.get(m.group(1).lower()) if m else None, rounds)
-    if sys.platform.startswith("linux"):               # it runs the warning, which speaks Wayland over a Unix socket
-        import tempfile
-        os_was = sb.OS
-        sb.OS = "linux"
-        env_was = {k: os.environ.get(k) for k in ("XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP")}
-        with tempfile.TemporaryDirectory() as rt:          # a Wayland session of a compositor AppKata doesn't know
-            open(os.path.join(rt, "wayland-0"), "w").close()
-            os.environ.update(XDG_RUNTIME_DIR=rt, WAYLAND_DISPLAY="wayland-0", XDG_CURRENT_DESKTOP="COSMIC")
-            try:
-                warns_unknown = bool(sb.session_warning())
-            finally:
-                sb.OS = os_was
-                for k, v in env_was.items():
-                    os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
-        f["gaps.md 16.7: which sessions are warned"] = ("X11 and wlroots" if "warns on X11 and wlroots sessions" in _gaps_item(7) else "every compositor but GNOME",
-                                                         "every compositor but GNOME" if warns_unknown else "X11 and wlroots")
-    f["gaps.md 16.11: the document portal and the marker"] = ("relies" if "document portal and PipeWire rely on" in _gaps_item(11) else "doesn't",
-                                                              "doesn't" if "Documents" in sb.FORWARD_HELPER else "relies")
-    item = re.sub(r"\s+", " ", _gaps_item(12))
-    f["gaps.md 16.12: seccomp"] = ("not yet" if "seccomp" in item and "fuller seccomp" not in item else "built",
-                                   "built" if sb.seccomp_filter("x86_64") else "not yet")
     # what a system boots with, against docs/testing.md's table, which each VM checks (E10, R3-37):
     # every place that names where the AppArmor setup is needed, or where the namespaces are
     # restricted, may name only systems the table says so of; every kernel named, the table's
@@ -220,7 +187,6 @@ DISTRO = r"(?:Linux )?Mint \d+(?:\.\d+)?|LMDE \d+|Ubuntu \d\d\.\d\d(?: LTS)?|(?<
 BOOTED_CLAIMS = (
     ("R17.10's heading: where the setup is needed", REQ, r"R17\.10\. \*\*AppArmor setup \(([^)]*)\)", booted.needs_setup),
     ("R17.10.2: a machine where the setup ran", REQ, r"— (an? [^—]*?machine where the setup ran)", booted.needs_setup),
-    ("R16.6: where the sandbox needs a profile", "docs/gaps.md", r"\*\*AppArmor:\*\* ([^;]+?) the sandbox needs a profile", booted.needs_setup),
     ("the Approach: where the privileged step is", A1, r"One privileged step (.+?) \(found", booted.needs_setup),
     ("bubblewrap: where the privileged requirement is", A1, r"\*\*One privileged requirement, ([^*]+)\.\*\*", booted.needs_setup),
     ("the Limits: where AppArmor is needed", A1, r"^- \*\*AppArmor ([^*]+)\.\*\*", booted.needs_setup),

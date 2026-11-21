@@ -92,5 +92,5 @@ data where the platform says so.
 
 R1.9. **One AppKata at a time.** Starting AppKata while it's already running (from the app menu,
 at login, or by an `appkata://` link, R11.3) hands its arguments to the running AppKata over a
-local socket (`QLocalServer`), one per user and data folder, and exits. The running AppKata shows its window, and for a
+local socket (`QLocalServer`), one per user and data folder, and exits. It is one per data folder so that the tests and the demo can run beside a real copy. The running AppKata shows its window, and for a
 link the Add source dialog.
