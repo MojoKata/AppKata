@@ -2,7 +2,7 @@
 """Mutation testing (docs/testing.md, "Mutation testing"): mutmut changes AppKata's code a change
 at a time and runs the tests that reach it; a change no test fails on survives.
 
-    sh scripts/test-mutate.sh run MODULE... [--workers N] [--only NAME...] [--only-file FILE]
+    sh scripts/test-mutate.sh run MODULE... [--workers N] [--only NAME...] [--resume DIR]
     sh scripts/test-mutate.sh summary | check CHANGE TEST | export DIR --name N --area A --modules M
     scripts/mutate.py plan [--areas GLOB...] [--size LINES] [--jobs NAME...] [--modules PATH...]
     scripts/mutate.py gather RUN... [--repo OWNER/NAME] | record --from DIR... [--commit REV]
@@ -19,6 +19,9 @@ tests that reached its function when it ran them once first. The run is stopped 
 (PSS) of memory, and a change's worker past --worker-limit GB of its own, that change counted
 killed. At the end, and with `summary`, it prints the outcomes by file and the survivors by
 function, and writes each survivor's change to survivors.txt.
+
+`--resume DIR` goes on from an earlier run of the same modules (its `export` folder): mutmut runs
+only the changes it left without an outcome, such as a job out of time.
 
 `check` runs one change against one test file by hand, the changed code ahead of the original.
 
@@ -192,7 +195,7 @@ def user_site(base: Path) -> Path:
 
 def link_mutmut(package: Path | None = None) -> None:
     """mutmut's package and its metadata alone, linked into the run's user site (PYTHONUSERBASE, which the tests'
-    processes inherit). A changed module imports mutmut's trampoline (the standard library only),
+    processes inherit), and USERCUSTOMIZE. A changed module imports mutmut's trampoline (the standard library only),
     and a test that starts Python with a PYTHONPATH of its own still finds it there."""
     if package is None:
         import importlib.util
@@ -202,9 +205,34 @@ def link_mutmut(package: Path | None = None) -> None:
     user_site(USERBASE).mkdir(parents=True)
     for p in [package, *package.parent.glob("mutmut-*.dist-info")]:  # its version is read from its metadata
         (user_site(USERBASE) / p.name).symlink_to(p)
+    (user_site(USERBASE) / "usercustomize.py").write_text(USERCUSTOMIZE)
 
 
-def settings(mutate: list[str], selected: list[str], text: str, debug: bool = False) -> str:
+# Run by every Python the tests start (the user site's usercustomize): mutmut's first pass counts
+# which tests call each function, with MUTANT_UNDER_TEST=stats, which a test's own processes
+# inherit; there a changed function would count its call in mutmut's settings, which a process
+# started elsewhere can't read, and fail. Such a process runs the code unchanged instead, as its
+# calls can't be counted anyway.
+USERCUSTOMIZE = """import os
+if os.environ.get("MUTANT_UNDER_TEST") == "stats":
+    os.environ["MUTANT_UNDER_TEST"] = ""
+"""
+
+
+def resume(earlier: Path) -> int:
+    """An earlier run's outcomes (an `export` folder's .meta files) put where mutmut keeps them, so
+    it runs only the changes they leave without one: mutmut keeps an outcome while its function's
+    code is the same. Returns the outcomes carried."""
+    carried = 0
+    for rel, keys in codes(earlier).items():
+        (MUTANTS / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(earlier / f"{rel}.meta", MUTANTS / f"{rel}.meta")
+        carried += sum(c is not None for c in keys.values())
+    return carried
+
+
+def settings(mutate: list[str], selected: list[str], text: str, debug: bool = False,
+             dropped: dict[str, str] | None = None) -> str:
     """pyproject.toml with mutmut's settings: the modules, the tests, PYTEST_ARGS; with `debug`,
     mutmut prints each pytest run's command and output (a first run that fails says which test)."""
     text = re.sub(r"\n\[tool\.mutmut\][^\[]*", "\n", text)
@@ -214,7 +242,7 @@ def settings(mutate: list[str], selected: list[str], text: str, debug: bool = Fa
         f"only_mutate = {json.dumps(mutate)}\n"
         f"do_not_mutate = {json.dumps(NOT_MUTATED)}\n"
         f"pytest_add_cli_args_test_selection = {json.dumps(selected)}\n"
-        f"pytest_add_cli_args = {json.dumps(PYTEST_ARGS + [x for t in sorted(UNFIT) for x in ('--deselect', t)])}\n"
+        f"pytest_add_cli_args = {json.dumps(PYTEST_ARGS + deselected(dropped))}\n"
         # Each session in a fork of a process that only collected the tests: in mutmut's fork mode
         # the workers fork from the process that ran them all, with Qt's threads gone in the fork.
         'process_isolation = "forkserver"\n'
@@ -224,9 +252,14 @@ def settings(mutate: list[str], selected: list[str], text: str, debug: bool = Fa
     )
 
 
-def configure(mutate: list[str], selected: list[str], debug: bool = False) -> None:
+def deselected(dropped: dict[str, str] | None = None) -> list[str]:
+    """pytest's arguments that leave out UNFIT's tests and those a run dropped."""
+    return [x for t in sorted({*UNFIT, *(dropped or {})}) for x in ("--deselect", t)]
+
+
+def configure(mutate: list[str], selected: list[str], debug: bool = False, dropped: dict[str, str] | None = None) -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    (COPY / "pyproject.toml").write_text(settings(mutate, selected, text, debug), encoding="utf-8")
+    (COPY / "pyproject.toml").write_text(settings(mutate, selected, text, debug, dropped), encoding="utf-8")
 
 
 def _cmdline(pid: str) -> str:
@@ -299,6 +332,9 @@ def only_mutate(names: list[str]) -> list[str]:
     return [n.rstrip("/") + "/*" if (ROOT / n).is_dir() else n for n in names]
 
 
+DROPPED = 40  # the most tests a run leaves out as failing in its copy (DROPPED_FILE says which)
+
+
 def run(args) -> int:
     known = modules()
     unknown = [m for m in args.modules if m not in known and not (ROOT / m).is_dir()]
@@ -309,7 +345,40 @@ def run(args) -> int:
     print(f"mutating {', '.join(args.modules)}, with {len(selected)} test files")
     make_copy()
     link_mutmut()
-    configure(only_mutate(args.modules), selected, args.debug)
+    if args.resume:
+        print(f"going on from {resume(Path(args.resume))} outcomes of an earlier run")
+    dropped: dict[str, str] = {}
+    (WORK / DROPPED_FILE).write_text("{}\n")
+    while True:
+        configure(only_mutate(args.modules), selected, args.debug, dropped)
+        rc, stopped = mutmut(args)
+        text = (WORK / "mutmut.log").read_text(errors="replace")
+        if not rc or stopped or not FIRST_PASS_FAILED.search(text):
+            break
+        # A test fails in mutmut's first pass, which doesn't say which: one that reads a module's
+        # source, which in the copy is mutmut's, say. It is left out of this run, and says so.
+        print("mutmut's first pass over the tests failed, and says no more; pytest on the copy:")
+        failing, shown_ = first_failure(selected, dropped)
+        print(shown_)
+        new = [t for t in failing if t not in dropped]
+        if not new or len(dropped) + len(new) > DROPPED:
+            break
+        dropped.update({t: failure_line(shown_, t) for t in new})
+        (WORK / DROPPED_FILE).write_text(json.dumps(dropped, indent=1) + "\n")
+        print(f"left out of this run, and run again: {' '.join(new)}")
+    if rc:
+        print("its log's last lines:\n" + "\n".join(log_lines(text)[-30:]))
+    if dropped:
+        print(f"{len(dropped)} tests left out, failing in the copy: {' '.join(dropped)}")
+    summary(None)
+    return 1 if stopped else rc
+
+
+DROPPED_FILE = "dropped.json"
+
+
+def mutmut(args) -> tuple[int, bool]:
+    """mutmut over the copy, its memory watched: its exit code, and whether the watcher stopped it."""
     log = (WORK / "mutmut.log").open("w")
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}  # tier 1 checks skips; not here
     env["PYTHONUSERBASE"] = str(USERBASE)
@@ -343,14 +412,7 @@ def run(args) -> int:
     log.close()
     print(f"mutmut exited {proc.returncode} after {int(time.monotonic() - started) // 60} min; peak memory "
           f"{peak:.1f} GB (PSS), a worker's own at most {largest:.1f} GB; log: {WORK / 'mutmut.log'}")  # fmt: skip
-    if proc.returncode:
-        text = (WORK / "mutmut.log").read_text(errors="replace")
-        print("its log's last lines:\n" + "\n".join(log_lines(text)[-30:]))
-        if FIRST_PASS_FAILED.search(text):
-            print("\nmutmut's first pass over the tests failed, and says no more; pytest on the copy:")
-            print(first_failure(selected))
-    summary(None)
-    return 1 if stopped.is_set() else proc.returncode
+    return proc.returncode, stopped.is_set()
 
 
 # what mutmut says when a test fails in its first passes over the tests, without saying which
@@ -372,16 +434,37 @@ def log_lines(text: str) -> list[str]:
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
-def first_failure(selected: list[str]) -> str:
-    """The first failing test of a pass like mutmut's, in the copy, unmutated (no change chosen):
-    what mutmut's first pass stopped on, which it doesn't name."""
-    deselect = [x for t in sorted(UNFIT) for x in ("--deselect", t)]
-    cmd = [sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", "-p", "no:cacheprovider", *deselect, *selected]
-    env = {k: v for k, v in os.environ.items() if k not in ("APPKATA_SKIPS", "MUTANT_UNDER_TEST")}
+def first_failure(selected: list[str], dropped: dict[str, str] | None = None) -> tuple[list[str], str]:
+    """The tests failing in a pass like mutmut's first, in the copy, counting calls as it does and
+    with mutate_plugin loaded: what mutmut's pass stopped on, which it doesn't name. Their ids (at
+    most DROPPED), and pytest's short summary."""
+    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rfE", f"--maxfail={DROPPED + 1}", *PYTEST_ARGS,
+           *deselected(dropped), *selected]  # fmt: skip
+    env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}
     env["PYTHONUSERBASE"] = str(USERBASE)
+    env["MUTANT_UNDER_TEST"] = "stats"  # as in mutmut's pass: each changed function counts its calls
     env["PYTHONPATH"] = os.pathsep.join([str(MUTANTS / "src"), str(MUTANTS), env.get("PYTHONPATH", "")])
     r = subprocess.run(cmd, cwd=MUTANTS, env=env, capture_output=True, text=True)  # noqa: S603
-    return "\n".join((r.stdout + r.stderr).splitlines()[-60:])
+    out = (r.stdout + r.stderr).splitlines()
+    summary_at = next((i for i, x in enumerate(out) if "short test summary info" in x), max(0, len(out) - 40))
+    return failed_tests(out), "\n".join(out[summary_at:][-60:])
+
+
+def failed_tests(lines: list[str]) -> list[str]:
+    """The tests pytest's short summary names as failed (-rfE), in its order."""
+    out = []
+    for x in lines:
+        if (m := re.match(r"(?:FAILED|ERROR) (\S+?)(?: - .*)?$", x)) and m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def failure_line(shown_: str, test: str) -> str:
+    """Why a test failed, in a line: pytest's short summary's for it."""
+    for x in shown_.splitlines():
+        if x.startswith(("FAILED " + test, "ERROR " + test)):
+            return x.partition(" - ")[2].strip() or x
+    return "failed in the copy"
 
 
 def _progress() -> str:
@@ -507,6 +590,8 @@ def export(args) -> int:
     if (WORK / "mutmut.log").exists():
         shutil.copy2(WORK / "mutmut.log", out / "mutmut.log")
     job = {"name": args.name, "area": args.area, "modules": args.modules}
+    if (WORK / DROPPED_FILE).exists():
+        job["dropped"] = json.loads((WORK / DROPPED_FILE).read_text())
     (out / "job.json").write_text(json.dumps(job) + "\n")
     changes = sum(sum(c.values()) for c in by_file.values())
     print(f"{out}: {changes} changes, {len(survivors)} survivors")
@@ -625,7 +710,8 @@ def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -
     for rel in named:
         c = by_file.get(rel, Counter())
         files[rel] = {"content": content.get(rel), "mutants": sum(c.values()), **{k: c[k] for k in COUNTED}}
-    return {"area": area, "made": made, **counts(by_file), "files": files,
+    dropped = {t: why for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
+    return {"area": area, "made": made, **counts(by_file), "files": files, "dropped": dropped,
             "survivors": survivor_entries(dirs, content)}  # fmt: skip
 
 
@@ -724,6 +810,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--limit", type=float, default=LIMIT_GB, help="stop past this many GB (PSS)")
     r.add_argument("--worker-limit", type=float, default=WORKER_GB,
                    help="stop a change's worker past this many GB of its own; the change is killed")  # fmt: skip
+    r.add_argument("--resume", help="an earlier run's export folder: run only the changes it left unrun")
     r.add_argument("--debug", action="store_true", help="mutmut's pytest runs' commands and output, in its log")
     sub.add_parser("summary", help="the last run's outcomes and survivors")
     c = sub.add_parser("check", help="one change against one test file")

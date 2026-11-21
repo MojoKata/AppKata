@@ -126,6 +126,15 @@ the functions each one reaches, then runs each change against only the tests tha
 function. Code a test reaches only in a process it starts is out of mutmut's sight: its changes count
 as **no tests**.
 
+mutmut stops at the first test that fails in that first pass, without naming it. A run then runs
+pytest over the copy itself, leaves out each test that fails there and starts mutmut again; the
+baseline names them (`dropped`), with pytest's reason. They are tests that read a module's source,
+which in the copy is mutmut's, such as `test_field_test_plan.py`'s, and run none of its code.
+Two things make the copy behave as the checkout for the rest (`scripts/mutate_plugin.py`): a script
+runs under the module name mutmut gives its changes (`scripts.areas`), whatever name a test imports
+it by, so its changes run at all; and a process a test starts runs the code unchanged during the
+first pass, where it couldn't count its calls.
+
 ### A run by hand
 
     sh scripts/test-mutate.sh run src/appkata_core/windows.py src/appkata/winframe.py --workers 3
@@ -136,7 +145,8 @@ A run's container is capped at `APPKATA_MUTATE_MEMORY` (6 GB unless set), swap i
 watches its own memory, as PSS: past `--limit` GB it stops, and a change's worker past
 `--worker-limit` GB of its own is stopped, that change counted killed. `--only` runs named changes
 again, `--debug` puts each of mutmut's pytest runs in its log (a run that fails at its first full
-pass names the test there). Each survivor's change is written to `survivors.txt` in the work folder.
+pass names the test there), and `--resume DIR` goes on from an earlier run's `export` folder. Each
+survivor's change is written to `survivors.txt` in the work folder.
 
 ### The baseline
 
@@ -149,6 +159,10 @@ area at once on GitHub's runners, started by hand (Actions, `mutate`, Run workfl
 - **Each job** is a `run` of its modules with 4 workers, stopped at 5½ hours so what finished is
   kept (mutmut saves each outcome as it comes), and `export`, kept as its `mutation-<job>` artifact
   for 90 days. At most `parallel` (14) run at once, leaving room for pull requests' checks.
+- **`resume`**, an earlier run's id: each job takes its artifact from that run and runs only the
+  changes it left without an outcome (`run --resume`; mutmut keeps an outcome while its function's
+  code is the same), so a job out of time goes on where it stopped. Its artifact holds every
+  outcome, the earlier ones too.
 - A pull request that changes the workflow or these tools runs a trial on one small module.
 
 `scripts/mutate.py gather RUN...` downloads a run's artifacts and writes each area's baseline to
@@ -170,6 +184,7 @@ only from a workflow on the default branch).
   (mutmut's "suspicious", a crash) and `not run` (a job stopped first).
 - **`files`**: the same counts by file, and each file's `content`, its git blob at that commit:
   a file whose blob differs from the checkout's has changed since, and its counts are out of date.
+- **`dropped`**: the tests left out of the area's runs, each with the reason it failed in the copy.
 - **`survivors`**, a line each: mutmut's name for the change (`check` takes it), its file, function
   and line, and the lines it `removed` and `added`.
 

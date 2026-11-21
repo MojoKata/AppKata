@@ -227,6 +227,8 @@ def test_the_baselines_kept_name_files_that_exist_and_add_up():
             assert os.path.exists(os.path.join(ROOT, rel)), (path.name, rel)
             assert c["mutants"] == sum(c[k] for k in mutate.COUNTED), (path.name, rel)
         assert {s["file"] for s in record["survivors"]} <= set(record["files"]), path.name
+        for test in record["dropped"]:
+            assert os.path.exists(os.path.join(ROOT, test.split("::")[0])), (path.name, test)
 
 
 @pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, ".git")), reason="the copy isn't a checkout")
@@ -272,7 +274,7 @@ def test_mutmut_and_its_metadata_alone_are_in_the_runs_user_site(tmp_path, work)
     (site / "click").mkdir()
     mutate.link_mutmut(site / "mutmut")
     linked = mutate.user_site(work / "userbase")
-    assert sorted(p.name for p in linked.iterdir()) == ["mutmut", "mutmut-3.8.1.dist-info"]
+    assert sorted(p.name for p in linked.iterdir()) == ["mutmut", "mutmut-3.8.1.dist-info", "usercustomize.py"]
     assert linked.as_posix().endswith(f"/lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages")
 
 
@@ -382,3 +384,73 @@ def test_a_runs_artifacts_are_downloaded_once(work, monkeypatch):
 
 def test_the_watcher_finds_no_run_when_none_is_running(work):
     assert mutate._mutmut_pids() == [] and mutate._workers() == {} and mutate._pss_gb() == 0.0
+
+
+def test_a_run_goes_on_from_an_earlier_ones_outcomes(work, tmp_path):
+    earlier = tmp_path / "earlier"
+    meta(earlier, "src/appkata_core/urls.py", [1, 0, None])
+    meta(earlier, "scripts/areas.py", [None])
+    assert mutate.resume(earlier) == 2
+    assert mutate.codes(work / "copy" / "mutants") == mutate.codes(earlier)
+
+
+def test_a_test_failing_in_the_copy_is_named_and_why():
+    out = ["....F", "=== short test summary info ===",
+           "FAILED tests/test_field_test_plan.py::test_the_plan - AttributeError: 'Constant' object has no attribute 'elts'",
+           "1 failed, 206 passed"]  # fmt: skip
+    out += ["ERROR tests/test_x.py::test_y", "FAILED tests/test_field_test_plan.py::test_the_plan"]
+    assert mutate.failed_tests(out) == ["tests/test_field_test_plan.py::test_the_plan", "tests/test_x.py::test_y"]
+    test = "tests/test_field_test_plan.py::test_the_plan"
+    assert mutate.failure_line("\n".join(out), test) == "AttributeError: 'Constant' object has no attribute 'elts'"
+    assert mutate.failed_tests(["1 passed"]) == []
+    assert mutate.failure_line("", "tests/test_x.py::test_y") == "failed in the copy"
+
+
+def test_a_dropped_test_is_deselected_and_kept_in_the_baseline(tmp_path, monkeypatch):
+    text = mutate.settings([], [], "", dropped={"tests/test_x.py::test_y": "why"})
+    assert '"--deselect", "tests/test_x.py::test_y"' in text
+    monkeypatch.setattr(mutate, "source", lambda blob: "")
+    d, _ = job(tmp_path, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1]})
+    j = json.loads((d / "job.json").read_text())
+    (d / "job.json").write_text(json.dumps({**j, "dropped": {"tests/test_x.py::test_y": "why"}}))
+    record = mutate.baseline("store", [d], {}, {"src/appkata_core/db.py": "b"})
+    assert record["dropped"] == {"tests/test_x.py::test_y": "why"}
+
+
+# --- inside a run (mutate_plugin) ----------------------------------------------------------------
+
+_pspec = importlib.util.spec_from_file_location("appkata_mutate_plugin", os.path.join(ROOT, "scripts", "mutate_plugin.py"))
+plugin = importlib.util.module_from_spec(_pspec)
+_pspec.loader.exec_module(plugin)
+
+
+def test_a_script_runs_under_the_name_mutmut_gives_it_whatever_it_is_imported_as(tmp_path, monkeypatch):
+    scripts = tmp_path / "scripts"
+    (scripts / "sandbox").mkdir(parents=True)
+    (scripts / "sandbox" / "probe.py").write_text("def where():\n    return __name__\n")
+    monkeypatch.setattr(plugin, "SCRIPTS", str(scripts))
+    assert plugin.canonical(scripts / "sandbox" / "probe.py") == "scripts.sandbox.probe"
+    assert plugin.canonical(tmp_path / "other.py") is None
+    from importlib.machinery import SourceFileLoader
+
+    # undone after; Python's own, also where mutmut's session (this plugin) has named it already
+    current = SourceFileLoader.exec_module
+    monkeypatch.setattr(SourceFileLoader, "exec_module", getattr(current, "original", current))
+    plugin._named_as_mutmut_names_it()
+    plugin._named_as_mutmut_names_it()                     # once only
+    spec = importlib.util.spec_from_file_location("some_test_name", scripts / "sandbox" / "probe.py")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        assert module.__name__ == "some_test_name"        # the module keeps the name it was imported by
+        assert module.where.__module__ == "scripts.sandbox.probe"     # the name its functions were made under
+    finally:
+        sys.modules.pop("scripts.sandbox.probe", None)
+
+
+def test_a_tests_own_python_runs_mutmuts_first_pass_unchanged(tmp_path):
+    for value, want in (("stats", ""), ("appkata_core.urls.x_parse__mutmut_1", "appkata_core.urls.x_parse__mutmut_1")):
+        env = {**os.environ, "MUTANT_UNDER_TEST": value}
+        code = mutate.USERCUSTOMIZE + "print(repr(os.environ['MUTANT_UNDER_TEST']))"
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        assert r.stdout.strip() == repr(want)
