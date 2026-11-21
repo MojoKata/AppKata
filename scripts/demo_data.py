@@ -995,7 +995,13 @@ def self_app(db: DB, d: str) -> None:
          (APPKATA_REPO, "AppKata", "A FOSS app store built on git", readme, readme, "", "cache/appkata/icon.svg", "", "github",
           "github.com", APPKATA_REPO.split("github.com/", 1)[1], json.dumps(rels), now()))
     if not db.one("SELECT 1 FROM sources WHERE url=?", (APPKATA_REPO,)):
-        db.x("INSERT INTO sources(url, input_url, settings, added_at) VALUES(?,?,?,?)", (APPKATA_REPO, APPKATA_REPO, '{"builtin": true}', now()))
+        # a second after the last Source build added, so it lists last (Sources go by when they were
+        # added, then by URL): finish, run straight after build (remake, restore), was often within
+        # the same second, and AppKata's capital M put it first
+        from datetime import datetime, timedelta
+        last = db.one("SELECT max(added_at) AS t FROM sources")["t"]
+        added = (datetime.fromisoformat(last) + timedelta(seconds=1)).isoformat() if last else now()
+        db.x("INSERT INTO sources(url, input_url, settings, added_at) VALUES(?,?,?,?)", (APPKATA_REPO, APPKATA_REPO, '{"builtin": true}', added))
     target = os.path.join(d, "apps", "appkata"); os.makedirs(target, exist_ok=True)
     image = os.path.join(d, "Downloads", f"AppKata-{__version__}-x86_64.AppImage"); os.makedirs(os.path.dirname(image), exist_ok=True)
     open(image, "w").write("demo"); os.chmod(image, 0o755)

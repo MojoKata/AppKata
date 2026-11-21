@@ -133,6 +133,10 @@ def test_the_committed_snapshot_covers_what_the_build_lists(tmp_path):
     for a in snap.all("SELECT icon, hero FROM apps"):
         for p in (a["icon"], a["hero"]):
             assert not p or not p.startswith("cache/") or os.path.exists(os.path.join(demo.SNAPSHOT, p)), p
+    # AppKata's own Source lists last, however soon after the build finish adds it (S01)
+    demo.self_app(db, str(d))
+    order = [r["url"] for r in db.all("SELECT url FROM sources ORDER BY added_at, url")]
+    assert order[-1] == demo.APPKATA_REPO and len(order) == len(demo.SOURCES) + 1
 
 
 @pytest.mark.parametrize("hour, offset", [(0, "-01:00"), (1, "+00:00"), (23, "+00:00")])
