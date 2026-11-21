@@ -119,6 +119,12 @@ The `tour` job makes the Linux screenshots on every run, a pull request's includ
    job, before anything is uploaded.
 4. **The `tour` artifact**: `dark/` and `light/`, kept 90 days, so a tag's lasts until its release is
    published and the site takes it. `site` publishes master's.
+5. **The `tour.html` artifact**, for a review in the browser: `scripts/tour_page.py` writes one page
+   with every screen inlined, those whose bytes differ from master's published tour first, each beside
+   master's, then the new ones, the ones gone and, folded away, the rest. It is uploaded unzipped
+   (`actions/upload-artifact`'s `archive: false`), so the run's list of artifacts opens it in the
+   browser rather than downloading a zip. The screens that show the day (the Audit's) differ from
+   master's whenever the two were made on different days.
 
 The job runs from `~/kata/AppKata`, a link to the checkout, so the paths the screens show read as on
 a development machine (`~/kata/AppKata/build/tour-data/…`). In the first hour of a UTC day the tour

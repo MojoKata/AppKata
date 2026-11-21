@@ -185,6 +185,19 @@ jobs:
           path: build/layout-tour/*/*.png
           if-no-files-found: error
           retention-days: 90     # a tag's, until its release is published and the site takes it
+      # the same screens as one page for a review in the browser (scripts/tour_page.py): every screen
+      # inlined, those that differ from master's published tour first, beside master's; uploaded
+      # unzipped, so the run's artifact list opens it
+      - run: |
+          cd ~/kata/AppKata
+          python3 scripts/tour_page.py build/layout-tour build/tour.html --title "AppKata's Linux tour at ${GITHUB_SHA::7}"
+          python3 scripts/public_text.py check build/tour.html
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          path: build/tour.html
+          archive: false         # the artifact is the page itself, named tour.html
+          if-no-files-found: error
+          retention-days: 30
 
   # tier 1's parts against their budget, and against each other (scripts/ci_times.py)
   ci-times:
