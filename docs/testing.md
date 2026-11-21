@@ -165,6 +165,12 @@ area at once on GitHub's runners, started by hand (Actions, `mutate`, Run workfl
   outcome, the earlier ones too.
 - A pull request that changes the workflow or these tools runs a trial on one small module.
 
+A run of every area is 20 jobs and takes about 4 hours. Most jobs take 3 to 30 minutes; the ones
+whose code the most tests reach take longest, `store-1` (`db.py` and the rest of the store, about
+3¾ hours) and `ui-backend-1` (`backend.py`, about 3 hours). Most jobs stay under 2 GB of memory;
+a change that makes the code allocate without end grows its worker until the run stops it at 3 GB
+of its own, so a trust job reaches 7½ GB (PSS) at its peak, within the runner's 16.
+
 `scripts/mutate.py gather RUN...` downloads a run's artifacts and writes each area's baseline to
 `docs/hardening/mutation/<area>.json`; `record --from DIR...` does the same from a local run's
 `export` folders. Runs gathered together must be of one commit, and a later run's outcome for a
