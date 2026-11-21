@@ -182,8 +182,9 @@ def make_copy() -> None:
             (MUTANTS / p.name).symlink_to(p)
 
 
-def settings(mutate: list[str], selected: list[str], text: str) -> str:
-    """pyproject.toml with mutmut's settings: the modules, the tests, PYTEST_ARGS."""
+def settings(mutate: list[str], selected: list[str], text: str, debug: bool = False) -> str:
+    """pyproject.toml with mutmut's settings: the modules, the tests, PYTEST_ARGS; with `debug`,
+    mutmut prints each pytest run's command and output (a first run that fails says which test)."""
     text = re.sub(r"\n\[tool\.mutmut\][^\[]*", "\n", text)
     return text + (
         "\n[tool.mutmut]\n"
@@ -197,12 +198,13 @@ def settings(mutate: list[str], selected: list[str], text: str) -> str:
         'process_isolation = "forkserver"\n'
         # The copy is a fresh one each run, and isn't a checkout: nothing to compare with.
         "use_git_change_detection = false\n"
+        + ("debug = true\n" if debug else "")
     )
 
 
-def configure(mutate: list[str], selected: list[str]) -> None:
+def configure(mutate: list[str], selected: list[str], debug: bool = False) -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    (COPY / "pyproject.toml").write_text(settings(mutate, selected, text), encoding="utf-8")
+    (COPY / "pyproject.toml").write_text(settings(mutate, selected, text, debug), encoding="utf-8")
 
 
 def _cmdline(pid: str) -> str:
@@ -284,7 +286,7 @@ def run(args) -> int:
     selected = tests()
     print(f"mutating {', '.join(args.modules)}, with {len(selected)} test files")
     make_copy()
-    configure(only_mutate(args.modules), selected)
+    configure(only_mutate(args.modules), selected, args.debug)
     log = (WORK / "mutmut.log").open("w")
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}  # tier 1 checks skips; not here
     proc = subprocess.Popen(mutmut_command(args), cwd=COPY, stdout=log, stderr=subprocess.STDOUT, env=env)  # noqa: S603
@@ -318,7 +320,9 @@ def run(args) -> int:
     print(f"mutmut exited {proc.returncode} after {int(time.monotonic() - started) // 60} min; peak memory "
           f"{peak:.1f} GB (PSS), a worker's own at most {largest:.1f} GB; log: {WORK / 'mutmut.log'}")  # fmt: skip
     if proc.returncode:
-        print("its log's last lines:\n" + (WORK / "mutmut.log").read_text(errors="replace")[-3000:])
+        tail = (WORK / "mutmut.log").read_text(errors="replace").replace("\r", "\n")
+        tail = "\n".join(x for x in tail.splitlines() if x.strip() and "Running stats" not in x)
+        print("its log's last lines (--debug names a failing test):\n" + tail[-3000:])
     summary(None)
     return 1 if stopped.is_set() else proc.returncode
 
@@ -652,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--limit", type=float, default=LIMIT_GB, help="stop past this many GB (PSS)")
     r.add_argument("--worker-limit", type=float, default=WORKER_GB,
                    help="stop a change's worker past this many GB of its own; the change is killed")  # fmt: skip
+    r.add_argument("--debug", action="store_true", help="mutmut's pytest runs' commands and output, in its log")
     sub.add_parser("summary", help="the last run's outcomes and survivors")
     c = sub.add_parser("check", help="one change against one test file")
     c.add_argument("change")

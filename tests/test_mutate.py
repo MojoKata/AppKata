@@ -60,13 +60,14 @@ def test_the_plan_names_each_areas_jobs_and_holds_every_module_once():
     for j in jobs:
         assert re.fullmatch(rf"{re.escape(j['area'])}-\d+", j["name"])
         assert j["lines"] <= 1000 or len(j["modules"].split()) == 1
-    assert [j["name"] for j in mutate.plan_jobs(found, ["win*"], 1000)] == ["windows-1"]
+    windows = mutate.plan_jobs(found, ["win*"], 1000)      # the area's jobs alone, however many
+    assert windows and all(re.fullmatch(r"windows-\d+", j["name"]) for j in windows)
 
 
 def test_plan_takes_jobs_by_name_and_refuses_one_it_doesnt_have(capsys):
-    assert mutate.main(["plan", "--jobs", "windows-1"]) == 0
+    assert mutate.main(["plan", "--jobs", "trust-1"]) == 0
     jobs = json.loads(capsys.readouterr().out)
-    assert [j["name"] for j in jobs] == ["windows-1"]
+    assert [j["name"] for j in jobs] == ["trust-1"]
     assert mutate.main(["plan", "--jobs", "windows-9"]) == 1
     assert mutate.main(["plan", "--modules", "src/appkata_core/nowhere.py"]) == 1
 
