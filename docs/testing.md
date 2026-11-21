@@ -151,10 +151,14 @@ area at once on GitHub's runners, started by hand (Actions, `mutate`, Run workfl
   for 90 days. At most `parallel` (14) run at once, leaving room for pull requests' checks.
 - A pull request that changes the workflow or these tools runs a trial on one small module.
 
-`scripts/mutate.py gather RUN...` (with `--repo OWNER/NAME` for a fork's run) downloads a run's
-artifacts and writes each area's baseline to `docs/hardening/mutation/<area>.json`; `record --from
-DIR...` does the same from a local run's `export` folders. Runs gathered together must be of one
-commit, and a later run's outcome for a change replaces an earlier one's.
+`scripts/mutate.py gather RUN...` downloads a run's artifacts and writes each area's baseline to
+`docs/hardening/mutation/<area>.json`; `record --from DIR...` does the same from a local run's
+`export` folders. Runs gathered together must be of one commit, and a later run's outcome for a
+change replaces an earlier one's. A fork's run (`--repo OWNER/NAME`) is recorded as a fork's,
+without its name, and `--same-as COMMIT` records a commit of this repository whose code is the
+run's own (checked file by file) in place of the run's: a run started from a branch made only to
+start it, with a `push` trigger in its copy of the workflow (GitHub starts a `workflow_dispatch`
+only from a workflow on the default branch).
 
 ### Reading a baseline
 

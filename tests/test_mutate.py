@@ -351,10 +351,17 @@ def test_record_and_gather_write_each_areas_baseline_of_one_commit(work, tmp_pat
     heads = {"1": "a", "2": "a", "3": "b"}
     monkeypatch.setattr(mutate.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
         cmd, 0, stdout=heads[cmd[3]] + "\n"))
-    assert mutate.main(["gather", "1", "2", "--repo", "o/r"]) == 0
-    assert got["made"] == {"repo": "o/r", "runs": [1, 2], "commit": "a", "mutmut": mutate.mutmut_pin()}
-    assert got["dirs"] == [d, d] and got["repo"] == "o/r"
+    assert mutate.main(["gather", "1", "2"]) == 0
+    assert got["made"] == {"repo": mutate.REPO, "runs": [1, 2], "commit": "a", "mutmut": mutate.mutmut_pin()}
+    assert got["dirs"] == [d, d] and got["repo"] == mutate.REPO
     assert mutate.main(["gather", "1", "3"]) == 1        # two commits don't add up
+    # a fork's run, recorded without the fork's name, as a commit of this repository with its code
+    monkeypatch.setattr(mutate, "blob_at", lambda commit, rel, repo: "same" if commit in ("a", "c0ffee") else "other")
+    assert mutate.main(["gather", "1", "--repo", "someone/AppKata", "--same-as", "HEAD"]) == 0
+    assert got["made"] == {"repo": "a fork", "runs": [1], "commit": "c0ffee", "mutmut": mutate.mutmut_pin()}
+    assert got["repo"] == mutate.REPO
+    monkeypatch.setattr(mutate, "_git", lambda *a: "beef")
+    assert mutate.main(["gather", "1", "--repo", "someone/AppKata", "--same-as", "HEAD"]) == 1
 
 
 def test_a_runs_artifacts_are_downloaded_once(work, monkeypatch):

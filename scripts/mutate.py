@@ -675,7 +675,9 @@ def downloaded(run_id: str, repo: str) -> list[Path]:
 
 def gather(args) -> int:
     """The runs' artifacts, the earliest first, as each area's baseline. The runs must be of one
-    commit, so their outcomes add up."""
+    commit, so their outcomes add up. A fork's runs (--repo) are recorded as a fork's, without its
+    name; with --same-as, a commit of this repository whose code is the runs' own is recorded as
+    theirs (a run on a branch made only to start it, its workflow file changed)."""
     dirs, commits = [], set()
     for run_id in args.run:
         dirs += downloaded(run_id, args.repo)
@@ -685,8 +687,17 @@ def gather(args) -> int:
         print(f"the runs are of {len(commits)} commits; a baseline is of one: {' '.join(sorted(commits))}")
         return 1
     commit = commits.pop()
-    made = {"repo": args.repo, "runs": [int(r) for r in args.run], "commit": commit, "mutmut": mutmut_pin()}
-    return write_baselines(dirs, made, commit, args.repo)
+    if args.same_as:
+        same = _git("rev-parse", args.same_as)
+        named = sorted({m for d in dirs for m in json.loads((d / "job.json").read_text())["modules"].split()})
+        differ = [m for m in named if blob_at(commit, m, args.repo) != blob_at(same, m, REPO)]
+        if differ:
+            print(f"{same} differs from the runs' {commit} in {' '.join(differ)}")
+            return 1
+        commit = same
+    where = args.repo if args.repo == REPO else "a fork"
+    made = {"repo": where, "runs": [int(r) for r in args.run], "commit": commit, "mutmut": mutmut_pin()}
+    return write_baselines(dirs, made, commit, args.repo if not args.same_as else REPO)
 
 
 def record(args) -> int:
@@ -731,6 +742,7 @@ def main(argv: list[str] | None = None) -> int:
     g = sub.add_parser("gather", help="a mutate workflow run's artifacts, as each area's baseline")
     g.add_argument("run", nargs="+", help="the runs' ids, the earliest first")
     g.add_argument("--repo", default=REPO, help="the repository the runs are in (a fork's, say)")
+    g.add_argument("--same-as", help="record this commit, whose code is the runs' own, as theirs")
     k = sub.add_parser("record", help="directories export wrote, as each area's baseline")
     k.add_argument("--from", dest="from_", nargs="+", required=True)
     k.add_argument("--commit", default="HEAD", help="the commit the runs ran")
