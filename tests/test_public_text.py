@@ -14,8 +14,11 @@ import sys
 
 import pytest
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import written  # noqa: E402
+
+# the files as written: in a mutation run, the checkout, not mutmut's copy (tests/written.py)
+ROOT = written.root()
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 import public_text  # noqa: E402
 
 
