@@ -1,131 +1,21 @@
-# Sandbox launcher & bus proxy: how they work, and the real-desktop checklist
+# The sandbox's real-desktop checklist
 
 Companion to [A1](architecture/A1-app-sandboxing/README.md) (the rationale) and R17 (the spec).
-Two parts:
+How the launcher works is
+[A1.2.3](architecture/A1-app-sandboxing/A1.2-approach.md#a123-what-every-sandboxed-launch-does): the
+launcher step by step (A1.2.3.11), the filtered D-Bus proxy (A1.2.3.12), the identity marker
+(A1.2.3.13) and the capability mapping (A1.2.3.14). Its **exact text is the goldens** in
+[`tests/data/launchers/`](../tests/data/launchers), one per grant set; `tests/test_launcher_golden.py`
+keeps them byte for byte, so any change to the launcher shows in review as a shell diff (R17.4).
 
-1. **[How the launcher works](#how-the-launcher-works)**: the parts of the text AppKata writes for
-   each sandboxed app, the filtered D-Bus proxy, the identity marker and the capability mapping.
-   The launcher's **exact text is the goldens** in [`tests/data/launchers/`](../tests/data/launchers),
-   one per grant set. `tests/test_launcher_golden.py` keeps them byte for byte, so any change to the
-   launcher shows in review as a shell diff (R17.4).
-2. **[The real-desktop checklist](#the-real-desktop-checklist)**: what a logged-in desktop can answer
-   and the containers and VMs can't. `scripts/sandbox/field-test.sh` runs it against what AppKata
-   itself installs.
+This file is [the real-desktop checklist](#the-real-desktop-checklist): what a logged-in desktop can
+answer and the containers and VMs can't. `scripts/sandbox/field-test.sh` runs it against what AppKata
+itself installs.
 
 Status: built, and tested in the environments of [`testing.md`](testing.md). Review 2 (D1) replaced the planning-stage
 spec that stood here. That spec put the marker in the private home and in the proxy's root, opened
 the whole portal name, used `--new-session`, and expected the portal file chooser to hand files over.
 None of those are built, for the reasons in R17.6.1, R17.6.3 and the review rounds.
-
----
-
-## How the launcher works
-
-`~/bin/apps/<app>/run` is a POSIX shell script that AppKata writes and rewrites:
-
-- on every install, update and sandbox change;
-- at AppKata's start, for any launcher whose text isn't today's, or whose helpers aren't (R17.4).
-
-Its only run-time decisions are about the host it starts on: the display, DNS, the CLI tool's
-folder, the arguments, and whether the AppImage is unpacked yet. In order:
-
-1. **Header.** The app's identity (`id=io.appkata.<app>`), its private home, its marker, its program
-   and its log path. If the session's runtime folder is missing, it says so and stops. Started from
-   the app menu (the entry passes `--appkata-menu`), it appends its stderr to `logs/apps/<id>.log`,
-   rotated at 2 MB (R14.2.1). Started by AppKata, that file is its stderr already. From a terminal,
-   stderr stays the caller's.
-2. **A command-line tool's folder (the `cli-tool` template).** The folder it runs in is shared
-   read-write unless it is the home, above it, or never shared (R17.3.1). Paths are compared
-   physically (`pwd -P`). When it isn't shared, the tool runs in its private home and says why
-   (R17.3.3).
-3. **File arguments (Standard).** A path or `file://` argument outside the granted folders is handed
-   over through the document portal from the host side (`Documents.Add` + `GrantPermissions` for the
-   app's id), and the argument becomes `$XDG_RUNTIME_DIR/doc/<doc>/<name>` (R17.6.2).
-4. **Strict, from a terminal.** With arguments and a terminal on stderr, it says the app sees only its
-   private home (R17.3.3).
-5. **The symlink guard.** Every mount destination under `$HOME` lies inside the app-writable private
-   home, so any symlink the app left at such a path is removed before mounting (R17.4).
-6. **A refused folder** is noted in a comment: never shared (R17.3.1), or not a full path.
-7. **An AppImage is unpacked lazily, in its own sandbox.** Its runtime runs in a bwrap that can write
-   only a staging folder; the result is stamped with the file's size, mtime and inode, and serialised
-   with `flock` (R17.7).
-8. **Chromium's own sandbox (only where it can't run).** Under Ubuntu 25.04+'s `bwrap-userns-restrict`
-   a program that brings `chrome-sandbox` or `chrome_crashpad_handler` gets `--no-sandbox` (R17.10.2).
-9. **The bus proxy (Standard).** See [below](#the-filtered-d-bus-proxy).
-10. **Display.** The Wayland socket if the session has one, else X11 with `XAUTHORITY`. On Wayland,
-    X11 is added too with the X11 device grant (R17.9).
-11. **DNS (with the network grant).** Where `/etc/resolv.conf` points into `/run` (systemd-resolved,
-    NetworkManager), that target is bound too.
-12. **The host's desktop entries** (`/usr/share/applications`, `/usr/local/share/applications`) are
-    masked with an empty tmpfs. GLib then asks the OpenURI portal instead of starting a host
-    program inside (R17.4, R17.6.3).
-13. **The environment.** `--clearenv`, then an allow-list: locale, terminal, session and desktop
-    names, theme and scaling variables. Then `HOME`, `PATH` (AppKata's shim folder first),
-    `XDG_RUNTIME_DIR`, `GDK_DEBUG=no-portals`, `DBUS_SESSION_BUS_ADDRESS` (the proxy) and, for an
-    AppImage, `APPDIR`/`APPIMAGE`/`ARGV0`.
-14. **The bwrap command, run as the launcher's own child at every level.** The app outlives whatever
-    started it (R17.4), and its status is passed through.
-    - Read-only: `/usr` and `/etc`, the fontconfig cache, the `/sys` paths that identify GPUs, the
-      version folder (or read-write with the writable-app-folder grant), and the desktop's themes,
-      icons and fonts.
-    - Devices: `/dev/dri`, and with the camera grant `/dev/video*` and `/dev/media*`.
-    - The rest: the private home over `$HOME`; the folder grants; the PipeWire and Pulse sockets with
-      a sound grant; the marker at `/.flatpak-info`; the proxy socket at `$XDG_RUNTIME_DIR/bus`; the
-      document portal's `by-app/<id>` view at `$XDG_RUNTIME_DIR/doc`; the shim folder at
-      `/run/appkata`.
-    - Flags: `--unshare-all`, plus `--share-net` with the network, `--die-with-parent`, and the
-      terminal-injection seccomp filter (`--seccomp`, or `--new-session` only where the filter isn't
-      built).
-15. **Teardown.** The proxy is stopped and its socket removed.
-
-### The filtered D-Bus proxy
-
-- **One `xdg-dbus-proxy` per launch, in its own minimal bwrap.** It has a tmpfs root with `/usr` and
-  `/etc`, and `$XDG_RUNTIME_DIR` bound read-write so its socket is visible to the launcher.
-- **It has its own pid namespace (`--unshare-pid`), so it ends with its bwrap.** Its own death signal
-  isn't enough: the kernel clears it at an exec that changes the security domain, as entering Ubuntu
-  25.04+'s `unpriv_bwrap` does (review 2, F2).
-- **Its root carries no `.flatpak-info`**, so the portals judge the app a *host* caller. That is why
-  the portal name is opened per interface (R17.5, R17.6.1):
-  - always: OpenURI, Settings, Print, Email, NetworkMonitor, ProxyResolver and MemoryMonitor, with
-    their Request and Session objects and the portal object's Introspectable;
-  - with their capabilities: Notification and Inhibit;
-  - never: anything else on that name, including FileChooser, Background, DynamicLauncher,
-    Documents, Camera, ScreenCast and the `version` properties.
-- **`--filter` is mandatory.** An unfiltered bus reaches `org.freedesktop.systemd1`.
-
-### The app-identity marker
-
-- **Where it lives.** `<data>/sandboxes/.identity/<app>`, outside the app's private home (an app
-  could swap a marker in its home for a symlink to a host file). It is bound read-only at
-  `/.flatpak-info` in the app's root only, never the proxy's.
-- **What it says.**
-  ```ini
-  [Application]
-  name=io.appkata.<app>        # io.appkata._7zip for a slug that starts with a digit
-
-  [Instance]
-  instance-id=<app>            # the install's own id (17.6)
-
-  [Context]
-  shared=network;              # only with the network grant
-  ```
-- **Who reads it.** PipeWire/WirePlumber, to treat the app as a sandboxed client (R17.8), and GLib,
-  for its portal use and network availability. The portals don't read it (R17.6.1).
-- **Kept current.** It is rewritten at start whenever it isn't today's text (R17.4, review 2 F5).
-
-### Capability → proxy arguments
-
-| Capability | Proxy arguments | Notes |
-|---|---|---|
-| (always) | the per-interface `--call` rules above, `--own=io.appkata.<app>` | single instance, "open in the running window" |
-| Notifications | `--call=…=org.freedesktop.portal.Notification.*@…` and `--talk=org.freedesktop.Notifications` | both roads with the capability, neither without (R17.5.1) |
-| Screensaver inhibit | `--call=…=org.freedesktop.portal.Inhibit.*@…` and `--talk=org.freedesktop.ScreenSaver` | likewise |
-| Tray icon | `--talk=org.kde.StatusNotifierWatcher`, `--own=org.kde.StatusNotifierItem-<pid>-<n>` for pids 2–6, n 1–3 | xdg-dbus-proxy rejects `StatusNotifierItem-*`; two tray apps can collide (R17.17) |
-| Media keys | `--own=org.mpris.MediaPlayer2.*` | |
-| Secrets (use) | `--talk=org.freedesktop.secrets` | the keyring has no per-app walls: every unlocked password |
-| Secrets (provide) | `--own=org.freedesktop.secrets` | e.g. KeePassXC |
-| Camera | none: `/dev/video*` and `/dev/media*` are bound | the Camera portal is closed to sandboxed apps (R17.8) |
 
 ---
 

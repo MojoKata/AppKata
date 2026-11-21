@@ -64,7 +64,7 @@ rm -f "$sock"
 # Read the host bus with a default so `set -u` can't abort the launcher when it is unset.
 upstream="${DBUS_SESSION_BUS_ADDRESS:-}"
 # Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the
-# launcher (the P1 gotcha, resolved — local-proxy-test-plan.md). It carries *no*
+# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*
 # /.flatpak-info: the portals judge the caller by the proxy's root, and xdg-desktop-portal
 # 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the
 # app is a host caller to them and the proxy allows only the portal interfaces safe for one.

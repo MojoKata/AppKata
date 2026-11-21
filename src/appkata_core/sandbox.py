@@ -12,7 +12,7 @@ Limits the harm a portable app or AppImage can do once installed, using **bubble
   filtered **D-Bus proxy**, the `.flatpak-info` **identity** marker, and sandboxed AppImage
   extraction (R17.4–R17.9).
 
-The launcher/proxy shape matches `docs/local-proxy-test-plan.md` and the commands validated by
+The launcher/proxy shape matches A1.2.3 and the commands validated by
 `scripts/sandbox/field-test.sh`.
 """
 
@@ -1340,7 +1340,7 @@ def _portal_call(interface: str, obj: str = _PORTAL_PATH) -> str:
     return f"--call={_PORTAL}=org.freedesktop.portal.{interface}.*@{obj}"
 
 
-# capability → the extra xdg-dbus-proxy arguments it adds (local-proxy-test-plan.md). Where a portal
+# capability → the extra xdg-dbus-proxy arguments it adds (A1.2.3.14). Where a portal
 # covers the need, the capability opens *both* roads -- the portal interface, which GLib/GTK apps
 # take when they see /.flatpak-info, and the direct name the others use -- so the capability is the
 # one switch, and an app without it has neither (round three, R3-6: the Notification and Inhibit
@@ -2017,7 +2017,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# Read the host bus with a default so `set -u` can\'t abort the launcher when it is unset.\n'
             'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"\n'
             '# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n'
-            '# launcher (the P1 gotcha, resolved — local-proxy-test-plan.md). It carries *no*\n'
+            '# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*\n'
             '# /.flatpak-info: the portals judge the caller by the proxy\'s root, and xdg-desktop-portal\n'
             '# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the\n'
             '# app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'

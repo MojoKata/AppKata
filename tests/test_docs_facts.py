@@ -100,11 +100,11 @@ def _facts() -> dict:
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
     bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("R17.5.1"))}
     f["R17.5.1: the capabilities"] = ({caps17[b] for b in bold if b in caps17}, set(sb.CAP_PROXY_ARGS) - {"secrets-provide"})
-    plan = _read("docs/local-proxy-test-plan.md")
-    rows = dict(re.findall(r"^\| ([A-Z][^|]+?) \| (.+?) \|", plan[plan.index("### Capability → proxy arguments"):], re.M))
+    plan = _read(A1)
+    rows = dict(re.findall(r"^\| ([A-Z][^|]+?) \| (.+?) \|", plan[plan.index("### A1.2.3.14. Capability → proxy arguments"):], re.M))
     stated = {k for k, lab in sb.CAP_LABELS.items() if lab in rows and all(a.split("=", 1)[-1].split("@")[0].split(".")[-1].rstrip("*").rstrip(".")
                                                                            in rows[lab] for a in sb.CAP_PROXY_ARGS[k][:1])}
-    f["local-proxy-test-plan.md: the capability table"] = (stated, set(sb.CAP_LABELS))
+    f["A1.2.3.14: the capability table"] = (stated, set(sb.CAP_LABELS))
     text = re.sub(r"\s+", " ", _req("R17.17"))
     old = re.search(r"process (\d+) \(or (\d+)\)", text)                # the wording review 2 found
     new = re.search(r"processes (\d+) to (\d+)", text)

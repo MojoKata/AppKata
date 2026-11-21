@@ -104,7 +104,7 @@ differ from its list (review 3, harness B).
 | R17.5 | The portals see the app as a host | test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy, test_the_portals_answer_a_sandboxed_app_as_a_host_caller |
 | R17.5 | GTK4 is held by the FileChooser denial itself | harness:filedialogs, harness:filedialogs-lmde7, claim |
 | R17.5.1 | The fiddly desktop-services an app may use | test_proxy_args_map_capabilities, test_the_notification_and_inhibit_portals_come_with_their_capabilities, test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app, test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability, test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability, harness:consumers, test_the_dialog_can_make_every_change_that_runs_differently_but_the_listed |
-| R17.5.1 | The full mapping table is in local-proxy-test-plan.md. | statement |
+| R17.5.1 | The full mapping table is A1.2.3.14. | statement |
 | R17.6 | The launcher presents each app a stable id | test_identity_is_a_valid_bus_name, test_identity_marker_cannot_be_swapped_for_a_host_file |
 | R17.6 | PipeWire/WirePlumber take the app for a sandboxed client | harness:wayland, claim |
 | R17.6 | The id is also the app's D-Bus name | test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus, test_two_apps_with_one_name_get_their_own_folder_launcher_identity_and_home |
