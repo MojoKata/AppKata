@@ -1,0 +1,12 @@
+{
+ "short": 0.021,
+ "tests": {
+  "tests/test_publish.py::test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey": 3.0,
+  "tests/test_publish.py::test_release_tags_once_the_release_pull_request_is_merged_and_ci_passed_on_it": 10.1,
+  "tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun[1-1-True]": 10.1,
+  "tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun[2--False]": 10.2,
+  "tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun[2-1-True]": 10.2,
+  "tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun[2-2-True]": 10.1,
+  "tests/test_publish.py::test_resume_shows_what_ci_built_after_any_rerun[3-1-True]": 10.2
+ }
+}
