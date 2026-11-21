@@ -10,7 +10,8 @@ the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a dow
 
 | Event | Jobs | What it leaves |
 |---|---|---|
-| A pull request, a push to `master` | `tier1` in 3 parts, `appimage`, `windows`, then `coverage` and `ci-times`, then `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days) |
+| A pull request, a push to `master` | `tier1` in 3 parts, `appimage`, `windows`, then `coverage` and `ci-times`, then `site` and `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days); the Pages site as this commit would publish it (`site`, 30 days) |
+| A push to `master` | the same, then `pages` | the site, published at the repository's GitHub Pages ("The Pages site", below) |
 | A `v*` tag | the same, built without the caches, and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256` |
 
 All of it runs on GitHub's hosted `ubuntu-24.04` runners, free for a public repository. Each job runs
@@ -21,16 +22,18 @@ the script it would run on a development machine, so a CI failure reproduces loc
 | `tier1 1 of 3` to `3 of 3` | `scripts/test-tier1.sh`, a part each, measured ("Tier 1's parts", below) | 1 min each |
 | `coverage` | `scripts/coverage_report.py report --check` on the parts' data ("Coverage", below) | ½ min |
 | `ci-times` | `scripts/ci_times.py` on its own run: each part within 5 minutes, the parts within 1.4:1 | |
+| `site` | `scripts/coverage_site.py build` on the coverage report ("The Pages site", below) | |
 | `appimage` | `scripts/build-appimage.sh` | 1 min |
 | `windows` | `scripts/build-windows.sh`: PyInstaller and Inno Setup under Wine, in Docker, as the Windows VM tests it (`build.md`, "Windows") | 3 min |
 | `ci` | passes only when tier 1's parts, `coverage` and both builds did | |
+| `pages` | pushes to `master` only, after `ci` and `site`: publishes the site | |
 | `version` | tags only: the tag must be `v` and `__version__` (`src/appkata_core/__init__.py`) | |
 | `sign` | tags only, in the `release` environment: signs the AppImage | |
 | `release` | tags only: `gh release create --draft` with every file | |
 
 `ci` is the one check the `master` ruleset requires (GENESIS.md, step 4): a pull request can't
 merge while tier 1 fails, an area's coverage falls below its floor or either build breaks, and jobs
-can be added without changing the ruleset. `ci-times` reports beside it and doesn't hold a merge.
+can be added without changing the ruleset. `ci-times` and `site` report beside it and don't hold a merge.
 The tiers that need KVM or a desktop (2 and 3, [`testing.md`](testing.md)) stay on the development
 machine: GitHub advises against self-hosted runners for a public repository, since anyone can open a
 pull request and run code on them.
@@ -91,6 +94,57 @@ the commit it describes (`gh run download RUN -n coverage -D build/coverage-ci`,
 `coverage_report.py floor build/coverage-ci/totals.json`), never from a local run. The artifact
 holds the HTML report (`html/index.html`), `totals.json`, `files.json` (each file's counts) and
 coverage.py's own `coverage.json` (each file's lines and branches missed).
+
+## The Pages site
+
+The repository's GitHub Pages site, at `https://<owner>.github.io/<name>/` (for this repository
+https://mojokata.github.io/AppKata/), is built by [`scripts/coverage_site.py`](../scripts/coverage_site.py)
+and published by GitHub Actions on each push to `master`. It has three pages:
+
+- **Coverage** (`index.html`): the `coverage` job's figures by area against their floors, each area's
+  files linked to their line-by-line report (`report/`), and each area's line and branch coverage
+  over the pushes, with the sums *App* (every area but the scripts') and *Overall*. Beside it are
+  `history.json`, a point per push (its commit, pull request, totals by area and findings by area),
+  and `files.json`.
+- **Hardening** (`hardening.html`, [`scripts/hardening.py`](../scripts/hardening.py)): the sweep's
+  steps, each an issue labelled `hardening` titled "H1.n …", with the pull request GitHub links as
+  closing it; each step's findings, its sub-issues, with their severity (a body's "severity High",
+  "Med" or "Low"), area (the `area:` label, else the step's) and state; the coverage and findings by
+  area; and the open issues labelled `gap` or `question`. It reads the issues, not the project board.
+  Only an issue's number, title, labels, state and severity reach the page; its body text doesn't.
+  A closed step shows what changed in its areas at its pull request's merge, from the history.
+- **Screenshots** (`screenshots/index.html`): each version's screens under
+  `screenshots/<version>/`, listed in `screenshots/index.json`. `--screenshots DIR` adds the
+  versions a folder holds (`DIR/<version>/…`) and replaces those already published.
+
+The `site` job builds it on every run, a pull request's included, after `coverage`: it downloads the
+`coverage` artifact, reads the issues with the job's token (`issues: read`, `pull-requests: read`),
+runs `scripts/public_text.py check` on the pages and keeps the site as the `site` artifact, so a pull
+request's site can be downloaded and opened (`gh run download RUN -n site`). The `pages` job runs on
+a push to `master` only, after `ci` and `site`: it alone has `pages: write` and `id-token: write`,
+deploys to the `github-pages` environment, which takes deployments from `master` alone, and publishes
+the `site` artifact with `actions/upload-pages-artifact` and `actions/deploy-pages`.
+
+A Pages deployment replaces the whole site, so what the site keeps across pushes lives on the site
+itself: each build reads `history.json` and `screenshots/index.json` (and the files it lists) back
+from the published site and carries them into the new one, with this commit's point added last (a
+commit already there, a run done again, moves to the end). A site that answers with neither file
+starts afresh only while there is no site at all; any other failure to read them, or the issues,
+fails the job in CI, so a bad moment never starts the history over. A run on `master` never cancels
+another that is running (`concurrency`), so each build reads what the one before it published; of
+several pushes waiting behind a running one, GitHub keeps only the newest, so the others add no
+point.
+
+The repository is `GITHUB_REPOSITORY` in CI. Run by hand, `coverage_site.py build` takes the
+repository `APPKATA_REPO` names (`src/appkata_core/__init__.py`), reads the issues with `gh`'s token,
+and builds a preview into `build/site/` from a `coverage` artifact:
+
+```sh
+gh run download RUN -n coverage -D build/coverage
+python3 scripts/coverage_site.py build
+```
+
+`APPKATA_SITE` reads the history from another address (a local server, say).
 
 ## Signing
 
