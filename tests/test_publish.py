@@ -198,17 +198,29 @@ RESUME_GH = r'''#!/usr/bin/env python3
 # gh for publish.sh resume, without GitHub: run 77 of v0.9.9, built and not waiting for an approval.
 # FAKE_GH_ATTEMPTS is the run's attempts; a build job carries its sha256 notice only in the attempts
 # FAKE_GH_BUILT names, as when "gh run rerun --failed" carries a job over into a new attempt.
+# FAKE_GH_LATE: how many times the run list comes back empty before the run shows; FAKE_GH_RUNNING:
+# how many times the run is still in progress before it has finished.
 import os, re, sys
 a = sys.argv[1:]
+
+
+def once_more(what):
+    """Whether this call is still one of the first FAKE_GH_<what> (counted in a file beside gh)."""
+    count = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), what + ".count")
+    n = int(open(count).read()) if os.path.exists(count) else 0
+    open(count, "w").write(str(n + 1))
+    return n < int(os.environ.get("FAKE_GH_" + what, "0"))
+
+
 attempts, built = int(os.environ["FAKE_GH_ATTEMPTS"]), os.environ["FAKE_GH_BUILT"].split()
 sha = {"appimage": "a" * 64 + "  AppKata-0.9.9-x86_64.AppImage", "windows": "b" * 64 + "  AppKata-0.9.9-setup.exe"}
 job = lambda attempt, name: f"{attempt}0{1 + list(sha).index(name)}"      # 101, 102, 201, ...
 q = a[a.index("--jq") + 1] if "--jq" in a else ""
 name = next((n for n in sha if f'"{n}"' in q), None)
 if a[:2] == ["run", "list"]:
-    print(77)
+    print("" if once_more("LATE") else 77)
 elif a[:2] == ["run", "view"] and "status,conclusion" in a:
-    print("completed success")
+    print("in_progress " if once_more("RUNNING") else "completed success")
 elif a[:2] == ["run", "view"] and "attempt" in a:
     print(attempts)
 elif a[:2] == ["run", "view"] and "jobs" in a:                 # the latest attempt's jobs
@@ -237,20 +249,53 @@ def test_resume_shows_what_ci_built_after_any_rerun(tmp_path, attempts, built, s
     After "gh run rerun --failed", GitHub carries the build jobs that passed into the new attempt
     as new jobs without their annotations, and resume stopped: "the run's build jobs posted no sha256
     notices". It reads each from the attempt that built it."""
-    gh = tmp_path / "bin" / "gh"
-    gh.parent.mkdir()
-    gh.write_text(RESUME_GH)
-    gh.chmod(0o755)
-    r = subprocess.run(["sh", SCRIPT, "--repo", "owner/name", "--key", str(tmp_path / "no-key.asc"), "--yes",
-                        "resume", "0.9.9"], capture_output=True, text=True, timeout=60,
-                       env=dict(os.environ, FAKE_GH_ATTEMPTS=str(attempts), FAKE_GH_BUILT=built,
-                                PATH=f"{gh.parent}{os.pathsep}{os.environ['PATH']}"))
+    r = _resume(tmp_path, FAKE_GH_ATTEMPTS=str(attempts), FAKE_GH_BUILT=built)
     assert r.returncode == 1, r.stderr                         # verify then stops: no key to check with
     if shown:
         assert f"{'a' * 64}  AppKata-0.9.9-x86_64.AppImage\n{'b' * 64}  AppKata-0.9.9-setup.exe\n" in r.stderr, r.stderr
         assert "no public key to check the signature with" in r.stderr, r.stderr
     else:
         assert "publish.sh: the run's build jobs posted no sha256 notices" in r.stderr, r.stderr
+
+
+# sleep for publish.sh, which writes down how long it was asked to wait and goes on at once
+SLEEP = """#!/bin/sh
+echo "$*" >> "$(dirname "$0")/slept"
+"""
+
+# how often publish.sh asks GitHub, short for the tests (the defaults wait 10 and 20 seconds a time)
+POLLS = {"APPKATA_RUN_POLL": "0", "APPKATA_APPROVAL_POLL": "0"}
+
+
+def _resume(tmp_path, sleep=False, polls=POLLS, **env):
+    """publish.sh resume 0.9.9 against RESUME_GH (and with sleep, the SLEEP stand-in), with env."""
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text(RESUME_GH)
+    gh.chmod(0o755)
+    if sleep:
+        (gh.parent / "sleep").write_text(SLEEP)
+        (gh.parent / "sleep").chmod(0o755)
+    base = {k: v for k, v in os.environ.items() if k not in POLLS}
+    return subprocess.run(["sh", SCRIPT, "--repo", "owner/name", "--key", str(tmp_path / "no-key.asc"), "--yes",
+                           "resume", "0.9.9"], capture_output=True, text=True, timeout=60,
+                          env=dict(base, **polls, **env, PATH=f"{gh.parent}{os.pathsep}{os.environ['PATH']}"))
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="runs publish.sh, a POSIX shell script")
+@pytest.mark.parametrize("polls, run, approval", [
+    ({}, "10", "20"),                                              # the defaults, as a real release waits
+    ({"APPKATA_RUN_POLL": "1", "APPKATA_APPROVAL_POLL": "2"}, "1", "2"),
+])
+def test_resume_waits_for_the_run_to_show_and_then_to_finish(tmp_path, polls, run, approval):
+    """resume waits between its questions to GitHub: for the tag's run until it shows, then for the
+    run until it waits for the approval or ends, 10 and 20 seconds a time unless APPKATA_RUN_POLL and
+    APPKATA_APPROVAL_POLL say otherwise. A run that shows on the third question, and has finished
+    on the second, is waited for, and resume goes on to what CI built."""
+    r = _resume(tmp_path, sleep=True, polls=polls, FAKE_GH_ATTEMPTS="1", FAKE_GH_BUILT="1", FAKE_GH_LATE="2",
+                FAKE_GH_RUNNING="1")
+    assert f"{'a' * 64}  AppKata-0.9.9-x86_64.AppImage" in r.stderr, r.stderr
+    assert (tmp_path / "bin" / "slept").read_text().split() == [run, run, run, approval]
 
 
 GATE_GH = r'''#!/usr/bin/env python3
@@ -306,7 +351,7 @@ def _gate_repo(tmp_path, record=RECORD, state=True, status="0.9.9: Linux and Win
 
 def _gate(work, *args, **env):
     return subprocess.run(["sh", str(work / "scripts" / "publish.sh"), "--yes", *args], cwd=work, capture_output=True,
-                          text=True, timeout=120, env=dict(os.environ, **env, GIT_CONFIG_GLOBAL=os.devnull,
+                          text=True, timeout=120, env=dict(os.environ, **POLLS, **env, GIT_CONFIG_GLOBAL=os.devnull,
                                                            PATH=f"{work / 'bin'}{os.pathsep}{os.environ['PATH']}"))
 
 

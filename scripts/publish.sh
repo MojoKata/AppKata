@@ -38,11 +38,16 @@
 # Options: --repo OWNER/NAME (the default is APPKATA_REPO's, src/appkata_core/__init__.py: another
 # repository, a fork, to try these); --key FILE (the public key verify trusts; the default is
 # packaging/appkata-release-key.asc); --yes (no questions: for trying it out).
+#
+# How often release and resume ask GitHub, in seconds: APPKATA_RUN_POLL (for the tag's CI run, until
+# it shows; 10 by default) and APPKATA_APPROVAL_POLL (for the run, until it waits for the approval or
+# ends; 20 by default). The tests set them short.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 REPO=$(sed -n 's#^APPKATA_REPO = "https://github.com/\(.*\)"#\1#p' "$HERE/src/appkata_core/__init__.py")
 KEY="$HERE/packaging/appkata-release-key.asc"
 YES=
+RUN_POLL=${APPKATA_RUN_POLL:-10} APPROVAL_POLL=${APPKATA_APPROVAL_POLL:-20}
 while [ $# -gt 0 ]; do
     case $1 in
         --repo) REPO=$2; shift 2 ;;
@@ -393,7 +398,7 @@ resume() {
     say "== waiting for CI's run of $TAG"
     id=
     while [ -z "$id" ]; do
-        sleep 10
+        sleep "$RUN_POLL"
         id=$(gh run list --repo "$REPO" --workflow ci.yml --branch "$TAG" --event push --limit 1 --json databaseId --jq '.[].databaseId')
     done
     say "run $id: https://github.com/$REPO/actions/runs/$id"
@@ -404,7 +409,7 @@ resume() {
             "completed success") break ;;                 # signed already: resumed after the approval
             completed*) die "the run ended without signing: gh run view $id --repo $REPO" ;;
         esac
-        sleep 20
+        sleep "$APPROVAL_POLL"
     done
     say "== what CI built (its jobs' sha256 notices)"
     # each from the attempt that built it: "gh run rerun --failed" carries a build job that passed
