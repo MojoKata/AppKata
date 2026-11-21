@@ -114,6 +114,9 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   area; and the open issues labelled `gap` or `question`. It reads the issues, not the project board.
   Only an issue's number, title, labels, state and severity reach the page; its body text doesn't.
   A closed step shows what changed in its areas at its pull request's merge, from the history.
+  Each area also shows its mutation testing, from its latest record in `docs/hardening/mutation/`
+  (its survivors of its changes), marked "baseline, changed since" when a module has changed since
+  that record or isn't in it ([`testing.md`](testing.md#mutation-testing), `mutate.py stale`).
 - **Screenshots** (`screenshots/index.html`): each version's screens under
   `screenshots/<version>/`, listed in `screenshots/index.json`. `--screenshots DIR` adds the
   versions a folder holds (`DIR/<version>/…`) and replaces those already published.
