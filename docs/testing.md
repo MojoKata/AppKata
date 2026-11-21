@@ -12,8 +12,8 @@ together; Fedora, RHEL and its rebuilds come back if RPM packaging is taken up a
 | 2 | before pushing, with a CI build in parallel | fast checks of what most changes can break, side by side (about 5 minutes) |
 | 3 | in parallel, "just to be sure" | slower or specialised environments, side by side (about 15 minutes; the two Ubuntu VMs one after the other, since they share files) |
 
-CI ([`github-workflows.md`](github-workflows.md)) runs tier 1, the AppImage build and the
-installer build on GitHub's runners; its `ci` check gates merging. The rest of tiers 2 and 3 needs
+CI ([`github-workflows.md`](github-workflows.md)) runs tier 1 (in 3 parts, measured by coverage.py),
+the AppImage build and the installer build on GitHub's runners; its `ci` check gates merging. The rest of tiers 2 and 3 needs
 KVM, a desktop or the shared Windows VM, and runs on the development machine.
 
 ### What each run may skip
