@@ -6,7 +6,9 @@
     scripts/demo_data.py finish DIR    installs as of "a while ago", pins and a minimum age, from the real releases
     scripts/demo_data.py stage DIR [--utc-offset +HH:MM]
                                        before a tour: the minimum age, the sync times and the Audit, as of now,
-                                       the Audit's days in the time zone the tour shows them in (UTC by default)
+                                       the Audit's days in the time zone the tour shows them in (tour_offset: UTC,
+                                       but an hour behind in the first hour of a UTC day)
+    scripts/demo_data.py offset        that default zone, as +HH:MM
     scripts/demo_data.py check DIR     before a tour, after stage: exit 1 if an app's last sync failed (but for the errors the
                                        demo shows), or the data doesn't show what screenshots/README.md says
     scripts/demo_data.py retry DIR     sync again the apps whose last sync failed (GitHub answers 5xx at times)
@@ -772,13 +774,24 @@ def reroot(d: str) -> None:
     print(f"moved {d}'s paths from {old}")
 
 
-def stage(d: str, utc_offset: str = "+00:00") -> None:
+def tour_offset(t=None) -> str:
+    """The time zone a tour shows its times in, as +HH:MM: UTC, but in the first hour of a UTC day an
+    hour behind it, where the day is ending: the Audit's day has no room yet then (history).
+    APPKATA_TOUR_OFFSET sets another; scripts/test-layout.sh gives its container the same."""
+    from datetime import datetime, timezone
+    if os.environ.get("APPKATA_TOUR_OFFSET"):
+        return os.environ["APPKATA_TOUR_OFFSET"]
+    return "-01:00" if (t or datetime.now(timezone.utc)).hour == 0 else "+00:00"
+
+
+def stage(d: str, utc_offset: str | None = None) -> None:
     """Before a tour: what the screens show of time, as of now (R3-24). The data is made once and
     toured for weeks, so a minimum age set when it was made runs out, and its last sync ages. The
     minimum age is set so that HELD's newest release has HELD_DAYS_LEFT days to go, in the database
     and in Settings, the last sync and each Trust's are put 50 minutes back, and the Audit is
     written again to end half an hour back (R3-25), its days those of utc_offset's time zone, the
-    one the tour shows them in (history). First, the data's paths name where it is now (reroot)."""
+    one the tour shows them in (history; tour_offset by default). First, the data's paths name where
+    it is now (reroot)."""
     import math
     from datetime import datetime, timedelta, timezone
     reroot(d)
@@ -797,6 +810,7 @@ def stage(d: str, utc_offset: str = "+00:00") -> None:
     synced = (t - timedelta(minutes=50)).isoformat()
     db.put("last_sync", synced)
     db.x("UPDATE trusts SET synced_at=?", (synced,))
+    utc_offset = utc_offset or tour_offset(t)
     sign, hh, mm = utc_offset[0], int(utc_offset[1:3]), int(utc_offset[4:6])
     history(db, timezone(timedelta(hours=hh, minutes=mm) * (-1 if sign == "-" else 1)))
     print(f"staged {d}: minimum age {days} days ({HELD.split('/')[1]} {newest['version']} held, {HELD_DAYS_LEFT} days left), synced 50 min ago")
@@ -1071,6 +1085,9 @@ def history(db: DB, tz=None, now=None) -> None:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["offset"]:
+        print(tour_offset())
+        sys.exit(0)
     cmd, d = sys.argv[1], os.path.abspath(sys.argv[2])
     os.environ["APPKATA_DATA"] = d
     if cmd == "stage" and sys.argv[3:4] == ["--utc-offset"]:

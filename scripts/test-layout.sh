@@ -5,19 +5,26 @@
 # It runs on build/tour-data itself (scripts/demo_data.py), at the same path: the paths it shows are
 # part of what is laid out. The screens, at the design point (R5.2.1), go to
 # build/layout-tour; with --shots, a passing tour also replaces screenshots/linux/{dark,light}.
+# APPKATA_TOUR_OFFSET=+HH:MM is the tour's time zone, UTC by default and an hour behind it in the
+# first hour of a UTC day, whose Audit has no room yet (demo_data.py offset, stage).
 #   scripts/test-layout.sh [--shots] [--tour-only NAMES]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 "$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 SHOTS=0
 [ "${1:-}" != --shots ] || { SHOTS=1; shift; }
+OFF=${APPKATA_TOUR_OFFSET:-}
+[ -n "$OFF" ] || OFF=$(python3 "$HERE/scripts/demo_data.py" offset)
+case $OFF in [+-][0-9][0-9]:[0-9][0-9]) ;; *) echo "APPKATA_TOUR_OFFSET is +HH:MM or -HH:MM, not $OFF" >&2; exit 2 ;; esac
+# the same zone for the container, as POSIX writes it: the sign turned round, the name in <>
+TZ_POSIX="<$(echo "$OFF" | tr -d :)>$(echo "$OFF" | tr '+-' '-+')"
 . "$HERE/scripts/lib-tier1.sh"
 tier1_setup "$HERE"
 TD="$HERE/build/tour-data"
 [ -f "$TD/appkata.db" ] || { echo "no demo data in $TD: see docs/build.md (scripts/demo_data.py)" >&2; exit 1; }
-# the minimum age and the sync times, as of now (R3-24); the Audit's days in UTC, the tour's
-# container's time zone (it sets no TZ)
-python3 "$HERE/scripts/demo_data.py" stage "$TD" --utc-offset +00:00
+# the minimum age and the sync times, as of now (R3-24); the Audit's days in the tour's time zone,
+# which its container gets as TZ
+python3 "$HERE/scripts/demo_data.py" stage "$TD" --utc-offset "$OFF"
 python3 "$HERE/scripts/demo_data.py" check "$TD"      # no failed sync, and what screenshots/README.md says each screen shows
 OUT="$HERE/build/layout-tour"
 rm -rf "$OUT" && mkdir -p "$OUT"
@@ -25,7 +32,7 @@ set +e
 # this machine's home, so the paths the screens show read as here (~/kata/AppKata/build/tour-data/...);
 # nothing is written there: the caches and settings go to /tmp
 docker run --rm --user "$(id -u):$(id -g)" -e HOME="$HOME" -e XDG_CACHE_HOME=/tmp/cache -e XDG_CONFIG_HOME=/tmp/config \
-    -e QT_QPA_PLATFORM=offscreen -e PYTHONDONTWRITEBYTECODE=1 \
+    -e TZ="$TZ_POSIX" -e QT_QPA_PLATFORM=offscreen -e PYTHONDONTWRITEBYTECODE=1 \
     -e APPKATA_TOUR_THEMES="${APPKATA_TOUR_THEMES:-dark,light}" -e APPKATA_DATA="$TD" -e XDG_DATA_HOME="$TD/xdg" \
     -v "$HERE:$HERE" -v "$SITE:/site:ro" -v "$OUT:/out" "$IMG" sh -c \
     'cd "$1" && shift && PYTHONPATH="$PWD/src:/site" exec "$@"' sh "$HERE" "$PYT" -m appkata --tour /out "$@" \
@@ -37,7 +44,7 @@ RC=$?
 if [ "$RC" = 0 ]; then
     mkdir -p "$OUT/fresh"
     V=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/src/appkata_core/__init__.py")
-    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp/fresh \
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp/fresh -e TZ="$TZ_POSIX" \
         -e QT_QPA_PLATFORM=offscreen -e PYTHONDONTWRITEBYTECODE=1 -e APPKATA_TOUR_FRESH=1 \
         -e APPKATA_TOUR_THEMES="${APPKATA_TOUR_THEMES:-dark,light}" -e APPIMAGE="/tmp/fresh/Downloads/AppKata-$V-x86_64.AppImage" \
         -v "$HERE:$HERE" -v "$SITE:/site:ro" -v "$OUT/fresh:/out" "$IMG" sh -c \

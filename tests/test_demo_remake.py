@@ -133,3 +133,17 @@ def test_the_committed_snapshot_covers_what_the_build_lists(tmp_path):
     for a in snap.all("SELECT icon, hero FROM apps"):
         for p in (a["icon"], a["hero"]):
             assert not p or not p.startswith("cache/") or os.path.exists(os.path.join(demo.SNAPSHOT, p)), p
+
+
+@pytest.mark.parametrize("hour, offset", [(0, "-01:00"), (1, "+00:00"), (23, "+00:00")])
+def test_the_tours_zone_is_utc_but_in_the_first_hour_of_its_day(monkeypatch, hour, offset):
+    """The Audit's day has no room in its first hour (history stops), so the tour then shows an hour
+    behind UTC, where the day is ending; scripts/test-layout.sh gives its container the same zone."""
+    from datetime import datetime, timezone
+    demo = _demo()
+    monkeypatch.delenv("APPKATA_TOUR_OFFSET", raising=False)
+    assert demo.tour_offset(datetime(2026, 11, 21, hour, 30, tzinfo=timezone.utc)) == offset
+    monkeypatch.setenv("APPKATA_TOUR_OFFSET", "+05:30")
+    assert demo.tour_offset() == "+05:30"
+    sh = open(os.path.join(ROOT, "scripts", "test-layout.sh"), encoding="utf-8").read()
+    assert 'demo_data.py" offset' in sh and '--utc-offset "$OFF"' in sh and '-e TZ="$TZ_POSIX"' in sh

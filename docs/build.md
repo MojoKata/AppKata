@@ -61,6 +61,10 @@ menu or dialog it is drawn in (`src/appkata/layout.py`). It writes what runs pas
 to the QML. `tests/test_layout.py` opens the Install dialog with long values (Windows' paths, long
 names) and checks it the same way in tier 1.
 
+The Audit groups its entries by day, so the tour shows its times in UTC, but in the first hour of a
+UTC day an hour behind it, where the day is ending (`scripts/demo_data.py offset`; `stage` would stop
+there: today's entries have no room yet); `APPKATA_TOUR_OFFSET=+HH:MM` sets the zone.
+
 `scripts/demo_data.py sync` needs github.com. It syncs again any app whose sync failed (GitHub answers
 5xx at times), and stops if one still has: its message would show in the screenshots.
 `scripts/demo_data.py check DIR` says so of existing demo data, and `retry DIR` syncs those apps again;
