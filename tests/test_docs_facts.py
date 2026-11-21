@@ -15,6 +15,7 @@ import sys
 
 from appkata_core import sandbox as sb, trustfile
 import reqdocs
+import written
 import test_booted as booted
 from test_requirements_trace import _finding_exists
 
@@ -34,7 +35,7 @@ def _read(rel):
         return reqdocs.text()
     if rel == A1:
         return reqdocs.section(1, reqdocs.ARCH)
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+    with open(written.path(rel), encoding="utf-8") as f:     # the code as written, in a mutation run too
         return f.read()
 
 

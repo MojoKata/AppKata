@@ -14,8 +14,11 @@ import sys
 
 import pytest
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import written  # noqa: E402
+
+# the files as written: in a mutation run, the checkout, not mutmut's copy (tests/written.py)
+ROOT = written.root()
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 import public_text  # noqa: E402
 
 
@@ -55,6 +58,12 @@ def test_the_check_finds_a_name_however_it_is_written(monkeypatch):
         assert not public_text.found(text), text
 
 
+# The mutation baselines' survivors (docs/testing.md, "Mutation testing") keep each surviving change
+# mutmut made, and one that changes the address's case is a change to it, not an address written
+# there. The baselines' counts and every other file are checked.
+MUTATIONS = "docs/hardening/mutation/survivors/"
+
+
 def test_the_repository_address_is_appkata_core_s():
     """AppKata's own repository is written in one place, APPKATA_REPO (R2.11.1): it was a
     placeholder until the real one was chosen, and the placeholder had been copied into the installer,
@@ -67,7 +76,7 @@ def test_the_repository_address_is_appkata_core_s():
     hits = {}
     for rel in _tracked():
         path = os.path.join(ROOT, rel)
-        if not os.path.isfile(path):
+        if not os.path.isfile(path) or rel.startswith(MUTATIONS):
             continue
         with open(path, "rb") as f:
             data = f.read()

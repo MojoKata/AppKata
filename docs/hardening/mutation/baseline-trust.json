@@ -1,0 +1,81 @@
+{
+  "area": "trust",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 4694,
+  "killed": 2880,
+  "timeout": 19,
+  "survived": 1438,
+  "no tests": 351,
+  "other": 6,
+  "not run": 0,
+  "files": {
+    "src/appkata_core/gitsig.py": {
+      "content": "e62990dfeb7838521b5d2edca73d9f19882d4e91",
+      "mutants": 1187,
+      "killed": 636,
+      "timeout": 2,
+      "survived": 534,
+      "no tests": 15,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/nostr.py": {
+      "content": "ed28ba9feb54d97fae6742c951a3d269a427e234",
+      "mutants": 449,
+      "killed": 236,
+      "timeout": 2,
+      "survived": 177,
+      "no tests": 34,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/review.py": {
+      "content": "833d7b6be71146996d0ddc2409a377b68cb3e110",
+      "mutants": 418,
+      "killed": 239,
+      "timeout": 0,
+      "survived": 117,
+      "no tests": 61,
+      "other": 1,
+      "not run": 0
+    },
+    "src/appkata_core/scoring.py": {
+      "content": "71e9aa66ec528ab2ac2016aef5cd045fc8acce3a",
+      "mutants": 60,
+      "killed": 53,
+      "timeout": 0,
+      "survived": 7,
+      "no tests": 0,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/sshsig.py": {
+      "content": "bed46c065ece723208163843c3e40909b0c937a9",
+      "mutants": 815,
+      "killed": 434,
+      "timeout": 14,
+      "survived": 126,
+      "no tests": 241,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/trustfile.py": {
+      "content": "a51cd3be3b02e37f085459e8e64e4f714949000b",
+      "mutants": 1765,
+      "killed": 1282,
+      "timeout": 1,
+      "survived": 477,
+      "no tests": 0,
+      "other": 5,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}

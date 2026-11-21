@@ -163,3 +163,32 @@ def test_a_title_cannot_close_the_page_s_script():
     issues = [issue(1, "H1.0 x", "hardening"), issue(2, "H1.0-1 </script><script>alert(1)", parent=1)]
     text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store", issues)
     assert "</script><script>alert" not in text and "<\\/script><script>alert(1)" in text
+
+
+def test_an_areas_mutation_testing_is_its_latest_records_and_what_changed_since(tmp_path):
+    """The By area table's Mutation column (docs/testing.md, "Mutation testing"): an area's record's
+    figures, and "baseline, changed since" when a module changed after it or isn't in it."""
+    root, records = tmp_path / "repo", tmp_path / "records"
+    (root / "src" / "appkata_core").mkdir(parents=True)
+    for name in ("urls", "http", "review"):
+        (root / "src" / "appkata_core" / f"{name}.py").write_text(f"{name.upper()} = 1\n")
+    records.mkdir()
+    m = hardening._mutate()
+    same = m.blob(root / "src/appkata_core/urls.py")
+    (records / "baseline-sources.json").write_text(json.dumps({
+        "mutants": 9, "killed": 5, "timeout": 1, "survived": 3, "no tests": 0,
+        "files": {"src/appkata_core/urls.py": {"content": same}, "src/appkata_core/http.py": {"content": "old"}}}))
+    got = hardening.mutation(root, records)
+    assert got["sources"] == {"record": "baseline-sources.json", "mutants": 9, "killed": 5, "timeout": 1,
+                              "survived": 3, "noTests": 0, "changed": ["src/appkata_core/http.py"], "new": []}
+    assert got["trust"] == {"record": None, "changed": [], "new": ["src/appkata_core/review.py"]}
+    text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store", [], got)
+    data = json.loads(text.split('type="application/json">', 1)[1].split("</script>", 1)[0])
+    assert data["mutation"] == got
+    assert "baseline, changed since" in hardening.PAGE.read_text(encoding="utf-8")
+
+
+def test_the_checkouts_records_are_read_when_none_are_given():
+    got = hardening.mutation()
+    assert {"windows", "trust", "store"} <= set(got)
+    assert all(v["record"] is None or v["record"].endswith(".json") for v in got.values())

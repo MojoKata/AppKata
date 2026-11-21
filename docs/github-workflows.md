@@ -13,6 +13,7 @@ the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a dow
 | A pull request, a push to `master` | `tier1` in 3 parts, `appimage`, `windows`, then `coverage` and `ci-times`, then `site` and `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days); the Pages site as this commit would publish it (`site`, 30 days) |
 | A push to `master` | the same, then `pages` | the site, published at the repository's GitHub Pages ("The Pages site", below) |
 | A `v*` tag | the same, built without the caches, and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256` |
+| By hand, [`mutate.yml`](../.github/workflows/mutate.yml) (and a trial on a pull request that changes it or its tools) | `plan`, then a `mutate` job per 1000 code lines or so, 14 at once: mutation testing ([`testing.md`](testing.md#mutation-testing)) | each job's outcomes, survivors and log (`mutation-<job>`, 90 days), which `scripts/mutate.py gather` turns into the areas' baselines |
 
 All of it runs on GitHub's hosted `ubuntu-24.04` runners, free for a public repository. Each job runs
 the script it would run on a development machine, so a CI failure reproduces locally:
@@ -113,6 +114,9 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   area; and the open issues labelled `gap` or `question`. It reads the issues, not the project board.
   Only an issue's number, title, labels, state and severity reach the page; its body text doesn't.
   A closed step shows what changed in its areas at its pull request's merge, from the history.
+  Each area also shows its mutation testing, from its latest record in `docs/hardening/mutation/`
+  (its survivors of its changes), marked "baseline, changed since" when a module has changed since
+  that record or isn't in it ([`testing.md`](testing.md#mutation-testing), `mutate.py stale`).
 - **Screenshots** (`screenshots/index.html`): each version's screens under
   `screenshots/<version>/`, listed in `screenshots/index.json`. `--screenshots DIR` adds the
   versions a folder holds (`DIR/<version>/…`) and replaces those already published.

@@ -100,9 +100,9 @@ def test_the_tour_stages_the_sandbox_only_through_the_deciders():
     reader of a fact, and not the others, is R3-27's class: App Detail's "runs sandboxed" was
     forced in sandboxInfo itself, and in the empty-home warning beside it."""
     import ast
-    import os
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "appkata", "backend.py")
-    with open(path, encoding="utf-8") as f:
+
+    import written
+    with open(written.path("src/appkata/backend.py"), encoding="utf-8") as f:  # as written, in a mutation run too
         tree = ast.parse(f.read())
     readers = set()
     for fn in ast.walk(tree):
