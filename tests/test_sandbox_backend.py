@@ -1,4 +1,4 @@
-"""App sandboxing (requirement 17): the backend glue — which grant set applies to an app, and when."""
+"""App sandboxing (R17): the backend glue — which grant set applies to an app, and when."""
 
 import json
 import os
@@ -51,7 +51,7 @@ def _installed(be) -> None:
 
 
 def test_a_changed_review_never_changes_an_installed_apps_grants(be):
-    # Regression (decision 5, 17.11): with no choice saved by the user, every update re-resolved the
+    # Regression (decision 5, R17.11): with no choice saved by the user, every update re-resolved the
     # grants from the current reviews, so a new review asking for network widened access silently.
     _review(be, "offline-editor")
     r = be._resolved_sandbox(URL, kind="appimage")
@@ -117,7 +117,7 @@ def _tarball_install(be, tmp_path) -> str:
 
 
 def test_apps_installed_before_sandbox_support_get_their_launcher_once_it_works(be, tmp_path, monkeypatch):
-    # Regression (17.10): an app installed while AppArmor setup was pending (or bwrap was missing) ran
+    # Regression (R17.10): an app installed while AppArmor setup was pending (or bwrap was missing) ran
     # Off — fine — but nothing regenerated its launcher after setup, so it stayed unsandboxed while
     # App Detail showed its grants as if they applied.
     _review(be, "offline-editor")
@@ -187,7 +187,7 @@ def test_an_update_that_first_sandboxes_an_app_says_so(be, tmp_path, monkeypatch
 
 @pytest.mark.parametrize("answer", ["now", "not now"])
 def test_the_first_install_that_needs_the_sandbox_asks_to_set_it_up(be, monkeypatch, answer):
-    # Review 2, F12: 17.10's "offers a one-time setup on first need ... if declined" was never built;
+    # Review 2, F12: R17.10's "offers a one-time setup on first need ... if declined" was never built;
     # the install card only pointed at Settings. Now a fresh install that would run sandboxed, on a
     # system that needs the setup, asks first; Not now is remembered and audited
     be._app = lambda url: {"url": URL, "name": "Demo", "installed": "", "foreign": False, "installKind": "tarball"}
@@ -233,7 +233,7 @@ def test_an_app_with_a_launcher_keeps_it_on_a_broken_host(be, tmp_path, monkeypa
     # Review 2, F16: an update, a rollback or a sandbox change while the support check failed (the
     # profile removed, another bwrap first on PATH, one cached timeout) removed a working launcher, and
     # the app ran with the real home until a later start healed it. Once it has one it keeps one; a
-    # fresh install on such a host still runs Off, as before (17.10).
+    # fresh install on such a host still runs Off, as before (R17.10).
     _tarball_install(be, tmp_path)
     host = {"tools": True, "status": "ok"}
     monkeypatch.setattr(sb, "have_tools", lambda: host["tools"])
@@ -260,9 +260,9 @@ def test_the_startup_pass_regenerates_a_launcher_an_older_appkata_wrote(be, tmp_
     # Regression (round four, R4-4): the heal pass skipped any launcher that existed, so a launcher
     # written by an older AppKata -- before the symlink guard, the narrowed proxy, the desktop-entry
     # mask, every launcher change this branch made -- kept running as written until the user
-    # happened to update the app or touch its sandbox. The launcher is the enforcement (17.4), so
+    # happened to update the app or touch its sandbox. The launcher is the enforcement (R17.4), so
     # the pass now compares each one with what AppKata would write today and rewrites it if they
-    # differ; a hand-edited launcher (17.4: "do not edit") is restored the same way.
+    # differ; a hand-edited launcher (R17.4: "do not edit") is restored the same way.
     _review(be, "online-app")
     _tarball_install(be, tmp_path)
     monkeypatch.setattr(sb, "have_tools", lambda: True)
@@ -440,7 +440,7 @@ def test_open_reports_a_launch_that_fails_at_once(be, tmp_path, monkeypatch):
 
 
 def test_startup_healing_leaves_foreign_installs_alone(be, tmp_path, monkeypatch):
-    # setSandbox never touches an app installed outside AppKata (4.5); the startup healing pass did.
+    # setSandbox never touches an app installed outside AppKata (R4.5); the startup healing pass did.
     _review(be, "offline-editor")
     _tarball_install(be, tmp_path)
     monkeypatch.setattr(sb, "have_tools", lambda: True)
@@ -453,9 +453,9 @@ def test_startup_healing_leaves_foreign_installs_alone(be, tmp_path, monkeypatch
 
 def test_appkata_itself_is_never_sandboxed_and_a_launcher_an_older_one_gave_it_goes(be, tmp_path, monkeypatch):
     # Review 3, R3-6 (found by the lifecycle harness): run as an AppImage, AppKata adopts its own file
-    # as installed (2.11), and nothing kept that install out of sandboxing. The heal pass gave it a
+    # as installed (R2.11), and nothing kept that install out of sandboxing. The heal pass gave it a
     # Strict launcher with no network, and its menu entry, command link, autostart and appkata://
-    # links then started it where it could neither sync nor install (17.1).
+    # links then started it where it could neither sync nor install (R17.1).
     from appkata_core import APPKATA_REPO, install
     monkeypatch.setattr(sb, "have_tools", lambda: True)
     monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
@@ -481,7 +481,7 @@ def test_appkata_itself_is_never_sandboxed_and_a_launcher_an_older_one_gave_it_g
 
 
 def test_settings_and_app_detail_warn_about_an_abstract_session_bus_for_apps_with_the_network(be, monkeypatch):
-    # Review 3, R3-8 (17.9): Settings > Sandbox says it for the session; App Detail only for an app the
+    # Review 3, R3-8 (R17.9): Settings > Sandbox says it for the session; App Detail only for an app the
     # network grant lets reach the bus
     monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-AbCdEf,guid=0123")
@@ -502,7 +502,7 @@ def test_settings_and_app_detail_warn_about_an_abstract_session_bus_for_apps_wit
     ("appimage", "windows", False), ("tarball", "macos", False), ("exe", "windows", False),
 ])
 def test_only_appimages_and_tarballs_on_linux_get_a_sandbox(be, monkeypatch, kind, os_name, applies):
-    # 17.1: Linux only, and only the two portable kinds AppKata installs itself. A .deb's or .rpm's
+    # R17.1: Linux only, and only the two portable kinds AppKata installs itself. A .deb's or .rpm's
     # scripts ran as root at install, a Flatpak has its own sandbox, and Windows and macOS have none of
     # this. Review 3, R3-1: no test ever asked for any of them.
     import appkata_core.platform as platform
@@ -528,7 +528,7 @@ def _plan_with(be, monkeypatch, names):
 
 def test_the_install_dialogs_sandbox_card_is_what_planfor_computes(be, monkeypatch):
     # Review 3, R3-3: the dialog tests build the plan by hand, so what planFor itself gives the Sandbox
-    # card went untested -- the unpacking cost (17.7), the card for each kind (review 2, F4) and a
+    # card went untested -- the unpacking cost (R17.7), the card for each kind (review 2, F4) and a
     # review's Off offered, never applied (F8). Here planFor computes it, against App Detail's view.
     monkeypatch.setattr(sb, "have_tools", lambda: True)
     monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
@@ -537,8 +537,8 @@ def test_the_install_dialogs_sandbox_card_is_what_planfor_computes(be, monkeypat
     info = be.sandboxInfo(URL)
     assert card["applicable"] and card["appImage"] and card["suggestsOff"] is False
     assert (card["template"], card["level"], card["chips"]) == (info["template"], info["level"], info["chips"])
-    assert card["extractMb"] == 250                                    # 2.5 x the AppImage (17.7)
-    assert card["byKind"]["gui"]["template"] == "strict" and card["byKind"]["cli"]["template"] == "cli-tool"   # 17.3.3
+    assert card["extractMb"] == 250                                    # 2.5 x the AppImage (R17.7)
+    assert card["byKind"]["gui"]["template"] == "strict" and card["byKind"]["cli"]["template"] == "cli-tool"   # R17.3.3
     assert set(_plan_with(be, monkeypatch, [img])["kind"]) == {"detected", "choice"}
     _review(be, "off")                                                 # a review's Off: offered, not applied
     card = _plan_with(be, monkeypatch, [img])["sandbox"]
@@ -553,7 +553,7 @@ def test_the_install_dialogs_sandbox_card_is_what_planfor_computes(be, monkeypat
 
 
 def test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_choice(be, monkeypatch):
-    # Regression (decision 5, 17.11): installWith rewrote app_settings.install from the dialog's fields
+    # Regression (decision 5, R17.11): installWith rewrote app_settings.install from the dialog's fields
     # alone, so "Install options…" saved without touching the Sandbox card dropped the pin, the "seen"
     # marker and the user's own sandbox choice; the next install then re-pinned from the current
     # reviews — the silent widening the pin exists to prevent, one step earlier.
@@ -588,7 +588,7 @@ def test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_ch
 
 
 def test_a_sandbox_chosen_in_the_install_dialog_counts_as_seen(be, monkeypatch):
-    # Regression (17.11): the install dialog's Sandbox card says "suggested by <reviewer>" beside the
+    # Regression (R17.11): the install dialog's Sandbox card says "suggested by <reviewer>" beside the
     # dropdown, yet a template picked there was saved without the "seen" marker, so the review badge
     # greeted the user as soon as the install finished — for a suggestion they had just overruled.
     monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": "1.0"})
@@ -745,7 +745,7 @@ def test_use_theirs_for_an_ordinary_suggestion_still_adopts_the_reviews(be):
 
 
 def test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed(be, tmp_path, monkeypatch):
-    # Review 2, F3 (owner's decision): an app marked "updates itself" (4.10) can't while sandboxed --
+    # Review 2, F3 (owner's decision): an app marked "updates itself" (R4.10) can't while sandboxed --
     # its folder, and an AppImage's own file, are read-only -- and AppKata didn't either, so it stayed
     # on its installed version unseen. While it runs sandboxed (it has a launcher) AppKata updates it.
     from appkata_core import catalog

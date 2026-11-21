@@ -45,7 +45,7 @@ QtObject {
     readonly property var warnTags: ["spyware", "malware", "ads", "tracking", "knownvuln"]
 
     function mb(n) { return n >= 1e8 ? Math.round(n / 1e6) + " MB" : (n / 1e6).toFixed(1) + " MB" }
-    // an install in progress (requirement 4.8.1): "Downloading 45%", "Verifying…", "Waiting"
+    // an install in progress (R4.8.1): "Downloading 45%", "Verifying…", "Waiting"
     function busyLabel(b) {
         if (!b) return ""
         if (b.phase === "Downloading") return "Downloading" + (b.total ? " " + Math.floor(b.progress * 100) + "%" : "…")

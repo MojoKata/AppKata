@@ -1,4 +1,4 @@
-"""The Audit (requirement 13), the App log (14) and Explore (7.7)."""
+"""The Audit (R13), the App log (R14) and Explore (R7.7)."""
 
 import base64
 import hashlib
@@ -137,7 +137,7 @@ def test_ngit_reports_unreachable_relays():
 
 
 def test_older_version_files_fetched_on_demand(tmp_path):
-    """The version list can install a release whose files the last sync didn't read (requirement 5.7.5)."""
+    """The version list can install a release whose files the last sync didn't read (R5.7.5)."""
     from appkata_core import sync
     db = DB(str(tmp_path / "a.db"))
     url = "https://git.example.net/team/app"
@@ -168,7 +168,7 @@ def test_autostart_and_links(tmp_path, monkeypatch):
 
 
 def test_export_import_roundtrip(tmp_path, monkeypatch):
-    """Sources, app settings and Trusts with their Authorities; tokens never (requirement 11.2)."""
+    """Sources, app settings and Trusts with their Authorities; tokens never (R11.2)."""
     import subprocess
     from appkata_core import devtools, sync, transfer
     monkeypatch.setenv("APPKATA_DATA", str(tmp_path / "data"))

@@ -1,4 +1,4 @@
-"""The local SQLite cache (requirement 1.8, 9.1). Versioned schema, migrated on open."""
+"""The local SQLite cache (R1.8, R9.1). Versioned schema, migrated on open."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS installs(
 CREATE TABLE IF NOT EXISTS app_settings(url TEXT PRIMARY KEY, pinned TEXT, min_age INTEGER, install TEXT);
 CREATE TABLE IF NOT EXISTS foreign_installs(url TEXT PRIMARY KEY, location TEXT, version TEXT, checked_at TEXT,
     adopt TEXT DEFAULT '');
--- package channels (requirement 16): Trusts' channel lines, the project's AppStream ID, link checks
+-- package channels (R16): Trusts' channel lines, the project's AppStream ID, link checks
 CREATE TABLE IF NOT EXISTS app_meta(url TEXT PRIMARY KEY, appstream_id TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS channel_checks(
     url TEXT, kind TEXT, value TEXT, state TEXT DEFAULT 'unchecked', detail TEXT DEFAULT '', verified INTEGER,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS channel_checks(
 """
 
 
-# The Audit (requirement 13): append-only. Triggers refuse every UPDATE and DELETE.
+# The Audit (R13): append-only. Triggers refuse every UPDATE and DELETE.
 AUDIT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit(
     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL,
@@ -83,23 +83,23 @@ class DB:
             v = int(row[0]) if row else 0
             if v < 2:
                 self.c.executescript(AUDIT_SCHEMA)
-            if v < 3:      # the install choice for each app (requirement 4.9)
+            if v < 3:      # the install choice for each app (R4.9)
                 cols = [r[1] for r in self.c.execute("PRAGMA table_info(app_settings)")]
                 if "install" not in cols:
                     self.c.execute("ALTER TABLE app_settings ADD COLUMN install TEXT")
-            if v < 4:      # reviewers' recommended install options (requirement 10.3.1)
+            if v < 4:      # reviewers' recommended install options (R10.3.1)
                 cols = [r[1] for r in self.c.execute("PRAGMA table_info(reviews)")]
                 if "settings" not in cols:
                     self.c.execute("ALTER TABLE reviews ADD COLUMN settings TEXT DEFAULT '{}'")
-            if v < 5:      # each Trust's Score, 1–5 stars (requirement 10.6.2)
+            if v < 5:      # each Trust's Score, 1–5 stars (R10.6.2)
                 cols = [r[1] for r in self.c.execute("PRAGMA table_info(trusts)")]
                 if "score" not in cols:
                     self.c.execute("ALTER TABLE trusts ADD COLUMN score INTEGER DEFAULT 3")
-            if v < 6:      # a foreign install a package channel matches exactly can be adopted (requirement 16.4.2)
+            if v < 6:      # a foreign install a package channel matches exactly can be adopted (R16.4.2)
                 cols = [r[1] for r in self.c.execute("PRAGMA table_info(foreign_installs)")]
                 if "adopt" not in cols:
                     self.c.execute("ALTER TABLE foreign_installs ADD COLUMN adopt TEXT DEFAULT ''")
-            if v < 7:      # Trusts' channel lines are read from their reviews' settings now (requirement 16.1.3)
+            if v < 7:      # Trusts' channel lines are read from their reviews' settings now (R16.1.3)
                 self.c.execute("DROP TABLE IF EXISTS trust_channels")
             if v < SCHEMA_VERSION:
                 self.c.execute("INSERT OR REPLACE INTO meta VALUES('schema', ?)", (str(SCHEMA_VERSION),))

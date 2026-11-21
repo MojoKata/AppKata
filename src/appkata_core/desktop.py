@@ -1,5 +1,5 @@
-"""Desktop integration: start in the tray at login (requirement 1.7.4), the appkata:// link
-handler (11.3). Linux and Windows (15.14); macOS follows with its build."""
+"""Desktop integration: start in the tray at login (R1.7.4), the appkata:// link
+handler (R11.3). Linux and Windows (R15.14); macOS follows with its build."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import sys
 from .platform import OS
 
 
-# AppKata's stable-name link once it has installed itself (requirement 2.11.3.1), so the appkata://
+# AppKata's stable-name link once it has installed itself (R2.11.3.1), so the appkata://
 # handler and autostart survive updates
 LAUNCH_OVERRIDE = ""
 
@@ -91,7 +91,7 @@ def scheme_registered() -> bool:
 
 
 def register_scheme(on: bool) -> bool:
-    """appkata://add/<url> opens Add source (requirement 11.3). Returns whether it's registered."""
+    """appkata://add/<url> opens Add source (R11.3). Returns whether it's registered."""
     if OS == "windows":
         from . import windows
         windows.scheme_set(_win_command([]) + ' "%1"' if on else "")

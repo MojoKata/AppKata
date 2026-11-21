@@ -2,8 +2,8 @@
 
 What AppKata checks when it downloads a release, where a cryptographic **signature** does and doesn't
 enter the picture, and what adding publisher-GPG verification would take. Requirements: downloads and
-checksums (4.4), review signatures (7.6.2, 10.7, 10.8), review Details (10.3.4), Windows Authenticode
-(15.11), package-channel trust (16.3.6).
+checksums (R4.4), review signatures (R7.6.2, R10.7, R10.8), review Details (R10.3.4), Windows Authenticode
+(R15.11), package-channel trust (R16.3.6).
 
 ## Short answers
 
@@ -47,9 +47,9 @@ that serves a different file than the forge, not against a compromised release.
 
 | Origin | Mechanism | Code |
 |---|---|---|
-| Windows `.exe`/`.msi`/`.msix` | **Authenticode** — the OS verifies the embedded signature; the signer is shown (15.11) | `install.py` (`authenticode` / `signature_verdict`) |
-| Flatpak | installed through `flatpak`, which verifies against the **remote's GPG key** (Flathub) (16.3.6) | `install.py` (flatpak branch) |
-| `.deb` / `.rpm` | installed through `apt`/`dnf`, which verify against the **distro's repo keys** (16.3.6) | `install.py` (package branch) |
+| Windows `.exe`/`.msi`/`.msix` | **Authenticode** — the OS verifies the embedded signature; the signer is shown (R15.11) | `install.py` (`authenticode` / `signature_verdict`) |
+| Flatpak | installed through `flatpak`, which verifies against the **remote's GPG key** (Flathub) (R16.3.6) | `install.py` (flatpak branch) |
+| `.deb` / `.rpm` | installed through `apt`/`dnf`, which verify against the **distro's repo keys** (R16.3.6) | `install.py` (package branch) |
 
 So the AppImage and tarball paths — the only two the sandbox covers — never produce `"signed"`.
 
@@ -64,14 +64,14 @@ check a signed `AppKata.md` commit — see below — not a release.)
 ## The signed-commit machinery is about reviewers, not binaries
 
 `gitsig.py` and `sshsig.py` verify that changes to a Trust's `AppKata.md` were **signed by one of its
-Authorities** (7.6.2, 10.7, 10.8): OpenPGP via `gpg` in a keyring holding only that Trust's keys, and
+Authorities** (R7.6.2, R10.7, R10.8): OpenPGP via `gpg` in a keyring holding only that Trust's keys, and
 SSH signatures in pure Python (so trust checks don't depend on the host's OpenSSH version). This
 authenticates *who wrote a review*. It says nothing, on its own, about the bytes of a release.
 
 ## Authenticity through signed reviews
 
 There is one path by which a cryptographic signature does reach a specific binary, and it is easy to
-miss. A reviewer can record a file's **SHA-256 in the review's `Details`** (10.3.4,
+miss. A reviewer can record a file's **SHA-256 in the review's `Details`** (R10.3.4,
 `### <App>[<version>]::Details` → `SHA-256: …`). Because that review lives in a **signed commit**, the
 digest is a **signed third-party attestation of that exact file**. When the file AppKata is about to
 install (or has installed) has the same digest, App Detail shows **"Same file as \<reviewer\>
@@ -85,7 +85,7 @@ tends to own), and it composes with the Trust/Score system the rest of AppKata a
 
 ## If we wanted publisher-GPG verification
 
-This would be a **new feature** (and a new `requirements.md` §4.4 clause), not a tweak. Sketch:
+This would be a **new feature** (and a new R4.4 clause), not a tweak. Sketch:
 
 1. **A signing key per app/source.** A fingerprint, with lookup like the Trust layer already does
    (`.appkata/keys/` in the repo, then `keys.openpgp.org`), set as a Source setting and/or a review

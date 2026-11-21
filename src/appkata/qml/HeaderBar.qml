@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Own header bar (requirement 5.3): logo, perspective switcher, sync status, ⋮ menu, close; on
-// Windows also minimize and maximize/restore (requirement 15.13).
+// Own header bar (R5.3): logo, perspective switcher, sync status, ⋮ menu, close; on
+// Windows also minimize and maximize/restore (R15.13).
 Rectangle {
     id: root
     property string view: "catalog"
@@ -43,12 +43,12 @@ Rectangle {
                         anchors.centerIn: parent; spacing: 6
                         Icon { name: modelData[1]; color: parent.parent.on ? Theme.text : Theme.muted; anchors.verticalCenter: parent.verticalCenter }
                         Text { text: modelData[2]; color: parent.parent.on ? Theme.text : Theme.muted; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                        Icon {           // an install in progress (requirement 4.8.1)
+                        Icon {           // an install in progress (R4.8.1)
                             visible: modelData[0] === "apps" && backend.installing
                             name: "sync"; size: 14; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter
                             RotationAnimation on rotation { running: backend.installing; from: 0; to: 360; duration: 1100; loops: Animation.Infinite }
                         }
-                        Rectangle {      // updates waiting (requirement 5.3)
+                        Rectangle {      // updates waiting (R5.3)
                             visible: modelData[0] === "apps" && backend.updateCount > 0
                             width: Math.max(20, cnt.implicitWidth + 10); height: 18; radius: 9; color: Theme.accent
                             anchors.verticalCenter: parent.verticalCenter
@@ -61,7 +61,7 @@ Rectangle {
         }
     }
 
-    // sync status (requirement 9.2)
+    // sync status (R9.2)
     Row {
         id: syncRow
         anchors.right: dotsBtn.left; anchors.rightMargin: 22; anchors.verticalCenter: parent.verticalCenter
@@ -114,7 +114,7 @@ Rectangle {
             menuWidth: 300
             x: dotsBtn.width - menuWidth; y: 40
             readonly property string mode: Theme.mode         // the theme shown, decided once in Main.qml
-            items: [   // requirement 5.4
+            items: [   // R5.4
                 { key: "sync", icon: "sync", text: "Sync", subtext: backend.syncing ? "Syncing…" : "Last synced " + Theme.ago(backend.lastSync) },
                 { key: "settings", icon: "gear", text: "Settings…" },
                 { type: "separator" },

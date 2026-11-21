@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// Where an app comes from (requirement 2.9.3): branch icon for a Source, avatars for its Trusts.
+// Where an app comes from (R2.9.3): branch icon for a Source, avatars for its Trusts.
 Row {
     id: root
     property var app: ({})

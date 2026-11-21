@@ -64,7 +64,7 @@ class World:
     def __init__(self, be, tmp_path, monkeypatch):
         self.be, self.host, self.toasts = be, "ok", []
         _tarball_install(be, tmp_path)
-        # AppKata's own AppImage, adopted as installed the way _ensure_self records it (2.11)
+        # AppKata's own AppImage, adopted as installed the way _ensure_self records it (R2.11)
         image = tmp_path / "Downloads" / "AppKata-x86_64.AppImage"
         image.parent.mkdir(parents=True, exist_ok=True)
         image.write_text("#!/bin/sh\n")
@@ -168,7 +168,7 @@ def check(w: World, op: str, before: dict, after: dict, toasts: list) -> set[str
     if w.host == "bwrap-only" and op in ("heal", "update", "choose") and info["level"] != "off" and not after["launcher"]:
         broken.add("bwrap-alone-sandboxes")
     # a sandbox that starts with an empty home is said: before Save in the dialog the user chose it in,
-    # or in a notice when AppKata does it (17.13, R2-F13)
+    # or in a notice when AppKata does it (R17.13, R2-F13)
     if not before["launcher"] and after["launcher"] and before["fresh"] and \
             not (op in USER_DIALOG and before["warning"]) and not any("fresh settings" in t for t in toasts):
         broken.add("told-when-a-sandbox-starts")
@@ -177,7 +177,7 @@ def check(w: World, op: str, before: dict, after: dict, toasts: list) -> set[str
             if after["audit"] > before["audit"] else []
         b, a = sb.normalize(before["baked"]), sb.normalize(after["baked"])
         said = " ".join(r["detail"] or "" for r in rows)
-        # each grant that changed must be named in words a person reads (17.16, R2-F11: the entry said
+        # each grant that changed must be named in words a person reads (R17.16, R2-F11: the entry said
         # only the template and level); the harness's own words, not the product's describer
         words = {"network": ["network"], "write_app": ["own files"],
                  "folders": sorted(set(a["folders"]) ^ set(b["folders"]) | {p for p in a["folders"] if b["folders"].get(p) not in (None, a["folders"][p])}),

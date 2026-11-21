@@ -2,14 +2,14 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The Trust panel (requirement 7.6): Trust rows, signer hover cards, and the Trust Detail panel.
+// The Trust panel (R7.6): Trust rows, signer hover cards, and the Trust Detail panel.
 Rectangle {
     id: root
     property int selected: -1
     property var hoverInfo: null           // {trust, index, person, x, y}
     property var d: ({})
     signal addTrust()
-    signal confirmAction(string kind, var args)          // removals and new signers ask first (requirement 5.8)
+    signal confirmAction(string kind, var args)          // removals and new signers ask first (R5.8)
     function select(id) { selected = id; d = id >= 0 ? backend.trustDetail(id) : ({}) }
     function showSigner(trustId, i) {      // the tour: hover one avatar of one Trust row
         const rows = backend.trustItems, r = rows.findIndex(t => t.id === trustId)
@@ -60,7 +60,7 @@ Rectangle {
                 width: flick.width; spacing: 8
                 Repeater {
                     model: backend.trustItems
-                    Rectangle {    // requirement 7.6.3
+                    Rectangle {    // R7.6.3
                         width: col.width; height: 66; radius: 12
                         color: root.selected === modelData.id ? Theme.accentSoft : rArea.containsMouse ? Theme.hover : Theme.surface
                         border.width: root.selected === modelData.id ? 1.5 : 1
@@ -99,7 +99,7 @@ Rectangle {
             }
         }
 
-        // Trust Detail panel (requirement 7.6.5)
+        // Trust Detail panel (R7.6.5)
         Rectangle {
             id: detail
             visible: root.selected >= 0 && !!root.d.id
@@ -116,7 +116,7 @@ Rectangle {
                     width: parent.width; spacing: 8
                     Text { text: root.d.name || ""; color: Theme.text; font.bold: true; font.pixelSize: 16; width: parent.width; elide: Text.ElideRight }
                     Text { text: (root.d.url || "").replace("https://", ""); color: Theme.muted; font.pixelSize: 11; font.family: Theme.mono; width: parent.width; elide: Text.ElideMiddle }
-                    Row {       // the Score weights this Trust's reviews (requirement 10.6.2)
+                    Row {       // the Score weights this Trust's reviews (R10.6.2)
                         spacing: 10
                         Text { text: "Score"; color: Theme.text; font.bold: true; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                         StarPicker { visible: !root.d.own; noZero: true; value: root.d.score || 3; scale: 0.8; transformOrigin: Item.Left
@@ -137,7 +137,7 @@ Rectangle {
                     }
                     Text { visible: !!root.d.problem_detail && root.d.problem !== "unknown-signer"; width: parent.width; wrapMode: Text.WordWrap
                            text: root.d.problem_detail || ""; color: Theme.warn; font.pixelSize: 12 }
-                    Repeater {     // pending new signers (requirement 7.6.6)
+                    Repeater {     // pending new signers (R7.6.6)
                         model: (root.d.authorities || []).filter(a => a.pending)
                         Rectangle {
                             width: dcol.width; height: 100; radius: 11; color: Theme.warnSoft; border.color: Theme.warn
@@ -158,7 +158,7 @@ Rectangle {
                         }
                     }
                     Text { visible: !root.d.own; text: "AUTHORITIES · " + (root.d.authorities || []).filter(a => !a.pending).length; color: Theme.faint; font.bold: true; font.pixelSize: 11; font.letterSpacing: 1.1; topPadding: 4 }
-                    Repeater {    // requirement 7.6.5: remove or disable each
+                    Repeater {    // R7.6.5: remove or disable each
                         model: (root.d.authorities || []).filter(a => !a.pending)
                         Item {
                             width: dcol.width; height: 48
@@ -190,7 +190,7 @@ Rectangle {
         }
     }
 
-    // signer hover card, closes by itself (requirement 7.6.4)
+    // signer hover card, closes by itself (R7.6.4)
     Timer { id: hideTimer; interval: tourMode ? 600000 : 3000; onTriggered: root.hoverInfo = null }
     Rectangle {
         visible: !!root.hoverInfo

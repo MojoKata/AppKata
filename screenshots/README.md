@@ -8,7 +8,7 @@ screenshots/
   windows/{dark,light}/ the real app on Windows 10, from the test VM (scripts/test-windows-vm.sh --shots)
 ```
 
-The `linux` and `windows` screens are 1920 × 1040, the design point (requirement 5.2.1): AppKata
+The `linux` and `windows` screens are 1920 × 1040, the design point (R5.2.1): AppKata
 maximized on a 1920 × 1080 screen. The mockups are drawn at 1280 × 800.
 
 Dark is the main design target. `mocks/dark` has every mockup, and `mocks/light` has the main
@@ -23,66 +23,66 @@ The Windows set leaves out Linux's own screens: the sandbox (A20–A25, C11, U02
 channels (A17, C10, S17) and the AppImage's first start (X14, X16). The Windows screenshots use the same
 demo data as Linux's, which was made on Linux: installed apps
 show Linux file kinds (AppImage, .deb), while install dialogs choose Windows files. The header bar
-has Minimize and Maximize (req 15.13), and Settings has the Windows rows (req 11.1.4, 15.4).
+has Minimize and Maximize (R15.13), and Settings has the Windows rows (R11.1.4, R15.4).
 
 | Screen | Shows |
 |---|---|
-| `A01-apps` | Apps (req 6): updates group first (accent stripe, "Update available", icon-only Update), with **AppKata itself** (req 2.11; no Uninstall button), then the rest sorted by name, including an update held back by the global minimum age ("Held · N days left"), "Pinned at …" and an app that updates itself, a version behind ("2.1.6 is out · Updates itself"); Uninstall tooltip |
+| `A01-apps` | Apps (R6): updates group first (accent stripe, "Update available", icon-only Update), with **AppKata itself** (R2.11; no Uninstall button), then the rest sorted by name, including an update held back by the global minimum age ("Held · N days left"), "Pinned at …" and an app that updates itself, a version behind ("2.1.6 is out · Updates itself"); Uninstall tooltip |
 | `A02-apps-detail` | App Detail for an installed app with an update: From (its Source and the Trusts that list it), **Update / Uninstall / Open**, installed → latest, the ⋯ menu button (Pin, Open project page), a hover on the review pencil, and each Trust's review. Rows show their origin ("Source · 3 trusts", or a Trust's name for a Trust-only app such as VSCodium) |
-| `A03-review-dialog` | Review dialog (req 8.4): read-only app name, tag multi-select (chips centred), the `–★★★★★` Trust and Rating pickers side by side, Markdown editor (Edit/Preview), Auto-commit and Auto-push, signing key status |
-| `A04-review-avoid-unsigned` | Trust set to 0 (Avoid, a veto) and an unsigned auto-commit: not pushed, with **Amend with signing** and **How to set up signing** (req 8.5) |
-| `A05-apps-detail-versions` | App Detail scrolled to **Versions** (req 5.7.5): newest with ★, installed with ▶ and tinted, icon-only Install / Update buttons with tooltips (installing an older version pins it), **Kept** versions (req 4.3.1.5) with a trash button on the right, "Show next 5 older" |
-| `A07-apps-installing` | Installs in progress (req 4.8.1): LocalSend downloading with percentage, size and speed, AppKata and another app **Waiting** in the queue, icon-only Cancel (✕) on each, a turning icon in the Apps segment; Syncthing marked **Updates itself** (req 4.10) |
+| `A03-review-dialog` | Review dialog (R8.4): read-only app name, tag multi-select (chips centred), the `–★★★★★` Trust and Rating pickers side by side, Markdown editor (Edit/Preview), Auto-commit and Auto-push, signing key status |
+| `A04-review-avoid-unsigned` | Trust set to 0 (Avoid, a veto) and an unsigned auto-commit: not pushed, with **Amend with signing** and **How to set up signing** (R8.5) |
+| `A05-apps-detail-versions` | App Detail scrolled to **Versions** (R5.7.5): newest with ★, installed with ▶ and tinted, icon-only Install / Update buttons with tooltips (installing an older version pins it), **Kept** versions (R4.3.1.5) with a trash button on the right, "Show next 5 older" |
+| `A07-apps-installing` | Installs in progress (R4.8.1): LocalSend downloading with percentage, size and speed, AppKata and another app **Waiting** in the queue, icon-only Cancel (✕) on each, a turning icon in the Apps segment; Syncthing marked **Updates itself** (R4.10) |
 | `A08-apps-detail-installing` | The App Detail panel while it downloads: "Downloading 45%" in the Update button, **Cancel**, a progress bar, size and speed |
-| `A09-app-updates-itself` | An app that updates itself (req 4.10): **Updates itself** chip, the newer version that's out, no Update button, where the setting came from ("Kenji's app reviews says it updates itself"), and the Versions list without install buttons; on Linux its sandbox is Off (you switched it off, U01): a sandboxed app is updated by AppKata (req 17.12) |
-| `A10-confirm-uninstall` | Uninstall confirmation (req 4.7, 5.8): Cancel and a red **Uninstall** |
-| `A11-confirm-remove-version` | Removing a kept version asks first (req 5.8) |
-| `A13-app-detail-menu` | Mockup only. The App Detail ⋯ menu (req 5.7.1): Pin at the installed version, **Install options…** (AppImage · portable), Open project page |
-| `A14-apps-empty` | Mockup only. Apps with nothing installed (req 6.7): **Browse the Catalog** |
-| `A15-toast-done` | Mockup only. A short-lived message (req 5.5): "LocalSend 1.17.0 installed." |
+| `A09-app-updates-itself` | An app that updates itself (R4.10): **Updates itself** chip, the newer version that's out, no Update button, where the setting came from ("Kenji's app reviews says it updates itself"), and the Versions list without install buttons; on Linux its sandbox is Off (you switched it off, U01): a sandboxed app is updated by AppKata (R17.12) |
+| `A10-confirm-uninstall` | Uninstall confirmation (R4.7, R5.8): Cancel and a red **Uninstall** |
+| `A11-confirm-remove-version` | Removing a kept version asks first (R5.8) |
+| `A13-app-detail-menu` | Mockup only. The App Detail ⋯ menu (R5.7.1): Pin at the installed version, **Install options…** (AppImage · portable), Open project page |
+| `A14-apps-empty` | Mockup only. Apps with nothing installed (R6.7): **Browse the Catalog** |
+| `A15-toast-done` | Mockup only. A short-lived message (R5.5): "LocalSend 1.17.0 installed." |
 | `A16-toast-error` | Mockup only. An error message, in red |
-| `A17-apps-detail-system-updated` | An app installed from Flathub (req 16.4–16.6, 16.5.1): **Flathub · verified** and **Updated by the system** chips, no Update button, "GNOME Software updates this Flatpak automatically…", **Permissions** with a warn chip for one an update added (+ Home folder since 1.18.0); in the list, KeePassXC as an Ubuntu package marked **Not updated** with the tooltip "Ubuntu doesn’t update this automatically" |
-| `A18-apps-version-avoided` | A Trust avoids the installed version (req 10.6.5): red banner "A trusted reviewer says to avoid your version (5.6.1)" with who, from which version and why, **Update to** the newest release no Trust avoids; the row shows **Avoid this version** |
-| `A19-review-dialog-version` | The review dialog's **Version** select (req 8.4.1.1, 8.4.5.1) at the installed version ("… · Installed"): a new review of it while your review of an earlier version stays in the file, Trust, Rating and Tags carried forward from that one, and **Include what I have installed** with the Details lines it writes |
-| `A06-appkata-restart` | AppKata after updating itself (req 2.11.3): installed 0.2.0 while still running 0.1.0, **Restart AppKata**, no Uninstall or Open |
-| `C01-catalog` | Catalog (req 12): search box, tag filter chips, sort select (Trust, then name), and tiles with icon, name, version, origin (branch icon for a Source, avatars for the Trusts that list it), summary, combined Trust (shield) and Rating (stars), tags, and state marks (Update, Installed, Outside AppKata) |
-| `C02-catalog-detail` | App Detail panel (req 5.7) for an app that comes only from Trusts: hero image, **From** pills that link to each Trust, Checksum chip, **Install**, version boxes, and Reviews with the first review expanded |
-| `C03-catalog-foreign` | A foreign-installed app (req 4.5): **Installed outside AppKata** chip, the disabled install button, and where the existing copy was found |
-| `C04-catalog-search-veto` | Searching "vpn" shows a vetoed app (req 12.6): dimmed tile, **Avoid** badges, the red banner in the panel, and the "hidden by a trusted reviewer" note |
-| `C05-catalog-tags` | Tiles whose tags don't fit are trimmed and end with a **›** button. Hovering KeePassXC's button pops up all 5 tags (req 12.4.1) |
-| `C07-catalog-all-tags` | **More…** opens every tag (req 12.2); a tile shows "Installing 45%" while its app installs (req 4.8.1) |
-| `C08-catalog-empty` | Mockup only. First run (req 12.7): what Sources and Trusts are, **Add source** and **Add trust** |
-| `C09-install-windows-exe` | Mockup only. Windows: an `.exe` AppKata couldn't classify (req 4.2.1, 4.9.2): "This file is **A portable program** / **An installer**" |
-| `C10-install-channels` | Compare with C06. Install options with channels (req 16.3): **Flathub** (Flatpak, Verified, Recommended by a Trust's `- Channel: flatpak`, "GNOME Software updates Flatpaks automatically"), the release's **AppImage**, and the **Ubuntu package** (4 releases behind the project); an **Updates** choice, defaulting to the detected system updater (req 16.5) |
-| `C06-install-options` | First install of Upscayl (req 4.9): its release has an AppImage and an `.rpm`, so AppKata asks; Portable / System package cards, this app's portable options (with the options recommended in a Trust's AppKata.md); the panel shows "AppImage · portable" |
-| `S01-sources` | Sources (req 7): rows with icon, URL, forge, version and chips (Installed, **Built in** for AppKata's own Source, Pinned, Track only, outside AppKata, **In N trusts**, and in the mockup a rate-limit error); Trust panel with avatar stacks ("+N" past four signers), each Trust's **Score** (accent stars; sorted by Score, then name, req 7.6.7), the ngit chip and a warning; signer hover card with a dismiss timer |
-| `S02-trust-detail` | Trust Detail panel at the bottom of the Trust panel (req 7.6.5): last verified commit, the **Score** picker (1–5 stars, req 7.6.8), a pending new signer with **Ignore / Trust signer** (req 10.8), and Authorities with enable switches and remove buttons |
-| `S03-source-menu` | Source row ⋯ menu (req 7.1.3): Pin, **Source settings…** (S08), Open project page, Remove source |
-| `S04-add-source` | Add source (req 7.2): forge detected through `/api/v1/version`, releases found, the download chosen for the platform, a preview card, "Already listed by" a Trust, and Source settings |
-| `S05-remove-source` | Removing an installed app's Source (req 7.3): **Remove and uninstall** or **Remove only**. Trusts also list this app, so it stays in the Catalog |
-| `S06-source-in-trusts` | Hovering a Source's **In 3 trusts** pill: the Trusts that also list it, sorted by Score then name, each with its Score and its review's Trust and Rating, and **Open** links to each Trust (req 2.9.4, 2.9.5) |
-| `S07-explore` | Explore (req 7.7): GitHub · GitLab · Codeberg · ngit picker, search, minimal match summaries with icon-only **Project page** and **Add source** buttons labelled by tooltips (a check when it's already a Source) |
-| `S08-source-settings` | Source settings from the Source ⋯ menu (req 2.6.7): forge (detected), Track only, **Include pre-releases** (Default (Off) · Yes · No), and the download filter for this platform with a live preview of the file it picks |
-| `S09-source-highlight` | An app's **Source** pill opens Sources with its row highlighted (req 2.9.5) |
-| `S10-confirm-remove-trust` | Remove trust (req 7.5): the installed app with no other origin, **Keep updating as my sources** and a red **Remove trust** |
-| `S11-confirm-remove-authority` | Removing an Authority asks first (req 5.8) |
-| `S12-confirm-trust-signer` | Trusting a new signer asks first (req 5.8, 10.8) |
+| `A17-apps-detail-system-updated` | An app installed from Flathub (R16.4–R16.6, R16.5.1): **Flathub · verified** and **Updated by the system** chips, no Update button, "GNOME Software updates this Flatpak automatically…", **Permissions** with a warn chip for one an update added (+ Home folder since 1.18.0); in the list, KeePassXC as an Ubuntu package marked **Not updated** with the tooltip "Ubuntu doesn’t update this automatically" |
+| `A18-apps-version-avoided` | A Trust avoids the installed version (R10.6.5): red banner "A trusted reviewer says to avoid your version (5.6.1)" with who, from which version and why, **Update to** the newest release no Trust avoids; the row shows **Avoid this version** |
+| `A19-review-dialog-version` | The review dialog's **Version** select (R8.4.1.1, R8.4.5.1) at the installed version ("… · Installed"): a new review of it while your review of an earlier version stays in the file, Trust, Rating and Tags carried forward from that one, and **Include what I have installed** with the Details lines it writes |
+| `A06-appkata-restart` | AppKata after updating itself (R2.11.3): installed 0.2.0 while still running 0.1.0, **Restart AppKata**, no Uninstall or Open |
+| `C01-catalog` | Catalog (R12): search box, tag filter chips, sort select (Trust, then name), and tiles with icon, name, version, origin (branch icon for a Source, avatars for the Trusts that list it), summary, combined Trust (shield) and Rating (stars), tags, and state marks (Update, Installed, Outside AppKata) |
+| `C02-catalog-detail` | App Detail panel (R5.7) for an app that comes only from Trusts: hero image, **From** pills that link to each Trust, Checksum chip, **Install**, version boxes, and Reviews with the first review expanded |
+| `C03-catalog-foreign` | A foreign-installed app (R4.5): **Installed outside AppKata** chip, the disabled install button, and where the existing copy was found |
+| `C04-catalog-search-veto` | Searching "vpn" shows a vetoed app (R12.6): dimmed tile, **Avoid** badges, the red banner in the panel, and the "hidden by a trusted reviewer" note |
+| `C05-catalog-tags` | Tiles whose tags don't fit are trimmed and end with a **›** button. Hovering KeePassXC's button pops up all 5 tags (R12.4.1) |
+| `C07-catalog-all-tags` | **More…** opens every tag (R12.2); a tile shows "Installing 45%" while its app installs (R4.8.1) |
+| `C08-catalog-empty` | Mockup only. First run (R12.7): what Sources and Trusts are, **Add source** and **Add trust** |
+| `C09-install-windows-exe` | Mockup only. Windows: an `.exe` AppKata couldn't classify (R4.2.1, R4.9.2): "This file is **A portable program** / **An installer**" |
+| `C10-install-channels` | Compare with C06. Install options with channels (R16.3): **Flathub** (Flatpak, Verified, Recommended by a Trust's `- Channel: flatpak`, "GNOME Software updates Flatpaks automatically"), the release's **AppImage**, and the **Ubuntu package** (4 releases behind the project); an **Updates** choice, defaulting to the detected system updater (R16.5) |
+| `C06-install-options` | First install of Upscayl (R4.9): its release has an AppImage and an `.rpm`, so AppKata asks; Portable / System package cards, this app's portable options (with the options recommended in a Trust's AppKata.md); the panel shows "AppImage · portable" |
+| `S01-sources` | Sources (R7): rows with icon, URL, forge, version and chips (Installed, **Built in** for AppKata's own Source, Pinned, Track only, outside AppKata, **In N trusts**, and in the mockup a rate-limit error); Trust panel with avatar stacks ("+N" past four signers), each Trust's **Score** (accent stars; sorted by Score, then name, R7.6.7), the ngit chip and a warning; signer hover card with a dismiss timer |
+| `S02-trust-detail` | Trust Detail panel at the bottom of the Trust panel (R7.6.5): last verified commit, the **Score** picker (1–5 stars, R7.6.8), a pending new signer with **Ignore / Trust signer** (R10.8), and Authorities with enable switches and remove buttons |
+| `S03-source-menu` | Source row ⋯ menu (R7.1.3): Pin, **Source settings…** (S08), Open project page, Remove source |
+| `S04-add-source` | Add source (R7.2): forge detected through `/api/v1/version`, releases found, the download chosen for the platform, a preview card, "Already listed by" a Trust, and Source settings |
+| `S05-remove-source` | Removing an installed app's Source (R7.3): **Remove and uninstall** or **Remove only**. Trusts also list this app, so it stays in the Catalog |
+| `S06-source-in-trusts` | Hovering a Source's **In 3 trusts** pill: the Trusts that also list it, sorted by Score then name, each with its Score and its review's Trust and Rating, and **Open** links to each Trust (R2.9.4, R2.9.5) |
+| `S07-explore` | Explore (R7.7): GitHub · GitLab · Codeberg · ngit picker, search, minimal match summaries with icon-only **Project page** and **Add source** buttons labelled by tooltips (a check when it's already a Source) |
+| `S08-source-settings` | Source settings from the Source ⋯ menu (R2.6.7): forge (detected), Track only, **Include pre-releases** (Default (Off) · Yes · No), and the download filter for this platform with a live preview of the file it picks |
+| `S09-source-highlight` | An app's **Source** pill opens Sources with its row highlighted (R2.9.5) |
+| `S10-confirm-remove-trust` | Remove trust (R7.5): the installed app with no other origin, **Keep updating as my sources** and a red **Remove trust** |
+| `S11-confirm-remove-authority` | Removing an Authority asks first (R5.8) |
+| `S12-confirm-trust-signer` | Trusting a new signer asks first (R5.8, R10.8) |
 | `S13-confirm-ignore-signer` | Ignoring a new signer asks first |
-| `S14-add-trust` | Mockup only. Add trust (req 7.6.2): the URL, the Trust found (apps, signed commit), its **Score** (default 3), the signing keys to confirm, **Trust this signer** |
-| `S15-trusts-collapsed` | Mockup only. The Trust panel collapsed to a rail, with a warning dot (req 7.6) |
-| `S16-source-errors` | Mockup only. Source errors on their rows (req 2.10): moved (with **Update URL**, not built yet), rate limited, no download for this platform, host unreachable, no version |
-| `S17-explore-flathub` | Explore on **Flathub** (req 16.2), with **Ubuntu** for the distro's AppStream catalog: app ID, Verified, and the git project found in its AppStream data; a match with no project link can't be added until its git URL is entered |
-| `U01-audit` | Audit (req 13): the fourth perspective; entries by day, newest first, You/Sync, detail chips; kind filters |
-| `X01-app-menu` | ⋮ menu (req 5.4): Sync, Settings…, theme, **Show app log** (req 14.5), About AppKata, **Close window** (keeps running in the tray) and **Quit AppKata** (Alt+Q) |
-| `X03-settings` | Settings (req 11.1): General (theme, start in the tray at login, appkata:// links), Reviews (path with an icon-only folder button), Updates (the global **Minimum age**, req 9.5.2) |
-| `X04-settings-portable` | Settings scrolled to **Portable apps** (req 4.3.1): install folder (`~/bin/apps`, icon-only folder button), app menu, stable name, command links (`~/bin`), keep older versions; then Accounts and tokens |
-| `X05-settings-data` | Settings scrolled to Accounts, **Nostr relays** and **Data**: list items with red trash and "+" buttons on the right (req 11.1.4.1); database and app log locations with icon-only Open folder / Show; Import, and Export with a floppy icon |
-| `X06-about` | About AppKata from the ⋮ menu (req 5.4.1): version, license, project link, platforms, **Check for updates** |
-| `X07-confirm-remove-token` | Removing a token from Settings asks first (req 11.1.5) |
-| `X08-confirm-remove-relay` | Removing a relay asks first (req 11.1.6) |
-| `X09-confirm-quit` | Quit (⋮, tray or Alt+Q) while installing (req 1.7.3) lists the installs that will stop |
-| `X10-appkata-md-settings` | Mockup only, not an AppKata screen: an `AppKata.md` entry as a reviewer writes it (req 10.1, 10.3): the table row (the newest review), `# Zettlr` and `## Zettlr::Settings` (the review of the app as a whole: Trust, Rating, Tags, install options, a per-platform Download filter and Auto update, `Flatpak` and `Channel`), then a review of a version, `## Zettlr[3.5.1]`, with its `### Zettlr[3.5.1]::Details` and `### Zettlr[3.5.1]::Settings` (only what changed) |
-| `X11-sync-progress` | Mockup only. A sync in progress (req 9.2): the turning indicator and, on click, what it's syncing with **Cancel** |
+| `S14-add-trust` | Mockup only. Add trust (R7.6.2): the URL, the Trust found (apps, signed commit), its **Score** (default 3), the signing keys to confirm, **Trust this signer** |
+| `S15-trusts-collapsed` | Mockup only. The Trust panel collapsed to a rail, with a warning dot (R7.6) |
+| `S16-source-errors` | Mockup only. Source errors on their rows (R2.10): moved (with **Update URL**, not built yet), rate limited, no download for this platform, host unreachable, no version |
+| `S17-explore-flathub` | Explore on **Flathub** (R16.2), with **Ubuntu** for the distro's AppStream catalog: app ID, Verified, and the git project found in its AppStream data; a match with no project link can't be added until its git URL is entered |
+| `U01-audit` | Audit (R13): the fourth perspective; entries by day, newest first, You/Sync, detail chips; kind filters |
+| `X01-app-menu` | ⋮ menu (R5.4): Sync, Settings…, theme, **Show app log** (R14.5), About AppKata, **Close window** (keeps running in the tray) and **Quit AppKata** (Alt+Q) |
+| `X03-settings` | Settings (R11.1): General (theme, start in the tray at login, appkata:// links), Reviews (path with an icon-only folder button), Updates (the global **Minimum age**, R9.5.2) |
+| `X04-settings-portable` | Settings scrolled to **Portable apps** (R4.3.1): install folder (`~/bin/apps`, icon-only folder button), app menu, stable name, command links (`~/bin`), keep older versions; then Accounts and tokens |
+| `X05-settings-data` | Settings scrolled to Accounts, **Nostr relays** and **Data**: list items with red trash and "+" buttons on the right (R11.1.4.1); database and app log locations with icon-only Open folder / Show; Import, and Export with a floppy icon |
+| `X06-about` | About AppKata from the ⋮ menu (R5.4.1): version, license, project link, platforms, **Check for updates** |
+| `X07-confirm-remove-token` | Removing a token from Settings asks first (R11.1.5) |
+| `X08-confirm-remove-relay` | Removing a relay asks first (R11.1.6) |
+| `X09-confirm-quit` | Quit (⋮, tray or Alt+Q) while installing (R1.7.3) lists the installs that will stop |
+| `X10-appkata-md-settings` | Mockup only, not an AppKata screen: an `AppKata.md` entry as a reviewer writes it (R10.1, R10.3): the table row (the newest review), `# Zettlr` and `## Zettlr::Settings` (the review of the app as a whole: Trust, Rating, Tags, install options, a per-platform Download filter and Auto update, `Flatpak` and `Channel`), then a review of a version, `## Zettlr[3.5.1]`, with its `### Zettlr[3.5.1]::Details` and `### Zettlr[3.5.1]::Settings` (only what changed) |
+| `X11-sync-progress` | Mockup only. A sync in progress (R9.2): the turning indicator and, on click, what it's syncing with **Cancel** |
 | `C11-install-sandbox` | Mockup only, [app sandboxing](../docs/app-sandboxing.md). Install options with a **Sandbox** card: a **template** dropdown (Offline editor), the live summary chips, **Customize…**, the suggested template and the disk cost of unpacking; plus the **Disable the app's own updater** option (required, with a warning, when sandboxed) |
 | `A20-apps-detail-sandbox` | Mockup only. Apps rows show each portable app's sandbox (**Standard**, or **No sandbox**); App Detail has a **Sandboxed** chip and a **Sandbox** section: level, folders, no network, **Change…**, and the X11 caveat |
 | `A21-sandbox-dialog` | Mockup only. The per-app Sandbox dialog from **Change…**: a **template** dropdown with a live plain-language summary and grant chips, the "· customized / Reset to template" state, a collapsed **Customize** disclosure (Files · Connections · Devices & media · Advanced) and the app's home folder |
@@ -92,12 +92,12 @@ has Minimize and Maximize (req 15.13), and Settings has the Windows rows (req 11
 | `A24-sandbox-setup-needed` | Mockup only. On a system that blocks the sandbox until setup (Ubuntu 24.04), an app runs Off with a **Not sandboxed** chip and a standing banner (**Enable…**) for the one-time system setup (decision 6, recovery) |
 | `X15-settings-sandbox` | Mockup only. Settings → **Sandbox**: the **System support** status/**Set up…** row, the level for new GUI apps (with the reviewed/unreviewed precedence), unreviewed apps, command-line tools (the **CLI tool** template), following reviewers' suggestions, the review-badge toggle, the **Built-in templates** list and the sandbox home folders, with the X11/wlroots session warning at the top |
 | `X16-appkata-md-sandbox` | Mockup only, not an AppKata screen: `Sandbox`, `Sandbox folders` and `Sandbox network` lines (linux) in `## Zettlr::Settings`, and a version's Settings asking for more |
-| `U02-audit-sandbox` | The Audit's **Apps** filter (req 13, 17.16): app entries only, sandbox changes among them (setting one, turning one off, a launcher rewritten by the system); the mockup shows a held update, allowing more access, changing a sandbox, installing with one, turning one off |
-| `X12-choose-review-file` | Mockup only. The first review asks where `AppKata.md` goes (req 8.2), in the system's save dialog |
-| `X13-macos-menu-bar` | Mockup only. macOS: the menu-bar extra (req 1.7) with ⌘Q and an update notification |
-| `X14-install-appkata` | First start of the downloaded AppImage (req 2.11.3.1): **Install AppKata?** with where it goes, what it adds (app-menu entry, icon, appkata:// and login at the installed copy), **Delete the downloaded file**, **Run from here** and **Install**; also in ⋮ as **Install AppKata…** |
-| `X16-first-start` | The same first start as it really is: an empty database, nothing synced yet ("Not synced yet"), and the Apps view behind the dialog with AppKata alone, by its name and icon (req 2.11.3; review 3, R3-36). Taken from an empty database, not the demo data |
-| `X02-tray` | Tray menu (req 1.7) with **Quit AppKata**, and the update notification (req 9.3) |
+| `U02-audit-sandbox` | The Audit's **Apps** filter (R13, R17.16): app entries only, sandbox changes among them (setting one, turning one off, a launcher rewritten by the system); the mockup shows a held update, allowing more access, changing a sandbox, installing with one, turning one off |
+| `X12-choose-review-file` | Mockup only. The first review asks where `AppKata.md` goes (R8.2), in the system's save dialog |
+| `X13-macos-menu-bar` | Mockup only. macOS: the menu-bar extra (R1.7) with ⌘Q and an update notification |
+| `X14-install-appkata` | First start of the downloaded AppImage (R2.11.3.1): **Install AppKata?** with where it goes, what it adds (app-menu entry, icon, appkata:// and login at the installed copy), **Delete the downloaded file**, **Run from here** and **Install**; also in ⋮ as **Install AppKata…** |
+| `X16-first-start` | The same first start as it really is: an empty database, nothing synced yet ("Not synced yet"), and the Apps view behind the dialog with AppKata alone, by its name and icon (R2.11.3; review 3, R3-36). Taken from an empty database, not the demo data |
+| `X02-tray` | Tray menu (R1.7) with **Quit AppKata**, and the update notification (R9.3) |
 
 App names are real FOSS projects used as sample data. Their icons are generated
 placeholders, not the projects' logos. TurboShield VPN and every reviewer and signer are
@@ -127,12 +127,12 @@ It needs `@resvg/resvg-js` on `NODE_PATH`, and the Cantarell and DejaVu Sans Mon
 
 ### Windows only
 
-The W mockups also show the Windows header bar, with Minimize and Maximize before the close button (req 15.13).
+The W mockups also show the Windows header bar, with Minimize and Maximize before the close button (R15.13).
 
 | Screen | Shows |
 |---|---|
-| `W01-close-app` | Windows can't change a running program's files (req 15.9): "Close KeePassXC to continue", with **Try again** |
-| `W02-install-options` | Install options… on Windows (req 15.4, 15.11.1): portable `.zip` recommended over the `.msi`, **Install for** Just me / Everyone on this computer, and **Mark downloads as from the internet** |
-| `W03-msvcrt` | An app that needs the Visual C++ run-time, which is missing (req 15.18): the warning **MSVCRT** chip, and "Install the Visual C++ run-time?" with **Install run-time** (one administrator prompt) |
+| `W01-close-app` | Windows can't change a running program's files (R15.9): "Close KeePassXC to continue", with **Try again** |
+| `W02-install-options` | Install options… on Windows (R15.4, R15.11.1): portable `.zip` recommended over the `.msi`, **Install for** Just me / Everyone on this computer, and **Mark downloads as from the internet** |
+| `W03-msvcrt` | An app that needs the Visual C++ run-time, which is missing (R15.18): the warning **MSVCRT** chip, and "Install the Visual C++ run-time?" with **Install run-time** (one administrator prompt) |
 | `W04-msvcrt-chip` | Mockup only. The **MSVCRT** chip on an Apps row with its tooltip, "Microsoft Visual C++ Run-time: not installed", and in the App Detail panel |
-| `W05-settings-windows` | Mockup only (the real one is `windows/*/X04-settings-portable`). Settings on Windows (req 11.1.4, 15.4, 15.6): **Install apps for**, the install folders for me and for everyone, Start menu, `<app>\current`, `.cmd` command links |
+| `W05-settings-windows` | Mockup only (the real one is `windows/*/X04-settings-portable`). Settings on Windows (R11.1.4, R15.4, R15.6): **Install apps for**, the install folders for me and for everyone, Start menu, `<app>\current`, `.cmd` command links |

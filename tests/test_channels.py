@@ -1,4 +1,4 @@
-"""Package channels (requirement 16) against recorded data: AppStream catalogs, flatpak and package
+"""Package channels (R16) against recorded data: AppStream catalogs, flatpak and package
 manager output, D-Bus messages, and fakes for everything that would need root or the network."""
 
 import io
@@ -26,7 +26,7 @@ def db(tmp_path):
     return DB(str(tmp_path / "appkata.db"))
 
 
-# ---------------------------------------------------------------- AppStream (16.2.2)
+# ---------------------------------------------------------------- AppStream (R16.2.2)
 def test_dep11_apps_only():
     comps = appstream.parse_dep11(data("Components-amd64.yml"), "noble/universe")
     by_id = {c.id: c for c in comps}
@@ -77,7 +77,7 @@ def test_yaml_reader_edge_cases():
     assert c.name == "It's C" and c.icon == "c" and c.compulsory == ["GNOME"] and c.origin == "o"
 
 
-# ---------------------------------------------------------------- D-Bus (16.8.1)
+# ---------------------------------------------------------------- D-Bus (R16.8.1)
 def test_dbus_round_trip():
     raw = dbus.marshal_message(dbus.SIGNAL, 7, {"path": "/t", "interface": "i.x", "member": "Changed"}, "sa{sv}ast",
                                ["org.x", {"Percentage": dbus.Variant("u", 45), "Name": dbus.Variant("s", "a")}, ["a", "b"], 1 << 40])
@@ -89,7 +89,7 @@ def test_dbus_round_trip():
     assert dbus.split_types("a{sv}as(ii)t") == ["a{sv}", "as", "(ii)", "t"]
 
 
-# ---------------------------------------------------------------- plans and refusals (16.3.5, 16.4.3)
+# ---------------------------------------------------------------- plans and refusals (R16.3.5, R16.4.3)
 APT_SIM = """NOTE: This is only a simulation!
 Inst libfoo1 (1.2-1 Ubuntu:24.04/noble [amd64])
 Inst hello (2.10-3build1 Ubuntu:24.04/noble [amd64])
@@ -189,7 +189,7 @@ def test_packagekit_backend():
     assert e.value.lines == ["Removes oldlib"]
 
 
-# ---------------------------------------------------------------- Flatpak (16.6)
+# ---------------------------------------------------------------- Flatpak (R16.6)
 META = """[Application]
 name=org.example.App
 runtime=org.freedesktop.Platform/x86_64/24.08
@@ -246,7 +246,7 @@ Installation: user
     assert flatpak.parse_updates("org.x.A\t2.0\tccc\n") == {"org.x.A": {"version": "2.0", "commit": "ccc"}}
 
 
-# ---------------------------------------------------------------- who updates it (16.5.2, 16.5.4)
+# ---------------------------------------------------------------- who updates it (R16.5.2, R16.5.4)
 def test_unattended_upgrades():
     on, origins = autoupdate.parse_apt_config('APT::Periodic::Unattended-Upgrade "1";\n'
                                               'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}";\n'
@@ -302,7 +302,7 @@ def test_update_state():
     assert channels.update_state({"channel": "package", "held": True}, det) == ("held", "")
 
 
-# ---------------------------------------------------------------- links (16.1.3)
+# ---------------------------------------------------------------- links (R16.1.3)
 CONTENT = """| App | Source | Tags | Trust | Rating |
 |---|---|---|---|---|
 | KeePassXC | https://github.com/keepassxreboot/keepassxc | foss | 5 | 4 |
@@ -349,7 +349,7 @@ def test_trust_lines_and_links(db):
     assert channels.links(db, KEEPASSXC, None, "dnf").get("package") is None        # no Fedora line for Linux
     assert channels.recommended_channel(db, KEEPASSXC) == ("flatpak", "high")
     db.x("INSERT INTO installs(url, name, version, record) VALUES(?,?,?,?)", (KEEPASSXC, "KeePassXC", "2.7.6", "{}"))
-    assert channels.recommended_channel(db, KEEPASSXC) == ("package", "high")       # the review for 2.7.6 (10.3.5)
+    assert channels.recommended_channel(db, KEEPASSXC) == ("package", "high")       # the review for 2.7.6 (R10.3.5)
     db.x("DELETE FROM installs")
     db.x("INSERT INTO sources(url, settings) VALUES(?,?)", (KEEPASSXC, json.dumps({"flatpak": "flathub org.mine.K"})))
     assert channels.links(db, KEEPASSXC, None, "apt")["flatpak"].source == "you"
@@ -387,7 +387,7 @@ def test_options_order(db):
     assert o[0]["channel"] == "package" and o[0]["recommendedBy"] == "t" and o[0]["recommended"]
 
 
-# ---------------------------------------------------------------- link checks (16.1.4, 16.1.5)
+# ---------------------------------------------------------------- link checks (R16.1.4, R16.1.5)
 class Resp(io.BytesIO):
     def __init__(self, url, body, headers=None):
         super().__init__(body.encode() if isinstance(body, str) else body)
@@ -473,7 +473,7 @@ def test_check_package_appstream(db):
     assert c["state"] == "matches"
 
 
-# ---------------------------------------------------------------- install, uninstall, adopt (16.3–16.4)
+# ---------------------------------------------------------------- install, uninstall, adopt (R16.3–R16.4)
 class FakeBackend(pkgbackend.Backend):
     name, manager = "fake", "apt"
 
@@ -554,7 +554,7 @@ def test_adopt(db, monkeypatch, fake_pkgs):
 
 
 def test_tracking(db, monkeypatch, fake_pkgs):
-    """Removed and updated outside AppKata, and pending updates (16.4.1, 16.5.4, 16.5.5)."""
+    """Removed and updated outside AppKata, and pending updates (R16.4.1, R16.5.4, R16.5.5)."""
     monkeypatch.setattr(channels, "manager", lambda: "apt")
     monkeypatch.setattr(flatpak, "available", lambda: True)
     monkeypatch.setattr(flatpak, "installed", lambda: {"org.a.A": flatpak.Installed("org.a.A", "2.0", "flathub", "user", "bbbbbbbbbbbb")})

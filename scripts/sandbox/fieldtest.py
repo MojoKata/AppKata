@@ -135,7 +135,7 @@ class Probe:
 
 def _setup_questions(r: Report, interactive: bool) -> None:
     """The AppArmor setup's questions, only where AppKata's setup applies: the kernel restricts
-    unprivileged user namespaces and the system has no bwrap profile of its own (17.10, 17.10.2;
+    unprivileged user namespaces and the system has no bwrap profile of its own (R17.10, R17.10.2;
     review 3, R3-37); N/A elsewhere. A1-prompt asks what the first install showed (review 3, R3-38)."""
     if sb.userns_restricted() and not sb.other_bwrap_profiles():
         for cid, question in SETUP_QUESTIONS:
@@ -170,7 +170,7 @@ def main() -> int:
            f"gpu:      {' '.join(sorted(os.listdir('/dev/dri'))) if os.path.isdir('/dev/dri') else 'no /dev/dri'}\n")
     print("== environment ==\n" + env + "== checks ==")
 
-    # A. can AppKata sandbox here at all (17.10, 17.10.2)
+    # A. can AppKata sandbox here at all (R17.10, R17.10.2)
     status = st.get("status")
     if status == "ok":
         r.rec("PASS", "A-support", "AppKata's sandbox can run here",
@@ -230,7 +230,7 @@ def _checks(r: Report, p: Probe, warn: dict, a) -> None:
         call = 'gdbus call --session --dest {} --object-path {} --method org.freedesktop.DBus.Peer.Ping 2>&1; true'
         res = p.run("online-app", call.format("org.freedesktop.systemd1", "/org/freedesktop/systemd1"))
         r.rec("BLOCKED" if "()" not in res.stdout else "LEAK", "P-filter", "the bus filter refuses systemd1")
-        # the filter opens the portal per interface (17.5): Introspect is one it allows, Peer.Ping isn't
+        # the filter opens the portal per interface (R17.5): Introspect is one it allows, Peer.Ping isn't
         res = p.run("online-app", 'gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop 2>&1; true')
         ok = "org.freedesktop.portal.OpenURI" in res.stdout
         r.rec("PASS" if ok else "INFO", "P-portal", "the portal answers through the filter", "" if ok else res.stdout.strip()[-120:])

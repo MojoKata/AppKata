@@ -1,4 +1,4 @@
-"""AppKata installing itself on the first start of a downloaded AppImage (requirement 2.11.3.1):
+"""AppKata installing itself on the first start of a downloaded AppImage (R2.11.3.1):
 a copy in the install folder with the stable-name link, an app-menu entry and icon, and the
 appkata:// handler and autostart pointed at the stable link."""
 

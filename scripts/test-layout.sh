@@ -3,7 +3,7 @@
 # outside its card, chip or dialog (src/appkata/layout.py; review 3, R3-22). Both themes unless
 # APPKATA_TOUR_THEMES says otherwise; extra args go to the tour (--tour-only A01-apps,C10-install-channels).
 # It runs on build/tour-data itself (scripts/demo_data.py), at the same path: the paths it shows are
-# part of what is laid out. The screens, at the design point (requirement 5.2.1), go to
+# part of what is laid out. The screens, at the design point (R5.2.1), go to
 # build/layout-tour; with --shots, a passing tour also replaces screenshots/linux/{dark,light}.
 #   scripts/test-layout.sh [--shots] [--tour-only NAMES]
 set -eu

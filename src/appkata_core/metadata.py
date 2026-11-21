@@ -1,4 +1,4 @@
-"""App metadata from a repository: icon, hero image, summary (requirement 3)."""
+"""App metadata from a repository: icon, hero image, summary (R3)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ RASTER = re.compile(r"\.(png|jpe?g|webp|gif|svg)(\?.*)?$", re.I)
 
 
 def summary(markdown: str, fallback: str = "") -> str:
-    """The README's first prose paragraph (requirement 3.4.1)."""
+    """The README's first prose paragraph (R3.4.1)."""
     text = re.sub(r"<!--.*?-->", "", markdown or "", flags=re.S)
     text = re.sub(r"```.*?```", "", text, flags=re.S)
     paras, cur = [], []
@@ -61,7 +61,7 @@ def readme_images(markdown: str, hero: bool = True) -> list[str]:
 
 
 def resolve(url: str, raw_base: str, readme_dir: str = "") -> str:
-    """Relative README links against the raw-file URL (requirement 3.4)."""
+    """Relative README links against the raw-file URL (R3.4)."""
     if re.match(r"^[a-z]+://", url, re.I) or url.startswith("data:"):
         if "github.com/" in url and "/blob/" in url:
             return url.replace("github.com/", "raw.githubusercontent.com/", 1).replace("/blob/", "/", 1)
@@ -82,7 +82,7 @@ SKIP_PATHS = re.compile(r"(^|/)(node_modules|vendor|third[-_]?party|thirdparty|e
 
 
 def icon_candidates(paths: list[str], name: str = "") -> list[str]:
-    """Repository files that are probably the app icon, best first (requirement 3.2)."""
+    """Repository files that are probably the app icon, best first (R3.2)."""
     low = name.lower().replace(" ", "")
     scored = []
     for p in paths:

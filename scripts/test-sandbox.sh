@@ -21,15 +21,15 @@
 #   launcher-vm  the same tests in a real Ubuntu 24.04 VM under KVM (AppArmor userns restriction with
 #            AppKata's profile applied, systemd-resolved DNS). The cloud image is cached in build/.
 #   launcher-vm26  the same tests in an Ubuntu 26.04 LTS VM, under the system's own bwrap profile
-#            (bwrap-userns-restrict: AppKata installs none; Chromium/Electron get --no-sandbox, 17.10.2).
+#            (bwrap-userns-restrict: AppKata installs none; Chromium/Electron get --no-sandbox, R17.10.2).
 #   wayland  the generated launcher under headless sway and a real PipeWire (Mint 22.3): a GTK3
 #            window, a tone played as a sandboxed client, recording.
 #   filedialogs  which file dialog GTK3, GTK4 and Qt 6 apps show inside a generated launcher, with
 #            xdg-desktop-portal and its gtk backend on the bus (Mint 22.3 container, Xvfb): the
-#            app's own, as 17.6.3 says, and which proxy denial makes it so. filedialogs-lmde7: the same
+#            app's own, as R17.6.3 says, and which proxy denial makes it so. filedialogs-lmde7: the same
 #            on LMDE 7 (Qt 6.8, which reads /.flatpak-info, and GTK 4.18).
 #   kwin     what KDE's kwin gives a sandboxed app (Mint 22.3's kwin 5.27 under --virtual): the
-#            clipboard leaks (17.9). kwin-lmde7: the same with LMDE 7's kwin 6.3 (Plasma 6).
+#            clipboard leaks (R17.9). kwin-lmde7: the same with LMDE 7's kwin 6.3 (Plasma 6).
 #   inputmethod  what IBus and Fcitx 5 give a sandboxed app through the filter (their portals, headless;
 #            review 2 F15, review 3 R3-18).
 #   consumers  real consumers of the desktop integration behind generated launchers (Mint 22.3 plus
@@ -44,7 +44,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 "$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 OPEN="--security-opt seccomp=unconfined --security-opt systempaths=unconfined --security-opt apparmor=unconfined"
 # The launcher tiers run AppKata's code and the tests on the Python the release carries (requirement
-# 1.2; review 3, R3-21: a system's older Python can't unpack a tarball the way AppKata does), fetched
+# R1.2; review 3, R3-21: a system's older Python can't unpack a tarball the way AppKata does), fetched
 # once into build/ and seen at /src/build/... in the containers; what a generated launcher runs on the
 # host (the file-argument helper, the xdg-open shim) stays on each system's own python3 and its gi.
 # The packages the Wayland session needs (installed into the container on each run; Mint's own
@@ -98,7 +98,7 @@ if [ "${1:-}" = wayland ]; then
 fi
 
 if [ "${1:-}" = kwin ] || [ "${1:-}" = kwin-lmde7 ]; then
-    # What KDE's kwin gives a sandboxed app (scripts/sandbox/kwin.py; 17.9, round seven R7-1): the
+    # What KDE's kwin gives a sandboxed app (scripts/sandbox/kwin.py; R17.9, round seven R7-1): the
     # clipboard-manager protocol to every client, so the clipboard leaks; capture and injection hidden.
     # kwin: Mint 22.3's kwin 5.27; kwin-lmde7: LMDE 7's kwin 6.3 (Plasma 6), which Ubuntu 25.04's tier
     # showed until it retired (round eight).
@@ -129,7 +129,7 @@ fi
 
 if [ "${1:-}" = filedialogs ] || [ "${1:-}" = filedialogs-lmde7 ]; then
     # Which file dialog GTK3, GTK4 and Qt 6 apps show inside a generated launcher, with the real
-    # portal on the bus (scripts/sandbox/filedialogs.py; requirement 17.6.3, round four R4-5).
+    # portal on the bus (scripts/sandbox/filedialogs.py; R17.6.3, round four R4-5).
     # filedialogs: Mint 22.3 (Qt 6.4, GTK 4.14); filedialogs-lmde7: LMDE 7 (Qt 6.8, which reads
     # /.flatpak-info, and GTK 4.18), which Ubuntu 25.04's tier showed until it retired (round six).
     if [ "$1" = filedialogs-lmde7 ]; then IMG=appkata-sandbox-dialogs-lmde7 BASE=linuxmintd/lmde7-amd64
@@ -147,7 +147,7 @@ fi
 if [ "${1:-}" = consumers ]; then
     # Real consumers behind generated launchers (scripts/sandbox/consumers.py): a GLib app's
     # notification with and without the capability, a GTK3 app's link opening on the host, and
-    # Chromium's file chooser under three proxy variants (17.5.1, 17.6.3; round four).
+    # Chromium's file chooser under three proxy variants (R17.5.1, R17.6.3; round four).
     if ! docker image inspect appkata-sandbox-consumers-mint22.3 >/dev/null 2>&1; then
         printf 'FROM linuxmintd/mint22.3-amd64\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dbus xdg-desktop-portal xdg-desktop-portal-gtk xvfb x11-utils xdotool python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 python3-pyqt6 dunst chromium fuse3 >/dev/null && useradd -m kata\n' \
             | docker build -q -t appkata-sandbox-consumers-mint22.3 - >/dev/null
@@ -159,7 +159,7 @@ fi
 
 if [ "${1:-}" = launcher-vm ] || [ "${1:-}" = launcher-vm26 ]; then
     # launcher-vm26: Ubuntu 26.04 LTS, where the system's own bwrap-userns-restrict profile confines
-    # what bwrap runs and AppKata installs no profile of its own (17.10.2, review 2 F2)
+    # what bwrap runs and AppKata installs no profile of its own (R17.10.2, review 2 F2)
     if [ "$1" = launcher-vm26 ]; then IMG=resolute.img; IMGURL=https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
     else IMG=noble.img; IMGURL=https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img; fi
     shift

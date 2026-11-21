@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of the app-sandboxing review (docs/reviews/app-sandboxing-1.md finding 0, requirement 17.6.1).
+# Part of the app-sandboxing review (docs/reviews/app-sandboxing-1.md finding 0, R17.6.1).
 # Runs inside the Mint 22.1 session container as the test user. End to end: a real generated AppKata
 # launcher (online-app template) asks the FileChooser portal for a file; the gtk portal backend shows
 # its dialog in headless sway; wtype answers it with ~/Documents/secret.txt; the portal hands the file

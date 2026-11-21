@@ -1,6 +1,6 @@
 # R3. App metadata
 
-R3.1. For each app, AppKata reads the following from the project and caches it (1.8):
+R3.1. For each app, AppKata reads the following from the project and caches it (R1.8):
 
 - An icon (small, 32–128 px).
 - A high-resolution hero image (about 1280 × 640).
@@ -9,7 +9,7 @@ R3.1. For each app, AppKata reads the following from the project and caches it (
 
 R3.2. **Icon.** AppKata uses the first one it finds:
 
-1. The manifest (2.7).
+1. The manifest (R2.7).
 2. AppStream `*.metainfo.xml` (`<icon>`).
 3. Fastlane metadata (`fastlane/metadata/**/images/icon.png`).
 4. An icon file at the repo root or in `assets/`, `icons/`, `data/` (`icon.svg`, `icon.png`,

@@ -1,40 +1,40 @@
 # R15. Windows
 
-R15.1. AppKata runs on Windows 10 22H2 (fully updated), x64 only; Windows 11 isn't tested yet (1.1). This section
+R15.1. AppKata runs on Windows 10 22H2 (fully updated), x64 only; Windows 11 isn't tested yet (R1.1). This section
 collects what is specific to Windows. The sections it refers to still apply.
 
 R15.2. **Elevation.** AppKata runs without administrator rights. It starts every installer and
 uninstaller through the shell (`ShellExecuteEx`), as Explorer does, and waits for its exit code:
 an installer whose manifest needs administrator rights then gets the UAC prompt, and with the
-Mark of the Web (15.11.1) SmartScreen checks it. When AppKata itself asks for administrator rights
-(15.4, 15.7, 15.8), it uses the `runas` verb. Declining the prompt cancels the action.
+Mark of the Web (R15.11.1) SmartScreen checks it. When AppKata itself asks for administrator rights
+(R15.4, R15.7, R15.8), it uses the `runas` verb. Declining the prompt cancels the action.
 AppKata never starts a per-machine installer through `CreateProcess`, where it would fail (error
 740), or for a silent `.msi`, fail without asking.
 
-R15.3. **Choosing a file.** Portable files come first (4.2): a `.zip` with a program inside, a
+R15.3. **Choosing a file.** Portable files come first (R4.2): a `.zip` with a program inside, a
 portable `.exe`, then `.msi`, a `.exe` installer and `.msix`. When a release has both a portable
-file and an installer, the install dialog asks, with the portable file **Recommended** (4.9.1).
+file and an installer, the install dialog asks, with the portable file **Recommended** (R4.9.1).
 
 R15.4. **Who an app is for.** Every app installed on Windows is for **Just me** or for
 **Everyone on this computer**.
 
-R15.4.1. It is a per-app setting, like the portable options (4.3.1.6). Its starting value is
-**Install apps for** in Settings (11.1.4; default Just me). The install dialog (4.9.2) shows it
+R15.4.1. It is a per-app setting, like the portable options (R4.3.1.6). Its starting value is
+**Install apps for** in Settings (R11.1.4; default Just me). The install dialog (R4.9.2) shows it
 when the file supports both. **Install options…** can change it later: AppKata reinstalls the
 installed version in the new place, then removes the old copy. Trusts don't recommend it
-(10.3.1), because it describes this computer, not the app.
+(R10.3.1), because it describes this computer, not the app.
 
 R15.4.2. What each means:
 
 | | Just me | Everyone |
 |---|---|---|
-| Portable apps | `%LOCALAPPDATA%\Programs\<app>\` | `C:\Programs\<app>\` (15.4.3) |
+| Portable apps | `%LOCALAPPDATA%\Programs\<app>\` | `C:\Programs\<app>\` (R15.4.3) |
 | Start-menu shortcut | The user's Start menu | The all-users Start menu; UAC at install and uninstall only |
-| Installers | The per-user arguments (15.7.2) | The per-machine arguments, elevated |
+| Installers | The per-user arguments (R15.7.2) | The per-machine arguments, elevated |
 | `.msix` | Always | Not offered |
-| Command links (15.6) | The user's | Still only the installing user's; others use the Start menu |
+| Command links (R15.6) | The user's | Still only the installing user's; others use the Start menu |
 
-Both folders are settings (11.1.4).
+Both folders are settings (R11.1.4).
 
 R15.4.3. **Protecting `C:\Programs`.** By default every user may change what is created at the
 root of the system drive, so another account could replace a program that others then run.
@@ -52,9 +52,9 @@ permissions:
    error naming the folder, and installs nothing.
 
 R15.4.4. Another user's AppKata sees an app installed for everyone as **Installed outside
-AppKata** (4.5), through its all-users Start-menu shortcut.
+AppKata** (R4.5), through its all-users Start-menu shortcut.
 
-R15.5. **Shortcuts and the stable name** (4.3.1.1, 4.3.1.2).
+R15.5. **Shortcuts and the stable name** (R4.3.1.1, R4.3.1.2).
 
 - `current` is a directory junction to the current version's folder; junctions need no extra
   rights. A portable `.exe` is placed in its own version folder, so every portable app on
@@ -64,10 +64,10 @@ R15.5. **Shortcuts and the stable name** (4.3.1.1, 4.3.1.2).
   `current`, with the program's own icon and its folder as the working directory. It is made at
   install and doesn't change on updates. It sets no AppUserModelID: one the app doesn't use
   itself would break pinning and grouping on the taskbar.
-- An app that updates itself (4.10.2) has an `app` folder and no junction; its shortcut points
+- An app that updates itself (R4.10.2) has an `app` folder and no junction; its shortcut points
   into that folder.
 
-R15.6. **Command links** (4.3.1.3) are `<app>.cmd` files: a first line `@rem made by AppKata`, then
+R15.6. **Command links** (R4.3.1.3) are `<app>.cmd` files: a first line `@rem made by AppKata`, then
 `@"<install folder>\<app>\current\<Program>.exe" %*`. The default command links folder is
 `%LOCALAPPDATA%\AppKata\bin`.
 
@@ -76,15 +76,15 @@ R15.6. **Command links** (4.3.1.3) are `<app>.cmd` files: a first line `@rem mad
   last one, it removes the folder from the PATH.
 - AppKata never replaces a `.cmd` it didn't write (one without that first line).
 
-R15.7. **Installers** (4.3.3).
+R15.7. **Installers** (R4.3.3).
 
-R15.7.1. The installer type comes from probing (4.2.1): markers in the file's first megabyte, in
+R15.7.1. The installer type comes from probing (R4.2.1): markers in the file's first megabyte, in
 ASCII or UTF-16 (Inno Setup 6.3 and later keep only `InnoSetupLdrWindow` and a jrsoftware.org
 link), and the release's other files: `latest.yml` marks electron-builder's NSIS, and a
 `RELEASES` file or `-full.nupkg` packages mark Squirrel. An app installed by Squirrel is marked
-as updating itself (4.10) unless the user unticks it.
+as updating itself (R4.10) unless the user unticks it.
 
-R15.7.2. **Arguments for each scope** (15.4). Where the installer can't choose, the dialog's
+R15.7.2. **Arguments for each scope** (R15.4). Where the installer can't choose, the dialog's
 **Install for** row says what it does ("This installer installs for everyone") instead of
 offering a choice:
 
@@ -98,8 +98,8 @@ offering a choice:
 | `.msix` | `Add-AppxPackage` | Always | Not offered |
 
 An Inno Setup installer accepts `/CURRENTUSER` only when it was built to allow it. AppKata
-learns the real scope from where the app's Uninstall entry appears (15.8.1) and records that. An
-installer that turns out to need administrator rights is started again, elevated (15.2).
+learns the real scope from where the app's Uninstall entry appears (R15.8.1) and records that. An
+installer that turns out to need administrator rights is started again, elevated (R15.2).
 
 R15.7.3. **Exit codes.**
 
@@ -115,12 +115,12 @@ R15.7.4. **`.msix`** installs with `Add-AppxPackage` for the current user, with 
 package whose signer Windows doesn't trust can't be installed, and AppKata says so. The
 package's full name is recorded for uninstalling.
 
-R15.8. **Uninstalling installer apps** (4.9.6).
+R15.8. **Uninstalling installer apps** (R4.9.6).
 
 R15.8.1. AppKata reads the Uninstall registry keys (HKCU, and HKLM in its 64-bit and 32-bit
 views) before and after running an installer. The entry that is new or changed is recorded with
-the install (4.1): its key, `DisplayName`, `DisplayVersion`, `QuietUninstallString`,
-`UninstallString`, and for MSI the product code. Its hive gives the real scope (15.4). If no
+the install (R4.1): its key, `DisplayName`, `DisplayVersion`, `QuietUninstallString`,
+`UninstallString`, and for MSI the product code. Its hive gives the real scope (R15.4). If no
 entry appears, the install still succeeds, with a note that AppKata can't uninstall it.
 
 R15.8.2. Uninstalling runs `QuietUninstallString`, else `UninstallString` with the silent
@@ -138,19 +138,19 @@ uninstalling a portable app, AppKata checks for processes running from the app's
 are any, it shows "Close <App> to continue" with **Try again** and **Cancel**. AppKata never
 stops the app itself. Installers handle this themselves.
 
-R15.10. **AppKata's own setup** (1.6) is built with Inno Setup, `PrivilegesRequired=lowest`, with
+R15.10. **AppKata's own setup** (R1.6) is built with Inno Setup, `PrivilegesRequired=lowest`, with
 overrides allowed:
 
 - Just me by default, into `%LOCALAPPDATA%\Programs\AppKata`; or Everyone, into `Program Files`.
-- It refuses a Windows older than Windows 10 22H2 (`MinVersion=10.0.19045`, 1.1). It doesn't
+- It refuses a Windows older than Windows 10 22H2 (`MinVersion=10.0.19045`, R1.1). It doesn't
   check the updates installed.
-- It adds the Start-menu shortcut (with AppKata's AppUserModelID, 15.14) and the `appkata://`
+- It adds the Start-menu shortcut (with AppKata's AppUserModelID, R15.14) and the `appkata://`
   handler.
 - Its uninstaller removes AppKata, offers to remove `%LOCALAPPDATA%\AppKata`, and leaves the
   apps AppKata installed in place, saying so.
-- Updates: 2.11.5.
+- Updates: R2.11.5.
 
-R15.11. **Authenticode** (4.4). AppKata checks `.exe`, `.msi` and `.msix` downloads with
+R15.11. **Authenticode** (R4.4). AppKata checks `.exe`, `.msi` and `.msix` downloads with
 Windows' own check (`Get-AuthenticodeSignature`, which uses `WinVerifyTrust`).
 
 - A valid signature makes the chip **Verified · <signer>**.
@@ -160,27 +160,27 @@ Windows' own check (`Get-AuthenticodeSignature`, which uses `WinVerifyTrust`).
   common for small FOSS projects), is judged by its checksum alone.
 
 R15.11.1. **Mark of the Web.** **Mark downloads as from the internet** is a per-app setting, off by
-default, in **Install options…** (4.9.5) on Windows. Trusts don't recommend it (10.3.1).
+default, in **Install options…** (R4.9.5) on Windows. Trusts don't recommend it (R10.3.1).
 
 - When it's on, AppKata gives each download the mark a browser would (a `Zone.Identifier` stream
   with `ZoneId=3` and the download's URL). It copies the mark to every file it unpacks from an
   archive, as Explorer does. It starts installers, and opens the app, with `ShellExecuteEx`, so
   that SmartScreen checks them. If the user chooses not to run a file at SmartScreen's warning,
   the install is cancelled.
-- When it's off, downloads carry no mark, and AppKata's own checks (4.4, 15.11) are the only
+- When it's off, downloads carry no mark, and AppKata's own checks (R4.4, R15.11) are the only
   ones.
-- Changing it applies from the next install or update, and is recorded in the Audit (13.3).
+- Changing it applies from the next install or update, and is recorded in the Audit (R13.3).
 
-R15.12. **Foreign installs** (4.5) on Windows are found in:
+R15.12. **Foreign installs** (R4.5) on Windows are found in:
 
 - The Uninstall registry (HKCU, and HKLM 64-bit and 32-bit), which also covers winget installs.
 - Store and `.msix` apps (`Get-AppxPackage`).
 - Scoop (`~\scoop\apps`) and Chocolatey (`%ProgramData%\chocolatey\lib`).
 - Start-menu shortcuts, the user's and all users'.
 
-Entries AppKata recorded itself (15.8.1) aren't foreign.
+Entries AppKata recorded itself (R15.8.1) aren't foreign.
 
-R15.13. **The window** (5.3). The header bar also has **Minimize** and **Maximize** (**Restore**
+R15.13. **The window** (R5.3). The header bar also has **Minimize** and **Maximize** (**Restore**
 when maximized) before the close button, in Windows' usual order and shapes. The window behaves
 like any other Windows window:
 
@@ -189,21 +189,21 @@ like any other Windows window:
 - Its edges resize it, and it keeps its size when moved between monitors with different scaling.
 - Double-clicking the header bar maximizes or restores it, and Alt+Space opens the system menu.
 
-Closing still leaves AppKata in the tray (1.7.1).
+Closing still leaves AppKata in the tray (R1.7.1).
 
 R15.14. **Registering with Windows.** All of this is under HKCU and needs no UAC prompt.
 
-- **Start in the tray at login** (1.7.4): an `AppKata` value under
+- **Start in the tray at login** (R1.7.4): an `AppKata` value under
   `Software\Microsoft\Windows\CurrentVersion\Run` that runs `"…\appkata.exe" --tray`. Settings
   shows the value's real state, because Task Manager can also turn it off.
-- **Open appkata:// links** (11.3): `Software\Classes\appkata`, with `URL Protocol` and
-  `shell\open\command` set to `"…\appkata.exe" "%1"`. The setup registers it (15.10); the
+- **Open appkata:// links** (R11.3): `Software\Classes\appkata`, with `URL Protocol` and
+  `shell\open\command` set to `"…\appkata.exe" "%1"`. The setup registers it (R15.10); the
   setting does it for other builds.
-- **Notifications** (9.3): AppKata sets its AppUserModelID, `AppKata.AppKata`, at startup, the
+- **Notifications** (R9.3): AppKata sets its AppUserModelID, `AppKata.AppKata`, at startup, the
   same as on its Start-menu shortcut, so its toasts are shown as AppKata's. Clicking an update
   toast, including one in the Action Center, opens the Apps view.
 
-R15.15. **git and gpg** (1.4). When git is missing, AppKata suggests `winget install Git.Git`.
+R15.15. **git and gpg** (R1.4). When git is missing, AppKata suggests `winget install Git.Git`.
 AppKata looks for `gpg` on the PATH, then in Git for Windows' `usr\bin` (found from
 `git --exec-path`).
 
@@ -236,18 +236,18 @@ AppKata.md: the app's own files decide.
 R15.18.2. **Showing it.** An app that needs it has an **MSVCRT** chip (tooltip "Microsoft Visual
 C++ Run-time") on its Apps row and in the App Detail panel. The chip is in the warning colour
 when the run-time is missing from this computer, and clicking it then offers to install it
-(15.18.3). AppKata finds an installed copy from the registry
+(R15.18.3). AppKata finds an installed copy from the registry
 (`HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64`, `Installed` and `Version`), or
 from `vcruntime140.dll` in `System32`.
 
 R15.18.3. **Installing it.** When an app that needs the run-time is installed and the run-time is
 missing, AppKata offers **Install the Visual C++ run-time**. It downloads Microsoft's
 `vc_redist.x64.exe` (`https://aka.ms/vs/17/release/vc_redist.x64.exe`), checks its Authenticode
-signature (15.11; the signer must be Microsoft Corporation), and runs it with
+signature (R15.11; the signer must be Microsoft Corporation), and runs it with
 `/install /quiet /norestart`, elevated; exit code 1638 (a newer copy is already installed) counts
-as done. Installing it is recorded in the Audit (13.3). The run-time installs only for everyone, so this one step
-asks for administrator rights even for an app that is Just me (15.4). The dialog says why. Exit
-codes are read as for other installers (15.7.3). This normally happens once per computer.
+as done. Installing it is recorded in the Audit (R13.3). The run-time installs only for everyone, so this one step
+asks for administrator rights even for an app that is Just me (R15.4). The dialog says why. Exit
+codes are read as for other installers (R15.7.3). This normally happens once per computer.
 
 R15.18.4. **Never removed.** Other software shares the run-time, so AppKata doesn't track it as an
 app, never uninstalls it, and doesn't copy its DLLs into app folders.

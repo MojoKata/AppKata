@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// The app's icon (requirement 3.2), or a generated gradient tile with its initials.
+// The app's icon (R3.2), or a generated gradient tile with its initials.
 Item {
     id: root
     property var app: ({})

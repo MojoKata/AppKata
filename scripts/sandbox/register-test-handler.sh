@@ -3,7 +3,7 @@
 # desktop has firefox.desktop and xed.desktop registered. Run as root before the launcher tests
 # (scripts/test-sandbox.sh launcher, scripts/sandbox/vm-launcher.sh). The handler records where it
 # ran: tests/test_sandbox_run.py checks that a sandboxed `gio open` reaches the OpenURI portal and
-# never this program inside the sandbox (requirement 17.4, round three R3-1).
+# never this program inside the sandbox (R17.4, round three R3-1).
 set -eu
 cat > /usr/share/applications/appkata-test-handler.desktop <<'EOF'
 [Desktop Entry]

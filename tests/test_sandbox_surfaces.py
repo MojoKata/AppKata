@@ -75,8 +75,8 @@ FLIPS = {
     "saved passwords": lambda g: _with(g, caps=set(g["caps"]) | {"secrets"}),
     "the password service": lambda g: _with(g, caps=set(g["caps"]) | {"secrets-provide"}),
     "can change its own files": lambda g: _with(g, write_app=True),
-    "no execute-deny": lambda g: _with(g, exec_deny=False),          # Landlock: deferred (17.18)
-    "limited to ports": lambda g: _with(g, ports=[443]),               # Landlock: deferred (17.18)
+    "no execute-deny": lambda g: _with(g, exec_deny=False),          # Landlock: deferred (R17.18)
+    "limited to ports": lambda g: _with(g, ports=[443]),               # Landlock: deferred (R17.18)
 }
 
 
@@ -131,7 +131,7 @@ def test_the_harness_catches_a_chip_dropped(monkeypatch):
     assert "can change its own files" in _chip_misses()
 
 
-# ------------------------------------------------------------------- one review's lines (10.3.1, 17.3)
+# ------------------------------------------------------------------- one review's lines (R10.3.1, R17.3)
 
 def _read_back(opts: dict) -> dict | None:
     """Sandbox options written as a review's lines (this platform's), and read back as the reader's
@@ -171,7 +171,7 @@ def test_a_review_the_user_writes_carries_their_sandbox_but_the_listed(be, monke
     assert missing == set(STILL_MISSING["your review"]), sorted(missing)
 
 
-# ------------------------------------------------------------------- the Audit (17.16)
+# ------------------------------------------------------------------- the Audit (R17.16)
 
 def test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed(be, monkeypatch):
     monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})

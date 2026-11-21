@@ -1,7 +1,7 @@
-; Inno Setup script: AppKata-<version>-setup.exe (requirements 1.6, 15.10).
+; Inno Setup script: AppKata-<version>-setup.exe (R1.6, R15.10).
 ; For the current user by default, with no UAC prompt; /ALLUSERS (or the dialog) installs for
 ; everyone into Program Files. /RELAUNCH=1 starts AppKata again when Setup finishes, even when
-; silent: AppKata's own updates use it (requirement 2.11.5).
+; silent: AppKata's own updates use it (R2.11.5).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -47,14 +47,14 @@ Type: filesandordirs; Name: "{app}\_internal"
 Name: "{autoprograms}\AppKata"; Filename: "{app}\appkata.exe"; Comment: "A FOSS app store built on git"; AppUserModelID: "AppKata.AppKata"
 
 [Registry]
-; appkata://add/<url> opens Add source (requirement 11.3, 15.14). HKA: HKCU for the current user, HKLM for everyone.
+; appkata://add/<url> opens Add source (R11.3, R15.14). HKA: HKCU for the current user, HKLM for everyone.
 Root: HKA; Subkey: "Software\Classes\appkata"; ValueType: string; ValueName: ""; ValueData: "URL:AppKata link"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\appkata"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\appkata\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\appkata.exe"",0"
 Root: HKA; Subkey: "Software\Classes\appkata\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\appkata.exe"" ""%1"""
 
 [Run]
-; after a self-update (requirement 2.11.5): start the new version as the user who ran Setup
+; after a self-update (R2.11.5): start the new version as the user who ran Setup
 Filename: "{app}\appkata.exe"; Flags: nowait runasoriginaluser; Check: WantRelaunch
 Filename: "{app}\appkata.exe"; Description: "Open AppKata"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: not WantRelaunch
 

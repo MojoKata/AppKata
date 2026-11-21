@@ -1,4 +1,4 @@
-"""Application startup: window, tray icon (requirement 1.7) and the screenshot tour."""
+"""Application startup: window, tray icon (R1.7) and the screenshot tour."""
 
 from __future__ import annotations
 
@@ -25,14 +25,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tour", metavar="DIR", help="save screenshots of each screen to DIR and exit")
     ap.add_argument("--tour-only", default="", metavar="NAMES", help="with --tour: only these screens (comma-separated)")
     ap.add_argument("--install-self", action="store_true",
-                    help="install this AppImage into the install folder and the app menu, then exit (requirement 2.11.3.1)")
+                    help="install this AppImage into the install folder and the app menu, then exit (R2.11.3.1)")
     ap.add_argument("--version", action="version", version=f"appkata {__version__}")
-    ap.add_argument("link", nargs="?", default="", help="an appkata://add/<url> link (requirement 11.3)")
+    ap.add_argument("link", nargs="?", default="", help="an appkata://add/<url> link (R11.3)")
     a, qt_args = ap.parse_known_args(argv)
     if a.data_dir:
         os.environ["APPKATA_DATA"] = os.path.abspath(a.data_dir)
 
-    if a.install_self:          # before the one-AppKata hand-off (1.9): it never reaches a running AppKata
+    if a.install_self:          # before the one-AppKata hand-off (R1.9): it never reaches a running AppKata
         return install_self()
 
     if a.tour:
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     levels = {QtMsgType.QtDebugMsg: logging.DEBUG, QtMsgType.QtInfoMsg: logging.INFO, QtMsgType.QtWarningMsg: logging.WARNING,
               QtMsgType.QtCriticalMsg: logging.ERROR, QtMsgType.QtFatalMsg: logging.CRITICAL}
 
-    def qt_messages(mode, context, message):        # Qt and QML warnings go to the App log (requirement 14.2)
+    def qt_messages(mode, context, message):        # Qt and QML warnings go to the App log (R14.2)
         if message.startswith("qt.qpa"):
             return
         qtlog.log(levels.get(mode, logging.INFO), "%s", message)
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     if os.name == "nt":
         import ctypes
         from appkata_core.platform import quiet_subprocesses, use_system_certificates
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AppKata.AppKata")    # requirement 15.14
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AppKata.AppKata")    # R15.14
         quiet_subprocesses()
         use_system_certificates()
     app = QApplication([sys.argv[0]] + qt_args)
@@ -77,13 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     app.setDesktopFileName("appkata")
     icon = QIcon(os.path.join(QML_DIR, "assets", "appkata.svg"))
     app.setWindowIcon(icon)
-    app.setQuitOnLastWindowClosed(False)            # closing the window leaves AppKata in the tray (1.7.1)
+    app.setQuitOnLastWindowClosed(False)            # closing the window leaves AppKata in the tray (R1.7.1)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     from appkata_core.desktop import parse_link
     link = parse_link(a.link)
     server = None
-    if not a.tour:          # one AppKata at a time (requirement 1.9)
+    if not a.tour:          # one AppKata at a time (R1.9)
         from .single import hand_over, listen
         if hand_over({"link": link, "tray": bool(a.tray)}):
             return 0
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     win = engine.rootObjects()[0]
     frame = None
-    if os.name == "nt" and not a.tour:          # requirement 15.13
+    if os.name == "nt" and not a.tour:          # R15.13
         try:
             from .winframe import WinFrame
             frame = WinFrame(win)
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         menu.addAction("Open AppKata").triggered.connect(lambda: show_window())
         menu.addAction("Check for updates").triggered.connect(backend.sync)
         menu.addSeparator()
-        menu.addAction("Quit AppKata").triggered.connect(lambda: QMetaObject.invokeMethod(win, "requestQuit"))   # asks while installing (1.7.3)
+        menu.addAction("Quit AppKata").triggered.connect(lambda: QMetaObject.invokeMethod(win, "requestQuit"))   # asks while installing (R1.7.3)
 
         def refresh_tray() -> None:
             n = backend.updateCount
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     if link:
         open_link(link)
     if server is not None:
-        def from_other(msg: dict) -> None:     # a second start hands over its link (requirement 1.9)
+        def from_other(msg: dict) -> None:     # a second start hands over its link (R1.9)
             if msg.get("link"):
                 show_window("sources")
                 open_link(msg["link"])

@@ -1,5 +1,5 @@
 """The Sandbox and Install dialogs, driven offscreen against a real Backend: the QML-to-backend
-contract (requirement 17.3, 17.11).
+contract (R17.3, R17.11).
 
 The backend tests call setSandbox/installWith with hand-written arguments; the dialogs compose
 those arguments in QML (template vs custom, "customized", "widened", "touched"), and three review
@@ -151,7 +151,7 @@ def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be,
     _call(dlg, "openFor", URL)                                   # reopened: the template, customized
     assert _prop(dlg, "tpl") == "online-app" and _prop(dlg, "customized")
     _pick(dlg, "templateSelect", "strict")
-    _call(dlg, "setField", "folders", {"~/Projects": "rw"})      # a folder added at Strict (17.2, R3-2)
+    _call(dlg, "setField", "folders", {"~/Projects": "rw"})      # a folder added at Strict (R17.2, R3-2)
     assert _prop(dlg, "widened") and _prop(dlg, "tpl") == "standard" and _prop(dlg, "gs")["level"] == "standard"
     # described by what it is, not Standard's blurb ("Network and notifications"; review 2's nit)
     blurb = dlg.findChild(__import__("PySide6.QtCore", fromlist=["QObject"]).QObject, "blurb").property("text")
@@ -279,7 +279,7 @@ def test_the_install_dialogs_kind_choice_moves_the_sandbox_card_and_is_saved(ui,
 
 @pytest.mark.parametrize("where", ["sandbox dialog", "install options"])
 def test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save(ui, be, tmp_path, monkeypatch, where):
-    # Review 2, F13: 17.13's warning that the app starts afresh came as a toast after the change was
+    # Review 2, F13: R17.13's warning that the app starts afresh came as a toast after the change was
     # made. It is said above Save now, once a sandboxed choice is picked, and only where it is true:
     # an installed app that runs unsandboxed and has no private home with anything in it
     from test_sandbox_ui_surfaces import _seen

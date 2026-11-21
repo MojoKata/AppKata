@@ -1,4 +1,4 @@
-"""An app's kind from its download (requirement 17.3.3; review 2, F4)."""
+"""An app's kind from its download (R17.3.3; review 2, F4)."""
 
 import os
 import struct

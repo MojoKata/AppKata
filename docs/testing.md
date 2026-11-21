@@ -1,7 +1,7 @@
 # Testing
 
-What runs when, on which environment, and how long it takes. Requirement 1.1 promises only what
-these environments test (the owner's decision, 2026-10-24). An environment leaves this list, and 1.1,
+What runs when, on which environment, and how long it takes. R1.1 promises only what
+these environments test (the owner's decision, 2026-10-24). An environment leaves this list, and R1.1,
 together; Fedora, RHEL and its rebuilds come back if RPM packaging is taken up again.
 
 ## Tiers
@@ -37,7 +37,7 @@ Containers run on the test machine's kernel; the VMs on their own.
 |---|---|---|---|---|---|
 | 1 | Ubuntu 24.04 LTS | 1, 2, 3 | 2 · 12 · 4 · 4 · 1 · 3 est. min | ~6 GB | **1:** the suite, `scripts/test-tier1.sh` (container, the release's Python and PySide6) · **1:** the suite at the times and in the zones where a test that reads the clock goes wrong, `scripts/test-clock.sh` (seven runs of tier 1, [issue #13](reviews/issue-13-clock.md)) · **2:** the screenshot tour and its checks, `scripts/test-layout.sh` · **2:** `scripts/test-sandbox.sh launcher-vm` (a VM: Ubuntu's kernel and user-namespace restriction, AppKata's AppArmor profile) · **3:** the AppImage started on X11 and Wayland (`scripts/test-appimage.sh`, desktops) · **3:** package channels, apt and Flatpak (`scripts/test-channels.sh ubuntu ubuntu-pk`) |
 | 2 | Linux Mint 22.3, the current release | 2, 3 | 3 · 3 · 4 · 5 · 1 est. min | ~45 GB | **2:** `scripts/test-sandbox.sh launcher` (container, with what a stock install has that changes what a sandboxed app meets: dbus-x11, gnome-keyring, Firefox, a display) · **2:** the AppImage tour, `--install-self`, host libraries and desktop start (`scripts/test-appimage.sh`) · **3:** a VM installed from the official ISO, `scripts/test-desktop-vm.sh run mint22.3`: in its Cinnamon session, logged in as a user, the stock system reported, the AppImage started as a user starts it, the launcher tests, the field test (`scripts/sandbox/field-test.sh --non-interactive`), screenshots of the session (`build mint22.3` once: 3 min, 8 GB) · **3:** `wayland`, `kwin`, `inputmethod`, `filedialogs`, `consumers` (containers) · **3:** package channels, apt (`scripts/test-channels.sh mint`) |
-| 3 | Ubuntu 22.04 LTS | 2, 3 | 1 · 1 min | ~3 GB | **2:** the AppImage build (`scripts/build-appimage.sh`), on the oldest glibc 1.1 supports (2.35) · **3:** the AppImage started on X11 and Wayland. The sandbox isn't tested here (1.1) |
+| 3 | Ubuntu 22.04 LTS | 2, 3 | 1 · 1 min | ~3 GB | **2:** the AppImage build (`scripts/build-appimage.sh`), on the oldest glibc R1.1 supports (2.35) · **3:** the AppImage started on X11 and Wayland. The sandbox isn't tested here (R1.1) |
 | 4 | LMDE 7, the current release | 3 | 4 · 2 · 1 · 2 · 1 min | ~35 GB | **3:** a VM installed from the official ISO, `scripts/test-desktop-vm.sh run lmde7`: the same as Mint's (`build lmde7` once: 2 min, 8 GB) · **3:** `scripts/test-sandbox.sh launcher-lmde7` · **3:** the AppImage started on X11 and Wayland · **3:** `filedialogs-lmde7` (Qt 6.8, GTK 4.18) · **3:** `kwin-lmde7` (Plasma 6) |
 | 5 | Windows 10 22H2 | 3 | 2 · 7 min | ~40 GB | **3:** the installer build (`scripts/build-windows.sh`, Wine in a container) · **3:** the VM (`scripts/test-windows-vm.sh --tests --e2e --shots`): install, the suite, end to end, the tour, uninstall. The VM can be shared with the machine's other projects (the coworker protocol, `vms`) |
 | 6 | Ubuntu 26.04 LTS | 3 | 3 min | ~1 GB | **3:** `scripts/test-sandbox.sh launcher-vm26`: the newest sandbox versions (bwrap 0.11.1, portal 1.21), under the system's own bwrap profile |
@@ -53,12 +53,12 @@ VM that boots the system found it: the Ubuntu 24.04 and 26.04 VMs and the Mint 2
 desktop VMs check their own row (`tests/test_booted.py`, review 3, E10). A container can't: it runs
 on the test machine's kernel. Ubuntu 22.04 has no row, since the sandbox isn't tested there.
 
-| Environment | Kernel, as tested | Unprivileged user namespaces | AppKata's AppArmor setup (17.10) |
+| Environment | Kernel, as tested | Unprivileged user namespaces | AppKata's AppArmor setup (R17.10) |
 |---|---|---|---|
 | Ubuntu 24.04 LTS | 6.8 | restricted, by Ubuntu's `/usr/lib/sysctl.d/10-apparmor.conf` | needed |
 | Linux Mint 22.3 | 6.14 | allowed: Mint's `/etc/sysctl.d/20-apparmor-mint.conf` lifts Ubuntu's restriction | not needed |
 | LMDE 7 | 6.12 | allowed: Debian's kernel has no such restriction | not needed |
-| Ubuntu 26.04 LTS | 7.0 | restricted, with Ubuntu's own `bwrap-userns-restrict` profile for bwrap | not needed: the system's own profile (17.10.2) |
+| Ubuntu 26.04 LTS | 7.0 | restricted, with Ubuntu's own `bwrap-userns-restrict` profile for bwrap | not needed: the system's own profile (R17.10.2) |
 
 ## By hand, before a release
 

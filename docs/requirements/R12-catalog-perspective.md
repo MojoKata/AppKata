@@ -1,7 +1,7 @@
 # R12. Catalog perspective
 
 R12.1. The Catalog should look like a cool, modern app store for browsing the available apps
-(10.5).
+(R10.5).
 
 R12.2. **Title row.**
 
@@ -23,11 +23,11 @@ R12.4. **Tile contents.**
 
 - The icon (56 px).
 - The name and latest version.
-- The origin (2.9.3): the branch icon for a Source, and the avatars of the Trusts that list
+- The origin (R2.9.3): the branch icon for a Source, and the avatars of the Trusts that list
   the app.
-- The summary (3.4.1), up to three lines.
+- The summary (R3.4.1), up to three lines.
 - At the bottom: the combined Trust (shield) and Rating (stars) with the reviewer count, or
-  "Unreviewed"; the app's tag chips (12.4.1); and a state mark: **Installed**, **Update**, or
+  "Unreviewed"; the app's tag chips (R12.4.1); and a state mark: **Installed**, **Update**, or
   **Installed outside AppKata**.
 
 R12.4.1. **Tags on a tile.**
@@ -37,13 +37,13 @@ R12.4.1. **Tags on a tile.**
 - If they don't all fit, the tile drops tags from the end until there is room for a small
   **›** button at the end of the line.
 - Hovering the button, or focusing it with the keyboard, shows a popup listing all of the
-  app's tags with the count ("5 tags"). Warning tags (10.4.3) keep their warning colour. The
+  app's tags with the count ("5 tags"). Warning tags (R10.4.3) keep their warning colour. The
   popup closes when the pointer leaves it or focus moves away.
 
-R12.5. Clicking a tile opens the App Detail panel (5.6). The selected tile is outlined in the
+R12.5. Clicking a tile opens the App Detail panel (R5.6). The selected tile is outlined in the
 accent colour.
 
-R12.6. **Vetoed apps** (10.6.1) are not shown unless they match the current search text.
+R12.6. **Vetoed apps** (R10.6.1) are not shown unless they match the current search text.
 Clearing a search hides them again.
 
 R12.6.1. When shown, a vetoed tile is dimmed and has a red **Avoid** badge with a warning icon.

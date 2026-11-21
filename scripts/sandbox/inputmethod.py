@@ -1,4 +1,4 @@
-"""What an input method gives a sandboxed app (review 2, F15; review 3, R3-18; requirement 17.5).
+"""What an input method gives a sandboxed app (review 2, F15; review 3, R3-18; R17.5).
 
 Run by `scripts/test-sandbox.sh inputmethod` as the test user in a Mint 22.1 container with IBus
 and Fcitx 5, after a session bus, `ibus-daemon` and `fcitx5` are up (headless: their D-Bus front

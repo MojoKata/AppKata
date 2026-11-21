@@ -67,7 +67,7 @@ The "Primary key fingerprint" `gpg` names must be the one the README publishes,
 ## The draft, and publishing it
 
 A published release reaches every AppKata at its next sync, since AppKata takes its own updates from
-this repository's releases (requirement 2.11). So CI makes a **draft**, which only the repository's
+this repository's releases (R2.11). So CI makes a **draft**, which only the repository's
 writers see, and the owner publishes it after the checks no runner can make
 ([`RELEASE.md`](RELEASE.md#4-the-field-test), 4: the field test by hand, which uses the draft's files).
 

@@ -2,7 +2,7 @@
 """Generate docs/AppKata.md from scripts/data/appkata-md-facts.json (gathered from GitHub on
 2026-10-02: releases, assets, licenses, funding files, and a scan of each project's source for a
 built-in updater). Trust and Rating follow the rubric written into the file; edit before signing.
-Apps that update themselves are listed too, with an "Auto update" setting (requirement 4.10)."""
+Apps that update themselves are listed too, with an "Auto update" setting (R4.10)."""
 
 import json
 import os
@@ -132,7 +132,7 @@ for name, repo, offline, updater, lic, note, cmd, auto in ALL:
         opts += ["- App menu: yes", f"- Command link: {'yes' if cmd else 'no'}"] + ([] if auto else ["- Stable name link: yes"])
     if auto is True:
         opts.append("- Auto update: yes")
-    elif auto:      # one line per platform (requirement 10.3.1)
+    elif auto:      # one line per platform (R10.3.1)
         opts += [f"- Auto update ({p}): {'yes' if p in auto else 'no'}" for p in ("linux", "windows", "macos")]
     if opts:
         lines += ["", f"## {name}::Settings", ""] + opts

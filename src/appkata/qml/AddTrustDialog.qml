@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Adding a Trust (requirement 7.6.2): find AppKata.md, check the signature, confirm the signer.
+// Adding a Trust (R7.6.2): find AppKata.md, check the signature, confirm the signer.
 Dialog {
     id: root
     property var p: null

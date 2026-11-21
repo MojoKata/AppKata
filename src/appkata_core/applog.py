@@ -1,4 +1,4 @@
-"""The App log (requirement 14): background activity, errors and command output, in two text
+"""The App log (R14): background activity, errors and command output, in two text
 files of at most 2 MB each: AppKata.log (current) and AppKata-prev.log (previous)."""
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def log_dir() -> str:
 
 class TwoFileHandler(logging.Handler):
     """Writes AppKata.log; at the limit, replaces AppKata-prev.log with it and starts a new one
-    (requirement 14.4.1)."""
+    (R14.4.1)."""
 
     def __init__(self, folder: str, limit: int = LIMIT):
         super().__init__()
@@ -82,7 +82,7 @@ def setup(level: int = logging.INFO) -> TwoFileHandler:
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    """subprocess.run that logs the command and its output (requirement 14.2)."""
+    """subprocess.run that logs the command and its output (R14.2)."""
     lg = logging.getLogger("appkata.cmd")
     lg.info("$ %s", " ".join(cmd))
     p = subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -101,7 +101,7 @@ GRACE = 10.0
 def app_log_path(app_id: str) -> str:
     """Where a launched app's own output goes: logs/apps/<id>.log, one file per install, keyed by the
     install's own id (install.app_id_of, unique among installs), appended to at each launch and
-    replaced by <id>-prev.log past APP_LOG_LIMIT (requirement 14.2.1). Review 2, F14: it was keyed by
+    replaced by <id>-prev.log past APP_LOG_LIMIT (R14.2.1). Review 2, F14: it was keyed by
     the name, so two "Notes" from two Sources shared one log, and one's failed start could be
     reported with the other's line. A file rather than a pipe: the app outlives AppKata, and a pipe
     whose reader is gone would end an app the moment it next wrote a line. The generated launcher
@@ -116,7 +116,7 @@ def app_log_path(app_id: str) -> str:
 def adopt_name_logs(installs: list[tuple[str, str]]) -> None:
     """Move each log an older AppKata kept by app name (logs/apps/<name>.log and its -prev) to its
     install's id, given [(id, name)] of every install. A name two installs share keeps its old log,
-    unsplit: its lines are both apps'. Nothing is moved over a log the id already has (14.2.1)."""
+    unsplit: its lines are both apps'. Nothing is moved over a log the id already has (R14.2.1)."""
     names = [n for _, n in installs]
     for app_id, name in installs:
         if names.count(name) > 1:
@@ -133,7 +133,7 @@ def adopt_name_logs(installs: list[tuple[str, str]]) -> None:
 def open_app_log(app_id: str, name: str):
     """(path, file) for a launch: the install's log opened for appending, rotated past the limit, with
     a dated header line naming the app written — the same rotation and header the launcher itself
-    does when it is the one redirecting (14.2)."""
+    does when it is the one redirecting (R14.2)."""
     import time
     path = app_log_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -218,7 +218,7 @@ def watch(proc: subprocess.Popen, name: str, logfile: str, on_failed=None, grace
 
 
 def combined() -> str:
-    """Both files, oldest first, joined into one temp file (requirement 14.5.1); returns its path."""
+    """Both files, oldest first, joined into one temp file (R14.5.1); returns its path."""
     d = log_dir()
     out = os.path.join(tempfile.gettempdir(), "AppKata-log.txt")
     with open(out, "w", encoding="utf-8") as o:
@@ -231,7 +231,7 @@ def combined() -> str:
 
 
 def open_in_editor(path: str) -> None:
-    """The system's text editor (requirement 14.5.2)."""
+    """The system's text editor (R14.5.2)."""
     if OS == "windows":
         subprocess.Popen(["notepad.exe", path])
     elif OS == "macos":

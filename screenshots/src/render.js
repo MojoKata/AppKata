@@ -268,8 +268,8 @@ function cursor(x, y) {
   return `<path d="M${x},${y} l0,17 l4.5,-4 l3,7 l2.6,-1.2 l-3,-6.8 l6,0 Z" fill="#ffffff" stroke="#111" stroke-width="1.1" stroke-linejoin="round"/>`;
 }
 const WARN_TAGS = ['spyware', 'malware', 'ads', 'tracking', 'knownvuln'];
-// Windows screens (W…): Minimize and Maximize in the header (req 15.13), and an app that needs the
-// Visual C++ run-time (req 15.18). Set while one is drawn.
+// Windows screens (W…): Minimize and Maximize in the header (R15.13), and an app that needs the
+// Visual C++ run-time (R15.18). Set while one is drawn.
 let WIN = false, MSVCRT = null;
 const onWindows = (draw, msvcrt = null) => T => { WIN = true; MSVCRT = msvcrt; try { return draw(T); } finally { WIN = false; MSVCRT = null; } };
 
@@ -340,7 +340,7 @@ const INSTALLED = {
   flameshot: { from: '13.1.0', type: 'Flatpak' },
   inkscape: { from: '1.4.1', to: '1.4.2', type: 'AppImage', held: 'Held · 5 days left' },
   keepassxc: { from: '2.7.10', type: 'AppImage' },
-  syncthing: { from: '2.0.9', type: 'tar.gz', auto: true, by: 'Kenji’s app reviews' },     // updates itself (req 4.10)
+  syncthing: { from: '2.0.9', type: 'tar.gz', auto: true, by: 'Kenji’s app reviews' },     // updates itself (R4.10)
   ventoy: { from: '1.0.99', to: '1.1.07', type: 'tar.gz', pinned: true },
   vscodium: { from: '1.104.2', type: '.rpm' },
 };
@@ -364,10 +364,10 @@ const TRUSTS = [
     auth: ['jo', 'rp', 'tk', 'ab', 'ln', 'sv'], warn: 'New signer', score: 3 },
   { name: 'Kenji’s app reviews', short: 'Kenji', url: 'nostr://npub1k3nj…8f2q/app-reviews', apps: 21, synced: '5 h ago', auth: ['kj', 'ay'], nostr: true, score: 5 },
 ];
-// Trusts are listed by Score, then name; your own file first (req 7.6.7)
+// Trusts are listed by Score, then name; your own file first (R7.6.7)
 const byScore = (a, b) => (TRUSTS[b].own ? 1 : 0) - (TRUSTS[a].own ? 1 : 0) || TRUSTS[b].score - TRUSTS[a].score || TRUSTS[a].name.localeCompare(TRUSTS[b].name);
 const TRUST_ORDER = TRUSTS.map((_, i) => i).sort(byScore);
-// Where each app comes from (req 2.9): its own Source, and/or the Trusts that list it
+// Where each app comes from (R2.9): its own Source, and/or the Trusts that list it
 const ORIGIN = {
   appkata: { src: true, tr: [3] },
   localsend: { src: true, tr: [1, 2, 3] }, keepassxc: { src: true, tr: [1, 2, 3] }, syncthing: { src: true, tr: [1, 2, 3] },
@@ -382,7 +382,7 @@ function originText(key) {
   if (o.src) return n ? `Source · ${n} trust${n > 1 ? 's' : ''}` : 'Source';
   return n === 1 ? TRUSTS[o.tr[0]].name : `${n} trusts`;
 }
-// first lines of each Trust's review section (req 5.7.6)
+// first lines of each Trust's review section (R5.7.6)
 const REVIEW_TEXT = {
   localsend: 'No account, no cloud: transfers stay on the LAN and are TLS-encrypted. Releases are built in CI from tagged commits, with checksums.',
   krita: 'The best FOSS painting app, full stop. KDE signs the release builds; donations go to the Krita Foundation.',
@@ -502,7 +502,7 @@ function headerBar(T, view, o = {}) {
     s += text(x + segW / 2 - lw / 2 + 22, 30.5, label, { size: 13, weight: 700, fill: c });
     if (k === 'apps' && (o.badge ?? 4) > 0) {
       const bx = x + segW / 2 - lw / 2 + 22 + tw(label, 13, { bold: true }) + 6 + (o.installing ? 20 : 0);
-      if (o.installing) s += icon('sync', bx - 20, 18, 14, T.accent);       // an install in progress (req 4.8.1)
+      if (o.installing) s += icon('sync', bx - 20, 18, 14, T.accent);       // an install in progress (R4.8.1)
       s += rect(bx, 17, 20, 18, 9, T.accent) + text(bx + 10, 30, String(o.badge ?? 4), { size: 11, weight: 700, fill: '#ffffff', anchor: 'middle' });
     }
   });
@@ -537,7 +537,7 @@ function toast(T, msg, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- App Detail panel (req 5.6–5.7)
+// ---------------------------------------------------------------- App Detail panel (R5.6–R5.7)
 const PANEL_W = 450;
 function detailPanel(T, key, o = {}) {
   const a = APPS[key], st = STATE[key], inst = INSTALLED[key];
@@ -551,7 +551,7 @@ function detailPanel(T, key, o = {}) {
   s += iconBtn(pcx, 81, 'pencil', T, { active: o.pencilHover });
   if (o.pencilHover) s += tooltip(pcx, 104, 'Write a review', T, { below: true });
   let y = 104;
-  if (inst && inst.avoid) {        // a Trust avoids the installed version (req 10.6.5)
+  if (inst && inst.avoid) {        // a Trust avoids the installed version (R10.6.5)
     const v = inst.avoid;
     s += rect(x0, y, pw, 64, 11, T.errSoft, { stroke: T.err });
     s += icon('warn', x0 + 14, y + 14, 16, T.err, 1.7);
@@ -588,7 +588,7 @@ function detailPanel(T, key, o = {}) {
   y += 196;
   s += text(x0, y + 12, a.name, { size: 24, weight: 700, fill: T.text });
   s += text(x0, y + 34, `${a.host}/${a.repo}`, { size: 12, fill: T.muted, mono: true });
-  // From: origins (req 5.7.3)
+  // From: origins (R5.7.3)
   const og = ORIGIN[key];
   s += text(x0, y + 64, 'From', { size: 12, weight: 700, fill: T.faint });
   let fx = x0 + 44;
@@ -609,13 +609,13 @@ function detailPanel(T, key, o = {}) {
   else if (!a.veto) chips.push(['Checksum', T.accentSoft, T.accent, 'check']);
   else chips.push(['Unverified', T.warnSoft, T.warn, 'warn']);
   if (st === 'foreign') chips.push(['Installed outside AppKata', T.warnSoft, T.warn, 'info']);
-  if (inst && inst.channel) chips.splice(0, chips.length, ...inst.channel);   // e.g. Flathub · verified (req 16.6)
+  if (inst && inst.channel) chips.splice(0, chips.length, ...inst.channel);   // e.g. Flathub · verified (R16.6)
   if (inst && !inst.channel) chips.push([inst.type, T.track, T.muted, null]);
-  if (inst && inst.system) chips.push(['Updated by the system', T.track, T.muted, 'sync']);       // req 16.5
+  if (inst && inst.system) chips.push(['Updated by the system', T.track, T.muted, 'sync']);       // R16.5
   if (inst && inst.auto) chips.push(['Updates itself', T.track, T.muted, 'sync']);
   if (inst && inst.sandbox && inst.sandbox.level !== 'Off') chips.push(['Sandboxed', T.okSoft, T.ok, 'shieldCheck']);
   if (inst && inst.setupNeeded) chips.push(['Not sandboxed', T.warnSoft, T.warn, 'warn']);
-  if (inst && MSVCRT === key) chips.push(['MSVCRT', T.warnSoft, T.warn, 'warn']);          // req 15.18.2
+  if (inst && MSVCRT === key) chips.push(['MSVCRT', T.warnSoft, T.warn, 'warn']);          // R15.18.2
   for (const [l, bg, fg, ic] of chips) { const p = pill(cx, cy, l, { bg, fg, ic, size: 11.5 }); s += p.s; cx += p.w + 6; }
   // actions
   y = cy + 40;
@@ -627,13 +627,13 @@ function detailPanel(T, key, o = {}) {
     y += 44;
   } else if (!inst) {
     add(button(bx, y, 'Install', T, { ic: 'download', primary: !a.veto, danger: a.veto }));
-  } else if (inst.self) {     // AppKata itself (req 2.11)
+  } else if (inst.self) {     // AppKata itself (R2.11)
     if (inst.restart) add(button(bx, y, 'Restart AppKata', T, { ic: 'sync', primary: true }));
     else if (inst.to) add(button(bx, y, 'Update', T, { ic: 'update', primary: true }));
     s += para(x0, y + 54, pw, inst.restart ? 'AppKata 0.2.0 is installed. Restart to finish updating; you’re running 0.1.0.'
       : 'AppKata updates itself like any portable app and keeps older versions for a quick rollback.', T, { size: 12, lh: 17 }).s;
     y += 30;
-  } else if (o.busy && BUSY[key]) {        // installing: phase in the button, Cancel, bar, size and speed (req 4.8.1)
+  } else if (o.busy && BUSY[key]) {        // installing: phase in the button, Cancel, bar, size and speed (R4.8.1)
     add(button(bx, y, BUSY[key].phase, T, { ic: 'update', disabled: true }));
     add(button(bx, y, 'Cancel', T, { ic: 'x' }));
     s += rect(x0, y + 46, pw, 5, 2.5, T.track) + rect(x0, y + 46, pw * BUSY[key].p, 5, 2.5, T.accent);
@@ -667,7 +667,7 @@ function detailPanel(T, key, o = {}) {
     s += text(bxx + 14, y + 48, l, { size: 11.5, fill: T.muted });
   });
   y += 84;
-  if (inst && inst.perms) {        // Flatpak permissions, and what an update added (req 16.6)
+  if (inst && inst.perms) {        // Flatpak permissions, and what an update added (R16.6)
     s += text(x0, y, 'Permissions', { size: 14, weight: 700, fill: T.text });
     let qx = x0, qy = y + 14;
     inst.perms.forEach(([l, added]) => {
@@ -733,7 +733,7 @@ function detailPanel(T, key, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- Catalog (req 12)
+// ---------------------------------------------------------------- Catalog (R12)
 function catalogTile(x, y, w, h, key, T, o = {}) {
   const a = APPS[key], st = STATE[key], k = w / 300;
   let s = '';
@@ -763,7 +763,7 @@ function catalogTile(x, y, w, h, key, T, o = {}) {
   const fy = y + h - 22;
   const tb = trustBadge(x + 18, fy, a, T);
   s += tb.s;
-  // tags: as many as fit; if some don't, trim and end with a › button that pops up all of them (req 12.4)
+  // tags: as many as fit; if some don't, trim and end with a › button that pops up all of them (R12.4)
   const left = x + 18 + tb.w + 8, right = x + w - 16, gapT = 5, BTN = 22;
   const widths = a.tags.map(t => tw(t, 10.5, { bold: true }) + 18);
   const total = widths.reduce((p, q) => p + q + gapT, -gapT);
@@ -842,7 +842,7 @@ function catalogView(T, o = {}) {
   const ct = { panel: !!o.detail, search: o.search, allTags: o.allTags };
   s += catalogTitle(T, 32, right, ct);
   const byTrust = (p, q) => ((APPS[q].trust ?? -1) - (APPS[p].trust ?? -1)) || APPS[p].name.localeCompare(APPS[q].name);
-  const keys = o.keys || [...CATALOG].sort(byTrust);       // Trust, then name; unreviewed last (req 12.2)
+  const keys = o.keys || [...CATALOG].sort(byTrust);       // Trust, then name; unreviewed last (R12.2)
   const out = {};
   const g = catalogGrid(T, 32, right - 32, keys, { selected: o.detail, tagsHover: o.tagsHover, out, busy: o.busyTile });
   s += g.s + (out.pop || '');
@@ -856,7 +856,7 @@ function catalogView(T, o = {}) {
   if (o.allTags) s += allTagsPopover(ct._moreX, 162, T);
   return s;
 }
-function allTagsPopover(x, y, T) {           // More… (req 12.2)
+function allTagsPopover(x, y, T) {           // More… (R12.2)
   const tags = ['foss', 'donation', 'offline', 'saas', 'freemium', 'reproducible', 'signed', 'portable', 'nonfreenet', 'upstreamnonfree', 'tracking', 'spyware', 'ads'];
   const w = 340, rows = [];
   let row = [], rw = 0;
@@ -869,7 +869,7 @@ function allTagsPopover(x, y, T) {           // More… (req 12.2)
   return s + cursor(x + 60, y - 18);
 }
 
-// ---------------------------------------------------------------- app menu (req 5.4)
+// ---------------------------------------------------------------- app menu (R5.4)
 function appMenu(T, o = {}) {
   const mw_ = 290, x = W - 64 - mw_ + 40, y = 50, mh = 458;
   let s = rect(x, y, mw_, mh, 14, T.raised, { filter: 'lift' }) + rect(x + 0.5, y + 0.5, mw_ - 1, mh - 1, 14, 'none', { stroke: T.border });
@@ -902,9 +902,9 @@ function appMenu(T, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- Apps (req 6)
+// ---------------------------------------------------------------- Apps (R6)
 const APP_ORDER_UPD = ['appkata', 'localsend', 'signal', 'zettlr'];
-// installing (req 4.8): one download, the rest waiting
+// installing (R4.8): one download, the rest waiting
 const BUSY = { localsend: { phase: 'Downloading 45%', p: 0.45, detail: '41.4 MB of 92.0 MB · 3.4 MB/s' }, appkata: { phase: 'Waiting', p: 0 }, signal: { phase: 'Waiting', p: 0 } };
 const APP_ORDER_REST = ['flameshot', 'inkscape', 'keepassxc', 'syncthing', 'ventoy', 'vscodium'];
 function appRow(x, y, w, key, T, o = {}) {
@@ -932,9 +932,9 @@ function appRow(x, y, w, key, T, o = {}) {
     s += text(sx + 17, y + 46, off ? 'No sandbox' : inst.sandbox.level, { size: 11.5, weight: off ? 400 : 700, fill: off ? T.faint : T.ok });
   }
   // status
-  const bx = x + w - 16 - 32 + (inst.self ? 40 : 0);    // AppKata can't uninstall itself (req 2.11.2)
+  const bx = x + w - 16 - 32 + (inst.self ? 40 : 0);    // AppKata can't uninstall itself (R2.11.2)
   const b = o.busy && BUSY[key];
-  if (b) {                     // phase, progress bar and an icon-only Cancel (req 4.8.1)
+  if (b) {                     // phase, progress bar and an icon-only Cancel (R4.8.1)
     const cx = x + w - 16 - 32, wait = b.phase === 'Waiting';
     s += text(cx - 10, y + 27, b.phase, { size: 12, weight: 700, fill: wait ? T.muted : T.accent, anchor: 'end' });
     if (b.detail && w > 900) s += text(cx - 18 - tw(b.phase, 12, { bold: true }), y + 27, b.detail, { size: 11, fill: T.faint, anchor: 'end' });
@@ -943,14 +943,14 @@ function appRow(x, y, w, key, T, o = {}) {
     return s;
   }
   if (inst.auto) s += pill(bx - 8, y + 19, 'Updates itself', { bg: T.track, fg: T.muted, ic: 'sync', anchor: 'end' }).s;
-  if (MSVCRT === key) {         // the Visual C++ run-time, missing here (req 15.18.2)
+  if (MSVCRT === key) {         // the Visual C++ run-time, missing here (R15.18.2)
     const p = pill(bx - 8, y + 19, 'MSVCRT', { bg: T.warnSoft, fg: T.warn, ic: 'warn', anchor: 'end' });
     s += p.s;
     const tip = 'Microsoft Visual C++ Run-time: not installed';
     if (o.msvcrtTip) s += tooltip(bx - 8 - p.w / 2, y - 18, tip, T, { right: bx - 8 + 12 });
   }
   if (inst.system) s += pill(bx - 8, y + 19, 'Updated by the system', { bg: T.track, fg: T.muted, ic: 'sync', anchor: 'end' }).s;
-  if (inst.notUpdated) {        // a distro package nothing updates automatically (req 16.5)
+  if (inst.notUpdated) {        // a distro package nothing updates automatically (R16.5)
     const p = pill(bx - 8, y + 19, 'Not updated', { bg: T.warnSoft, fg: T.warn, ic: 'warn', anchor: 'end' });
     s += p.s + tooltip(bx - 8 - p.w / 2, y - 18, inst.notUpdated, T, { right: bx - 8 + 12 });
   }
@@ -974,7 +974,7 @@ function appRow(x, y, w, key, T, o = {}) {
   return s;
 }
 function appsView(T, o = {}) {
-  if (o.selfUpdated) {        // AppKata 0.2.0 installed, still running 0.1.0 (req 2.11.3)
+  if (o.selfUpdated) {        // AppKata 0.2.0 installed, still running 0.1.0 (R2.11.3)
     const keep = INSTALLED.appkata;
     INSTALLED.appkata = { from: '0.2.0', type: 'AppImage', self: true, restart: true };
     const s = appsView(T, { ...o, selfUpdated: false, _self: true });
@@ -1001,7 +1001,7 @@ function appsView(T, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- review dialog (req 8.4)
+// ---------------------------------------------------------------- review dialog (R8.4)
 function picker(x, y, value, T, o = {}) {        // "–★★★★★"
   let s = '';
   const avoid = o.trust && value === 0;
@@ -1034,7 +1034,7 @@ function reviewDialog(T, o = {}) {
   s += icon('folder', x0 + iw - 40 - tw('~/src/reviews/AppKata.md', 11.5, { mono: true }) - 22, dy + 34, 14, T.faint);
   s += text(x0 + iw - 40, dy + 46, '~/src/reviews/AppKata.md', { size: 11.5, fill: T.faint, mono: true, anchor: 'end' });
   let y = dy + 92;
-  if (o.version) {          // which review this is: a release, or Any version (req 8.4.1.1)
+  if (o.version) {          // which review this is: a release, or Any version (R8.4.1.1)
     s += text(x0, y, 'Version', { size: 12.5, weight: 700, fill: T.muted });
     s += input(x0, y + 10, 220, T, { value: o.version.value, h: 38 });
     s += icon('chevDown', x0 + 220 - 28, y + 21, 16, T.muted);
@@ -1121,7 +1121,7 @@ function reviewDialog(T, o = {}) {
     o.version.details.forEach((l, i) => { s += text(x0 + 42, y + 20 + i * 17, l, { size: 11.5, fill: T.muted, mono: true }); });
     y += o.version.details.length * 17 + 26;
   }
-  // the install options sub-section it will write (req 8.4.7)
+  // the install options sub-section it will write (R8.4.7)
   y += 10;
   // git options
   s += checkbox(x0, y - 4, true, T);
@@ -1153,7 +1153,7 @@ function reviewDialog(T, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- Sources (req 7)
+// ---------------------------------------------------------------- Sources (R7)
 const SOURCES = [
   { key: 'localsend', chips: [['Installed', 'ok']] },
   { key: 'signal', chips: [['Installed', 'ok']] },
@@ -1212,7 +1212,7 @@ function sourceMenu(x, y, T) {
   s += text(x + 44, y + 164, 'Remove source', { size: 13.5, weight: 700, fill: T.err });
   return s;
 }
-function trustsPopover(x, y, key, T) {          // which Trusts also list this Source (req 2.9.4)
+function trustsPopover(x, y, key, T) {          // which Trusts also list this Source (R2.9.4)
   const tr = ORIGIN[key].tr.filter(i => i > 0).sort(byScore), w = 330, h = 44 + tr.length * 50;
   let s = rect(x, y, w, h, 14, T.raised, { filter: 'lift' }) + rect(x + 0.5, y + 0.5, w - 1, h - 1, 14, 'none', { stroke: T.border });
   s += text(x + 16, y + 27, `Also listed by ${tr.length} trusts`, { size: 12, weight: 700, fill: T.faint });
@@ -1260,7 +1260,7 @@ function hoverCard(x, y, key, T) {
   s += rect(x + 14, y + h - 6, w - 28, 2.5, 1.2, T.track) + rect(x + 14, y + h - 6, (w - 28) * 0.6, 2.5, 1.2, T.accent);
   return s;
 }
-function trustRail(T, px) {          // the Trust panel collapsed (req 7.6)
+function trustRail(T, px) {          // the Trust panel collapsed (R7.6)
   let s = rect(px, 53, W - px, H - 53, 0, T.side) + `<path d="M${px + 0.5},53 V${H}" stroke="${T.border}"/>`;
   s += rect(px + 11, 74, 34, 32, 9, T.surface, { stroke: T.border }) + icon('panel', px + 20, 82, 16, T.muted);
   s += icon('shieldCheck', px + 18, 124, 20, T.accent) + `<circle cx="${px + 39}" cy="124" r="4.5" fill="${T.warn}"/>`;
@@ -1295,7 +1295,7 @@ function trustDetail(T, x0, iw, idx) {
   s += text(x0, y0 + 77, t.url.length > 44 ? t.url.slice(0, 43) + '…' : t.url, { size: 11, fill: T.muted, mono: true });
   s += icon('check', x0, y0 + 88, 13, T.ok, 1.8);
   s += text(x0 + 18, y0 + 99, 'Verified at c41e7d3 · Sep 29 · 112 apps · 1 parse warning', { size: 11.5, fill: T.muted });
-  // Score (req 7.6.8): how much its reviews count
+  // Score (R7.6.8): how much its reviews count
   s += text(x0, y0 + 128, 'Score', { size: 13, weight: 700, fill: T.text });
   s += stars(x0 + 50, y0 + 124, t.score, 7.5, T, { color: T.accent }).s;
   s += text(x0 + 140, y0 + 128, `${t.score} of 5`, { size: 12, fill: T.muted });
@@ -1415,7 +1415,7 @@ function removeSourceDialog(T) {
   return s;
 }
 
-// ---------------------------------------------------------------- confirmations (req 5.8)
+// ---------------------------------------------------------------- confirmations (R5.8)
 function confirmDialog(T, base, c) {
   // c: {title, body, action, ic, danger, app, warn: {title, lines, note}, extra: [label, ic], list}
   let s = base + scrim(T);
@@ -1457,7 +1457,7 @@ function confirmDialog(T, base, c) {
   return s;
 }
 
-// ---------------------------------------------------------------- Source settings (req 2.6.7)
+// ---------------------------------------------------------------- Source settings (R2.6.7)
 function sourceSettingsDialog(T) {
   let s = sourcesView(T, {}) + scrim(T);
   const dw = 640, dh = 590, dx = (W - dw) / 2, dy = (H - dh) / 2, x0 = dx + 30, iw = dw - 60, right = x0 + iw, a = APPS.localsend;
@@ -1503,7 +1503,7 @@ function sourceSettingsDialog(T) {
 
 
 // ---------------------------------------------------------------- more screens and dialogs
-function detailMenu(T) {             // App Detail ⋯ menu (req 5.7.1, 4.9.5)
+function detailMenu(T) {             // App Detail ⋯ menu (R5.7.1, R4.9.5)
   let s = appsView(T, { detail: 'localsend' });
   const mw_ = 270, x = W - 28 - 48 - mw_ + 30, y = 100, mh = 186;
   s += iconBtn(W - 28 - 48, 81, 'dots', T, { active: true });
@@ -1516,7 +1516,7 @@ function detailMenu(T) {             // App Detail ⋯ menu (req 5.7.1, 4.9.5)
   });
   return s;
 }
-function emptyState(T, view) {       // first run (req 6.7, 12.7)
+function emptyState(T, view) {       // first run (R6.7, R12.7)
   let s = headerBar(T, view, { badge: 0 });
   const cx = W / 2;
   if (view === 'apps') {
@@ -1535,7 +1535,7 @@ function emptyState(T, view) {       // first run (req 6.7, 12.7)
   }
   return s;
 }
-function toastScene(T, err) {        // short-lived messages (req 5.5)
+function toastScene(T, err) {        // short-lived messages (R5.5)
   let s = appsView(T);
   const msg = err ? 'Signal Desktop: apt-get install failed: dpkg was interrupted' : 'LocalSend 1.17.0 installed.';
   const w = tw(msg, 13, { bold: true }) + 64, x = (W - w) / 2, y = H - 28 - 44;
@@ -1544,7 +1544,7 @@ function toastScene(T, err) {        // short-lived messages (req 5.5)
   s += text(x + 44, y + 27, msg, { size: 13, weight: 700, fill: err ? '#ffffff' : T.tipFg });
   return s;
 }
-function addTrustDialog(T) {         // req 7.6.2
+function addTrustDialog(T) {         // R7.6.2
   let s = sourcesView(T) + scrim(T);
   const dw = 600, dh = 560, dx = (W - dw) / 2, dy = (H - dh) / 2, x0 = dx + 30, iw = dw - 60;
   s += rect(dx, dy, dw, dh, 20, T.surface, { filter: 'lift' });
@@ -1574,7 +1574,7 @@ function addTrustDialog(T) {         // req 7.6.2
   s += b.s + button(x0 + iw - b.w - 10, by, 'Cancel', T, { anchor: 'end' }).s;
   return s;
 }
-function syncScene(T) {              // sync in progress, with Cancel (req 9.2)
+function syncScene(T) {              // sync in progress, with Cancel (R9.2)
   let s = catalogView(T, { syncing: true });
   const x = W - 152 - 200, y = 50, w = 260, h = 92;
   s += rect(x, y, w, h, 12, T.raised, { filter: 'lift' }) + rect(x + 0.5, y + 0.5, w - 1, h - 1, 12, 'none', { stroke: T.border });
@@ -1582,7 +1582,7 @@ function syncScene(T) {              // sync in progress, with Cancel (req 9.2)
   s += button(x + 14, y + 42, 'Cancel', T).s;
   return s;
 }
-function reviewFileScene(T) {        // first review: choose where AppKata.md goes (req 8.2)
+function reviewFileScene(T) {        // first review: choose where AppKata.md goes (R8.2)
   let s = appsView(T, { detail: 'localsend' }) + scrim(T);
   // the system's save dialog (GTK on Linux), drawn neutrally
   const dw = 760, dh = 470, dx = (W - dw) / 2, dy = (H - dh) / 2, bg = T.dark ? '#24262c' : '#fafafa', side = T.dark ? '#1d1f24' : '#efefef';
@@ -1604,7 +1604,7 @@ function reviewFileScene(T) {        // first review: choose where AppKata.md go
   s += text(dx + 200, dy + dh - 18, 'The first review asks once; change it later in Settings → Reviews.', { size: 11.5, fill: T.faint });
   return s;
 }
-function exeChoiceDialog(T) {        // Windows: an .exe AppKata couldn't classify (req 4.2.1, 4.9.2)
+function exeChoiceDialog(T) {        // Windows: an .exe AppKata couldn't classify (R4.2.1, R4.9.2)
   let s = catalogView(T, { detail: 'kdenlive' }) + scrim(T);
   const dw = 680, dh = 360, dx = (W - dw) / 2, dy = (H - dh) / 2, x0 = dx + 30, iw = dw - 60, a = APPS.kdenlive;
   s += rect(dx, dy, dw, dh, 20, T.surface, { filter: 'lift' });
@@ -1629,7 +1629,7 @@ function exeChoiceDialog(T) {        // Windows: an .exe AppKata couldn't classi
   s += text(x0, by + 22, 'Install stays disabled until you pick one. Shown on Windows only.', { size: 12, fill: T.faint });
   return s;
 }
-function macMenuBar(T) {             // macOS: the menu-bar extra and a notification (req 1.7)
+function macMenuBar(T) {             // macOS: the menu-bar extra and a notification (R1.7)
   const g = linGrad([[0, T.dark ? '#1e2a4a' : '#bfdbfe'], [1, T.dark ? '#3a2350' : '#e9d5ff']], 1, 1);
   let s = rect(0, 0, W, H, 0, `url(#${g})`);
   s += rect(0, 0, W, 28, 0, T.dark ? '#16181f' : '#f5f5f7', { op: 0.85 });
@@ -1658,7 +1658,7 @@ function macMenuBar(T) {             // macOS: the menu-bar extra and a notifica
   s += logo(W / 2 - 200 + 5 * 62, H - 68, 46, T) + `<circle cx="${W / 2 - 177 + 5 * 62}" cy="${H - 16}" r="2.5" fill="${T.text}"/>`;
   return s;
 }
-const SOURCE_ERRORS = [       // Source errors on their rows (req 2.10)
+const SOURCE_ERRORS = [       // Source errors on their rows (R2.10)
   { key: 'joplin', chips: [['Track only', 'muted']], err: 'Moved to github.com/laurent22/joplin-app', errIc: 'info', action: 'Update URL' },
   { key: 'kdenlive', chips: [], err: 'Rate limited until 14:32 · add a GitLab token in Settings' },
   { key: 'tenacity', chips: [], err: 'No download for Linux x86_64', errIc: 'warn' },
@@ -1667,9 +1667,9 @@ const SOURCE_ERRORS = [       // Source errors on their rows (req 2.10)
   { key: 'localsend', chips: [['Installed', 'ok']] },
 ];
 
-// ---------------------------------------------------------------- AppKata.md settings stanza (req 10.3.1)
+// ---------------------------------------------------------------- AppKata.md settings stanza (R10.3.1)
 function settingsStanza(T, v = '') {
-  // not an AppKata screen: the file a reviewer writes, open in a text editor (req 10.1, 10.3)
+  // not an AppKata screen: the file a reviewer writes, open in a text editor (R10.1, R10.3)
   const ed = T.dark ? '#16181f' : '#fbfbfd', gutter = T.dark ? '#1c1f27' : '#f1f2f6';
   let s = rect(0, 0, W, H, 0, ed);
   s += rect(0, 0, W, 44, 0, T.dark ? '#1f222b' : '#eceef3') + hline(0, W, 44.5, T.border);
@@ -1766,7 +1766,7 @@ function settingsStanza(T, v = '') {
   return s;
 }
 
-// ---------------------------------------------------------------- tray (req 1.7)
+// ---------------------------------------------------------------- tray (R1.7)
 function trayScene(T) {
   // desktop with a top panel and the tray menu, the window closed
   const g = linGrad([[0, T.dark ? '#1b1f3a' : '#c7d2fe'], [1, T.dark ? '#3b1d4a' : '#fbcfe8']], 1, 1);
@@ -1809,7 +1809,7 @@ function trayScene(T) {
 }
 
 
-// ---------------------------------------------------------------- Audit (req 13)
+// ---------------------------------------------------------------- Audit (R13)
 const AUDIT = [
   ['Today', [
     ['you', 'app', 'apps', 'You installed', 'KeePassXC', [['version', '2.7.10'], ['file', 'KeePassXC-2.7.10-x86_64.AppImage']], 'github.com/keepassxreboot/keepassxc', '09:41:07'],
@@ -1863,7 +1863,7 @@ function auditView(T, days = AUDIT) {
   return s;
 }
 
-// ---------------------------------------------------------------- Explore (req 7.7)
+// ---------------------------------------------------------------- Explore (R7.7)
 const EXPLORE = [
   ['keepassxreboot', 'keepassxc', 'KeePassXC is a cross-platform community-driven port of the Windows application “KeePass Password Safe”.', '25.1k', 'C++', '2 days ago', 'source'],
   ['bitwarden', 'clients', 'Bitwarden client apps (web, browser extension, desktop, and cli).', '10.4k', 'TypeScript', '5 hours ago', ''],
@@ -1901,7 +1901,7 @@ function exploreDialog(T) {
     s += text(x0 + 14, y + 44, dl[0], { size: 12, fill: T.muted });
     s += icon('star', x0 + 14, y + 52, 12, T.star);
     s += text(x0 + 30, y + 62, `${stars}   ${lang}   updated ${upd}`, { size: 11, fill: T.faint });
-    // icon-only actions, labelled by tooltips (req 7.7.3)
+    // icon-only actions, labelled by tooltips (R7.7.3)
     const added = flag === 'source', bx = x0 + iw - 12 - 32, by = y + 21;
     s += added ? rect(bx, by, 32, 32, 9, T.track) + icon('check', bx + 8, by + 8, 16, T.faint)
                : rect(bx, by, 32, 32, 9, T.accent) + icon('plus', bx + 8, by + 8, 16, '#ffffff');
@@ -1917,7 +1917,7 @@ function exploreDialog(T) {
   return s;
 }
 
-// ---------------------------------------------------------------- App Detail: versions (req 5.7.5)
+// ---------------------------------------------------------------- App Detail: versions (R5.7.5)
 const ZETTLR_VERSIONS = [['3.6.0', 'Sep 22, 2026', 'newest'], ['3.5.1', 'Aug 30, 2026', 'installed'], ['3.5.0', 'Aug 11, 2026', 'kept'],
   ['3.4.4', 'Jul 2, 2026', 'kept'], ['3.4.3', 'Jun 14, 2026'], ['3.4.2', 'May 28, 2026'], ['3.4.1', 'May 3, 2026']];
 function versionsDetail(T) {
@@ -1944,7 +1944,7 @@ function versionsDetail(T) {
     if (flag === 'kept') s += pill(x0 + 30 + tw(v, 13, { mono: true }) + 8, ry + 9, 'Kept', { bg: T.track, fg: T.muted, size: 10, h: 18 }).s;
     s += text(x0 + pw - 86, ry + 23, d, { size: 12, fill: T.faint, anchor: 'end' });
     if (mine) s += text(x0 + pw - 14, ry + 23, 'Installed', { size: 12, weight: 700, fill: T.ok, anchor: 'end' });
-    else {      // icon-only, labelled by tooltips (req 5.7.5.1)
+    else {      // icon-only, labelled by tooltips (R5.7.5.1)
       const kept = flag === 'kept';
       s += tipBtn(x0 + pw - (kept ? 72 : 38), ry + 4, top ? 'update' : 'download', T, { accent: top, size: 28 });
       if (kept) s += tipBtn(x0 + pw - 38, ry + 4, 'trash', T, { danger: true, size: 28 });
@@ -1968,7 +1968,7 @@ function versionsDetail(T) {
 }
 
 
-// ---------------------------------------------------------------- Settings (req 11)
+// ---------------------------------------------------------------- Settings (R11)
 const SETTINGS = [
   ['section', 'GENERAL'],
   ['seg', 'Theme', '', ['Match system', 'Dark', 'Light']],
@@ -2003,7 +2003,7 @@ const SETTINGS = [
   ['info', 'App log', 'AppKata.log and AppKata-prev.log, 2 MB each.', '~/.local/state/appkata', ['Show', 'Open folder']],
   ['info', 'Import and export', 'Sources, Trusts with their Authorities, and settings, as JSON. Import also takes a list of URLs.', '', ['Import…', 'Export…']],
 ];
-// Windows (req 11.1.4, 15.4, 15.6): who apps are for, two install folders, Start menu, .cmd links
+// Windows (R11.1.4, R15.4, R15.6): who apps are for, two install folders, Start menu, .cmd links
 const SETTINGS_WIN = SETTINGS.flatMap(r =>
   r[1] === 'Your AppKata.md' ? [['path', r[1], r[2], 'C:\\Users\\you\\src\\reviews\\AppKata.md']]
   : r[0] === 'note' && r[1].startsWith('AppImages') ? [['note', 'Portable .zip and .exe apps, which run without installing. Changes apply to new installs and updates; apps already installed stay where they are.'],
@@ -2143,7 +2143,7 @@ function aboutDialog(T) {
   return s;
 }
 
-// ---------------------------------------------------------------- Install options (req 4.9)
+// ---------------------------------------------------------------- Install options (R4.9)
 function installDialog(T, o = {}) {
   let s = catalogView(T, { detail: 'krita' });
   s += scrim(T);
@@ -2212,7 +2212,7 @@ function installDialog(T, o = {}) {
   return s;
 }
 
-// ---------------------------------------------------------------- Install options on Windows (req 4.9, 15.4, 15.11.1)
+// ---------------------------------------------------------------- Install options on Windows (R4.9, R15.4, R15.11.1)
 function installDialogWindows(T) {
   let s = appsView(T, { detail: 'keepassxc' }) + scrim(T);
   const a = APPS.keepassxc, dw = 680, dh = 752, dx = (W - dw) / 2, dy = (H - dh) / 2, x0 = dx + 30, iw = dw - 60;
@@ -2248,13 +2248,13 @@ function installDialogWindows(T) {
   s += text(x0 + 238 + tw('Command ', 13, { bold: true }), y + 54, 'keepassxc', { size: 12.5, fill: T.text, mono: true });
   s += text(x0 + 238 + tw('Command ', 13, { bold: true }) + tw('keepassxc ', 12.5, { mono: true }), y + 54, 'in …\\bin', { size: 13, fill: T.text });
   s += checkbox(x0 + 490, y + 40, true, T) + text(x0 + 518, y + 54, 'Stable name link', { size: 13, weight: 700, fill: T.text });
-  y += 86;            // who it's for (req 15.4)
+  y += 86;            // who it's for (R15.4)
   s += rect(x0, y, iw, 76, 12, T.input, { stroke: T.border });
   s += text(x0 + 16, y + 28, 'Install for', { size: 13, weight: 700, fill: T.text });
   const p1 = pill(x0 + 100, y + 12, 'Just me', { bg: T.accentSoft, fg: T.accent, stroke: T.accent, size: 12, h: 30 });
   s += p1.s + pill(x0 + 110 + p1.w, y + 12, 'Everyone on this computer', { bg: T.surface, fg: T.text, stroke: T.border, size: 12, h: 30 }).s;
   s += text(x0 + 16, y + 62, 'Only you can use it. No administrator rights are needed.', { size: 12, fill: T.muted });
-  y += 88;            // Mark of the Web (req 15.11.1)
+  y += 88;            // Mark of the Web (R15.11.1)
   s += rect(x0, y, iw, 70, 12, T.input, { stroke: T.border });
   s += checkbox(x0 + 16, y + 14, false, T) + text(x0 + 44, y + 28, 'Mark downloads as from the internet', { size: 13, weight: 700, fill: T.text });
   s += text(x0 + 16, y + 54, 'Windows SmartScreen then checks this app’s installers and programs, as it does a browser download.', { size: 12, fill: T.muted });
@@ -2270,7 +2270,7 @@ function installDialogWindows(T) {
 }
 
 
-// ---------------------------------------------------------------- package channels (req 16)
+// ---------------------------------------------------------------- package channels (R16)
 // Patches the sample data for one scene: { APPS: {key: {...}}, INSTALLED: {key: {...} | null}, STATE: {...} }
 function withData(patch, draw) {
   return T => {
@@ -2288,7 +2288,7 @@ function radio(x, cy, on, T) {
   return `<circle cx="${x}" cy="${cy}" r="9" fill="${on ? T.accent : 'none'}" stroke="${on ? 'none' : T.borderStrong}" stroke-width="1.6"/>` +
     (on ? `<circle cx="${x}" cy="${cy}" r="3.6" fill="#ffffff"/>` : '');
 }
-// Install options with channels: Flathub, the release's AppImage and the distro's package (req 16.3)
+// Install options with channels: Flathub, the release's AppImage and the distro's package (R16.3)
 function installChannelsDialog(T) {
   let s = catalogView(T, { detail: 'localsend' });
   s += scrim(T);
@@ -2330,7 +2330,7 @@ function installChannelsDialog(T) {
     y += ch + 8;
   });
   y += 4;
-  // who updates it (req 16.5): the system was detected updating Flatpaks, so it keeps doing that by default
+  // who updates it (R16.5): the system was detected updating Flatpaks, so it keeps doing that by default
   s += rect(x0, y, iw, 108, 12, T.input, { stroke: T.border });
   s += text(x0 + 16, y + 26, 'Updates', { size: 13, weight: 700, fill: T.text });
   s += radio(x0 + 26, y + 52, true, T) + text(x0 + 44, y + 57, 'Let GNOME Software update it', { size: 13, weight: 700, fill: T.text });
@@ -2347,7 +2347,7 @@ function installChannelsDialog(T) {
   s += text(x0 + tw(t1, 12) + 19, by + 22, 'menu.', { size: 12, fill: T.faint });
   return s;
 }
-// Installed from Flathub and updated by GNOME Software; a distro package nothing updates (req 16.5, 16.6)
+// Installed from Flathub and updated by GNOME Software; a distro package nothing updates (R16.5, R16.6)
 const systemUpdatedScene = withData({
   APPS: { localsend: { ver: '1.18.2' } },
   INSTALLED: {
@@ -2360,14 +2360,14 @@ const systemUpdatedScene = withData({
   INSTALLED.localsend.channel = [['Flathub · verified', T.okSoft, T.ok, 'shieldCheck'], ['Flatpak', T.track, T.muted, null]];
   return appsView(T, { detail: 'localsend', upd: ['appkata', 'signal', 'zettlr'], rest: ['flameshot', 'inkscape', 'keepassxc', 'localsend', 'syncthing', 'ventoy', 'vscodium'] });
 });
-// The installed version is avoided by a Trust (req 10.6.5)
+// The installed version is avoided by a Trust (R10.6.5)
 const versionAvoidedScene = withData({
   INSTALLED: { xz: { from: '5.6.1', to: '5.6.2', type: 'tar.gz',
     avoid: { by: 'desk-collective', from: '5.6.0', note: 'Backdoored release tarballs' } } },
   STATE: { xz: 'update' },
 }, T => appsView(T, { detail: 'xz', upd: ['xz', 'appkata', 'localsend', 'signal'], rest: ['flameshot', 'inkscape', 'keepassxc', 'syncthing', 'ventoy', 'vscodium'] }));
 
-// Explore on Flathub: each match needs a git project URL to become a Source (req 16.2)
+// Explore on Flathub: each match needs a git project URL to become a Source (R16.2)
 const FLATHUB = [
   ['Joplin', 'net.cozic.joplin_desktop', 'A note taking and to-do application with synchronisation', true, 'github.com/laurent22/joplin', 'source'],
   ['Xournal++', 'com.github.xournalpp.xournalpp', 'Handwriting notetaking software with PDF annotation support', true, 'github.com/xournalpp/xournalpp', 'trusts'],
@@ -2427,7 +2427,7 @@ function exploreFlathubDialog(T) {
   return s;
 }
 
-// ---------------------------------------------------------------- AppKata installing itself (req 2.11.3.1)
+// ---------------------------------------------------------------- AppKata installing itself (R2.11.3.1)
 function selfInstallScene(T) {
   let s = emptyState(T, 'catalog') + scrim(T);
   const dw = 560, x0 = (W - dw) / 2 + 30, iw = dw - 60, dh = 384, dx = (W - dw) / 2, dy = (H - dh) / 2;
@@ -2665,7 +2665,7 @@ const SCREENS = [
   ['X12-choose-review-file', T => reviewFileScene(T), ['dark']],
   ['X13-macos-menu-bar', T => macMenuBar(T), ['dark', 'light']],
   ['X10-appkata-md-settings', T => settingsStanza(T), ['dark', 'light']],
-  // Package channels and versioned reviews (req 16, 10.3)
+  // Package channels and versioned reviews (R16, R10.3)
   ['C10-install-channels', withData({ APPS: { localsend: { ver: '1.18.2' } }, INSTALLED: { localsend: null }, STATE: { localsend: null } }, T => installChannelsDialog(T)), ['dark', 'light']],
   ['A17-apps-detail-system-updated', systemUpdatedScene, ['dark']],
   ['A18-apps-version-avoided', versionAvoidedScene, ['dark']],
@@ -2704,7 +2704,7 @@ const SCREENS = [
   ['X15-settings-sandbox', T => settingsDialog(T, 'sandbox', SETTINGS_SANDBOX), ['dark', 'light']],
   ['X16-appkata-md-sandbox', T => settingsStanza(T, 'sandbox'), ['dark']],
   ['U02-audit-sandbox', T => auditView(T, AUDIT_SANDBOX), ['dark']],
-  // Windows only (req 15)
+  // Windows only (R15)
   ['W01-close-app', onWindows(T => confirmDialog(T, appsView(T), { app: 'keepassxc', title: 'Close KeePassXC to continue', action: 'Try again', ic: 'sync', danger: false,
     body: 'KeePassXC is running (KeePassXC.exe). Windows can’t replace or remove a running program’s files. Close it, then try again.' })), ['dark', 'light']],
   ['W02-install-options', onWindows(T => installDialogWindows(T)), ['dark', 'light']],

@@ -1,7 +1,7 @@
 """Every promise a requirement makes is shown by a test, or named as open (review 3, harness B).
 
-Review 2's class B: a decision recorded but never built. Requirement 17.12 promised a "Disable the
-app's own updater" install option for releases; 17.4 a "Show the launch command"; 17.10 an "if
+Review 2's class B: a decision recorded but never built. R17.12 promised a "Disable the
+app's own updater" install option for releases; R17.4 a "Show the launch command"; R17.10 an "if
 declined" prompt. None was built, and no test noticed, because nothing tied a sentence of the
 requirements to a test. docs/requirements-trace.md does: one row per sentence (and table row) of
 each covered section, naming the tests that show it, a harness mode, a claim with evidence, a
@@ -10,7 +10,7 @@ and fails when a sentence has no row, a row no longer matches its sentence, a na
 doesn't exist, or the rows still open differ from the list below.
 
 A second check covers the same class from the other side: a Backend slot or property no QML file
-uses is either a promise the UI never got (sandboxLaunchCommand: 17.4's "Show the launch command")
+uses is either a promise the UI never got (sandboxLaunchCommand: R17.4's "Show the launch command")
 or dead code.
 """
 
@@ -53,7 +53,7 @@ def section_units(sec: str, number: int) -> list[tuple[str, str]]:
             else:
                 prose.append(line)
         body = re.sub(rf"^R{number}\.[0-9.]*[0-9]\.? ", "", _norm(" ".join(prose)))
-        out += [(rid, s) for s in re.split(r"(?<=[.;:])\s+(?=[A-Z(*\"'])", body) if len(s) > 20]
+        out += [(rid, s) for s in re.split(r"(?<=[.;:])\s+(?!R\d)(?=[A-Z(*\"'])", body) if len(s) > 20]
         out += [(rid, r) for r in rows]
     return out
 

@@ -1,4 +1,4 @@
-"""Forge APIs: from a project to its releases, README and files (requirement 2.4)."""
+"""Forge APIs: from a project to its releases, README and files (R2.4)."""
 
 from __future__ import annotations
 
@@ -377,7 +377,7 @@ class GitLab(Forge):
 
 
 class Gitea(Forge):
-    """Gitea and Forgejo (Codeberg) share this API (requirement 2.4.1)."""
+    """Gitea and Forgejo (Codeberg) share this API (R2.4.1)."""
     kind, label = "forgejo", "Forgejo"
 
     def __init__(self, http: Http, repo: Repo, label: str = "Forgejo"):
@@ -432,7 +432,7 @@ LABELS = {"github": "GitHub", "gitlab": "GitLab", "forgejo": "Forgejo", "gitea":
 
 
 def detect(http: Http, host: str) -> str:
-    """The forge type of a host (requirement 2.4.2): known hosts first, then API probes."""
+    """The forge type of a host (R2.4.2): known hosts first, then API probes."""
     if host in KNOWN:
         return KNOWN[host]
     try:

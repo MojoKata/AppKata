@@ -1,4 +1,4 @@
-"""Explore (requirement 7.7): search well-known forges, and ngit on Nostr relays, for projects."""
+"""Explore (R7.7): search well-known forges, and ngit on Nostr relays, for projects."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class Match:
     topics: list[str] = field(default_factory=list)
     service: str = ""
     addable: bool = True
-    channel: str = ""        # Flathub and the distribution (requirement 16.2.3): "flatpak" | "package"
+    channel: str = ""        # Flathub and the distribution (R16.2.3): "flatpak" | "package"
     link: str = ""           # the app ID, or the package name
     verified: bool | None = None
     found: str = ""          # where the project URL came from ("AppStream")
@@ -81,7 +81,7 @@ def codeberg(http: Http, q: str, limit: int = 20, host: str = "codeberg.org") ->
 
 def ngit(q: str, relays: list[str] | None = None, limit: int = 20) -> tuple[list[Match], list[str]]:
     """ngit repository announcements matching the query. They open on gitworkshop.dev; adding one
-    as a Source waits for ngit Sources (requirement 2.4.3)."""
+    as a Source waits for ngit Sources (R2.4.3)."""
     events, errors = nostr.repo_announcements(relays or nostr.DEFAULT_RELAYS)
     words = q.lower().split()
     out = []
@@ -110,7 +110,7 @@ FLATHUB = "https://flathub.org/api/v2"
 
 
 def _component_match(c, service: str, channel: str) -> Match:
-    """An AppStream component as a match: adding it needs its project's git URL (requirement 16.2.4)."""
+    """An AppStream component as a match: adding it needs its project's git URL (R16.2.4)."""
     proj = (c.project_urls() or [""])[0]
     owner, name = (proj.split("://", 1)[-1].split("/")[1:3] + ["", ""])[:2] if proj else ("", "")
     link = c.id.removesuffix(".desktop") if channel == "flatpak" else c.package
@@ -120,7 +120,7 @@ def _component_match(c, service: str, channel: str) -> Match:
 
 def flathub(http: Http, q: str, catalog=None, limit: int = 15) -> tuple[list[Match], str]:
     """Flathub's search, each match's project URL from its AppStream data. Flathub unreachable: the
-    Flathub catalog already on this computer, with a note (requirement 16.2.3)."""
+    Flathub catalog already on this computer, with a note (R16.2.3)."""
     import json as _json
     from . import urls
     try:
@@ -154,7 +154,7 @@ def flathub(http: Http, q: str, catalog=None, limit: int = 15) -> tuple[list[Mat
 
 
 def distro(q: str, catalog=None, limit: int = 30) -> tuple[list[Match], str]:
-    """The distribution's AppStream catalog, offline (requirement 16.2.2, 16.2.3)."""
+    """The distribution's AppStream catalog, offline (R16.2.2, R16.2.3)."""
     if catalog is None or not catalog.available:
         return [], "No AppStream catalog on this computer."
     return [_component_match(c, "distro", "package") for c in catalog.search(q, flatpak=False, limit=limit)], ""

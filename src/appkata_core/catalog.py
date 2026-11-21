@@ -1,5 +1,5 @@
 """Putting Sources, Trust reviews and installs together into the app list every view shows
-(requirement 2.9, 9.4, 9.5, 10.5, 10.6)."""
+(R2.9, R9.4, R9.5, R10.5, R10.6)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ PALETTE = [("#22d3ee", "#2563eb"), ("#60a5fa", "#1e40af"), ("#4ade80", "#15803d"
 
 
 def colors(seed: str) -> tuple[str, str]:
-    """A stable gradient for generated icons and avatars (requirement 3.2, 10.9)."""
+    """A stable gradient for generated icons and avatars (R3.2, R10.9)."""
     return PALETTE[int(hashlib.sha1(seed.encode()).hexdigest()[:6], 16) % len(PALETTE)]
 
 
@@ -43,17 +43,17 @@ def _parse_date(s: str):
 
 
 def trust_rows(db: DB) -> list[dict]:
-    """Trusts whose reviews count: enabled and verified (requirement 10.5)."""
+    """Trusts whose reviews count: enabled and verified (R10.5)."""
     return db.all("SELECT * FROM trusts WHERE enabled=1 AND (own=1 OR verified_commit IS NOT NULL) ORDER BY own DESC, id")
 
 
 def trust_score(t: dict) -> int:
-    """A Trust's Score, 1–5; your own reviews always weigh 5 (requirement 10.6.2)."""
+    """A Trust's Score, 1–5; your own reviews always weigh 5 (R10.6.2)."""
     return 5 if t.get("own") else max(1, min(5, int(t.get("score") or 3)))
 
 
 def trust_order(t: dict):
-    """Trusts are listed yours first, then by Score (highest first), then name (requirement 7.6.7)."""
+    """Trusts are listed yours first, then by Score (highest first), then name (R7.6.7)."""
     return (not t.get("own"), -trust_score(t), (t.get("name") or "").lower())
 
 
@@ -103,7 +103,7 @@ def _days_left(newest_date, min_age: int) -> int:
 
 
 def eligible_release(releases: list[dict], settings: dict, include_pre: bool = False) -> tuple[dict | None, str]:
-    """The newest release allowed by pin and minimum age (requirement 9.4, 9.5): (release, held reason)."""
+    """The newest release allowed by pin and minimum age (R9.4, R9.5): (release, held reason)."""
     rs = [r for r in releases if include_pre or not r.get("prerelease")]
     if not rs:
         return None, ""
@@ -127,7 +127,7 @@ def eligible_release(releases: list[dict], settings: dict, include_pre: bool = F
 
 def channel_view(rec: dict, version: str, releases: list[dict], det, check: dict | None = None) -> dict:
     """What the Apps row and App Detail panel show about an app installed from a package channel
-    (requirement 16.5.1, 16.6, 16.7.2): its channel and publisher, who updates it, and its pending
+    (R16.5.1, R16.6, R16.7.2): its channel and publisher, who updates it, and its pending
     update."""
     from . import channels
     check = check or {}
@@ -157,7 +157,7 @@ def channel_view(rec: dict, version: str, releases: list[dict], det, check: dict
 def build(db: DB, os_name: str = OS, cpu: str | None = None,
           runs_sandboxed: Callable[[str, dict], bool] | None = None) -> list[dict]:
     """Every Catalog app with its origins, reviews, score and state. `runs_sandboxed(url, record)`:
-    whether an installed app runs sandboxed (17.12), the backend's answer, which App Detail gives
+    whether an installed app runs sandboxed (R17.12), the backend's answer, which App Detail gives
     too (review 3, R3-27); by default, whether its launcher is there."""
     cpu = cpu or arch()
     runs_sandboxed = runs_sandboxed or (lambda url, rec: sandbox.runs_sandboxed(rec))
@@ -189,13 +189,13 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
         chains = [review_chain(r, os_name, dates) for r in revs]
         inst = installs.get(url)
         is_self = url == APPKATA_REPO
-        # a reviewer's App column is a curated name; then the forge's (requirement 10.1.1). Before any
+        # a reviewer's App column is a curated name; then the forge's (R10.1.1). Before any
         # sync, the name it was installed by, and AppKata its own, not its URL's last part (review 3, R3-36)
         name = ((revs[0]["app"] if revs else "") or meta.get("name") or (inst["name"] if inst else "")
                 or ("AppKata" if is_self else "") or url.rsplit("/", 1)[-1])
         ssettings = json.loads(src["settings"]) if src and src.get("settings") else {}
         aset = settings.get(url, {})
-        pin_min = {"min_age": db.get("min_age_default", 0)}         # a global setting only (requirement 9.5.2)
+        pin_min = {"min_age": db.get("min_age_default", 0)}         # a global setting only (R9.5.2)
         cur_v = inst["version"] if inst else None       # options for the installed version, else the newest review
         rec, rec_by = pick_recommended([(r["settings"], trusts[r["trust_id"]]) for r in revs], os_name, cur_v, dates)
         eff = effective_source(ssettings, rec, rec_by, os_name, cpu, include_pre_default)
@@ -204,7 +204,7 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
         rel, held = eligible_release(offered, pin_min, include_pre)
         latest = next((r for r in offered if include_pre or not r.get("prerelease")), None) or \
             next((r for r in releases if include_pre or not r.get("prerelease")), None)   # newest offered, else newest
-        # scores for a version (requirement 10.6.5): the latest release, and the installed version
+        # scores for a version (R10.6.5): the latest release, and the installed version
         score, tags, _ = score_at(revs, chains, trusts, (latest or {}).get("version"), os_name, dates, is_self)
         if is_self and not inst:        # AppKata itself, run from source or a package: it's installed, but not by AppKata
             inst = {"version": __version__, "date": "", "kind": "", "self_unmanaged": True}
@@ -213,7 +213,7 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
             saved = json.loads(aset.get("install") or "{}")
         except ValueError:
             saved = {}
-        # updates itself (requirement 4.10): your choice for this app, else the highest-Score Trust that says
+        # updates itself (R4.10): your choice for this app, else the highest-Score Trust that says
         auto_by = ""
         if "autoUpdate" in saved:
             auto = bool(saved["autoUpdate"])
@@ -227,9 +227,9 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
                     break
         state, update_to = "", None
         irec = json.loads(inst.get("record") or "{}") if inst and inst.get("record") else {}
-        sandboxed = bool(inst) and not is_self and runs_sandboxed(url, irec)       # 17.12
+        sandboxed = bool(inst) and not is_self and runs_sandboxed(url, irec)       # R17.12
         chv = None
-        if irec.get("channel"):          # a package channel: it updates through its channel (requirement 16.5)
+        if irec.get("channel"):          # a package channel: it updates through its channel (R16.5)
             chv = channel_view(irec, inst["version"], releases, det,
                                checks.get((url, irec["channel"], irec.get("flatpak") or irec.get("package") or "")))
         if chv:
@@ -237,12 +237,12 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
             if pinned:
                 state = "pinned"
             elif chv["updates"] == "system":
-                state = "system"         # tracked, updated by the system (16.5.1)
+                state = "system"         # tracked, updated by the system (R16.5.1)
             elif chv["updates"] != "held" and chv["pending"]:
                 state, update_to = "update", {"version": chv["pending"], "date": ""}
         elif inst and auto and not is_self and not sandboxed:
-            state = "selfupdating"       # AppKata tracks it but doesn't update it (4.10.1) -- unless it runs
-                                         # sandboxed, where it can't update itself and AppKata does (17.12)
+            state = "selfupdating"       # AppKata tracks it but doesn't update it (R4.10.1) -- unless it runs
+                                         # sandboxed, where it can't update itself and AppKata does (R17.12)
         elif inst:
             state = "installed"
             if pinned:
@@ -271,7 +271,7 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
             if update_to:
                 upd_avoided = score_at(revs, chains, trusts, update_to["version"], os_name, dates, is_self)[0].vetoed
         chosen = None
-        prefer = saved.get("kind") or (inst["kind"] if inst else "")      # keep to the way it was installed (4.9.4)
+        prefer = saved.get("kind") or (inst["kind"] if inst else "")      # keep to the way it was installed (R4.9.4)
         if rel:
             ch = choose_with(eff, [Asset(**a) for a in rel.get("assets", [])], os_name, cpu, family, prefer)
             if ch.asset:
@@ -293,14 +293,14 @@ def build(db: DB, os_name: str = OS, cpu: str | None = None,
             "state": state, "installed": inst["version"] if inst else "", "installKind": inst["kind"] if inst else "",
             "updateTo": update_to["version"] if update_to else "", "held": held if state == "held" else "",
             "pinned": pinned, "minAge": pin_min["min_age"] or 0, "trackOnly": track_only,
-            "msvcrt": bool(inst and inst.get("record") and json.loads(inst["record"] or "{}").get("msvcrt")),   # 15.18
+            "msvcrt": bool(inst and inst.get("record") and json.loads(inst["record"] or "{}").get("msvcrt")),   # R15.18
             "self": is_self, "selfManaged": bool(is_self and not inst.get("self_unmanaged")),
             "restartNeeded": bool(is_self and inst and not inst.get("self_unmanaged") and inst["version"] != __version__),
             "foreign": foreign.get(url, {}).get("location", ""), "foreignVersion": foreign.get(url, {}).get("version", ""),
             "error": meta.get("error") or "", "errorCode": meta.get("error_code") or "",
             "asset": chosen, "releaseCount": len(releases), "installChoice": saved, "sourceSettings": eff,
             "autoUpdate": auto, "autoUpdateBy": auto_by if "autoUpdate" not in saved else "you",
-            "sandboxedUpdates": bool(inst and auto and not is_self and sandboxed),   # 17.12, review 2 F3
+            "sandboxedUpdates": bool(inst and auto and not is_self and sandboxed),   # R17.12, review 2 F3
             "newer": bool(state in ("selfupdating", "system") and latest and versions.newer(latest["version"], inst["version"])),
             "installedVetoed": bool(iscore and iscore.vetoed), "installedTrust": iscore.trust if iscore else None,
             "installedRating": iscore.rating if iscore else None, "avoid": avoid, "avoidUpdateTo": avoid_to,
@@ -316,7 +316,7 @@ def release_dates(releases: list[dict]) -> dict:
 
 
 def review_chain(r: dict, os_name: str, dates: dict) -> list[dict]:
-    """One Trust's reviews of an app over versions (requirement 10.3.3), from its reviews row."""
+    """One Trust's reviews of an app over versions (R10.3.3), from its reviews row."""
     s = json.loads(r["settings"] or "{}") if r.get("settings") else {}
     chain = trustfile.reviews_over_versions(s, {"trust": r["trust"], "rating": r["rating"], "tags": json.loads(r["tags"] or "[]")},
                                             os_name, dates)
@@ -326,11 +326,11 @@ def review_chain(r: dict, os_name: str, dates: dict) -> list[dict]:
 
 def score_at(revs: list[dict], chains: list[list[dict]], trusts: dict, version: str | None, os_name: str, dates: dict,
              is_self: bool = False) -> tuple[scoring.Score, list[str], list[tuple[dict, dict]]]:
-    """The combined score and tags for one version (requirement 10.6.5), and each Trust's review
+    """The combined score and tags for one version (R10.6.5), and each Trust's review
     that applies to it: [(reviews row, review)]."""
     applied = [(r, trustfile.review_for({}, None, version, os_name, dates, chain=c)) for r, c in zip(revs, chains)]
     score = scoring.combine([(x["trust"], x["rating"], trust_score(trusts[r["trust_id"]])) for r, x in applied])
-    if is_self:     # you're running it: AppKata's own Trust is 5 (requirement 10.6.4)
+    if is_self:     # you're running it: AppKata's own Trust is 5 (R10.6.4)
         score = scoring.Score(vetoed=False, trust=5.0, rating=score.rating, reviewers=score.reviewers)
     tags = []
     for _, x in applied:
@@ -341,7 +341,7 @@ def score_at(revs: list[dict], chains: list[list[dict]], trusts: dict, version: 
 
 
 def version_scores(db: DB, url: str, vs: list[str], os_name: str = OS) -> dict:
-    """{version: (combined Trust, vetoed)} for the Versions list (requirement 10.6.5)."""
+    """{version: (combined Trust, vetoed)} for the Versions list (R10.6.5)."""
     trusts = {t["id"]: t for t in trust_rows(db)}
     revs = sorted([r for r in db.all("SELECT * FROM reviews WHERE url=?", (url,)) if r["trust_id"] in trusts],
                   key=lambda r: trust_order(trusts[r["trust_id"]]))
@@ -365,9 +365,9 @@ def _first_line(text: str) -> str:
 
 def pick_recommended(rows: list[tuple[str, dict]], os_name: str, version: str | None = None,
                      dates: dict | None = None) -> tuple[dict, dict]:
-    """The settings the Trusts recommend for an app on this platform (requirement 10.3.1): for each
+    """The settings the Trusts recommend for an app on this platform (R10.3.1): for each
     option, the first Trust in Trust order (yours, then by Score, then name) that sets it, as each
-    Trust's review for `version` has it (10.3.3; the newest review when None).
+    Trust's review for `version` has it (R10.3.3; the newest review when None).
     rows: (settings JSON, trust row). Returns (values, {option: Trust name or "you"})."""
     out, by = {}, {}
     for js, t in sorted(rows, key=lambda r: trust_order(r[1])):
@@ -385,7 +385,7 @@ def recommended_for(db: DB, url: str, os_name: str = OS) -> tuple[dict, dict]:
 
 
 def effective_source(ss: dict, rec: dict, rec_by: dict, os_name: str, cpu: str, pre_default: bool) -> dict:
-    """A Source's settings as they apply (requirement 2.6, 10.3.1): yours, else a Trust's
+    """A Source's settings as they apply (R2.6, R10.3.1): yours, else a Trust's
     recommendation, else the default. `by` says where each came from ("you", a Trust's name, "")."""
     own_filter = (ss.get("asset_filters") or {}).get(f"{os_name}-{cpu}") or ss.get("asset_filter", "")
     def pick(own_key, rec_key, default):
@@ -406,7 +406,7 @@ def effective_source(ss: dict, rec: dict, rec_by: dict, os_name: str, cpu: str, 
 
 def choose_with(eff: dict, assets: list, os_name: str, cpu: str, family: str, prefer: str = ""):
     """choose() with the Source's download filter. A Trust's recommended filter that matches nothing
-    here is ignored; your own filter is not (requirement 2.6.4, 10.3.1)."""
+    here is ignored; your own filter is not (R2.6.4, R10.3.1)."""
     ch = choose(assets, os_name, cpu, family, eff.get("assetFilter", ""), prefer=prefer)
     if not ch.asset and eff.get("assetFilter") and eff.get("by", {}).get("assetFilter") not in ("you", ""):
         ch = choose(assets, os_name, cpu, family, "", prefer=prefer)
@@ -414,7 +414,7 @@ def choose_with(eff: dict, assets: list, os_name: str, cpu: str, family: str, pr
 
 
 def asset_filter(ssettings: dict, os_name: str, cpu: str) -> str:
-    """A Source's asset filter for this platform (requirement 2.6.4)."""
+    """A Source's asset filter for this platform (R2.6.4)."""
     return (ssettings.get("asset_filters") or {}).get(f"{os_name}-{cpu}") or ssettings.get("asset_filter", "")
 
 
@@ -427,13 +427,13 @@ def _abs(p: str | None) -> str:
 
 
 def sort(apps: list[dict], by: str = "trust") -> list[dict]:
-    if by == "recent":          # newest release first, then name (requirement 12.2)
+    if by == "recent":          # newest release first, then name (R12.2)
         return sorted(sorted(apps, key=lambda a: a["name"].lower()), key=lambda a: a.get("date") or "", reverse=True)
     return sorted(apps, key=lambda a: scoring.sort_key(a["name"], scoring.Score(a["vetoed"], a["trust"], a["rating"], a["reviewers"]), by))
 
 
 def visible(apps: list[dict], search: str = "", tag: str = "") -> tuple[list[dict], int]:
-    """Catalog filtering (requirement 12.2, 12.6): vetoed apps only when the search matches them."""
+    """Catalog filtering (R12.2, R12.6): vetoed apps only when the search matches them."""
     q = search.strip().lower()
     out, vetoed_shown = [], 0
     for a in apps:

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Windows installer on Linux (requirement 1.6): PyInstaller under Wine
+# Build the Windows installer on Linux (R1.6): PyInstaller under Wine
 # (tobix/pywine), then Inno Setup under Wine (amake/innosetup), each image as
 # packaging/versions.env pins it. Writes releases/AppKata-<version>-setup.exe and its .sha256.
 # See docs/build.md § Windows.
@@ -7,7 +7,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 "$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
 VERSION=$(python3 -c "import sys; sys.path.insert(0, '$HERE/src'); import appkata_core; print(appkata_core.__version__)")
-. "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (requirement 1.2)
+. "$HERE/packaging/versions.env"          # PY_SERIES, PYSIDE (R1.2)
 PYINSTALLER=6.22.3
 TRUSTSTORE=0.10.5
 # PyInstaller's dependencies, installed with --no-deps like the rest, so none of them moves
@@ -23,7 +23,7 @@ test -f "$HERE/build/wine-cache/$ICU" || docker run --rm -v "$HERE:/src" "$MINGW
   chown $(id -u):$(id -g) /src/build/wine-cache/$ICU"
 test -f "$HERE/build/wine-cache/$ICU" || { echo "couldn't build the icuuc.dll stand-in"; exit 1; }
 
-# the installer carries the AppImage's Python (requirement 1.2): the Wine image's must be the same
+# the installer carries the AppImage's Python (R1.2): the Wine image's must be the same
 PYV=${PYTHON_BUILD%%+*}
 V=$(docker run --rm "$PYWINE_IMAGE" sh -c "wine python -c 'import platform; print(platform.python_version())'" 2>/dev/null | tr -d '\r' | tail -1)
 [ "$V" = "$PYV" ] || { echo "$PYWINE_IMAGE carries Python $V, the release $PYV (packaging/versions.env)"; exit 1; }

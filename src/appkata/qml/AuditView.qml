@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The Audit perspective (requirement 13): an immutable record of key operations, newest first,
+// The Audit perspective (R13): an immutable record of key operations, newest first,
 // loaded a page at a time as the list scrolls.
 Item {
     id: root
@@ -53,7 +53,7 @@ Item {
         }
     }
 
-    ListView {      // virtualized: only visible rows exist (requirement 13.4)
+    ListView {      // virtualized: only visible rows exist (R13.4)
         id: list
         objectName: "auditList"
         x: 32; y: 120; width: parent.width - 64; height: parent.height - y
@@ -85,7 +85,7 @@ Item {
                     x: 58; y: 11; width: parent.width - 58 - 170; spacing: 5
                     Text {
                         width: parent.width; wrapMode: Text.WordWrap; textFormat: Text.StyledText; color: Theme.text; font.pixelSize: 14
-                        text: modelData.actor === "system" ? "<b>" + modelData.subject.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</b> " + modelData.action    // found changed by something else (16.9)
+                        text: modelData.actor === "system" ? "<b>" + modelData.subject.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</b> " + modelData.action    // found changed by something else (R16.9)
                               : (modelData.actor === "sync" ? "Sync " : "You ") + modelData.action + " <b>" + modelData.subject.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</b>"
                     }
                     Flow {

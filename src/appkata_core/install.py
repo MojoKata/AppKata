@@ -1,5 +1,5 @@
-"""Installing, updating and uninstalling (requirement 4): AppImage, tarball, Flatpak bundle, .deb
-and .rpm on Linux; portable .zip and .exe, installers (.msi, .exe) and .msix on Windows (15).
+"""Installing, updating and uninstalling (R4): AppImage, tarball, Flatpak bundle, .deb
+and .rpm on Linux; portable .zip and .exe, installers (.msi, .exe) and .msix on Windows (R15).
 macOS installers follow."""
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ class Cancelled(InstallError):
 
 
 class InUse(InstallError):
-    """Windows can't replace a running program's files (requirement 15.9)."""
+    """Windows can't replace a running program's files (R15.9)."""
     def __init__(self, name: str, programs: list[str]):
         self.name, self.programs = name, programs
         super().__init__(f"close {name} to continue")
@@ -82,7 +82,7 @@ def new_app_id(db: DB, url: str, name: str) -> str:
 
 
 def check_not_running(folder: str, name: str) -> None:
-    """Stop before touching a folder that a running program comes from (requirement 15.9)."""
+    """Stop before touching a folder that a running program comes from (R15.9)."""
     if OS != "windows" or not folder or not os.path.isdir(folder):
         return
     from . import windows
@@ -91,14 +91,14 @@ def check_not_running(folder: str, name: str) -> None:
 
 
 def downloads_dir() -> str:
-    """Where partial downloads wait to be resumed (requirement 4.8.2)."""
+    """Where partial downloads wait to be resumed (R4.8.2)."""
     from .platform import data_dir
     return os.path.join(data_dir(), "downloads")
 
 
 def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 60, retries: int = 3) -> str:
     """Download to dest through dest + ".part", resuming a broken or earlier download with a Range
-    request when the server still has the same file (requirement 4.8.2). Returns the SHA-256 hex
+    request when the server still has the same file (R4.8.2). Returns the SHA-256 hex
     digest of the whole file. Cancelling deletes the partial file; other failures keep it."""
     part, meta_path = dest + ".part", dest + ".part.json"
     try:
@@ -171,7 +171,7 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
 
 
 def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
-    """The first n bytes of a download (a Range request), to see what a .exe is (requirement 4.2.1)."""
+    """The first n bytes of a download (a Range request), to see what a .exe is (R4.2.1)."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Range": f"bytes=0-{n - 1}"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -181,7 +181,7 @@ def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
 
 
 def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
-    """(hex, source) of the checksum to compare with: the forge digest, or a checksum file (requirement 4.4)."""
+    """(hex, source) of the checksum to compare with: the forge digest, or a checksum file (R4.4)."""
     if asset.digest.startswith("sha256:"):
         return asset.digest.split(":", 1)[1].lower(), "forge digest"
     sums = checksum_for(asset, assets)
@@ -202,7 +202,7 @@ def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
 
 
 def _elevate(cmd: list[str]) -> subprocess.CompletedProcess:
-    """Run an install command with administrator rights for this action only (requirement 1.3)."""
+    """Run an install command with administrator rights for this action only (R1.3)."""
     if OS == "linux":
         if os.geteuid() != 0:
             if not shutil.which("pkexec"):
@@ -214,7 +214,7 @@ def _elevate(cmd: list[str]) -> subprocess.CompletedProcess:
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
     """The app-menu entry. For a sandbox launcher (`launcher=True`) Exec passes the word
     --appkata-menu first: started this way nothing shows stderr, so the launcher keeps its own in
-    logs/apps/<id>.log, where a refused launch is then found (14.2.1, requirement 17.4)."""
+    logs/apps/<id>.log, where a refused launch is then found (R14.2.1, R17.4)."""
     path = os.path.join(desktop_dir(), f"appkata-{app_id}.desktop")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     word = " --appkata-menu" if launcher else ""
@@ -258,15 +258,15 @@ def _find_executable(root: str, names: list[str]) -> str:
 
 @dataclass
 class Portable:
-    """Where and how apps are installed (requirement 4.3.1, 11.1.4, 15.4)."""
+    """Where and how apps are installed (R4.3.1, R11.1.4, R15.4)."""
     folder: str = ""              # each app gets <folder>/<app>/ (default: platform.apps_dir())
     app_menu: bool = True         # add a .desktop entry / Start-menu shortcut
     stable_name: bool = True      # <App>.AppImage → the versioned file, so launchers survive updates
     command_dir: str = ""         # a folder on PATH for a command link per app ("" = none)
     keep: int = 2                 # older versions kept for a quick rollback
-    scope: str = "me"             # Windows: "me" or "everyone" (requirement 15.4)
+    scope: str = "me"             # Windows: "me" or "everyone" (R15.4)
     folder_everyone: str = ""     # Windows: where apps for everyone go (default C:\Programs)
-    motw: bool = False            # Windows: Mark of the Web on downloads (requirement 15.11.1)
+    motw: bool = False            # Windows: Mark of the Web on downloads (R15.11.1)
 
     @property
     def root(self) -> str:
@@ -304,7 +304,7 @@ def _extract(kind: str, file: str, dest: str) -> None:
     import zipfile
     if OS == "windows":
         from .windows import long_path
-        dest = long_path(dest)          # deep archives (requirement 15.16)
+        dest = long_path(dest)          # deep archives (R15.16)
     with zipfile.ZipFile(file) as z:
         for m in z.infolist():          # no paths outside the folder
             if m.filename.startswith(("/", "\\")) or ".." in m.filename.replace("\\", "/").split("/"):
@@ -317,9 +317,9 @@ def _extract(kind: str, file: str, dest: str) -> None:
 
 
 def _place(kind: str, file: str, app: dict, target: str, version: str, asset_name: str, fixed: bool = False) -> dict:
-    """Put one version in the app's folder (requirement 4.3.1): {version, path, exec} where path is
+    """Put one version in the app's folder (R4.3.1): {version, path, exec} where path is
     the versioned file or folder and exec is relative to the app folder. `fixed`: an app that
-    updates itself gets <App>.AppImage or an "app" folder instead (requirement 4.10.2)."""
+    updates itself gets <App>.AppImage or an "app" folder instead (R4.10.2)."""
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
@@ -345,7 +345,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
 
 
 def _apply_kind(rec: dict, app: dict, portable: "Portable", kind: str, target: str, prev: dict) -> "Portable":
-    """The app's kind (17.3.3), decided from the version just placed, before the launcher and the
+    """The app's kind (R17.3.3), decided from the version just placed, before the launcher and the
     app-menu entry are written (review 2, F4: "a command link and no menu entry" decided it before,
     which Settings' defaults never produced, so every tool ran Strict and saw nothing).
 
@@ -368,9 +368,9 @@ def _apply_kind(rec: dict, app: dict, portable: "Portable", kind: str, target: s
 
 
 def _leave_fixed_layout(cur: dict, target: str) -> dict:
-    """The current version of an app that updated itself (4.10.2: one fixed-name file or an `app`
+    """The current version of an app that updated itself (R4.10.2: one fixed-name file or an `app`
     folder), renamed into the versioned layout as AppKata starts updating it -- because it now runs
-    sandboxed and can't update itself (17.12; review 2, F3). An AppImage's fixed name is exactly where
+    sandboxed and can't update itself (R17.12; review 2, F3). An AppImage's fixed name is exactly where
     the versioned layout's stable-name link goes, so left in place it stopped the update ("exists and
     isn't a link AppKata made"). Returns the entry as it is now, kept with the version it was."""
     path = cur.get("path", "")
@@ -416,13 +416,13 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
             link = _link(cur["path"], os.path.join(target, "current"))
             rec["links"].append(link)
             run = os.path.join(link, os.path.relpath(os.path.join(target, cur["exec"]), cur["path"]))
-    # The sandbox launcher (17.4): when the app is sandboxed, the app-menu entry and the command link
+    # The sandbox launcher (R17.4): when the app is sandboxed, the app-menu entry and the command link
     # point at ~/bin/apps/<app>/run, not the program itself, so every way AppKata starts it is sandboxed.
     launch_target = _sandbox_launcher(rec, app, portable, target, run) or run
     rec["exec"] = launch_target
     if target not in rec["files"]:
         rec["files"].insert(0, target)
-    if rec.get("selfInstalled"):          # AppKata's own appkata.desktop points at the stable link (2.11.3.1)
+    if rec.get("selfInstalled"):          # AppKata's own appkata.desktop points at the stable link (R2.11.3.1)
         pass
     elif portable.app_menu:
         rec["files"].append(_desktop_entry(app_id, app["name"], launch_target, app.get("icon") or "", app.get("summary", ""),
@@ -434,10 +434,10 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
 
 def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, prog: str) -> str:
     """Generate (or remove) the per-app sandbox launcher and return its path, or "" when the app runs
-    Off (requirement 17.4, 17.7). The resolved grant set is `app["sandbox"]`, baked in by the backend;
+    Off (R17.4, R17.7). The resolved grant set is `app["sandbox"]`, baked in by the backend;
     an absent/Off/unsupported sandbox leaves the program running directly, as before. Whether this
     system can sandbox is the backend's to decide: an app that has a launcher keeps it on a broken
-    host (17.10; review 2, F16: a missing tool here removed it)."""
+    host (R17.10; review 2, F16: a missing tool here removed it)."""
     app_id = app_id_of(rec, app)
     gs = app.get("sandbox")
     lp = sandbox.launcher_path(app_id, portable.root)
@@ -460,7 +460,7 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
 
 def _launcher_program(rec: dict, target: str) -> tuple[str, str, str | None]:
     """(appdir, program relative to it, the kept .AppImage or None) the launcher runs for the
-    current version: an AppImage is extracted and run through AppRun (17.7), a tarball as it is."""
+    current version: an AppImage is extracted and run through AppRun (R17.7), a tarball as it is."""
     cur = rec["current"]
     if cur["path"].lower().endswith(".appimage"):
         appdir = sandbox.extracted_dir(target, cur["version"])
@@ -470,7 +470,7 @@ def _launcher_program(rec: dict, target: str) -> tuple[str, str, str | None]:
 
 def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
     """Whether the launcher on disk is the one AppKata would write today for this app and grant
-    set (`app["sandbox"]`). The launcher is the enforcement (17.4), and only an install, an update
+    set (`app["sandbox"]`). The launcher is the enforcement (R17.4), and only an install, an update
     or a sandbox change rewrote it, so one written by an older AppKata -- before a launcher fix --
     kept running as written (round four, R4-4); the startup pass uses this to catch up, and it
     restores a hand-edited launcher the same way. False when there is no launcher or no grant set."""
@@ -491,7 +491,7 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
 
 
 def _activate_windows(rec: dict, app: dict, portable: "Portable", target: str) -> None:
-    """Windows (requirement 15.5, 15.6): `current` is a directory junction, the app menu entry a
+    """Windows (R15.5, R15.6): `current` is a directory junction, the app menu entry a
     Start-menu shortcut made once (for everyone, with administrator rights), the command link a .cmd."""
     from . import windows
     cur, app_id = rec["current"], app_id_of(rec, app)
@@ -536,7 +536,7 @@ def _activate_windows(rec: dict, app: dict, portable: "Portable", target: str) -
 
 
 def _secure_target(portable: "Portable", target: str) -> None:
-    """Apps for everyone live in folders only their owner and administrators can change (15.4.3)."""
+    """Apps for everyone live in folders only their owner and administrators can change (R15.4.3)."""
     if OS != "windows" or portable.scope != "everyone":
         return
     from . import windows
@@ -548,7 +548,7 @@ def _secure_target(portable: "Portable", target: str) -> None:
 
 
 def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
-    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (15.7, 15.8)."""
+    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8)."""
     from . import windows
     scope = portable.scope if portable.scope in windows.scopes(kind, exe_kind) else "me"
     msi_log = os.path.join(tmpdir, "msi.log") if kind == "msi" else ""
@@ -579,7 +579,7 @@ def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Po
     return rec
 
 def _retain(rec: dict, keep: int) -> None:
-    """Keep up to `keep` older versions (requirement 4.3.1.5); remove the rest."""
+    """Keep up to `keep` older versions (R4.3.1.5); remove the rest."""
     kept, out = rec.get("kept", []), []
     seen = {rec["current"]["path"]}
     for k in kept:
@@ -590,12 +590,12 @@ def _retain(rec: dict, keep: int) -> None:
             out.append(k)
         elif not k.get("external"):         # never delete a file AppKata adopted rather than placed
             _remove_path(k["path"])
-            _remove_extracted(k)            # its sandboxed-AppImage cache, if any (17.7)
+            _remove_extracted(k)            # its sandboxed-AppImage cache, if any (R17.7)
     rec["kept"] = out
 
 
 def _remove_extracted(k: dict) -> None:
-    """Drop a kept AppImage version's derived extraction cache (17.7)."""
+    """Drop a kept AppImage version's derived extraction cache (R17.7)."""
     if k.get("path", "").lower().endswith(".appimage"):
         cache = sandbox.extracted_dir(os.path.dirname(k["path"]), k.get("version", ""))
         for p in (cache, cache + ".stamp", cache + ".lock"):
@@ -612,11 +612,11 @@ def _remove_path(path: str) -> None:
 def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], progress=None, cancel=None,
             portable: Portable | None = None, phase=None) -> dict:
     """Install one app's chosen asset. Returns the install record (also stored). `phase(name)` is
-    told "Verifying" and "Installing" after the download (requirement 4.8.1). An app that updates
-    itself (app["autoUpdate"], requirement 4.10) goes into its folder without a version number."""
+    told "Verifying" and "Installing" after the download (R4.8.1). An app that updates
+    itself (app["autoUpdate"], R4.10) goes into its folder without a version number."""
     portable = portable or Portable()
     if app.get("foreign"):
-        raise InstallError("installed outside AppKata; uninstall that copy first")   # requirement 4.5.3
+        raise InstallError("installed outside AppKata; uninstall that copy first")   # R4.5.3
     rel_version = app.get("installVersion") or app.get("updateTo") or app.get("version", "")
     prev_row = db.one("SELECT record FROM installs WHERE url=?", (app["url"],))
     prev = json.loads(prev_row["record"] or "{}") if prev_row else {}
@@ -624,7 +624,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     app_id = prev.get("id") or (app_id_of(prev, app) if prev.get("current") else new_app_id(db, app["url"], app["name"]))
     moving_from = {}
     if OS == "windows" and prev and prev.get("scope", "me") != portable.scope and not app.get("selfSetup"):
-        moving_from, prev = prev, {}        # for someone else now: install afresh, then remove the old copy (15.4.1)
+        moving_from, prev = prev, {}        # for someone else now: install afresh, then remove the old copy (R15.4.1)
         check_not_running(moving_from.get("target", ""), app["name"])
     tmpdir = os.path.join(downloads_dir(), app_id)          # kept when a download breaks, to resume it
     os.makedirs(tmpdir, exist_ok=True)
@@ -644,9 +644,9 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         verified = "checksum" if want else "unverified"
         if OS == "windows":
             from . import windows
-            if portable.motw:            # requirement 15.11.1
+            if portable.motw:            # R15.11.1
                 windows.mark_of_web(file, asset.url)
-            if kind in ("exe", "msi", "msix"):          # Authenticode (requirement 15.11)
+            if kind in ("exe", "msi", "msix"):          # Authenticode (R15.11)
                 status, who = windows.authenticode(file)
                 verdict = windows.signature_verdict(status)
                 if verdict == "bad":
@@ -657,7 +657,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         if cancel and cancel():
             raise Cancelled()
         if app.get("selfSetup") and OS == "windows" and kind == "exe":
-            # AppKata's own setup runs when the user restarts AppKata (requirement 2.11.5)
+            # AppKata's own setup runs when the user restarts AppKata (R2.11.5)
             from .platform import data_dir
             updates = os.path.join(data_dir(), "updates")
             os.makedirs(updates, exist_ok=True)
@@ -682,7 +682,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec["scope"] = portable.scope
         portable_kind = kind in ("appimage", "tarball", "zip") or (kind == "exe" and app.get("exeKind") == "portable")
         if portable_kind and app.get("autoUpdate"):
-            # it replaces its own files, so no version folders, kept versions or current link (requirement 4.10.2)
+            # it replaces its own files, so no version folders, kept versions or current link (R4.10.2)
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)
             check_not_running(target, app["name"])
             _secure_target(portable, target)
@@ -698,7 +698,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             portable = _apply_kind(rec, app, portable, kind, target, prev)
             _activate(rec, app, replace(portable, stable_name=False, keep=0), target)
         elif portable_kind:
-            # a portable app keeps its versions side by side in its own folder (requirement 4.3.1)
+            # a portable app keeps its versions side by side in its own folder (R4.3.1)
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)
             check_not_running(target, app["name"])
             _secure_target(portable, target)
@@ -710,14 +710,14 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec["current"] = _place(kind, file, app, target, rel_version, asset.name)
             if OS == "windows" and portable.motw:
                 windows.mark_tree(rec["current"]["path"], asset.url)
-            if OS == "windows":           # requirement 15.18
+            if OS == "windows":           # R15.18
                 rec["msvcrt"] = windows.needs_msvcrt(rec["current"]["path"])
             portable = _apply_kind(rec, app, portable, kind, target, prev)
             _activate(rec, app, portable, target)
             _retain(rec, portable.keep)
-        elif kind in ("exe", "msi") and OS == "windows":     # an installer (requirement 15.7)
+        elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
             rec.update(_run_installer(app, file, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
-        elif kind == "msix" and OS == "windows":            # requirement 15.7.4
+        elif kind == "msix" and OS == "windows":            # R15.7.4
             from . import windows
             try:
                 rec.update(msix=windows.msix_install(file), scope="me")
@@ -732,7 +732,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             m = re.search(r"Installing\s+\d+/\d+…?\s+(\S+)|(\w+(?:\.\w+){2,})", p.stdout + p.stderr)
             rec["flatpak"] = m.group(1) or m.group(2) if m else ""
         elif kind in ("deb", "rpm"):
-            # through the package backend, dry run first (requirement 16.3.5, 16.8)
+            # through the package backend, dry run first (R16.3.5, R16.8)
             if kind == "deb":
                 pkg = subprocess.run(["dpkg-deb", "-f", file, "Package"], capture_output=True, text=True).stdout.strip()
             else:
@@ -773,7 +773,7 @@ def kept_versions(db: DB, url: str) -> list[str]:
 
 
 def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str = "") -> dict:
-    """Make a kept older version current again, without downloading (requirement 4.3.1.5)."""
+    """Make a kept older version current again, without downloading (R4.3.1.5)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
     rec = json.loads(row["record"] or "{}")
     k = next((x for x in rec.get("kept", []) if x["version"] == version), None)
@@ -791,7 +791,7 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
 
 def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     """Regenerate ~/bin/apps/<app>/run for the current version and grant set, without reinstalling
-    (requirement 17.4): used when the user changes an installed app's sandbox. `app["sandbox"]` is the
+    (R17.4): used when the user changes an installed app's sandbox. `app["sandbox"]` is the
     resolved grant set (or None/Off to drop the launcher)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
     if not row:
@@ -817,16 +817,16 @@ def remove_version(db: DB, url: str, version: str) -> None:
 
 def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
               remove_sandbox: bool = False) -> None:
-    """Reverse what install recorded (requirement 4.7). User data in the home folder is kept. A
+    """Reverse what install recorded (R4.7). User data in the home folder is kept. A
     package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`.
-    `remove_sandbox`: also delete the app's private sandbox home (17.14)."""
+    `remove_sandbox`: also delete the app's private sandbox home (R17.14)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (url,))
     if not row:
         return
     rec = json.loads(row["record"] or "{}")
     if rec.get("package"):
         # a dry run first: anything else it would remove is shown first, and some removals are refused
-        # (requirement 16.4.3)
+        # (R16.4.3)
         why = uninstall_blocker(rec)
         if why:
             raise InstallError(why)
@@ -859,14 +859,14 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
     db.x("DELETE FROM installs WHERE url=?", (url,))
     if OS == "linux":                           # only once the app itself is gone, not before a step can fail
         app_id = app_id_of(rec, {"name": row["name"]})
-        sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (17.14)
+        sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (R17.14)
         if remove_sandbox:
             sandbox.remove_sandbox_home(app_id)
 
 
 def install_msvcrt() -> str:
     """Download Microsoft's Visual C++ run-time, check it's signed by Microsoft, and install it for
-    everyone (requirement 15.18.3). Returns "ok" or "restart"."""
+    everyone (R15.18.3). Returns "ok" or "restart"."""
     from . import windows
     folder = downloads_dir()
     os.makedirs(folder, exist_ok=True)
@@ -895,7 +895,7 @@ def install_msvcrt() -> str:
 
 
 def _remove_portable_windows(rec: dict, name: str) -> None:
-    """A portable app's shortcut, command link, junction and folder (requirement 4.3.1.4, 15.5, 15.6)."""
+    """A portable app's shortcut, command link, junction and folder (R4.3.1.4, R15.5, R15.6)."""
     from . import windows
     check_not_running(rec.get("target", ""), name)
     for x in rec.get("shortcuts", []):
@@ -912,7 +912,7 @@ def _remove_portable_windows(rec: dict, name: str) -> None:
 
 
 def _uninstall_windows(name: str, rec: dict) -> None:
-    """Run the uninstaller recorded from the app's Uninstall entry (requirement 15.8.2)."""
+    """Run the uninstaller recorded from the app's Uninstall entry (R15.8.2)."""
     from . import windows
     entry = rec.get("entry")
     if OS != "windows" or not entry:
@@ -941,7 +941,7 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
     """Start the installed app. Its output goes to logs/apps/<id>.log (appended; the generated
     launcher writes there itself when started from the menu, so every way of starting the app leaves
     the same trace), its last lines into the App log when it exits, and `on_failed(code, last_lines)`
-    is called when it fails to start (requirement 14.2, :func:`applog.watch`): a sandboxed launch can
+    is called when it fails to start (R14.2, :func:`applog.watch`): a sandboxed launch can
     fail before the app runs — bwrap refused, the AppImage didn't unpack, a CLI tool refused its
     folder — and the user should see why rather than nothing happening. Returns the watching thread
     for a portable app (tests join it), else None."""
@@ -987,9 +987,9 @@ def _launch_windows(name: str, rec: dict) -> None:
     raise InstallError(f"open {name} from the Start menu")
 
 
-# ---------------------------------------------------------------- package channels (requirement 16)
+# ---------------------------------------------------------------- package channels (R16)
 class NeedsFlathub(InstallError):
-    """The Flathub remote isn't configured for this user: ask "Add Flathub?" first (16.3.4)."""
+    """The Flathub remote isn't configured for this user: ask "Add Flathub?" first (R16.3.4)."""
     def __init__(self):
         super().__init__("Flathub isn't set up on this computer")
 
@@ -1004,7 +1004,7 @@ def _apply(be, action: str, names: list[str], confirmed: bool, progress, cancel,
 
 
 def uninstall_blocker(rec: dict) -> str:
-    """Why a package can't be uninstalled from AppKata, or "" (requirement 16.4.3)."""
+    """Why a package can't be uninstalled from AppKata, or "" (R16.4.3)."""
     if not rec.get("package") or not pkgbackend.installed_version(rec["package"], rec.get("manager")):
         return ""
     be = pkgbackend.backend()
@@ -1023,11 +1023,11 @@ def _distro() -> str:
 
 def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None, phase=None, on_wait=None,
                     confirmed: bool = False, add_flathub: bool = False) -> dict:
-    """Install from a Flatpak remote or the distribution's repositories (requirement 16.3.4, 16.3.5).
+    """Install from a Flatpak remote or the distribution's repositories (R16.3.4, R16.3.5).
     `option` is a card from channels.options(). Returns the install record (also stored)."""
     from . import channels
     if app.get("foreign"):
-        raise InstallError("installed outside AppKata; adopt or uninstall that copy first")   # 4.5.3, 16.4.2
+        raise InstallError("installed outside AppKata; adopt or uninstall that copy first")   # R4.5.3, R16.4.2
     if phase:
         phase("Installing")
     if option["channel"] == "flatpak":
@@ -1065,8 +1065,8 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
 
 def update_channel(db: DB, url: str, progress=None, cancel=None, on_wait=None, confirmed: bool = False,
                    commit: str = "") -> dict:
-    """Update a channel install (requirement 16.5.5); a Flatpak `commit` installs that older build and
-    pins it (16.5.7)."""
+    """Update a channel install (R16.5.5); a Flatpak `commit` installs that older build and
+    pins it (R16.5.7)."""
     from . import channels
     row = db.one("SELECT * FROM installs WHERE url=?", (url,))
     if not row:
@@ -1099,7 +1099,7 @@ def update_channel(db: DB, url: str, progress=None, cancel=None, on_wait=None, c
 
 
 def set_pinned(db: DB, url: str, pinned: bool) -> None:
-    """A Flatpak is pinned with flatpak mask, which stops every updater (16.5.6); packages can't be."""
+    """A Flatpak is pinned with flatpak mask, which stops every updater (R16.5.6); packages can't be."""
     row = db.one("SELECT record FROM installs WHERE url=?", (url,))
     rec = json.loads(row["record"] or "{}") if row else {}
     if rec.get("channel") == "package":
@@ -1112,7 +1112,7 @@ def set_pinned(db: DB, url: str, pinned: bool) -> None:
 
 
 def set_update_owner(db: DB, url: str, owner: str) -> None:
-    """Install options → Updates: "system" or "appkata" (16.5.3)."""
+    """Install options → Updates: "system" or "appkata" (R16.5.3)."""
     row = db.one("SELECT record FROM installs WHERE url=?", (url,))
     if not row:
         return

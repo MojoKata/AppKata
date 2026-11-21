@@ -2,15 +2,15 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Confirmations (requirement 5.8): every removal, trusting a new signer, and quitting during an
+// Confirmations (R5.8): every removal, trusting a new signer, and quitting during an
 // install. Cancel plus a button named for the action. ask(kind, args):
 //   uninstall {url} · removeVersion {url, version} · removeTrust {id} · removeAuthority {trust, fp, name}
 //   trustSigner / ignoreSigner {trust, fp, name, trustName} · removeToken {host} · removeRelay {relay} · quit {}
-//   inUse {url, name, action, version, programs}: Windows can't change a running app (requirement 15.9)
-//   msvcrt {url, name}: install Microsoft's Visual C++ run-time (requirement 15.18.3)
-//   flathub {url, name, option, updates}: add the Flathub remote before the first Flatpak (requirement 16.3.4)
-//   plan {url, name, action, lines, refused, option, updates}: a package plan that changes other packages (16.3.5, 16.4.3)
-//   sandboxSetup {url, name, version, choice, ...}: the sandbox's first need, the one-time system setup (17.10)
+//   inUse {url, name, action, version, programs}: Windows can't change a running app (R15.9)
+//   msvcrt {url, name}: install Microsoft's Visual C++ run-time (R15.18.3)
+//   flathub {url, name, option, updates}: add the Flathub remote before the first Flatpak (R16.3.4)
+//   plan {url, name, action, lines, refused, option, updates}: a package plan that changes other packages (R16.3.5, R16.4.3)
+//   sandboxSetup {url, name, version, choice, ...}: the sandbox's first need, the one-time system setup (R17.10)
 Dialog {
     id: root
     property string kind: "uninstall"
@@ -19,7 +19,7 @@ Dialog {
     property var t: ({})            // what removing a Trust affects
     property bool deleteSandboxHome: false
     readonly property var sbx: (a.sandbox && a.sandbox.applicable && a.sandbox.installed && a.sandbox.level !== "off") ? a.sandbox : null
-    // its private home, at any level: one kept after the app was switched Off is offered too (17.14;
+    // its private home, at any level: one kept after the app was switched Off is offered too (R17.14;
     // review 2's nit: only a sandboxed app's was, so an Off app's home stayed behind, orphaned)
     readonly property var homeOf: (a.sandbox && a.sandbox.applicable && a.sandbox.installed && (a.sandbox.level !== "off" || a.sandbox.hasHome))
                                   ? a.sandbox : null
@@ -80,7 +80,7 @@ Dialog {
         open()
     }
     Text { width: parent.width; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 14; lineHeight: 1.15; text: root.cur[4] }
-    Rectangle {     // offer to delete the app's private sandbox home (17.14, A23)
+    Rectangle {     // offer to delete the app's private sandbox home (R17.14, A23)
         visible: root.kind === "uninstall" && !!root.homeOf
         width: parent.width; height: shCol.height + 20; radius: 10; color: Theme.input; border.color: Theme.border
         Column { id: shCol; x: 14; y: 10; width: parent.width - 28; spacing: 3
@@ -91,7 +91,7 @@ Dialog {
                 contentItem: Text { leftPadding: 26; text: "Also delete its sandbox home folder"; color: Theme.text; font.pixelSize: 13; font.bold: true; verticalAlignment: Text.AlignVCenter } }
             Text { x: 26; text: (root.homeOf ? root.homeOf.home : "").replace(backend.locations.home, "~"); color: Theme.muted; font.pixelSize: 12; font.family: Theme.mono } }
     }
-    Rectangle {     // apps that only this Trust lists (requirement 7.5)
+    Rectangle {     // apps that only this Trust lists (R7.5)
         visible: root.kind === "removeTrust" && (root.t.alone || []).length > 0
         width: parent.width; height: aloneCol.height + 24; radius: 11; color: Theme.warnSoft
         Column {
@@ -106,7 +106,7 @@ Dialog {
                    text: "Keep updating as my sources adds them as your own Sources first." }
         }
     }
-    Rectangle {     // the packages a plan changes (requirement 16.3.5, 16.4.3)
+    Rectangle {     // the packages a plan changes (R16.3.5, R16.4.3)
         visible: root.kind === "plan"
         width: parent.width; height: planCol.height + 20; radius: 10; color: root.args.refused ? Theme.errSoft : Theme.input; border.color: Theme.border
         Column {
@@ -131,7 +131,7 @@ Dialog {
     }
     footer: [
         FButton { text: root.kind === "plan" && root.args.refused ? "Close" : "Cancel"; onClicked: root.close() },
-        FButton {      // the first-need prompt's other answer: install it to run Off, and don't ask again (17.10)
+        FButton {      // the first-need prompt's other answer: install it to run Off, and don't ask again (R17.10)
             visible: root.kind === "sandboxSetup"
             text: "Not now"
             onClicked: { backend.answerSandboxSetup(root.args, false); root.close() }

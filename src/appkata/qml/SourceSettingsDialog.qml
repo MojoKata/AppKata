@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Source settings (requirement 2.6): forge type, track only, prereleases, and the download filter
+// Source settings (R2.6): forge type, track only, prereleases, and the download filter
 // for this platform with a live preview. From a Source's ⋯ menu, or from Add source before the
 // Source exists (then Save hands the settings back instead of storing them).
 Dialog {
@@ -34,10 +34,10 @@ Dialog {
     }
     function values() {
         const v = { forge: forge, trackOnly: trackOnly, prereleases: prereleases, assetFilter: filterField.text.trim() }
-        if (s.channels) { v.flatpak = flatpakField.text.trim(); v["package"] = packageField.text.trim() }    // requirement 16.1.3
+        if (s.channels) { v.flatpak = flatpakField.text.trim(); v["package"] = packageField.text.trim() }    // R16.1.3
         return v
     }
-    function hintText(h) {      // what applies without yours, and its check (requirement 2.6.7, 16.1.4)
+    function hintText(h) {      // what applies without yours, and its check (R2.6.7, R16.1.4)
         if (!h || !h.found) return "nothing found yet"
         return h.found + (h.from ? " · from " + h.from : "")
                + (h.check === "matches" ? " · matches the project" : h.check === "mismatch" ? " · " + (h.detail || "doesn't match the project") : " · unchecked")
@@ -94,7 +94,7 @@ Dialog {
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.prereleases = modelData[0] } } } }
         }
     }
-    Row2 {      // the app's Flatpak (requirement 2.6.7, 16.1.3)
+    Row2 {      // the app's Flatpak (R2.6.7, R16.1.3)
         visible: !!root.s.channels
         label: "Flatpak"; hint: "An app ID, optionally after its remote. Empty: " + root.hintText(root.s.flatpakHint)
         Field { id: flatpakField; width: 260; mono: true; placeholder: (root.s.flatpakHint || {}).found || "org.example.App" }
@@ -104,7 +104,7 @@ Dialog {
         label: "Package"; hint: "The " + (root.s.distro || "distribution") + " package. Empty: " + root.hintText(root.s.packageHint)
         Field { id: packageField; width: 260; mono: true; placeholder: (root.s.packageHint || {}).found || "package-name" }
     }
-    Column {    // requirement 2.6.4
+    Column {    // R2.6.4
         width: parent.width; spacing: 8
         Text { text: "Download filter for " + (root.s.platform || "this computer"); color: Theme.text; font.bold: true; font.pixelSize: 14 }
         Text { width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Inside a container, for scripts/test-appimage.sh: run the AppImage given as $1 on the demo data in
 # /data and write to /out what its processes loaded, for scripts/appimage_host_libs.py (requirement
-# 1.6; review 3, R3-31). The tour runs offscreen, so a probe then loads what a desktop session would
+# R1.6; review 3, R3-31). The tour runs offscreen, so a probe then loads what a desktop session would
 # and the tour can't: the X11 and Wayland platform plugins with their GL, shell and decoration
 # plugins, the input-method, image and icon plugins, and Qt's TLS backend, which loads OpenSSL only
 # when first used. The platform themes (GTK 3, the desktop portal) are left out: Qt uses them when

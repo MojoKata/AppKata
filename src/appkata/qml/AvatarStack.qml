@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// Partly overlapping avatars, "+N" after four (requirement 7.6.3). Hovering one reports it.
+// Partly overlapping avatars, "+N" after four (R7.6.3). Hovering one reports it.
 Item {
     id: root
     property var people: []

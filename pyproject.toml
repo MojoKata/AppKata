@@ -3,7 +3,7 @@ name = "appkata"
 dynamic = ["version"]
 description = "A FOSS app store built on git: Sources, Trusts and signed AppKata.md reviews"
 license = "GPL-3.0-or-later"
-requires-python = ">=3.14"          # the Python the release carries: packaging/versions.env (requirement 1.2)
+requires-python = ">=3.14"          # the Python the release carries: packaging/versions.env (R1.2)
 dependencies = ["PySide6-Essentials>=6.8", "truststore>=0.10; sys_platform != 'linux'"]
 
 [tool.pytest.ini_options]

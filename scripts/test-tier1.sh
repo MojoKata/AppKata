@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tier 1 -- the whole local suite (tests/) -- in a container, on the Python and the PySide6 the
-# release carries (packaging/versions.env, requirement 1.2), whatever this machine has: PySide6 6.10
+# release carries (packaging/versions.env, R1.2), whatever this machine has: PySide6 6.10
 # and later need glibc 2.34, which a RHEL 8 host lacks. Extra args go to pytest. The environment
 # can override PY_SERIES and PYSIDE to try others. A skip tests/skips/tier1.txt doesn't list fails the
 # run (tests/conftest.py).

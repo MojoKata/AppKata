@@ -1,4 +1,4 @@
-"""Writing a review to the user's AppKata.md, optionally committing and pushing it (requirement 8)."""
+"""Writing a review to the user's AppKata.md, optionally committing and pushing it (R8)."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def read(path: str) -> str:
 
 
 def current(path: str, app: str, url: str) -> dict:
-    """The user's existing review of an app (requirement 8.6)."""
+    """The user's existing review of an app (R8.6)."""
     tf = trustfile.parse(read(path))
     row = next((r for r in tf.rows if r.url == url or r.app.lower() == app.lower()), None)
     if not row:
@@ -65,7 +65,7 @@ class SaveResult:
 def save(path: str, app: str, source: str, tags: list[str], trust: int | None, rating: int | None, section: str,
          commit: bool = False, push: bool = False, settings: dict | None = None, version: str = "",
          details: list | None = None, dates: dict | None = None) -> SaveResult:
-    """Save the app review, or with `version` that version review (requirement 8.5); with commit,
+    """Save the app review, or with `version` that version review (R8.5); with commit,
     commit only AppKata.md; push only if that commit is signed."""
     text = trustfile.set_review(read(path), app, source, tags, trust, rating, section, settings, version, details, dates)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)

@@ -1,6 +1,6 @@
-"""The documents requirement 17 delegates to describe what is built (review 2, D1; class F).
+"""The documents R17 delegates to describe what is built (review 2, D1; class F).
 
-17.4 and 17.18 hand the launcher's explanation and the real-desktop checklist to
+R17.4 and R17.18 hand the launcher's explanation and the real-desktop checklist to
 docs/local-proxy-test-plan.md and scripts/sandbox/field-test.sh. Both had kept the planning-stage
 design long after it changed -- the marker in the private home and on the proxy, the whole portal
 name, a random instance id, the camera portal, an updater option never built -- and the field test,
@@ -18,10 +18,10 @@ RETIRED = {
     "Status: planning": "the launcher is built",
     "isn't built yet": "the launcher is built",
     '$home/.flatpak-info': "the marker lives outside the private home (016476a)",
-    "--talk=org.freedesktop.portal.Desktop": "the portal name is opened per interface (17.5)",
-    "instance-id=<random": "the instance id is the install's own id (17.6)",
-    "camera portal (via": "the Camera portal is closed to sandboxed apps (17.8)",
-    "Disable the app's own updater\" option is on": "AppKata updates a sandboxed self-updater (17.12)",
+    "--talk=org.freedesktop.portal.Desktop": "the portal name is opened per interface (R17.5)",
+    "instance-id=<random": "the instance id is the install's own id (R17.6)",
+    "camera portal (via": "the Camera portal is closed to sandboxed apps (R17.8)",
+    "Disable the app's own updater\" option is on": "AppKata updates a sandboxed self-updater (R17.12)",
     '"$HOME/.ssh/id_ed25519"': "the field test never touches the tester's home",
 }
 

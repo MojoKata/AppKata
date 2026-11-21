@@ -6,8 +6,8 @@ harm a **portable app or AppImage** can do to the rest of the computer once inst
 the experiments behind each decision, and the mockups are in [`app-sandboxing.md`](../../app-sandboxing.md);
 the human validation checklist and an explanation of the launcher and the proxy are in
 [`local-proxy-test-plan.md`](../../local-proxy-test-plan.md) (`scripts/sandbox/field-test.sh`); the launcher's
-exact text is the goldens in `tests/data/launchers/` (17.4). Deferred
-items are listed at 17.18.
+exact text is the goldens in `tests/data/launchers/` (R17.4). Deferred
+items are listed at R17.18.
 
 Each first-level item has a file of its own.
 

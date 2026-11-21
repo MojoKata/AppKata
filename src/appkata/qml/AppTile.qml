@@ -1,7 +1,7 @@
 import QtQuick
 import "."
 
-// A Catalog tile (requirement 12.3, 12.4), designed at 300 × 210 and scaled with its width.
+// A Catalog tile (R12.3, R12.4), designed at 300 × 210 and scaled with its width.
 Rectangle {
     id: root
     property var app: ({})
@@ -54,7 +54,7 @@ Rectangle {
         }
     }
     readonly property var busy: backend.busy[app.url]
-    Pill {     // state mark (requirement 12.4); "Installing 45%" while it installs (4.8.1)
+    Pill {     // state mark (R12.4); "Installing 45%" while it installs (R4.8.1)
         id: mark
         visible: !!root.marks[root.app.state] || !!root.app.vetoed || !!root.busy
         anchors.right: parent.right; anchors.rightMargin: 12; y: 12
@@ -62,7 +62,7 @@ Rectangle {
                                  : root.app.vetoed ? ["Avoid", Theme.errSoft, Theme.err, "warn"] : (root.marks[root.app.state] || ["", "", "", ""])
         text: m[0]; color: m[1]; fg: m[2]; icon: m[3]; u: 0.88; size: 12
     }
-    // footer: badge, tags trimmed to fit with a › button (requirement 12.4.1)
+    // footer: badge, tags trimmed to fit with a › button (R12.4.1)
     Rectangle { x: 16; width: parent.width - 32; height: 1; y: parent.height - 44 * root.k; color: Theme.border }
     TrustBadge { id: badge; app: root.app; u: Math.min(1.08, root.k); x: 18; y: root.height - 22 * root.k - height / 2 }
     Row {

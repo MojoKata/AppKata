@@ -68,7 +68,7 @@ def test_each_library_still_unnamed_names_its_finding():
 
 
 def test_requirement_1_6_names_each_group_of_the_listed_libraries():
-    """1.6 says what the AppImage takes from the host, by group; packaging/appimage-host-libs.txt
+    """R1.6 says what the AppImage takes from the host, by group; packaging/appimage-host-libs.txt
     lists each library with its group, and the check holds the AppImage to that list (R3-31)."""
     m = _mod()
     with open(m.NAMED, encoding="utf-8") as f:

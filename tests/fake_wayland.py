@@ -1,6 +1,6 @@
 """A stand-in Wayland compositor that answers the registry and nothing else (review 3, harness 4).
 
-The session warning lists the globals a compositor offers (17.9; review 2, F7). This answers a
+The session warning lists the globals a compositor offers (R17.9; review 2, F7). This answers a
 client's wl_display.get_registry and sync with a chosen list of globals, so tier 1 can run the
 product's own reader against each compositor of harness 4's table. The real ones are checked in the
 `wayland`, `kwin` and `kwin6` harnesses.

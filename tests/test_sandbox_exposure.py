@@ -7,7 +7,7 @@ with every network card's MAC address and the USB serials in it, even for a Stri
 network. The class: the sandbox shows something nobody listed.
 
 This harness turns the question round. docs/sandbox-exposure.md is the inventory of everything in
-view, each row with the sentence of requirement 17 that says so or the finding that keeps it
+view, each row with the sentence of R17 that says so or the finding that keeps it
 unstated. The harness fails on anything seen that the inventory doesn't list for that run, and on
 a row that should be seen and isn't. Tier 1 runs each template's launcher with a stand-in bwrap
 that records its words (mounts, variables, devices). Tier 2, in the launcher harnesses
@@ -42,7 +42,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(ROOT, "scripts", "sandbox"))
 import exposure as ex                                    # noqa: E402
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 
 @pytest.fixture(autouse=True)
@@ -54,11 +54,11 @@ def _proxy_here(monkeypatch):
 
 # what the inventory shows but no requirement states, and the finding that keeps each so
 STILL_UNSTATED: set = set()
-# 17.2's table checked where 17.2.1 says it is the whole story (Strict), and what keeps a cell wrong
+# R17.2's table checked where R17.2.1 says it is the whole story (Strict), and what keeps a cell wrong
 STILL_WRONG: dict = {}
 
 # Every built-in template, with the folder a folder template is made for as the user would pick it
-# (17.3), a writable app folder on one, and a CLI tool run from a project folder
+# (R17.3), a writable app folder on one, and a CLI tool run from a project folder
 RUNS = [("strict", {}), ("standard", {}), ("offline-editor", {"folders": {"~/Documents": "ro"}}),
         ("online-app", {}), ("messenger", {}), ("media-player", {"write_app": True}),
         ("developer", {"folders": {"~/Projects": "rw"}}), ("cli-tool", {})]
@@ -286,7 +286,7 @@ def test_the_harness_catches_round_threes_desktop_entries_back_in_view(tmp_path,
     assert "strict/wayland: listed, not seen: mount /usr/share/applications tmpfs" in problems, problems
 
 
-# 17.2's Strict row, where 17.2.1 says the table is the whole story: column -> (the cell as it is
+# R17.2's Strict row, where R17.2.1 says the table is the whole story: column -> (the cell as it is
 # written, {claim: what the Strict launcher must then give})
 STRICT_ROW = {
     "Home": ("private only", {"home": lambda s: "mount ~ rw" in s and not any("<folder>" in i or "<cwd>" in i for i in s)}),
@@ -305,7 +305,7 @@ def test_17_2s_strict_row_is_what_the_strict_launcher_gives_but_the_listed(tmp_p
     header = [c.strip() for c in re.search(r"\| Level \|(.+?)\|\s*\|-", text).group(1).split("|")]
     cells = [c.strip() for c in re.search(r"\| Strict \|(.+?)\| (?:17|$)", text + " 17").group(1).split("|")]
     row = dict(zip(header, cells))
-    assert set(row) == set(STRICT_ROW), f"17.2's columns changed: {sorted(row)}"
+    assert set(row) == set(STRICT_ROW), f"R17.2's columns changed: {sorted(row)}"
     env = Env(tmp_path, monkeypatch)
     s = Session(env, tmp_path, monkeypatch)
     try:
@@ -314,9 +314,9 @@ def test_17_2s_strict_row_is_what_the_strict_launcher_gives_but_the_listed(tmp_p
         s.close()
     wrong = set()
     for col, (written, claims) in STRICT_ROW.items():
-        assert row[col] == written, f"17.2 now says {row[col]!r} for Strict's {col}: update STRICT_ROW and STILL_WRONG"
+        assert row[col] == written, f"R17.2 now says {row[col]!r} for Strict's {col}: update STRICT_ROW and STILL_WRONG"
         wrong |= {f"Strict: {name}" for name, holds in claims.items() if not holds(seen)}
-    assert wrong == set(STILL_WRONG), f"17.2's Strict row against the Strict launcher: wrong {sorted(wrong)}, listed {sorted(STILL_WRONG)}"
+    assert wrong == set(STILL_WRONG), f"R17.2's Strict row against the Strict launcher: wrong {sorted(wrong)}, listed {sorted(STILL_WRONG)}"
 
 
 # ------------------------------------------------------------------------------------- tier 2
@@ -395,7 +395,7 @@ def test_a_run_catches_f18s_identifiers_with_its_rows_taken_out(tmp_path, monkey
 @needs_bwrap
 def test_a_run_catches_the_runtime_folder_bound_whole(tmp_path, monkeypatch):
     # The real session bus, the display sockets and every other app's runtime files in one bind: the
-    # class's worst member (17.3.3's never-shared runtime folder, R3 of round one for CLI tools)
+    # class's worst member (R17.3.3's never-shared runtime folder, R3 of round one for CLI tools)
     build = sb.build_launcher
     monkeypatch.setattr(sb, "build_launcher", lambda *a, **k: build(*a, **k).replace(
         '  --setenv XDG_RUNTIME_DIR "$rt"', '  --ro-bind "$rt" "$rt" --setenv XDG_RUNTIME_DIR "$rt"'))
@@ -410,7 +410,7 @@ def test_a_run_catches_the_runtime_folder_bound_whole(tmp_path, monkeypatch):
 
 @needs_bwrap
 def test_the_bus_warning_is_on_exactly_where_a_dbus_launch_bus_is_reachable(tmp_path, monkeypatch):
-    # Review 3, R3-8 (17.9): the warning follows the measured fact on each distro -- a bus started the
+    # Review 3, R3-8 (R17.9): the warning follows the measured fact on each distro -- a bus started the
     # way dbus-launch starts one is abstract on dbus 1.12 (Mint 21.3, RHEL 9), a path on 1.14 and later
     env = Env(tmp_path, monkeypatch)
     s = Session(env, tmp_path, monkeypatch, real=True)

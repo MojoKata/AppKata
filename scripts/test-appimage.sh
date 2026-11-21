@@ -1,11 +1,11 @@
 #!/bin/sh
 # Run the AppImage in a Linux Mint 22.3 container: --version, the screenshot tour on the demo data
 # (scripts/demo_data.py), and
-# --install-self from /tmp (requirement 2.11.3.1): the copy, its stable link, the desktop entry
+# --install-self from /tmp (R2.11.3.1): the copy, its stable link, the desktop entry
 # and icons, and that the installed copy starts.
-# Then what it takes from the host (requirement 1.6; review 3, R3-31, R3-32): the libraries it needs
-# against those 1.6 names (scripts/appimage_host_libs.py), and AppKata started on X11 and on Wayland
-# in each 1.1 platform's desktop package set (scripts/appimage_desktop.sh): the tour runs offscreen and
+# Then what it takes from the host (R1.6; review 3, R3-31, R3-32): the libraries it needs
+# against those R1.6 names (scripts/appimage_host_libs.py), and AppKata started on X11 and on Wayland
+# in each R1.1 platform's desktop package set (scripts/appimage_desktop.sh): the tour runs offscreen and
 # never loads the platform plugin a desktop session loads. The desktop images are built once
 # (appkata-desktop-*, a few GB each).
 # Then what AppKata uses of the AppImage: the trace step runs it the ways AppKata is used, under strace
@@ -57,7 +57,7 @@ for image in $(case " $STEPS " in *" mint "*) echo linuxmintd/mint22.3-amd64;; e
     fi
 done
 
-# Each 1.1 distro's desktop, as its installer lays it down (recommends included), with the package
+# Each R1.1 distro's desktop, as its installer lays it down (recommends included), with the package
 # list taken before the test's own tools (Xvfb, xwininfo, a Wayland compositor) go in.
 # name | base image | how to install the desktop | the tools | how to list the packages
 DESKTOPS="ubuntu22.04|ubuntu:22.04|apt ubuntu-desktop-minimal|xvfb x11-utils weston|dpkg

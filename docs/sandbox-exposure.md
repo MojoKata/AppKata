@@ -32,7 +32,7 @@ anything unlisted.
 - `always`;
 - `bus`: Standard, which gets the filtered bus;
 - `network`, `sound`, `camera`, `folder-ro` and `folder-rw`: the grant;
-- `cli`: a CLI tool run from a folder it may share, 17.3.3;
+- `cli`: a CLI tool run from a folder it may share, R17.3.3;
 - `write_app`;
 - `appimage`;
 - `wayland`: a Wayland session;

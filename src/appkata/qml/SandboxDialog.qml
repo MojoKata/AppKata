@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import "."
 
-// The per-app Sandbox dialog (requirement 17.3, mockups A21/A25): a template dropdown, a live
+// The per-app Sandbox dialog (R17.3, mockups A21/A25): a template dropdown, a live
 // summary, and a collapsed Customize disclosure that opens into Files / Connections / Devices & media
 // / Services / Advanced. A settings surface you return to — not a wizard.
 Dialog {
@@ -16,7 +16,7 @@ Dialog {
     property bool customized: false
     property bool expanded: false
     signal saved(string url)                 // the install card adopts what was saved here
-    // the template, when it is made for a folder the user picks: {mode, suggest} (17.3, review 2 F10)
+    // the template, when it is made for a folder the user picks: {mode, suggest} (R17.3, review 2 F10)
     readonly property var folderTpl: (function () { const t = (info.templates || []).find(x => x.key === tpl); return t ? t.folder : null })()
     readonly property bool noFolderYet: !!folderTpl && gs.level !== "strict" && Object.keys(gs.folders || {}).filter(p => p !== "$cwd").length === 0
     title: "Sandbox"
@@ -50,14 +50,14 @@ Dialog {
         tpl = name; gs = templateGrants(name); customized = false; widened = false
     }
     function has(arr, v) { return (arr || []).indexOf(v) >= 0 }
-    property bool widened: false            // Strict became Standard because a grant was added (17.2)
+    property bool widened: false            // Strict became Standard because a grant was added (R17.2)
     function toggleIn(key, v, on) {
         let a = (gs[key] || []).slice()
         const i = a.indexOf(v)
         if (on && i < 0) a.push(v); else if (!on && i >= 0) a.splice(i, 1)
         setField(key, a)
     }
-    // Strict has no folders, network, sound, services or writable app folder (17.2): a grant set at
+    // Strict has no folders, network, sound, services or writable app folder (R17.2): a grant set at
     // that level drops them, so adding one here makes the set Standard with that grant, and says so,
     // rather than showing a folder the launcher would never bind.
     function widens(key, v) {
@@ -79,7 +79,7 @@ Dialog {
         f[path] = folderTpl && folderTpl.mode === "ro" ? "ro" : "rw"
         setField("folders", f)
     }
-    function flipMode(path) {      // a granted folder is read-only or read-write (17.2.1, review 2 F10)
+    function flipMode(path) {      // a granted folder is read-only or read-write (R17.2.1, review 2 F10)
         let f = Object.assign({}, gs.folders || {})
         f[path] = f[path] === "rw" ? "ro" : "rw"
         setField("folders", f)
@@ -130,14 +130,14 @@ Dialog {
                    text: "suggested by " + (root.info.reviewBy || ""); color: Theme.accent; font.pixelSize: 12 }
             Text { visible: root.widened; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                    text: "Strict has no folders, network, sound or services, so this is now Standard with what you added." }
-            Rectangle {     // before Save: sandboxing an app that runs unsandboxed gives it an empty home (17.13, review 2 F13)
+            Rectangle {     // before Save: sandboxing an app that runs unsandboxed gives it an empty home (R17.13, review 2 F13)
                 visible: !!root.info.freshWarning && root.tpl !== "off"
                 width: parent.width; height: fwTxt.height + 20; radius: 10; color: Theme.warnSoft
                 Icon { x: 12; y: 12; name: "warn"; size: 15; color: Theme.warn; lineWidth: 1.6 }
                 Text { id: fwTxt; x: 38; y: 11; width: parent.width - 50; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                        text: root.info.freshWarning || "" }
             }
-            Rectangle {     // the reviewers suggest something else: adopt it in one click (17.11)
+            Rectangle {     // the reviewers suggest something else: adopt it in one click (R17.11)
                 visible: !!root.info.hasSuggestion
                 width: parent.width; height: rsCol.height + 20; radius: 10; color: Theme.accentSoft
                 Column { id: rsCol; x: 12; y: 10; width: parent.width - 24 - 110; spacing: 4
@@ -146,7 +146,7 @@ Dialog {
                            text: (root.info.reviewSuggests || []).map(c => c[0]).join(" · ") } }
                 FButton { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
                           text: "Use theirs"; implicitHeight: 28; objectName: "useTheirs"
-                          onClicked: { backend.useSuggestion(root.url); root.close() } }     // a suggested Off becomes the user's own choice (17.3.2)
+                          onClicked: { backend.useSuggestion(root.url); root.close() } }     // a suggested Off becomes the user's own choice (R17.3.2)
             }
 
             Text { width: parent.width; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 13; lineHeight: 1.2
@@ -157,7 +157,7 @@ Dialog {
                                         return root.tpl === "off" ? "No sandbox — the app runs with your full account."
                                                : t && root.customized ? backend.describeSandbox(root.tpl, root.gs) + "."
                                                : t ? t.blurb : "Your own mix of access, built from a template." })() }
-            Flow {      // a template made for a folder the user picks: offer it in place (17.3, review 2 F10)
+            Flow {      // a template made for a folder the user picks: offer it in place (R17.3, review 2 F10)
                 visible: root.noFolderYet; width: parent.width; spacing: 8; objectName: "pickFolder"
                 Text { text: "Pick its folder:"; color: Theme.text; font.bold: true; font.pixelSize: 12; height: 28
                        verticalAlignment: Text.AlignVCenter }
@@ -176,7 +176,7 @@ Dialog {
                            fg: modelData[2] === "ok" ? Theme.ok : modelData[2] === "warn" ? Theme.warn : Theme.muted }
                 }
             }
-            Rectangle {     // the X11 / wlroots caveat (17.9)
+            Rectangle {     // the X11 / wlroots caveat (R17.9)
                 visible: !!(root.info.sessionWarning && root.info.sessionWarning.text) && root.tpl !== "off"
                 width: parent.width; height: swText.height + 20; radius: 10; color: Theme.warnSoft
                 Icon { x: 12; y: 12; name: "info"; size: 15; color: Theme.warn }
@@ -219,7 +219,7 @@ Dialog {
                                     onClicked: { let f = Object.assign({}, root.gs.folders); delete f[modelData[0]]; root.setField("folders", f) } }
                     }
                 }
-                Flow {      // the user folders in one click, by this system's names for them (17.2.1, decision 4)
+                Flow {      // the user folders in one click, by this system's names for them (R17.2.1, decision 4)
                     width: body.width; spacing: 8
                     Repeater {
                         model: (root.info.userFolders || []).filter(x => !(x.path in (root.gs.folders || {})))

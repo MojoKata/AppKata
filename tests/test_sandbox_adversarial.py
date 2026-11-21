@@ -21,7 +21,7 @@ import pytest
 
 from appkata_core import sandbox as sb
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 
 @pytest.fixture(autouse=True)

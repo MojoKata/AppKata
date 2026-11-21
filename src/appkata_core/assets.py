@@ -1,4 +1,4 @@
-"""Choosing the release asset for this OS and architecture (requirement 4.2)."""
+"""Choosing the release asset for this OS and architecture (R4.2)."""
 
 from __future__ import annotations
 
@@ -47,15 +47,15 @@ def preference(os_name: str, family: str = "") -> list[str]:
         return ["appimage", "flatpak", *native, "tarball"]
     if os_name == "macos":
         return ["dmg", "pkg", "zip"]
-    return ["zip", "exe-portable", "msi", "exe", "msix"]       # portable first (requirement 15.3)
+    return ["zip", "exe-portable", "msi", "exe", "msix"]       # portable first (R15.3)
 
 
 def order_key(kind: str, name: str) -> str:
-    """A portable .exe ranks apart from an installer .exe (requirement 15.3)."""
+    """A portable .exe ranks apart from an installer .exe (R15.3)."""
     return "exe-portable" if kind == "exe" and exe_hint(name) == "portable" else kind
 
 
-# Which install methods are portable (requirement 4.2.1). "exe" depends on the file.
+# Which install methods are portable (R4.2.1). "exe" depends on the file.
 PORTABLE = {"appimage", "tarball", "dmg", "zip"}
 SYSTEM = {"deb", "rpm", "flatpak", "pkg", "msi", "msix"}
 
@@ -80,7 +80,7 @@ def exe_hint(name: str) -> str:
 
 
 def exe_type(name: str, head: bytes = b"", release: list[str] | tuple = ()) -> str:
-    """What a Windows .exe is (requirement 4.2.1, 15.7.1): "inno", "nsis", "electron" (NSIS made by
+    """What a Windows .exe is (R4.2.1, R15.7.1): "inno", "nsis", "electron" (NSIS made by
     electron-builder), "squirrel", "wix", "installshield" (installers, found from markers in its first
     bytes and the release's other files), "installer" or "portable" (from its name), or "unknown"."""
     from .windows import exe_kind_from_release
@@ -170,7 +170,7 @@ def pretty(os_name: str) -> str:
 
 
 def checksum_for(asset: Asset, assets: list[Asset]) -> Asset | None:
-    """A checksum file that covers this asset, if the release has one (requirement 4.4)."""
+    """A checksum file that covers this asset, if the release has one (R4.4)."""
     names = {a.name.lower(): a for a in assets}
     for cand in (asset.name + ".sha256", asset.name + ".sha256sum", asset.name + ".sha512"):
         if cand.lower() in names:

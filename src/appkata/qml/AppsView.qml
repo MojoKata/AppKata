@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The Apps perspective (requirement 6): installed apps, updates first, then by name.
+// The Apps perspective (R6): installed apps, updates first, then by name.
 Item {
     id: root
     property string selected: ""
@@ -62,7 +62,7 @@ Item {
             }
         }
     }
-    Column {     // empty state (requirement 6.7)
+    Column {     // empty state (R6.7)
         visible: root.all.length === 0
         anchors.centerIn: parent; spacing: 14
         Text { text: "No apps installed yet"; color: Theme.text; font.pixelSize: 17; font.bold: true; anchors.horizontalCenter: parent.horizontalCenter }

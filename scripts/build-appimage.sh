@@ -1,11 +1,11 @@
 #!/bin/sh
-# Build releases/AppKata-<version>-x86_64.AppImage (requirement 1.6) and its .sha256.
+# Build releases/AppKata-<version>-x86_64.AppImage (R1.6) and its .sha256.
 #
 #   python-build-standalone (CPython of PY_SERIES, x86_64, glibc 2.17+)  +  PySide6-Essentials from PyPI
-#   (both versions in packaging/versions.env, requirement 1.2)
+#   (both versions in packaging/versions.env, R1.2)
 #   +  src/appkata, src/appkata_core  →  AppDir  →  appimagetool
 #
-# Builds in an Ubuntu 22.04 container (glibc 2.35, the oldest 1.1 supports): the bundled Python runs
+# Builds in an Ubuntu 22.04 container (glibc 2.35, the oldest R1.1 supports): the bundled Python runs
 # PySide6 during the build, and PySide6 6.10 and later need glibc 2.34, which a RHEL 8 host lacks.
 # With docker absent it builds on the host. Downloads are cached in build/appimage-cache. Test it
 # with scripts/test-appimage.sh.
@@ -55,7 +55,7 @@ PY="$APPDIR/usr/python/bin/python3"
 SITE="$APPDIR/usr/python/lib/python$PY_SERIES/site-packages"
 # Qt's X11 plugin needs five xcb-util libraries no Debian-family desktop installs, libxcb-cursor
 # above all: without them AppKata doesn't start on X11, every Mint edition's session (review 3,
-# R3-32). They carry no settings of their own; taken from Ubuntu 22.04, the oldest glibc 1.1
+# R3-32). They carry no settings of their own; taken from Ubuntu 22.04, the oldest glibc R1.1
 # supports, they sit beside Qt's libraries, where Qt's RUNPATH finds them.
 LIC="$HERE/build/appimage-licenses"      # their copyright files, for the notices below
 rm -rf "$LIC" && mkdir -p "$LIC/xcb-util"
@@ -96,7 +96,7 @@ EOF
 cp "$APPDIR/appkata.desktop" "$APPDIR/usr/share/applications/"
 cp "$HERE/src/appkata/qml/assets/appkata.svg" "$APPDIR/appkata.svg"
 cp "$HERE/src/appkata/qml/assets/appkata.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/appkata.svg"
-mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"      # a PNG too, for the first-start install (2.11.3.1)
+mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"      # a PNG too, for the first-start install (R2.11.3.1)
 QT_QPA_PLATFORM=offscreen "$PY" - "$HERE/src/appkata/qml/assets/appkata.svg" "$APPDIR/usr/share/icons/hicolor/256x256/apps/appkata.png" <<'PNG'
 import sys
 from PySide6.QtCore import Qt

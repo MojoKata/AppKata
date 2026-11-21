@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// The Sources perspective (requirement 7): Sources list plus the Trust panel.
+// The Sources perspective (R7): Sources list plus the Trust panel.
 Item {
     id: root
     signal addSource()
@@ -27,7 +27,7 @@ Item {
     Text { anchors.left: title.right; anchors.leftMargin: 14; anchors.baseline: title.baseline
            text: backend.sourceItems.length + " source" + (backend.sourceItems.length === 1 ? "" : "s"); color: Theme.muted; font.pixelSize: 14 }
     FButton { id: addBtn; x: root.rightEdge - width; y: 22; text: "Add source"; icon: "plus"; primary: true; onClicked: root.addSource() }
-    FButton { id: exploreBtn; x: addBtn.x - 10 - width; y: 22; text: "Explore"; icon: "compass"; onClicked: root.explore() }     // requirement 7.7.1
+    FButton { id: exploreBtn; x: addBtn.x - 10 - width; y: 22; text: "Explore"; icon: "compass"; onClicked: root.explore() }     // R7.7.1
     Field { x: exploreBtn.x - 12 - width; y: 22; width: 170; height: 34; icon: "filter"; placeholder: "Filter"; clearable: true; onEdited: t => root.filter = t }
 
     Flickable {
@@ -62,7 +62,7 @@ Item {
                text: "A Source is an app you've decided to trust yourself: add its git project URL (GitHub, GitLab, Forgejo or Gitea) or its releases page." }
     }
 
-    // an app's "Source" pill (requirement 2.9.5): scroll to its row and highlight it for a while
+    // an app's "Source" pill (R2.9.5): scroll to its row and highlight it for a while
     function showSource(url) {
         filter = ""; highlightUrl = url
         const i = backend.sourceItems.findIndex(s => s.url === url)
@@ -84,7 +84,7 @@ Item {
         trustsPop.x = p.x; trustsPop.y = p.y + 6
         trustsPop.open()
     }
-    PopMenu {     // requirement 7.1.3
+    PopMenu {     // R7.1.3
         id: srcMenu
         menuWidth: 280
         items: [
@@ -102,7 +102,7 @@ Item {
             else if (key === "remove") root.removeSource(root.menuSrc)
         }
     }
-    Popup {     // the Trusts that also list a Source (requirement 2.9.4, 2.9.5)
+    Popup {     // the Trusts that also list a Source (R2.9.4, R2.9.5)
         id: trustsPop
         property var listing: []
         width: 330; padding: 6

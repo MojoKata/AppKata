@@ -1,4 +1,4 @@
-"""Package channels for the GUI (requirement 16): the install dialog's channel cards, the channels an
+"""Package channels for the GUI (R16): the install dialog's channel cards, the channels an
 app has, and Explore on Flathub and the distribution. The core is appkata_core.channels and friends;
 this module only gathers what the screens show."""
 
@@ -86,7 +86,7 @@ class Channels:
         return channels.links(self.db, url, self.catalog(), self.manager, ignore_mine)
 
     def facts(self, url: str, found: dict) -> dict:
-        """What each channel offers now: version, size, repository (16.3.1)."""
+        """What each channel offers now: version, size, repository (R16.3.1)."""
         if self.fake:
             return (self.fake.get("facts") or {}).get(url, {})
         out = {}
@@ -110,7 +110,7 @@ class Channels:
         return out
 
     def updater(self, kind: str) -> str:
-        """Who would update a new install from this channel (16.5.2), e.g. "GNOME Software", or ""."""
+        """Who would update a new install from this channel (R16.5.2), e.g. "GNOME Software", or ""."""
         from appkata_core import autoupdate
         det = autoupdate.Detection.from_dict((self.fake or {}).get("autoupdate") or self.db.get("autoupdate", {}) or {})
         if kind == "flatpak":
@@ -120,7 +120,7 @@ class Channels:
         return autoupdate.package_owner(det, self.manager)
 
     def cards(self, url: str, release_files: list[dict], releases: list[dict]) -> list[dict]:
-        """The install dialog's cards: release files and channels, Recommended first (16.3.1, 16.3.2)."""
+        """The install dialog's cards: release files and channels, Recommended first (R16.3.1, R16.3.2)."""
         found = self.links(url)
         if not found:
             return [{"channel": "release", **f} for f in release_files]
@@ -147,7 +147,7 @@ class Channels:
         return out
 
     def summary(self, url: str) -> list[dict]:
-        """The channels an app has, for the App Detail panel (16.6.1)."""
+        """The channels an app has, for the App Detail panel (R16.6.1)."""
         found = self.links(url)
         checks = self.checks(url, found) if found else {}
         out = []
@@ -164,7 +164,7 @@ class Channels:
         return out
 
     def explore(self, http, service: str, q: str) -> dict:
-        """Explore on Flathub or the distribution (16.2.3)."""
+        """Explore on Flathub or the distribution (R16.2.3)."""
         if self.fake:
             res = (self.fake.get("explore") or {}).get(service)
             if res is not None:

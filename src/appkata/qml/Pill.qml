@@ -12,7 +12,7 @@ Rectangle {
     property bool bold: true
     property int size: 12
     property string icon: ""
-    property real u: 1                  // scale factor (Fan tiles, requirement 5.2.5)
+    property real u: 1                  // scale factor (Fan tiles, R12.3)
     property string tip: ""             // a tooltip on hover
     property bool showTip: false        // the screenshot tour
     signal clicked()

@@ -1,6 +1,6 @@
 #!/bin/sh
 # The Python every release carries (packaging/versions.env), for development, the tests and the
-# field test (requirement 1.2): python-build-standalone of PY_SERIES unpacked to build/python-<series>
+# field test (R1.2): python-build-standalone of PY_SERIES unpacked to build/python-<series>
 # with pytest, fetched once, and again when PYTHON_BUILD changes. Prints the path of its python3;
 # progress goes to stderr.
 set -eu

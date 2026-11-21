@@ -1,10 +1,10 @@
-"""Every sandbox mutation leaves its audit entry (requirement 17.16), as a table over the slots and
+"""Every sandbox mutation leaves its audit entry (R17.16), as a table over the slots and
 as part of the transitions snapshot (round five, "Coverage after round five").
 
 Round four's R4-3 found a save path that applied a sandbox and wrote no audit row; the transitions
 test snapshots the files and the app's two rows but not the audit table, so a path like it could
 still go unnoticed. The snapshot here includes the audit rows, and each state-changing slot is
-driven once and must add exactly the entry 17.16 names.
+driven once and must add exactly the entry R17.16 names.
 """
 
 import json
@@ -49,7 +49,7 @@ def test_each_sandbox_mutation_writes_exactly_its_audit_entry(be, sandboxed, mon
 def test_a_sandbox_mutation_that_changes_nothing_still_says_so_once(be, sandboxed):
     before = audit_rows(be)
     be.setSandbox(URL, {"template": "online-app", "overrides": {}})      # what the review already says
-    assert len(audit_rows(be)) == len(before) + 1                         # 17.16: every change of the choice, even to the same grants
+    assert len(audit_rows(be)) == len(before) + 1                         # R17.16: every change of the choice, even to the same grants
 
 
 def test_the_system_setup_is_audited_once_it_really_worked(be, monkeypatch):

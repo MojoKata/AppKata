@@ -2,8 +2,8 @@
 
 Every sentence of a requirement either promises something observable or explains. A promise
 nobody shows is a decision recorded but never built — the class behind most of review 2's
-findings (the "Disable the app's own updater" option of 17.12, the "Show the launch command" of
-17.4, the "if declined" prompt of 17.10). `tests/test_requirements_trace.py` splits each covered
+findings (the "Disable the app's own updater" option of R17.12, the "Show the launch command" of
+R17.4, the "if declined" prompt of R17.10). `tests/test_requirements_trace.py` splits each covered
 section into sentences (and table rows) the way this table does and fails when a sentence has no
 row, a row no longer matches its sentence, a named test doesn't exist, or the rows still open
 differ from its list (review 3, harness B).
@@ -14,7 +14,7 @@ differ from its list (review 3, harness B).
 - `claim` — a third-party fact, with its evidence in `docs/app-sandboxing.md`'s claims table;
 - `open: <id>` — a finding that keeps it unshown (`R2-…` in `docs/reviews/app-sandboxing-2.md`,
   `R3-…` in `app-sandboxing-3.md`);
-- `deferred` — listed in 17.18; `statement` — explains, names a file or a limit, promises nothing
+- `deferred` — listed in R17.18; `statement` — explains, names a file or a limit, promises nothing
   a test could show.
 
 **Sentence starts** is the sentence's opening words with Markdown emphasis and backticks dropped.
@@ -88,7 +88,7 @@ differ from its list (review 3, harness B).
 | R17.3.5 | What a review may do. | statement |
 | R17.3.5 | Reviews are suggestions from people the user trusts | statement |
 | R17.3.5 | On its own a review may pick a | test_a_review_saying_off_needs_the_users_click, test_a_review_cannot_grant_a_secret_folder_and_the_summary_says_so |
-| R17.3.5 | The never-shared folders (17.3.1) are refused whoever | test_a_custom_sandbox_cannot_share_a_protected_folder, test_launcher_and_summary_refuse_protected_folders |
+| R17.3.5 | The never-shared folders (R17.3.1) are refused whoever | test_a_custom_sandbox_cannot_share_a_protected_folder, test_launcher_and_summary_refuse_protected_folders |
 | R17.4 | For every sandboxed app AppKata generates | test_activate_generates_launcher_and_points_everything_at_it, test_the_startup_pass_regenerates_a_launcher_an_older_appkata_wrote, test_the_startup_pass_restores_every_file_the_launcher_relies_on, test_a_sandbox_chosen_in_install_options_for_an_installed_app_applies_at_once |
 | R17.4 | Its text can be shown in App Detail | test_app_detail_shows_the_launch_command_and_the_audit_records_its_hash, test_the_startup_pass_rewrites_and_audits_a_launcher_per_app |
 | R17.4 | It binds /usr and /etc read-only; mounts a | test_the_launchers_words_give_exactly_what_the_inventory_lists, test_what_an_app_sees_inside_is_exactly_what_the_inventory_lists, test_the_launcher_matches_its_golden, test_strict_app_runs_and_cannot_read_the_real_home, test_launcher_binds_the_xdg_font_icon_and_theme_dirs_read_only, test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app, test_launcher_uses_the_filter_instead_of_a_new_session, test_the_app_outlives_the_process_that_started_it, test_terminal_input_injection_stays_blocked, test_what_each_personas_session_carries_reaches_the_app_but_the_listed, test_the_launcher_passes_no_variable_its_shell_made_up |
@@ -108,7 +108,7 @@ differ from its list (review 3, harness B).
 | R17.6 | The launcher presents each app a stable id | test_identity_is_a_valid_bus_name, test_identity_marker_cannot_be_swapped_for_a_host_file |
 | R17.6 | PipeWire/WirePlumber take the app for a sandboxed client | harness:wayland, claim |
 | R17.6 | The id is also the app's D-Bus name | test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus, test_two_apps_with_one_name_get_their_own_folder_launcher_identity_and_home |
-| R17.6 | A private home an uninstall keeps (17.14) stays | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home |
+| R17.6 | A private home an uninstall keeps (R17.14) stays | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home |
 | R17.6 | AppKata records which app (URL) each home belongs | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home, test_a_home_removed_with_its_app_frees_the_name |
 | R17.6 | A home with no owner recorded counts as | test_a_home_with_no_owner_recorded_counts_as_another_apps |
 | R17.6.2 | A file or folder the app is given as an argument | test_a_file_argument_is_handed_over_to_a_standard_app, test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_listed |
@@ -189,7 +189,7 @@ differ from its list (review 3, harness B).
 | R17.10.1 | But bwrap is a general tool, so the | statement |
 | R17.10.1 | Settings → Sandbox and the per-app setup banner | test_settings_sandbox_says_the_systems_support_and_reaches_its_setup, test_app_detail_offers_the_system_setup_or_repair_and_reaches_it |
 | R17.10.1 | AppKata does not install the tighter design that | statement |
-| R17.10.1 | Ubuntu 25.04 and later ship it themselves (17.10.2). | claim |
+| R17.10.1 | Ubuntu 25.04 and later ship it themselves (R17.10.2). | claim |
 | R17.10.2 | Ubuntu 25.04 and later. | statement |
 | R17.10.2 | These ship their own AppArmor profile for /usr/bin/bwrap | harness:launcher-vm26, test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher, claim |
 | R17.10.2 | There the sandbox runs with no setup (the | harness:launcher-vm26, test_the_systems_own_bwrap_profile_is_found_and_nothing_else |
@@ -197,7 +197,7 @@ differ from its list (review 3, harness B).
 | R17.10.2 | The launcher starts a program that brings that | test_a_chromium_app_gets_no_sandbox_only_where_its_own_cannot_run, test_a_chromium_app_gets_no_sandbox_exactly_where_its_own_cannot_run, claim |
 | R17.10.2 | App Detail says so for such an app | test_app_detail_says_a_chromium_app_runs_without_its_own_sandbox_where_it_must |
 | R17.10.2 | Whether the inner sandbox can run is probed | test_an_upgrade_to_a_system_with_its_own_bwrap_profile_rewrites_launchers_at_start, test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher |
-| R17.10.2 | Restoring the inner sandbox there is deferred (17.18). | deferred |
+| R17.10.2 | Restoring the inner sandbox there is deferred (R17.18). | deferred |
 | R17.11 | Where permissions come from. | statement |
 | R17.11 | In order: the user's per-app choice (install options | test_choose_precedence, test_user_choice_wins_and_unreviewed_defaults |
 | R17.11 | Reviews never change an app's grants on their | test_a_changed_review_never_changes_an_installed_apps_grants, test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_choice |
@@ -205,24 +205,24 @@ differ from its list (review 3, harness B).
 | R17.11 | Access is never silently widened. | test_a_changed_review_never_changes_an_installed_apps_grants, test_merging_never_widens_and_is_symmetric |
 | R17.11 | The badge stands until the user acts on | test_the_review_badge_clears_once_the_user_acts_on_the_suggestion, test_use_theirs_in_the_sandbox_dialog_adopts_the_suggestion, test_a_sandbox_chosen_in_the_install_dialog_counts_as_seen |
 | R17.11 | A later, different suggestion raises it again; a | test_the_review_badge_clears_once_the_user_acts_on_the_suggestion |
-| R17.12 | An app that updates itself (4.10) can't while | test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself |
+| R17.12 | An app that updates itself (R4.10) can't while | test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself |
 | R17.12 | So while it runs sandboxed — whenever it | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed, test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it |
 | R17.12 | App Detail says "It would update itself, but | test_app_detail_says_appkata_updates_a_self_updating_app_while_it_runs_sandboxed |
 | R17.12 | Its own updater simply fails (how gracefully is | statement |
 | R17.12 | Switched to Off, it updates itself again. | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed |
 | R17.12 | (Review 2, F3: an earlier draft named a | statement |
 | R17.13 | Enabling a sandbox after install warns that the | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
-| R17.13 | No automatic config import in v1 (17.18). | deferred |
+| R17.13 | No automatic config import in v1 (R17.18). | deferred |
 | R17.13 | The warning comes before the change: the Sandbox | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save |
 | R17.13 | Every way to set up system support (the | test_every_setup_entry_point_names_the_apps_it_will_sandbox, test_apps_sandboxed_by_appkata_are_named_before_and_after, test_the_waiting_note_tells_fresh_homes_from_kept_ones |
 | R17.13 | When AppKata itself sandboxes an installed app (at | test_apps_sandboxed_by_appkata_are_named_before_and_after, test_an_update_that_first_sandboxes_an_app_says_so, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.14 | Uninstalling a sandboxed app offers to remove its | test_uninstall_leaves_only_what_it_promises_to_keep, test_uninstall_keeps_the_private_home_until_the_app_is_really_gone, test_the_uninstall_dialog_offers_to_delete_the_sandbox_home_but_the_listed |
-| R17.14 | A kept home remains that app's alone (17.6). | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home |
-| R17.15 | Settings → Sandbox (11.1): the default template for | test_user_default_applies_only_to_unreviewed_apps, test_settings_sandbox_defaults_reach_the_backend, test_settings_sandbox_says_the_systems_support_and_reaches_its_setup |
-| R17.15 | "Follow reviewers' suggestions"; the review-badge toggle (17.11); a | test_app_detail_raises_the_review_badge_and_keep_mine_puts_it_down, test_settings_sandbox_says_the_systems_support_and_reaches_its_setup |
+| R17.14 | A kept home remains that app's alone (R17.6). | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home |
+| R17.15 | Settings → Sandbox (R11.1): the default template for | test_user_default_applies_only_to_unreviewed_apps, test_settings_sandbox_defaults_reach_the_backend, test_settings_sandbox_says_the_systems_support_and_reaches_its_setup |
+| R17.15 | "Follow reviewers' suggestions"; the review-badge toggle (R17.11); a | test_app_detail_raises_the_review_badge_and_keep_mine_puts_it_down, test_settings_sandbox_says_the_systems_support_and_reaches_its_setup |
 | R17.15 | "Follow reviewers' suggestions" off takes the reviews out | test_follow_reviewers_off_uses_the_users_default_and_never_badges |
 | R17.15 | The Sandbox dialog still says what the reviewers | test_follow_reviewers_off_uses_the_users_default_and_never_badges |
-| R17.16 | The Audit (13) records every change of a | test_each_sandbox_mutation_writes_exactly_its_audit_entry, test_the_system_setup_is_audited_once_it_really_worked, test_the_repair_removes_appkatas_profile_heals_and_is_audited, test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
+| R17.16 | The Audit (R13) records every change of a | test_each_sandbox_mutation_writes_exactly_its_audit_entry, test_the_system_setup_is_audited_once_it_really_worked, test_the_repair_removes_appkatas_profile_heals_and_is_audited, test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.17 | Limits, stated plainly in the UI and docs: | test_every_dialog_hint_has_a_row_in_the_evidence_table, test_the_bus_warning_is_said_only_for_an_abstract_session_bus |
 | R17.17 | Flatpak has the same property); a kernel exploit | statement |
 | R17.18 | Deferred to later releases (not v1): the Wayland | deferred |

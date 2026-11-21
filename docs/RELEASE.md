@@ -7,7 +7,7 @@ files are built, in [`build.md`](build.md); what CI's jobs do, in
 [`github-workflows.md`](github-workflows.md).
 
 **Publishing a release ships an update.** Every AppKata takes its own updates from this
-repository's releases (requirement 2.11), and with immutable releases on, a published release's
+repository's releases (R2.11), and with immutable releases on, a published release's
 files and tag can never change. A bad release is fixed by a new version, never in place.
 
 ## The flow

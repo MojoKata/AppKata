@@ -1,12 +1,12 @@
-"""Every platform requirement 1.1 supports a sandbox on has a sandbox tier, or is named as untested
+"""Every platform R1.1 supports a sandbox on has a sandbox tier, or is named as untested
 (review 3, E3).
 
 How review 2's F17 slipped past: the launcher tiers were chosen from the family the tester uses
-(Mint and Ubuntu), and 17.1 described their ends as "both ends of what the supported platforms
-ship". 1.1 also supported Debian, Fedora, RHEL and its rebuilds, and arm64, and none of them ran.
-This test derives the claimed platforms from 1.1 and the tiers from scripts/test-sandbox.sh,
+(Mint and Ubuntu), and R17.1 described their ends as "both ends of what the supported platforms
+ship". R1.1 also supported Debian, Fedora, RHEL and its rebuilds, and arm64, and none of them ran.
+This test derives the claimed platforms from R1.1 and the tiers from scripts/test-sandbox.sh,
 and fails when a claimed platform has neither a tier nor an entry in the list of untested ones. A
-platform 1.1 supports "without the sandbox" (Ubuntu 22.04) needs no tier, and 1.1 must say so.
+platform R1.1 supports "without the sandbox" (Ubuntu 22.04) needs no tier, and R1.1 must say so.
 Since 2026-10-24 the platforms are the environments docs/testing.md tests (the owner's decision):
 Fedora, RHEL and its rebuilds, Debian 12, Mint 21.3 and Ubuntu 25.04 left with their tiers.
 
@@ -29,7 +29,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # Claimed platforms with no tier yet, and the finding that keeps each so
 STILL_UNTESTED: dict = {}
-# What each tier's image is, as platforms 1.1 names them
+# What each tier's image is, as platforms R1.1 names them
 IMAGES = {
     "linuxmintd/mint22.3-amd64": {"Linux Mint 22.3"},
     "linuxmintd/lmde7-amd64": {"LMDE 7"},
@@ -43,14 +43,14 @@ def _read(rel):
 
 
 def _platforms() -> list[str]:
-    """1.1's Linux platforms, one bullet each, as written."""
+    """R1.1's Linux platforms, one bullet each, as written."""
     req = reqdocs.text()
     block = req[req.index("- Linux x86_64:"):req.index("\n- Windows")]
     return [" ".join(b.split()) for b in re.split(r"\n  - ", block)[1:]]
 
 
 def claimed() -> set[str]:
-    """The Linux platforms 1.1 supports a sandbox on: each bullet's name, up to its first comma or
+    """The Linux platforms R1.1 supports a sandbox on: each bullet's name, up to its first comma or
     full stop, but those it supports "without the sandbox"."""
     return {re.split(r",|\.(?:\s|$)", p)[0].strip() for p in _platforms() if "without the sandbox" not in p}
 
@@ -106,7 +106,7 @@ def test_the_matrix_catches_a_claimed_platform_losing_its_tier():
     assert {"Ubuntu 24.04 LTS", "Ubuntu 26.04 LTS"} <= _untested(without)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the launcher is a Linux /bin/sh script (17.1)")
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the launcher is a Linux /bin/sh script (R17.1)")
 def test_the_launcher_passes_no_variable_its_shell_made_up():
     # Review 3, R3-20: the pass-through read its shell's own variables, and bash -- /bin/sh on RHEL and
     # Fedora -- sets TERM=dumb when it is unset, so every app started from the menu there got it.

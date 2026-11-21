@@ -88,7 +88,7 @@ C = "https://git.example.org/mallory/notes"
 
 def test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home(be, two):
     # Review 2, F19: R6-1 made ids unique among *installed* apps, but uninstalling keeps the private
-    # home by default (17.14), and new_app_id() looked only at the installs table: the next "Notes",
+    # home by default (R17.14), and new_app_id() looked only at the installs table: the next "Notes",
     # from another Source, got the freed id -- and with it the first app's home, accounts and tokens.
     home_a = sb.sandbox_home("notes")
     os.makedirs(os.path.join(home_a, ".config", "notes"), exist_ok=True)
@@ -103,7 +103,7 @@ def test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home(be, t
 
 
 def test_a_home_with_no_owner_recorded_counts_as_another_apps(be, two):
-    # 17.6, review 2 F19: a home made before owners were recorded (or whose record went) may hold
+    # R17.6, review 2 F19: a home made before owners were recorded (or whose record went) may hold
     # another app's accounts and tokens, so it counts as taken -- the safe direction: the worst case is
     # a reinstalled app starting afresh under a new id. Review 3, R3-4: no test made one.
     orphan = sb.sandbox_home("notes-3")

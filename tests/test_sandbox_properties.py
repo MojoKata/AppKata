@@ -1,4 +1,4 @@
-"""Properties that must hold for every grant set, not just the ones a finding named (requirement 17).
+"""Properties that must hold for every grant set, not just the ones a finding named (R17).
 
 The point tests in test_sandbox.py pin one bug each; several findings were a *reader* of a grant
 set disagreeing with another reader for some set no test had built (round two R9: the chips vs the
@@ -20,7 +20,7 @@ import pytest
 from appkata_core import sandbox as sb
 from appkata_core import trustfile
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (17.1)")
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +74,7 @@ def test_a_grant_set_survives_storage_and_normalizing_is_idempotent(gs):
     assert sb.normalize(stored) == n
     assert sb.normalize(sb.grants_from_config({"custom": stored})) == n     # and what the dialog sends back
     assert sb.config_error({"custom": stored}) == ""
-    if n["level"] == "strict":                                         # 17.2's table, whatever was asked
+    if n["level"] == "strict":                                         # R17.2's table, whatever was asked
         assert n["folders"] == {} and n["network"] is False and n["sound"] == set() and n["caps"] == set()
         assert n["devices"] <= {"x11"} and n["write_app"] is False
 
@@ -180,7 +180,7 @@ LEVEL = {"off": 0, "standard": 1, "strict": 2}
 @pytest.mark.parametrize("a", [c[1] for c in CORPUS[::3]], ids=IDS[::3])
 @pytest.mark.parametrize("b", [c[1] for c in CORPUS[1::5]], ids=IDS[1::5])
 def test_merging_never_widens_and_is_symmetric(a, b):
-    # 17.3.2: across Trusts the result is least-privilege -- nothing a single review withheld comes
+    # R17.3.2: across Trusts the result is least-privilege -- nothing a single review withheld comes
     # back -- and the order of the reviews does not matter. Off adds no limit (c97ef39).
     a, b = sb.normalize(a), sb.normalize(b)
     m = sb.intersect(a, b)
@@ -206,7 +206,7 @@ def test_merging_never_widens_and_is_symmetric(a, b):
 @pytest.mark.parametrize("template", list(sb.TEMPLATE_ORDER) + ["off"])
 @pytest.mark.parametrize("folders,network", [("", None), ("+~/Zettlr, ~/Media:ro, -~/Downloads", None), ("", True), ("+~/Docs", False)])
 def test_a_review_line_round_trips_to_the_same_grant_set(template, folders, network):
-    # 10.3.1 / 17.3: what a reviewer writes is what the reader resolves -- through the trustfile's
+    # R10.3.1 / R17.3: what a reviewer writes is what the reader resolves -- through the trustfile's
     # writer and parser, not just config_from_review on a hand-built dict.
     opts = {"sandbox": template}
     if folders:

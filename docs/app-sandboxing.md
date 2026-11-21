@@ -7,9 +7,9 @@ real-app screenshots**, and taken through nine review rounds and two reviews sin
 ([`reviews/`](reviews/)), whose findings are fixed or held open by a harness's list. The experiments behind it were run on
 2026-10-08/09 (`scripts/sandbox/`, three rounds); the code landed 2026-10-09; the reviews and their
 fixes 2026-10-10 to 2026-10-24. What remains is **the field test's questions on a real desktop** (below) and the explicitly
-**deferred** items ([Plan](#plan) step 7, requirement 17.18).
+**deferred** items ([Plan](#plan) step 7, R17.18).
 
-**This document is the rationale and evidence; `requirements.md` §17 is the spec.** Read §17 for the
+**This document is the rationale and evidence; R17 is the spec.** Read R17 for the
 contract and here for *why* each choice was made, the experiment results, the [Decisions](#decisions),
 the [Plan](#plan) (now a build log — what each step became), and the mockups ([Screens](#screens)).
 
@@ -43,7 +43,7 @@ published; the commits the review records cite are in the private history that c
   (`launcher-vm`, where the virtio GPU renders inside the sandbox) and an Ubuntu 26.04 VM under the
   system's own bwrap profile (`launcher-vm26`: bwrap 0.11.1, portal 1.21, the newest); which run
   when is in [`testing.md`](testing.md). Until 2026-10-24 it also ran on Mint 21.3, Ubuntu 25.04,
-  Rocky Linux 9, Debian 12 and Fedora 39 and 44, which left with them (requirement 1.1). It
+  Rocky Linux 9, Debian 12 and Fedora 39 and 44, which left with them (R1.1). It
   includes the degraded host (a dependency stalled or removed at
   a time), the Strict counterpart of every desktop road, AppKata acting on an app while it runs,
   stand-in daemons and clients on the other end of every capability, two apps at once, and the
@@ -57,7 +57,7 @@ published; the commits the review records cite are in the private history that c
   below. `.venv/bin/python -m pytest` runs the local tier; the screenshot tour and the AppImage
   build are in [`build.md`](build.md). On a host without `bwrap` the app runs everything Off (no
   launcher generated); without `xdg-dbus-proxy` a Standard app runs sandboxed with no session bus
-  (17.1; review 2, F12).
+  (R17.1; review 2, F12).
 - **Still owed:** the questions of the checklist in
   [`local-proxy-test-plan.md`](local-proxy-test-plan.md) ("What it asks the tester";
   `scripts/sandbox/field-test.sh`), answered by a person at a real desktop: the setup's prompt and
@@ -70,7 +70,7 @@ published; the commits the review records cite are in the private history that c
   as "real hardware" — the file hand-over, the portals, the toolkits' dialogs, notifications,
   links — has been shown in the containers. That file also explains the
   launcher and the proxy part by part; the launcher's exact text is the goldens in `tests/data/launchers/`.
-- **Deferred, not v1** (17.18): the **Landlock** layer (execute-deny, per-port TCP — the Advanced
+- **Deferred, not v1** (R17.18): the **Landlock** layer (execute-deny, per-port TCP — the Advanced
   toggles exist in the UI, disabled, badged "Later"), the **Wayland security-context** protocol
   (wlroots sessions get the warning, not the fix), **personal/reviewer-defined templates**, config
   **import on enable-later**, a **fuller seccomp filter** beyond the terminal-injection one,
@@ -87,13 +87,13 @@ AppKata installs apps from the projects' own releases, so it can't vouch for wha
 Trusts and reviews lower the odds of a hostile app, they don't contain one. This document plans
 how AppKata could limit the harm an app does to the user's computer once it's installed.
 
-**Scope.** Linux only, and only the two portable kinds AppKata installs itself (requirement 4.2.1):
+**Scope.** Linux only, and only the two portable kinds AppKata installs itself (R4.2.1):
 
 - **AppImage** (`kind == "appimage"`)
 - **Portable archives**: tarballs (`kind == "tarball"`), unpacked into versioned folders
 
 Out of scope: `.deb`/`.rpm` (their scripts run as root at install time, so a run-time sandbox can't
-undo what they did), Flatpak (already sandboxed; AppKata shows its permissions, 16.6.3), shell
+undo what they did), Flatpak (already sandboxed; AppKata shows its permissions, R16.6.3), shell
 installers (`.run`/`.sh`, not supported, and they stay unsupported), Windows and macOS.
 
 ## What a hostile app can do today
@@ -135,7 +135,7 @@ In brief (kept current as findings land; detail in the rest of this document):
   there bwrap won't start until an AppArmor profile grants the carve-out. AppKata installs it **on first need**, behind a single **pkexec** prompt (the one place
   sandboxing needs root; one-time, persists across reboots), re-engageable from Settings → Sandbox.
   If declined, the app runs **Off with a warning** (no false-comfort fallback). A system without the
-  restriction, or with a bwrap profile of its own (17.10.2), needs none of this; which of the tested
+  restriction, or with a bwrap profile of its own (R17.10.2), needs none of this; which of the tested
   systems are which, [`testing.md`](testing.md) says ("What each environment boots with").
 - **Desktop-integration holes have specific fixes:** the session bus is filtered to the safe portal
   interfaces, and the portals see the app as a *host* caller (xdg-desktop-portal 1.18+ refuses any
@@ -162,14 +162,14 @@ block and the fix, on Ubuntu 24.04; which tested systems restrict, [`testing.md`
 precise about when and how (all verified in the VM, [Experiment](#experiment)):
 
 - **Done on first need, not at AppKata's own install.** AppKata installs as a per-user AppImage
-  without admin (requirement 1.6, 2.11), so it has no root at its own install time anyway. Instead,
+  without admin (R1.6, R2.11), so it has no root at its own install time anyway. Instead,
   the launcher detects that bwrap can't create a user namespace and AppKata offers to set it up the
   first time a sandbox is actually needed, with a clear explanation. Detection is cheap: try a
   no-op `bwrap --unshare-user` once and cache the result.
 - **It needs root once.** An unprivileged user cannot do any of it — writing `/etc/apparmor.d/`,
   `apparmor_parser`, and the `kernel.apparmor_restrict_unprivileged_userns` sysctl are all denied
   (confirmed). So AppKata asks for admin rights once, through **pkexec** — the same mechanism it
-  already uses for `.deb`/`.rpm` installs (`_apply`/PackageKit, requirement 16) — to write
+  already uses for `.deb`/`.rpm` installs (`_apply`/PackageKit, R16) — to write
   `/etc/apparmor.d/appkata-sandbox` and load it (`apparmor_parser -r`), the way Flatpak, Chrome,
   Obsidian and Signal ship theirs. The profile that worked in the VM, attached to the system
   `/usr/bin/bwrap` (present on Mint 22):
@@ -184,7 +184,7 @@ precise about when and how (all verified in the VM, [Experiment](#experiment)):
   If AppKata ships its own bwrap at a non-standard path instead, the profile's path must match it.
 - **The cost is one-time and permanent.** `apparmor.service` is enabled and reloads
   `/etc/apparmor.d/` at every boot, so the profile survives reboots and upgrades; no prompt again.
-- **What it costs (requirement 17.10.1).** The carve-out applies to `/usr/bin/bwrap` itself, not to
+- **What it costs (R17.10.1).** The carve-out applies to `/usr/bin/bwrap` itself, not to
   AppKata: any program the user runs can again get a user namespace by way of bwrap — the kernel attack
   surface Ubuntu's restriction exists to shrink. Ubuntu's own `flatpak` and Chrome profiles have the same
   shape, but for their own programs. Ubuntu's later `bwrap-userns-restrict` profile instead strips
@@ -200,7 +200,7 @@ precise about when and how (all verified in the VM, [Experiment](#experiment)):
 Mint 21.3 (bwrap 0.6.1) has no such restriction: no profile, no prompt.
 
 **Ubuntu 25.04 and later bring their own profile** (`/etc/apparmor.d/bwrap-userns-restrict`, in 25.04's
-`apparmor` 4.1 and 26.04 LTS's 5.0; requirement 17.10.2, review 2 F2). It is the capability-stripping
+`apparmor` 4.1 and 26.04 LTS's 5.0; R17.10.2, review 2 F2). It is the capability-stripping
 design above: bwrap may create a user namespace, and everything it runs is stacked into `unpriv_bwrap`,
 which denies capabilities. Shown in a 26.04 KVM guest:
 - the sandbox works with no setup (the probe passes), but nothing inside it can make a user
@@ -244,7 +244,7 @@ review badge all see the same thing. The real home is never shared, not even rea
 neither is anything above it, AppKata's own folders, `~/.ssh`, `~/.gnupg`, the session's runtime
 folder, or the places a program could start again from at the next login (autostart, systemd
 units, `~/.local/bin`, the shell's startup files, the desktop's extension and script folders, …;
-the full list is `_protected_roots()` and requirement 17.3.1) — whoever asks, a review line or the
+the full list is `_protected_roots()` and R17.3.1) — whoever asks, a review line or the
 folder picker; such a grant is refused by name in the launcher, the chips and the dialog.
 
 ### What every sandboxed launch does
@@ -284,7 +284,7 @@ bwrap \
 2. **A private home.** `~/.local/share/appkata/sandboxes/<app>/` is mounted over `$HOME`. The app
    keeps its settings there (it writes `~/.config/<app>` as usual and lands in its own folder).
    Writes to `~/.bashrc`, autostart or systemd units also land there, where nothing reads them.
-   Uninstalling offers to remove this folder, like any app data (requirement 4.5). **So apps look
+   Uninstalling offers to remove this folder, like any app data (R4.5). **So apps look
    native, the host's `~/.themes`, `~/.icons`, `~/.fonts`, `~/.config/fontconfig` and
    `~/.local/share/{fonts,icons,themes}` are bound read-only** — without this a private home strips
    the user's theme and fonts and the app looks wrong. Every mount destination under `$HOME` lies
@@ -332,7 +332,7 @@ bwrap \
    it, and the Wayland **security-context** will use it too when that lands (deferred). The portals do
    *not* see it: xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak, so the
    proxy carries no marker and the portals answer the app as a host caller, on the narrowed set of
-   interfaces above (requirement 17.6.1). The id is also the document portal's per-app folder, which
+   interfaces above (R17.6.1). The id is also the document portal's per-app folder, which
    AppKata exports file arguments into from the host side. (It leans on Flatpak's convention; revisit
    if a non-Flatpak standard matures.)
 8. **Files the app is given.** A path or `file://` URI among the app's arguments — the menu entry's
@@ -416,7 +416,7 @@ Audit records a hash of it with the set it was written for (review 2, F11), and 
 
 AppImages and tarballs don't declare what they need, so AppKata needs a source:
 
-1. **Reviews.** `AppKata.md`'s `## <App>::Settings` (10.3.1) gains platform lines. Usually just a
+1. **Reviews.** `AppKata.md`'s `## <App>::Settings` (R10.3.1) gains platform lines. Usually just a
    **template** name plus any overrides (see [Templates](#templates)):
    ```
    - Sandbox (linux): offline-editor
@@ -434,7 +434,7 @@ AppImages and tarballs don't declare what they need, so AppKata needs a source:
    A version's `::Settings` can change them from that version on, like Auto update today
    (`Zettlr[3.5.1]`). Several Trusts disagreeing: take the **most restrictive** template/level and the
    **intersection** of grants, so one careless reviewer can't open an app up.
-2. **The user's choice** per app, asked in the install options (requirement 4.2) on the first
+2. **The user's choice** per app, asked in the install options (R4.2) on the first
    install, saved with the other install options, and changeable from the App Detail panel or
    Install options; either applies at the app's next start. It always wins over reviews. A
    template the user changes is stored as that template plus the changes, so it keeps its name
@@ -443,7 +443,7 @@ AppImages and tarballs don't declare what they need, so AppKata needs a source:
 3. **A default template** (by app kind, [decision 1](#decisions)) for apps nobody has reviewed —
    the user's own default for the kind, from Settings → Sandbox.
 
-**What a review may do on its own** (requirement 17.3.5, review 2 F8, the owner's decision):
+**What a review may do on its own** (R17.3.5, review 2 F8, the owner's decision):
 - **Narrow freely.** A review picks a template, narrows access and grants ordinary folders.
 - **Off is never applied by itself.** Where the merged reviews say Off, the reviewed baseline
   applies and the dialogs offer "Use theirs".
@@ -461,7 +461,7 @@ different suggestion raises it again. Access is never widened silently. With "Fo
 suggestions" off (Settings → Sandbox) reviews play no part at all: the user's default for the kind
 applies and no badge shows, though the dialog still says what the reviewers suggest.
 
-Every change of a sandbox level or grant is an audit event (requirement 13).
+Every change of a sandbox level or grant is an audit event (R13).
 
 ## Templates
 
@@ -480,9 +480,9 @@ so baking them into the built-ins is where templates earn their keep:
 | Template | Level | Files | Network | Sound | Devices | Services | Landlock |
 |---|---|---|---|---|---|---|---|
 | **Strict** | Strict | none | no | no | X11 only | — | execute-deny |
-| **Standard** | Standard | none (files given to it are handed over, 17.6.2) | yes | — | X11 | notifications | execute-deny |
+| **Standard** | Standard | none (files given to it are handed over, R17.6.2) | yes | — | X11 | notifications | execute-deny |
 | **Offline editor** | Standard | a folder you pick (rw): Documents or Pictures in one click | no | no | X11 | — | execute-deny |
-| **Online app** | Standard | none (files given to it are handed over, 17.6.2) | yes | play | X11 | notifications | execute-deny |
+| **Online app** | Standard | none (files given to it are handed over, R17.6.2) | yes | play | X11 | notifications | execute-deny |
 | **Messenger / calls** | Standard | none | yes | play + record | camera, X11 | tray, notifications, inhibit | execute-deny |
 | **Media player** | Standard | a media folder you pick (read-only): Music or Videos in one click | optional | play | X11 | MPRIS media keys, inhibit | execute-deny |
 | **Developer tool** | Standard | a projects folder you pick (rw) | yes | — | X11 | — | **execute allowed** + terminal |
@@ -563,7 +563,7 @@ which makes the multi-Trust case well-defined (validated in `scripts/sandbox/mer
 ## App categories (separate work)
 
 Raised during sandbox design and recorded here, but it is **its own feature, not part of the
-sandboxing work** — a Catalog change (touching req 3/12), kept out of this PR.
+sandboxing work** — a Catalog change (touching R3/12), kept out of this PR.
 
 At Flathub scale AppKata wants freedesktop/AppStream **categories** (Game, Graphics, Network, Office…)
 to group and filter the catalog. They are a third axis, distinct from both of AppKata's existing ideas
@@ -629,12 +629,12 @@ directly** (it self-mounts via FUSE, outside any sandbox); **at Standard/Strict,
    namespaces, and Obsidian started without `--no-sandbox` and without errors about its sandbox.
    AppKata must never chmod `chrome-sandbox` setuid (it doesn't today), and must not pass
    `--disable-userns` to bwrap, or Chromium falls back to no sandbox at all.
-7. **Apps that update themselves** (requirement 4.10, AppImageUpdate/zsync, electron-updater)
+7. **Apps that update themselves** (R4.10, AppImageUpdate/zsync, electron-updater)
    replace their own file, which the read-only folder blocks, and an AppImage's own `.AppImage` is
    bound read-only whatever the grants. So while such an app runs sandboxed, AppKata updates it as
-   if it didn't update itself (4.10.5, 17.12; review 2, F3, the owner's decision): Update, Update
+   if it didn't update itself (R4.10.5, R17.12; review 2, F3, the owner's decision): Update, Update
    all, version folders from its next update, and App Detail says why. Switched Off, it updates
-   itself again. An earlier draft named a "Disable the app's own updater" install option; 4.10.3 rules
+   itself again. An earlier draft named a "Disable the app's own updater" install option; R4.10.3 rules
    that out (AppKata can't switch an app's updater off) and it was never built, so until this
    nobody updated a sandboxed self-updating app. Still owed on a real desktop: whether a blocked
    updater makes an app degrade gracefully or crash.
@@ -704,9 +704,9 @@ needs `/dev/kvm`) and the round-3 probes run directly in the session container. 
 | `session` | Round 2 display/sound/portals in a Mint 22.1 Wayland container (sway + mutter, PipeWire, portals) | `session.sh`, `lib.sh`, `display.sh`, `sound.sh`, `portals.sh`, `filechooser.sh`, `apps-wayland.sh`, `typebox.py` |
 | `apparmor` | Round 2 AppArmor/userns in a real Ubuntu 24.04 VM under KVM | `vmtest.sh` |
 | round 3 | De-risking: theme/font binds, D-Bus own-name/caps, write-beside-itself, the full launcher, portal identity, and the merge rule | `validate2.sh`, `validate-launcher.sh`, `validate-portal.sh`, `merge.py` |
-| review | The file-chooser call through a generated launcher: showed xdg-desktop-portal 1.18+ refusing the marked caller (requirement 17.6.1, `docs/reviews/app-sandboxing-1.md` finding 0); since the decision it shows the proxy's own AccessDenied, the portal never asked | `validate-chooser.sh` |
-| `filedialogs` | Which file dialog real GTK3, GTK4 and Qt 6 apps show behind a generated launcher, with the portal and its gtk backend on the bus, and which proxy denial makes it so (17.6.3; round four R4-5): their own, GTK4 held by the FileChooser denial, GTK3 and Qt 6.4 never asking | `filedialogs.py` |
-| `consumers` | Real consumers behind generated launchers, with the real portal, its gtk backend, a stand-in notification daemon and the test link handler on the host: a GLib app's notification reaches the host daemon with the capability and nowhere without it (17.5.1, R3-6); a GTK3 app's link runs the host's handler on the host, never inside (17.6.3, R3-1); Chromium 154 shows its own GTK file dialog as generated, *no dialog* with only Properties allowed (it reads `version`, takes the portal road, is refused `OpenFile`), the portal's with FileChooser allowed too — the Properties denial is load-bearing for Chromium/Electron and for it alone (R4-5) | `consumers.py` |
+| review | The file-chooser call through a generated launcher: showed xdg-desktop-portal 1.18+ refusing the marked caller (R17.6.1, `docs/reviews/app-sandboxing-1.md` finding 0); since the decision it shows the proxy's own AccessDenied, the portal never asked | `validate-chooser.sh` |
+| `filedialogs` | Which file dialog real GTK3, GTK4 and Qt 6 apps show behind a generated launcher, with the portal and its gtk backend on the bus, and which proxy denial makes it so (R17.6.3; round four R4-5): their own, GTK4 held by the FileChooser denial, GTK3 and Qt 6.4 never asking | `filedialogs.py` |
+| `consumers` | Real consumers behind generated launchers, with the real portal, its gtk backend, a stand-in notification daemon and the test link handler on the host: a GLib app's notification reaches the host daemon with the capability and nowhere without it (R17.5.1, R3-6); a GTK3 app's link runs the host's handler on the host, never inside (R17.6.3, R3-1); Chromium 154 shows its own GTK file dialog as generated, *no dialog* with only Properties allowed (it reads `version`, takes the portal road, is refused `OpenFile`), the portal's with FileChooser allowed too — the Properties denial is load-bearing for Chromium/Electron and for it alone (R4-5) | `consumers.py` |
 
 `lib.sh` holds the `sbx` helper that builds the Standard/Strict bwrap command the tests exercise;
 `session.sh` brings up the headless desktop session. Output and screenshots land in
@@ -761,7 +761,7 @@ on Mint 21.3 (bwrap 0.6.1) and 22.1 (bwrap 0.9.0):
 proxy): AppKata's own AppImage (Qt 6) and Obsidian 1.14.4 (Electron) both started, drew their
 first window and were still running after 15 s; Obsidian's Chromium sandbox worked inside bwrap
 and it reached GitHub for its update check. AppKata, started for the first time in its private
-home, installed itself there (2.11.3), harmlessly.
+home, installed itself there (R2.11.3), harmlessly.
 
 ### Round 2: display, sound, portals, Ubuntu 24.04
 
@@ -784,7 +784,7 @@ provide). Findings that change or confirm the plan:
   user cannot write `/etc/apparmor.d/`, run `apparmor_parser`, or set the sysctl (all denied), so the
   profile is installed **on first need** behind a single **pkexec** prompt and then persists across
   reboots (`apparmor.service` is enabled and reloads the profile at boot). Disabling the sysctl also
-  works but weakens the whole system. Where the user declines, the app runs Off (17.10): a Landlock-only
+  works but weakens the whole system. Where the user declines, the app runs Off (R17.10): a Landlock-only
   fallback was considered and rejected (decision 6), since Landlock can't mediate the session bus.
   Mint 21.3 (bwrap 0.6.1) has no such restriction. *(Corrected 2026-10-24, review 3, R3-37: this said
   Mint 22 ships the same restriction as the 24.04 it's built on, which was inferred, not run. Mint 22
@@ -855,7 +855,7 @@ A third pass validated the mechanisms the plan leans on (`scripts/sandbox/valida
   launcher's `FileChooser.OpenFile` call is refused — "Portal operation not allowed: Failed to open
   file …/.flatpak/<instance>/bwrapinfo.json" — because 1.18+ validates a marked caller against a live
   Flatpak instance; "recognized" above meant only that the marker changed the portal's behaviour.
-  **Decided** (requirement 17.6.1, decision 15): the bus proxy carries no marker, the portals see a
+  **Decided** (R17.6.1, decision 15): the bus proxy carries no marker, the portals see a
   host caller, the file chooser portal is not used, and file arguments are handed over from the host
   side — all shown end to end in the containers since (`tests/test_sandbox_run.py`,
   `scripts/test-sandbox.sh filedialogs` and `consumers`).
@@ -880,14 +880,14 @@ Say these in the UI and the docs, plainly:
   and a sandboxed app can connect to it whatever the "X11 apps" grant says (a launcher test shows
   it); what keeps it out is Xwayland requiring the `XAUTHORITY` cookie, which GNOME/mutter and
   KDE/kwin do and wlroots compositors (no auth file) do not — the same sessions the next bullet
-  already warns about. Flatpak has the same property. Said in 17.9 and the toggle's hint.
+  already warns about. Flatpak has the same property. Said in R17.9 and the toggle's hint.
 - **The network grant reaches every abstract socket on the host** (review 3, R3-8), not the X
   server's alone. Where dbus is 1.12 (Mint 21.3, Ubuntu 22.04, RHEL 9), a session bus started with
   `dbus-run-session` or `dbus-launch` listens on one, and an app with the network grant reaches it
   past the filtering proxy. A desktop's own login uses systemd's user bus, a path, and isn't
   affected. AppKata warns about such a session in Settings → Sandbox and, for an app with the
   network grant, in App Detail. The real fix, a network of the app's own (`pasta`, `slirp4netns`),
-  is in 17.18.
+  is in R17.18.
 - **Screen, clipboard and keystrokes — X11 and wlroots Wayland (a v1 limit).** Any X11 client can read
   keystrokes sent to other windows and capture the screen; on X11 a sandbox protects files, not what's
   typed, and Mint's Cinnamon is X11 by default. **Wayland is not automatically safe either:** wlroots
@@ -915,7 +915,7 @@ Say these in the UI and the docs, plainly:
 - **Chromium's own sandbox on Ubuntu 25.04 and later.** Under the system's `bwrap-userns-restrict`
   nothing inside the sandbox can make a user namespace, so a Chromium/Electron app runs with
   `--no-sandbox` inside AppKata's: a renderer exploit gets the app's own sandboxed access (its private
-  home, its grants), not the rest of the account. App Detail says so (17.10.2).
+  home, its grants), not the rest of the account. App Detail says so (R17.10.2).
 - **The kernel.** A kernel exploit leaves any namespace sandbox; this isn't a VM.
 - **Bypasses outside AppKata.** Running the `.AppImage` or the program directly, or through
   AppImageLauncher, skips the sandbox.
@@ -980,20 +980,20 @@ fails the local tier. Keep a row's first words identical to the hint's.
 | Hint (first words) | What it claims | Evidence |
 |---|---|---|
 | "Let it reach the internet and the local network." | the network grant is all-or-nothing | tier 2 `test_a_network_grant_includes_working_dns`, `test_no_network_grant_means_no_network` |
-| "Allow only certain ports (Landlock" | deferred | 17.18; the toggle is disabled |
+| "Allow only certain ports (Landlock" | deferred | R17.18; the toggle is disabled |
 | "Strict has no session bus: the app can't open links or files" | Strict opens nothing on the host | tier 2 `test_a_strict_app_fails_fast_on_every_desktop_road_and_never_falls_back_inside` (R5-4) |
 | "Opening links and files on this computer, settings, printing — always on at Standard." | the portal roads at Standard | tier 2 host-caller test, `consumers` (links and files with the real portal) |
-| "Send audio to the speakers. Not yet separable from recording" | play-only cannot be enforced | `wayland` harness: the play-only app records (17.8) |
-| "Record audio from the microphone. Today any sound access allows this" | any sound grant also records | `wayland` harness: the play-only app records 385 KB from the same sockets (17.8) |
+| "Send audio to the speakers. Not yet separable from recording" | play-only cannot be enforced | `wayland` harness: the play-only app records (R17.8) |
+| "Record audio from the microphone. Today any sound access allows this" | any sound grant also records | `wayland` harness: the play-only app records 385 KB from the same sockets (R17.8) |
 | "The camera devices themselves. Without this the app has no camera" | no camera portal road | tier 2 host-caller test: `AccessCamera` denied with and without the grant (R6-2) |
 | "On Wayland, also offer X11 for apps that can't use Wayland." | the X11 toggle's reach | tier 2 `test_on_wayland_x11_apps_get_xwayland_only_with_the_grant`, `test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one` (R4-8) |
-| "Show a status-bar icon (StatusNotifierItem) and own its own bus name." | the tray road and the name collision | tier 2 `test_a_tray_icon_registers_with_a_watcher_which_can_talk_back_to_it` (round six); the collision is stated in 17.17 |
+| "Show a status-bar icon (StatusNotifierItem) and own its own bus name." | the tray road and the name collision | tier 2 `test_a_tray_icon_registers_with_a_watcher_which_can_talk_back_to_it` (round six); the collision is stated in R17.17 |
 | "Play/pause and track info on the keyboard and lock screen (MPRIS)." | the MPRIS own | tier 2 `test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app` (a media-key stand-in calls `Play` on the app through the proxy; without the capability the app can't own the name) |
 | "Show desktop notifications, through the notification portal" | the notification roads | `consumers` (a GLib notification shown with the capability, not without) and tier 1 `test_the_notification_and_inhibit_portals_come_with_their_capabilities` (review 3, R3-14) |
 | "Inhibit the screensaver while it's doing something" | the inhibit roads | tier 2 host-caller test (the portal with the capability, denied without) and `test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability` (the direct name, a ScreenSaver stand-in) |
 | "Store and read passwords in your keyring (org.freedesktop.secrets)." | the keyring has no per-app walls | the Secret Service specification (one collection, any client): **read** |
 | "Offer the secret service (org.freedesktop.secrets) to other apps" | owning the name | tier 2 `test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability` (a host client opens a session with the sandboxed service; without the capability there is none) |
-| "A second lock (Landlock) so the app can write its data but not execute" | deferred | 17.18; the toggle is disabled |
+| "A second lock (Landlock) so the app can write its data but not execute" | deferred | R17.18; the toggle is disabled |
 | "Only for apps that keep settings or data beside the program" | the writable app folder; an AppImage's own file stays read-only; AppKata updates a sandboxed app | tier 2 `test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant`, `…appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself` (round six); tier 1 `test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed` (review 2, F3) |
 
 ## Claims and their evidence
@@ -1011,39 +1011,39 @@ Debian 12, Fedora) records where it was run; `testing.md` lists what runs now.
 
 | Claim (where) | Evidence | How |
 |---|---|---|
-| bwrap follows a symlink at a bind *destination* on the host side and creates files there (17.4) | run | tier 2/3, `test_a_link_the_app_leaves_at_a_mount_point_is_not_followed` (bwrap 0.4.0 and 0.9.0) |
-| An AppImage can't FUSE-mount inside bwrap, so it is extracted (17.7) | run | round 1 `probe` (Mint 21.3, 22.1) |
-| dash's `printf` takes a format starting with `---` as options (14.2.1) | run | tier 2, the menu-launch test (round two, R4) |
-| xdg-dbus-proxy accepts `IFACE.*@/path` and `@/path/*` call rules, makes the name visible, passes unicast signals, needs `--broadcast` for broadcasts; rejects `StatusNotifierItem-*` and a digit-led `--own` (17.5) | run + read | tier 2 `test_the_portals_answer_a_sandboxed_app_as_a_host_caller`, `test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus`; `filter_new_from_rule` (finding 0) |
-| xdg-desktop-portal 1.18+ refuses a caller presenting `.flatpak-info` whose instance id names no running Flatpak (17.6.1) | run | tier 2, the same test fails on the pre-15ae403 proxy with the exact refusal; `xdp-app-info-flatpak.c` |
-| The portals' `open-uri.c` treats a host caller like a sandboxed one for the chooser and content-type logic; only the writable-fd check is relaxed; the chooser is skipped for a default-app scheme, a single handler, or a settled choice (17.6.3) | read + run | `open-uri.c` 1.20.0 (round four, R5-5); `consumers`: a single handler runs with no chooser |
-| `Documents.Add` + `GrantPermissions` from a host process exports a file to an app id readable at `$rt/doc/by-app/<id>`, and only by that id (17.6.2) | run | tier 2/3 `test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app`, `test_a_file_argument_is_handed_over_to_a_standard_app` (document portal 1.20 on FUSE) |
-| The `by-app/<id>` view exists as soon as the document portal runs, before any export (17.6.2) | run | tier 2 `test_a_file_exported_while_the_app_runs_is_readable_on_its_first_launch` |
-| The real portal's `OpenFile` for a host caller resolves the descriptor to the host path and opens it; a private-home file is refused with Response 2 (17.6.3) | run | `consumers` (round five, R5-6; it found the shim not waiting) |
-| GLib opens a link or file with the default handler it finds and asks the OpenURI portal only when there is none (17.4, 17.6.3) | run | tier 2/3 `test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler` (GLib 2.80); `gappinfo.c` |
-| IBus and Fcitx 5 serve a sandboxed app through their portals behind AppKata's filter: an input context created and driven; refused without the rules; none at Strict (17.5; review 2, F15) | run | `inputmethod` harness (IBus 1.5.29, Fcitx 5.1.7, headless) |
-| GLib sends notifications through the portal when it sees `/.flatpak-info`; nothing reaches the host daemon without the capability (17.5.1) | run | `consumers` (notification shown / not), tier 2 host-caller test |
-| GLib's NetworkMonitor reads `[Context] shared=network` from the marker (17.6) | run | tier 2 `NetworkMonitor.GetAvailable` answers true; `gnetworkmonitorportal.c` |
-| GTK3 never asks the portal for a file dialog without `GTK_USE_PORTAL` or `$XDG_RUNTIME_DIR/flatpak-info` (17.6.3) | run | `filedialogs` (GTK 3.24); no `/.flatpak-info` string in `libgtk-3.so.0` |
-| GTK4 calls FileChooser.OpenFile without reading `version`; GTK 4.14 falls back to its own dialog when refused, GTK 4.18 shows none; `GDK_DEBUG=no-portals` stops GTK4 asking on both, and leaves GLib's link road alone (17.6.3) | run | `filedialogs` (GTK 4.14) and `filedialogs-qt68` (GTK 4.18), the "portals on" variant for the road the flag closes; `consumers` (a GTK4 link lands on the host) — round six, R6-4 |
-| Qt 6.4 never touches the portal (reads `$XDG_RUNTIME_DIR/flatpak-info`); Qt 6.5+ reads `/.flatpak-info`, probes FileChooser's `version` and keeps its own dialog whatever the proxy answers (17.6.3) | run | `filedialogs` (Qt 6.4.2, Mint 22.1) and `filedialogs-qt68` (Qt 6.8.3, Ubuntu 25.04: `Properties.Get` in every variant, its own dialog in every variant, round six) |
-| Qt calls the OpenURI portal itself when it sees `/.flatpak-info`, `xdg-open` only as a fallback (17.6.3) | run | `consumers` (Qt 6.4) and `filedialogs-qt68` (Qt 6.8): `QDesktopServices.openUrl` from a sandboxed app, the host handler ran, nothing inside — round seven |
-| Chromium reads FileChooser's `version` first and cancels its dialog when `OpenFile` then fails; Electron ships the same code (17.5, 17.6.3) | run / inferred | `consumers` (Chromium 154, three proxy variants); Electron itself (Obsidian) **inferred** from the shared `select_file_dialog_linux_portal` |
-| xdg-open's generic road (no known desktop) runs the first of `x-www-browser`, `firefox`, … on `PATH` (17.4) | run | tier 2/3 `test_a_strict_apps_xdg_open_fails_plainly_instead_of_starting_a_browser_inside` (xdg-utils 1.1.3) |
-| PipeWire/WirePlumber take the app for a sandboxed client from `/.flatpak-info` and let it play — and record from the same sockets (17.8) | run | round 2 `session` (`sound.sh`: WirePlumber 0.4.17, PipeWire 1.0.5), and behind a *generated* launcher in `scripts/test-sandbox.sh wayland` (`pipewire.access = flatpak`, `app_id = io.appkata.<app>`; a play-only app records) |
-| The Camera portal is denied to sandboxed apps, with and without the camera grant, so nothing asks (17.8) | run | tier 2 `test_the_portals_answer_a_sandboxed_app_as_a_host_caller` (`AccessCamera`, `IsCameraPresent`, the property); round six R6-2 corrected the earlier "asks the user first" |
-| wlroots compositors expose screencopy, data-control and virtual-keyboard to any client; mutter exposes none; kwin hides screencast and fake input but exposes data-control, so the clipboard leaks there (17.9) | run | `wayland` harness (sway: `wl-paste` reads the host's clipboard from the sandbox; mutter: nothing of the kind advertised) and `kwin` harness (kwin 5.27: the globals it offers and `wl-paste` reading the clipboard) — round seven, R7-1; and `kwin6` (kwin 6.3, Ubuntu 25.04): the same, with `wp_security_context_manager_v1` advertised too (round eight) |
-| mutter starts Xwayland with an auth cookie; wlroots does not; kwin: read (17.9) | run / read | `wayland` harness: an unauthenticated X11 connection over the abstract socket from a sandboxed app is accepted by sway's Xwayland and refused by mutter's ("Authorization required"); kwin `xwayland.cpp` **read** |
-| AppKata reads which leaking globals a compositor offers an ordinary client: sway capture, clipboard and input; mutter none; kwin 5.27 and 6.3 the clipboard alone (17.9; review 2, F7) | run | `wayland`, `kwin`, `kwin6` harnesses (`sandbox.compositor_leaks`, as a host client); tier 1 against `tests/fake_wayland.py` |
-| The X server's abstract socket is reachable from a shared network namespace whatever the socket bind says (17.9) | run | tier 2/3 `test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one` |
-| sway started from a TTY sets no `XDG_CURRENT_DESKTOP`; display managers export it from the session file (17.9) | read | sway's man page and `sway.desktop` (`DesktopNames=sway`); the warning no longer depends on it (R5-1) |
-| Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, and Mint 22 lifts that restriction in its own `/etc/sysctl.d/20-apparmor-mint.conf`; an `(unconfined)` profile with `userns` on bwrap's path lifts it (17.10) | run | tier 3 (the VM applies the profile first), round 2 `apparmor`; each VM checks `testing.md`'s table (`tests/test_booted.py`, review 3, R3-37) |
-| Ubuntu 25.04 and 26.04 ship `bwrap-userns-restrict` on `/usr/bin/bwrap`; under it bwrap runs but nothing inside can make a user namespace (17.10.2) | run + read | `launcher-vm26` (26.04: `test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher`); 25.04's `apparmor` 4.1.0~beta5 and 26.04's 5.0.2 packages read (review 2, F2) |
-| AppKata's profile loaded beside Ubuntu's leaves bwrap with no user namespace, live and after a reboot (17.10.2) | run | review 2's KVM probe in a 26.04 guest (`vm-probe.sh` and its reboot variant) |
-| Chromium/Electron abort without a nested user namespace and a setuid `chrome-sandbox` ("The SUID sandbox helper binary was found, but is not configured correctly"), and run with `--no-sandbox`; electron-builder's AppRun adds `--no-sandbox` itself when `unshare -Ur true` fails (17.10.2) | run | Obsidian 1.x in the 26.04 guest: its binary behind a generated launcher aborts (exit 133) without the launcher's block and runs with it; its AppImage runs either way, its AppRun read (review 2, F2) |
-| Mint 22.1's and Ubuntu's default `.bashrc` sources `~/.bash_aliases`; Fedora's sources `~/.bashrc.d/*` (17.3.1) | run | tier 2 `test_every_file_the_distributions_default_bashrc_sources_is_refused` (Mint skel); Fedora 40's `/etc/skel/.bashrc` lines 18–19 (round six) |
-| Python runs `.pth` files from `~/.local/lib/python3.X/site-packages` without `-s` (17.3.1) | read | CPython `site.py`; AppKata's AppImage sets `PYTHONNOUSERSITE=1` |
-| A browser's `NativeMessagingHosts` manifest names a program it starts on an extension's request (17.3.1) | read | Chromium and Firefox native-messaging documentation |
+| bwrap follows a symlink at a bind *destination* on the host side and creates files there (R17.4) | run | tier 2/3, `test_a_link_the_app_leaves_at_a_mount_point_is_not_followed` (bwrap 0.4.0 and 0.9.0) |
+| An AppImage can't FUSE-mount inside bwrap, so it is extracted (R17.7) | run | round 1 `probe` (Mint 21.3, 22.1) |
+| dash's `printf` takes a format starting with `---` as options (R14.2.1) | run | tier 2, the menu-launch test (round two, R4) |
+| xdg-dbus-proxy accepts `IFACE.*@/path` and `@/path/*` call rules, makes the name visible, passes unicast signals, needs `--broadcast` for broadcasts; rejects `StatusNotifierItem-*` and a digit-led `--own` (R17.5) | run + read | tier 2 `test_the_portals_answer_a_sandboxed_app_as_a_host_caller`, `test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus`; `filter_new_from_rule` (finding 0) |
+| xdg-desktop-portal 1.18+ refuses a caller presenting `.flatpak-info` whose instance id names no running Flatpak (R17.6.1) | run | tier 2, the same test fails on the pre-15ae403 proxy with the exact refusal; `xdp-app-info-flatpak.c` |
+| The portals' `open-uri.c` treats a host caller like a sandboxed one for the chooser and content-type logic; only the writable-fd check is relaxed; the chooser is skipped for a default-app scheme, a single handler, or a settled choice (R17.6.3) | read + run | `open-uri.c` 1.20.0 (round four, R5-5); `consumers`: a single handler runs with no chooser |
+| `Documents.Add` + `GrantPermissions` from a host process exports a file to an app id readable at `$rt/doc/by-app/<id>`, and only by that id (R17.6.2) | run | tier 2/3 `test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app`, `test_a_file_argument_is_handed_over_to_a_standard_app` (document portal 1.20 on FUSE) |
+| The `by-app/<id>` view exists as soon as the document portal runs, before any export (R17.6.2) | run | tier 2 `test_a_file_exported_while_the_app_runs_is_readable_on_its_first_launch` |
+| The real portal's `OpenFile` for a host caller resolves the descriptor to the host path and opens it; a private-home file is refused with Response 2 (R17.6.3) | run | `consumers` (round five, R5-6; it found the shim not waiting) |
+| GLib opens a link or file with the default handler it finds and asks the OpenURI portal only when there is none (R17.4, R17.6.3) | run | tier 2/3 `test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler` (GLib 2.80); `gappinfo.c` |
+| IBus and Fcitx 5 serve a sandboxed app through their portals behind AppKata's filter: an input context created and driven; refused without the rules; none at Strict (R17.5; review 2, F15) | run | `inputmethod` harness (IBus 1.5.29, Fcitx 5.1.7, headless) |
+| GLib sends notifications through the portal when it sees `/.flatpak-info`; nothing reaches the host daemon without the capability (R17.5.1) | run | `consumers` (notification shown / not), tier 2 host-caller test |
+| GLib's NetworkMonitor reads `[Context] shared=network` from the marker (R17.6) | run | tier 2 `NetworkMonitor.GetAvailable` answers true; `gnetworkmonitorportal.c` |
+| GTK3 never asks the portal for a file dialog without `GTK_USE_PORTAL` or `$XDG_RUNTIME_DIR/flatpak-info` (R17.6.3) | run | `filedialogs` (GTK 3.24); no `/.flatpak-info` string in `libgtk-3.so.0` |
+| GTK4 calls FileChooser.OpenFile without reading `version`; GTK 4.14 falls back to its own dialog when refused, GTK 4.18 shows none; `GDK_DEBUG=no-portals` stops GTK4 asking on both, and leaves GLib's link road alone (R17.6.3) | run | `filedialogs` (GTK 4.14) and `filedialogs-qt68` (GTK 4.18), the "portals on" variant for the road the flag closes; `consumers` (a GTK4 link lands on the host) — round six, R6-4 |
+| Qt 6.4 never touches the portal (reads `$XDG_RUNTIME_DIR/flatpak-info`); Qt 6.5+ reads `/.flatpak-info`, probes FileChooser's `version` and keeps its own dialog whatever the proxy answers (R17.6.3) | run | `filedialogs` (Qt 6.4.2, Mint 22.1) and `filedialogs-qt68` (Qt 6.8.3, Ubuntu 25.04: `Properties.Get` in every variant, its own dialog in every variant, round six) |
+| Qt calls the OpenURI portal itself when it sees `/.flatpak-info`, `xdg-open` only as a fallback (R17.6.3) | run | `consumers` (Qt 6.4) and `filedialogs-qt68` (Qt 6.8): `QDesktopServices.openUrl` from a sandboxed app, the host handler ran, nothing inside — round seven |
+| Chromium reads FileChooser's `version` first and cancels its dialog when `OpenFile` then fails; Electron ships the same code (R17.5, R17.6.3) | run / inferred | `consumers` (Chromium 154, three proxy variants); Electron itself (Obsidian) **inferred** from the shared `select_file_dialog_linux_portal` |
+| xdg-open's generic road (no known desktop) runs the first of `x-www-browser`, `firefox`, … on `PATH` (R17.4) | run | tier 2/3 `test_a_strict_apps_xdg_open_fails_plainly_instead_of_starting_a_browser_inside` (xdg-utils 1.1.3) |
+| PipeWire/WirePlumber take the app for a sandboxed client from `/.flatpak-info` and let it play — and record from the same sockets (R17.8) | run | round 2 `session` (`sound.sh`: WirePlumber 0.4.17, PipeWire 1.0.5), and behind a *generated* launcher in `scripts/test-sandbox.sh wayland` (`pipewire.access = flatpak`, `app_id = io.appkata.<app>`; a play-only app records) |
+| The Camera portal is denied to sandboxed apps, with and without the camera grant, so nothing asks (R17.8) | run | tier 2 `test_the_portals_answer_a_sandboxed_app_as_a_host_caller` (`AccessCamera`, `IsCameraPresent`, the property); round six R6-2 corrected the earlier "asks the user first" |
+| wlroots compositors expose screencopy, data-control and virtual-keyboard to any client; mutter exposes none; kwin hides screencast and fake input but exposes data-control, so the clipboard leaks there (R17.9) | run | `wayland` harness (sway: `wl-paste` reads the host's clipboard from the sandbox; mutter: nothing of the kind advertised) and `kwin` harness (kwin 5.27: the globals it offers and `wl-paste` reading the clipboard) — round seven, R7-1; and `kwin6` (kwin 6.3, Ubuntu 25.04): the same, with `wp_security_context_manager_v1` advertised too (round eight) |
+| mutter starts Xwayland with an auth cookie; wlroots does not; kwin: read (R17.9) | run / read | `wayland` harness: an unauthenticated X11 connection over the abstract socket from a sandboxed app is accepted by sway's Xwayland and refused by mutter's ("Authorization required"); kwin `xwayland.cpp` **read** |
+| AppKata reads which leaking globals a compositor offers an ordinary client: sway capture, clipboard and input; mutter none; kwin 5.27 and 6.3 the clipboard alone (R17.9; review 2, F7) | run | `wayland`, `kwin`, `kwin6` harnesses (`sandbox.compositor_leaks`, as a host client); tier 1 against `tests/fake_wayland.py` |
+| The X server's abstract socket is reachable from a shared network namespace whatever the socket bind says (R17.9) | run | tier 2/3 `test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one` |
+| sway started from a TTY sets no `XDG_CURRENT_DESKTOP`; display managers export it from the session file (R17.9) | read | sway's man page and `sway.desktop` (`DesktopNames=sway`); the warning no longer depends on it (R5-1) |
+| Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, and Mint 22 lifts that restriction in its own `/etc/sysctl.d/20-apparmor-mint.conf`; an `(unconfined)` profile with `userns` on bwrap's path lifts it (R17.10) | run | tier 3 (the VM applies the profile first), round 2 `apparmor`; each VM checks `testing.md`'s table (`tests/test_booted.py`, review 3, R3-37) |
+| Ubuntu 25.04 and 26.04 ship `bwrap-userns-restrict` on `/usr/bin/bwrap`; under it bwrap runs but nothing inside can make a user namespace (R17.10.2) | run + read | `launcher-vm26` (26.04: `test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher`); 25.04's `apparmor` 4.1.0~beta5 and 26.04's 5.0.2 packages read (review 2, F2) |
+| AppKata's profile loaded beside Ubuntu's leaves bwrap with no user namespace, live and after a reboot (R17.10.2) | run | review 2's KVM probe in a 26.04 guest (`vm-probe.sh` and its reboot variant) |
+| Chromium/Electron abort without a nested user namespace and a setuid `chrome-sandbox` ("The SUID sandbox helper binary was found, but is not configured correctly"), and run with `--no-sandbox`; electron-builder's AppRun adds `--no-sandbox` itself when `unshare -Ur true` fails (R17.10.2) | run | Obsidian 1.x in the 26.04 guest: its binary behind a generated launcher aborts (exit 133) without the launcher's block and runs with it; its AppImage runs either way, its AppRun read (review 2, F2) |
+| Mint 22.1's and Ubuntu's default `.bashrc` sources `~/.bash_aliases`; Fedora's sources `~/.bashrc.d/*` (R17.3.1) | run | tier 2 `test_every_file_the_distributions_default_bashrc_sources_is_refused` (Mint skel); Fedora 40's `/etc/skel/.bashrc` lines 18–19 (round six) |
+| Python runs `.pth` files from `~/.local/lib/python3.X/site-packages` without `-s` (R17.3.1) | read | CPython `site.py`; AppKata's AppImage sets `PYTHONNOUSERSITE=1` |
+| A browser's `NativeMessagingHosts` manifest names a program it starts on an extension's request (R17.3.1) | read | Chromium and Firefox native-messaging documentation |
 
 ## Decisions
 
@@ -1077,7 +1077,7 @@ Resolved for the first release (the open questions these replace are in the PR h
    dialog* is its own and shows what the sandbox sees (the private home, the granted folders, that
    view): the portal file chooser is not used, since xdg-desktop-portal 1.18+ refuses a non-Flatpak
    caller that claims a sandbox identity, and for a host caller it returns paths the sandbox can't
-   open — requirement 17.6.1 records the decision, 17.6.3 the consequences. Strict has no bus and so
+   open — R17.6.1 records the decision, R17.6.3 the consequences. Strict has no bus and so
    no portals: a Strict app can open only what's in its private home.
 5. **Reviews never auto-change grants.** A new version installs normally and keeps the user's current
    grants; if its reviews suggest *more or less* access, the app gets a **review badge** (not a
@@ -1100,7 +1100,7 @@ Resolved for the first release (the open questions these replace are in the PR h
    its template's Services capabilities; and presents a stable `io.appkata.<app>` identity (via
    `.flatpak-info` in the app's root) that PipeWire and GLib rely on and that names the app's
    document-portal folder (the Wayland security-context will use it too, once that's built); the
-   portals themselves see a host caller on a narrowed proxy (requirement 17.6.1). Hardware/device
+   portals themselves see a host caller on a narrowed proxy (R17.6.1). Hardware/device
    tools (Ventoy, disk utilities) legitimately run **Off** — the
    expected outcome, not a gap. Proprietary-NVIDIA device nodes are a known later complication.
 9. **Wayland deferred to post-v1.** The security-context protocol (the only way to close the wlroots
@@ -1109,7 +1109,7 @@ Resolved for the first release (the open questions these replace are in the PR h
    "later" step, where it can be validated on a real wlroots desktop (it was not tested in round 2).
 10. **CLI tools get real protection** (not Off). An app's kind is decided from its download — an
     AppImage's `.desktop` saying `Terminal=true`, or a tarball whose program links no display library —
-    and the user can correct it in the install options (17.3.3; review 2, F4: it had been "a command
+    and the user can correct it in the install options (R17.3.3; review 2, F4: it had been "a command
     link and no menu entry", which Settings' defaults never produced). The default is the **CLI tool** template — the
     launcher binds the directory the tool is run in (rw) and nothing else of the home (validated
     in round 3), except when that directory is the home, above it or a never-shared folder, where
@@ -1118,8 +1118,8 @@ Resolved for the first release (the open questions these replace are in the PR h
     folder grant or Off.
 11. **A sandboxed app is updated by AppKata.** Self-update can't work in a sandbox (the install folder
     and an AppImage's own file are read-only), so while an app runs sandboxed AppKata updates it as if
-    it didn't update itself, and says why (4.10.5, 17.12). This replaces the original "Disable the app's
-    own updater" option, which contradicted 4.10.3 and was never built (review 2, F3). (Whether a
+    it didn't update itself, and says why (R4.10.5, R17.12). This replaces the original "Disable the app's
+    own updater" option, which contradicted R4.10.3 and was never built (review 2, F3). (Whether a
     given app degrades gracefully or crashes when its updater is blocked is the self-update item still
     owed on a real desktop.)
 12. **Enabling a sandbox after install warns it's effectively a reinstall.** The app's real files are
@@ -1139,14 +1139,14 @@ Resolved for the first release (the open questions these replace are in the PR h
     steps 1–6 ships in the first release — the AppArmor pkexec setup, the launcher, the eight templates
     with Services capabilities, Off/Standard/Strict + grants, lazy AppImage extraction, tarballs, the
     `AppKata.md` review lines with the merge rule and review badge, AppKata updating sandboxed
-    self-updating apps (4.10.5), and the session-type warning. **Deferred to later** (Plan steps 7–8): the Wayland security-context, the
+    self-updating apps (R4.10.5), and the session-type warning. **Deferred to later** (Plan steps 7–8): the Wayland security-context, the
     Landlock layer, personal templates, reviewer-defined templates, App categories, a fuller seccomp
     filter, squashfuse, NVIDIA nodes.
 
 Decided during the review rounds (the findings and evidence are in
 [`reviews/app-sandboxing-1.md`](reviews/app-sandboxing-1.md); the requirement numbers are the spec):
 
-15. **The portals see a host caller; the file dialog is the app's own** (17.6.1, 17.6.3).
+15. **The portals see a host caller; the file dialog is the app's own** (R17.6.1, R17.6.3).
     xdg-desktop-portal 1.18+ refuses any caller that presents a sandbox identity without being a
     running Flatpak, so the bus proxy carries no `.flatpak-info` and the portal name is opened
     per interface — only what is safe for a host caller, with Notification and Inhibit gated on
@@ -1155,14 +1155,14 @@ Decided during the review rounds (the findings and evidence are in
     returns paths the sandbox can't open); the app's own dialog shows what the sandbox sees, and
     the proxy's denials — FileChooser for GTK4, the `version` properties for Chromium/Electron —
     are what keep every toolkit there, shown with real apps.
-16. **Files given to an app are handed over from the host side** (17.6.2): the launcher exports a
+16. **Files given to an app are handed over from the host side** (R17.6.2): the launcher exports a
     file argument outside the granted folders through the document portal and rewrites the
     argument; the app sees the file, not its folder; Strict apps get none.
 17. **A capability opens both roads.** The notifications and inhibit capabilities open the portal
-    interface *and* the direct bus name; an app without the capability has neither (17.5.1).
-18. **"Follow reviewers' suggestions" off takes reviews out of sandboxing entirely** (17.15): the
+    interface *and* the direct bus name; an app without the capability has neither (R17.5.1).
+18. **"Follow reviewers' suggestions" off takes reviews out of sandboxing entirely** (R17.15): the
     user's default for the kind applies, no badge shows, the dialog still says what they suggest.
-19. **Installed launchers are kept current by comparison, not by version** (17.4): at start, any
+19. **Installed launchers are kept current by comparison, not by version** (R17.4): at start, any
     launcher that is not the text AppKata would write today is rewritten — a previous AppKata's,
     or a hand-edited one — so a launcher fix reaches every installed app without an update.
 
@@ -1186,7 +1186,7 @@ No sandbox prompt is a dead end; every dismissible prompt maps to a persistent c
 
 ## Plan
 
-This was the build order; steps 1–6 are **done** (a build log now), step 7 is **deferred** (17.18) and
+This was the build order; steps 1–6 are **done** (a build log now), step 7 is **deferred** (R17.18) and
 step 8 is **separate work**. File pointers are to the commit on branch `app-sandboxing`.
 
 1. **AppArmor profile + run-time detection.** ✅ `sandbox.userns_works()` (the `bwrap --unshare-user`
@@ -1205,7 +1205,7 @@ step 8 is **separate work**. File pointers are to the commit on branch `app-sand
    24.04 VM).
 3. **Tarballs.** ✅ `install._activate()` → `_sandbox_launcher()` generates the launcher and points the
    `.desktop` `Exec=` and the command link at it; `launch()` routes through it; the install Sandbox card,
-   App Detail Sandbox section and the Change dialog are wired; sandbox changes are audited (17.16).
+   App Detail Sandbox section and the Change dialog are wired; sandbox changes are audited (R17.16).
 4. **AppImage.** ✅ `.AppImage` runs directly at Off; Standard/Strict extract **lazily** inside the
    launcher (`_EXTRACT_BLOCK`, rebuilt if missing), run `AppRun`, and set `APPDIR`/`APPIMAGE`/`ARGV0`
    (decision 2). The extraction cache is cleaned up with kept versions.
@@ -1214,15 +1214,15 @@ step 8 is **separate work**. File pointers are to the commit on branch `app-sand
    is shown but not enforced — WirePlumber lets a sandboxed client record through the same
    sockets, deferred), hands file arguments over through the document portal, puts a portal-aware
    `xdg-open` first on the PATH, hides the host's desktop entries, and `session_warning()` drives
-   the session caveat in App Detail and Settings (X11, and every Wayland compositor but GNOME's, 17.9). An end-to-end run on a physical desktop is
+   the session caveat in App Detail and Settings (X11, and every Wayland compositor but GNOME's, R17.9). An end-to-end run on a physical desktop is
    the item still owed (`local-proxy-test-plan.md`). The **Wayland security-context** is deferred
    (step 7).
 6. **Reviews.** ✅ `trustfile.py` parses/writes `Sandbox` / `Sandbox folders` / `Sandbox network` /
-   `Sandbox sound` / `devices` / `services` / `app folder` (10.3.1, Linux-only), and saving a review
+   `Sandbox sound` / `devices` / `services` / `app folder` (R10.3.1, Linux-only), and saving a review
    writes the user's own sandbox (`sandbox.as_review`, review 2 F9); `backend._resolved_sandbox()` merges Trusts least-privilege with the user
    winning; the **review badge** (`sandboxInfo.reviewBadge`) flags a version whose reviews suggest a
    change without widening access (decision 5).
-7. **Deferred (17.18), not v1:** the **Wayland security-context** protocol (close the wlroots
+7. **Deferred (R17.18), not v1:** the **Wayland security-context** protocol (close the wlroots
    screen/clipboard/input leak), the **Landlock** layer (execute-deny, per-port TCP; the Advanced
    toggles are present but disabled/"Later"), **personal templates** ("Save as template…"), config
    **import on enable-later** (v1 only warns, decision 12), a **fuller seccomp** filter beyond the
@@ -1243,5 +1243,5 @@ five commits closed the *classes* those findings fell into (the QML driven again
 Backend, grant-set invariants, launcher goldens, real consumers, transition snapshots), and the
 branch was judged ready to merge, with the physical-desktop pass left for a release.
 
-The feature now lives in `docs/requirements.md` §17 (decisions in `docs/gaps.md` §16), like the rest of
+The feature now lives in R17 (decisions in `docs/gaps.md` §16), like the rest of
 AppKata; this document is kept as its rationale and build log.

@@ -1,4 +1,4 @@
-"""End-to-end check of installing on Windows (requirement 15), run in the test VM by
+"""End-to-end check of installing on Windows (R15), run in the test VM by
 scripts/test-windows-vm.sh --e2e. Real releases from GitHub, through AppKata's own forge, asset,
 install and uninstall code:
 
@@ -75,7 +75,7 @@ def main() -> int:
         print(f"== {name}", flush=True)
         repo = urls.parse(f"https://github.com/{repo_path}")
         rels = forges.forge_for(http, repo, "github").releases(limit=30)
-        rel = next((r for r in rels if r.assets and not r.prerelease), None)       # bare tags have no files (requirement 9.4)
+        rel = next((r for r in rels if r.assets and not r.prerelease), None)       # bare tags have no files (R9.4)
         check(rel is not None and bool(rel.assets), f"{name} {rel.version if rel else '?'}: {len(rel.assets) if rel else 0} files")
         ch = choose(rel.assets, "windows", "x86_64", override=rx or "")
         check(ch.asset is not None, f"chose {ch.asset.name if ch.asset else ch.reason}")
@@ -90,7 +90,7 @@ def main() -> int:
         print(f"      installed: verified={rec.get('verified')} signer={rec.get('signer') or '-'} scope={rec.get('scope')}", flush=True)
         if ch.kind == "zip":
             shim = rec["shims"][0]
-            if name == "hyperfine":         # requirement 15.18
+            if name == "hyperfine":         # R15.18
                 check(rec.get("msvcrt") is True, "needs the Visual C++ run-time (MSVCRT)")
                 if not windows.msvcrt_installed():
                     out = subprocess.run(["cmd", "/c", shim, "--version"], capture_output=True, text=True)

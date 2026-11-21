@@ -8,13 +8,13 @@ socket as "the Wayland display" and never play a sound; here real apps run behin
 AppKata generates:
 
 - a GTK3 app maps a window on sway (seen in sway's tree by its app_id), and on headless mutter;
-- the Xwayland cookie (17.9): from a sandboxed app with the network and the X11 grant off, an
+- the Xwayland cookie (R17.9): from a sandboxed app with the network and the X11 grant off, an
   unauthenticated X11 connection over the abstract socket is accepted by sway's Xwayland (no
   -auth) and refused by mutter's (-auth) -- the compositor's cookie is what "off" rests on;
 - an app with the sound grant plays a tone through PipeWire, which sees it as a sandboxed client
-  (`pipewire.access = flatpak`, the app's identity as the portal app id -- 17.8); the same app
+  (`pipewire.access = flatpak`, the app's identity as the portal app id -- R17.8); the same app
   without the grant has no socket to play through;
-- the same app records (17.8 says play-only can't be enforced; shown rather than inferred).
+- the same app records (R17.8 says play-only can't be enforced; shown rather than inferred).
 """
 import json
 import os
@@ -45,17 +45,17 @@ def install(name, gs, program):
 
 
 # What each verdict must be (round six: a harness nobody asserts fails nothing); the script exits 1
-# on a mismatch. LEAKED for the recording is what 17.8 states, not a failure.
+# on a mismatch. LEAKED for the recording is what R17.8 states, not a failure.
 EXPECTED = {"a GTK3 app maps a window on sway behind the generated launcher": "WORKS",
             "the same GTK3 app maps a window on mutter (headless)": "WORKS",
-            "sway's Xwayland (no -auth): an unauthenticated connection over the abstract socket": "LEAKED",   # 17.9 says so
+            "sway's Xwayland (no -auth): an unauthenticated connection over the abstract socket": "LEAKED",   # R17.9 says so
             "mutter's Xwayland (-auth): the same connection": "BLOCKED",
-            "sway: a sandboxed app reads what the user copied (wl-paste)": "LEAKED",       # 17.9: wlroots leaks the clipboard
+            "sway: a sandboxed app reads what the user copied (wl-paste)": "LEAKED",       # R17.9: wlroots leaks the clipboard
             "mutter: a sandboxed app reads what the user copied (wl-paste)": "BLOCKED",
             "online-app: plays a tone through PipeWire": "WORKS",
             "offline-editor: no sound grant, so no socket to play through": "BLOCKED",
             "online-app (play only): records from the same sockets": "LEAKED",
-            # what AppKata reads from each compositor's globals for the warning (17.9; review 2, F7)
+            # what AppKata reads from each compositor's globals for the warning (R17.9; review 2, F7)
             "sway: what AppKata reads from its globals": "capture,clipboard,input",
             "mutter: what AppKata reads from its globals": "nothing"}
 VERDICTS = {}
@@ -83,7 +83,7 @@ mapped = "appkata-wayland-probe" in tree
 say("WORKS" if mapped else "FAILS", "a GTK3 app maps a window on sway behind the generated launcher",
     out.strip().splitlines()[-1] if out.strip() else err.strip().splitlines()[-1] if err.strip() else "")
 
-# 1b. the same window under headless mutter (GNOME's compositor; the one 17.9 calls clear), on its own
+# 1b. the same window under headless mutter (GNOME's compositor; the one R17.9 calls clear), on its own
 # display beside sway's: the launcher binds whichever socket $WAYLAND_DISPLAY names
 mutter = subprocess.Popen(["mutter", "--headless", "--wayland", "--no-x11", "--virtual-monitor", "1280x800",
                            "--wayland-display", "wayland-9"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -98,7 +98,7 @@ say("WORKS" if "MAPPED" in r.stdout and "GdkWaylandWindow" in r.stdout else "FAI
     "the same GTK3 app maps a window on mutter (headless)", (r.stdout.strip().splitlines() or [r.stderr.strip()[-80:]])[-1])
 mutter.terminate()
 
-# 1c. the Xwayland cookie (17.9, R4-8): with the network grant and the X11 grant off, the X server's
+# 1c. the Xwayland cookie (R17.9, R4-8): with the network grant and the X11 grant off, the X server's
 # abstract socket is still reachable; what keeps the app out is Xwayland requiring the cookie. A
 # second sway with Xwayland on (no -auth) and a mutter with Xwayland on (-auth): a sandboxed app
 # sends an X11 connection setup with no authorization to every abstract socket it can reach.
@@ -135,7 +135,7 @@ say("LEAKED" if answers.get("display :0") == "ACCEPTED" else "BLOCKED", "sway's 
 say("BLOCKED" if mutter_x and all(answers[d] == "REFUSED" for d in mutter_x) else "LEAKED", "mutter's Xwayland (-auth): the same connection", ", ".join(f"{d} {answers[d]}" for d in mutter_x) or "no socket")
 sway2.terminate(); mutter2.terminate()
 
-# 1d. the clipboard (17.9, round seven R7-1): a sandboxed app runs wl-paste against text a host client
+# 1d. the clipboard (R17.9, round seven R7-1): a sandboxed app runs wl-paste against text a host client
 # copied -- sway offers zwlr_data_control to every client and the text comes out; mutter offers no
 # such protocol, and the ordinary selection needs keyboard focus the app never has.
 for comp, display in (("sway", os.environ["WAYLAND_DISPLAY"]), ("mutter", "wayland-6")):
@@ -186,7 +186,7 @@ for name, template in (("player", "online-app"), ("mute", "offline-editor")):
         say("BLOCKED" if p.returncode != 0 and not streams else "LEAKED", f"{template}: no sound grant, so no socket to play through",
             (err.strip().splitlines() or [""])[-1][:70])
 
-# 3. recording from the same sockets (17.8: play-only cannot be enforced)
+# 3. recording from the same sockets (R17.8: play-only cannot be enforced)
 lp = install("rec", sb.apply_overrides(sb.resolve_template("online-app"), {"folders": {"+~/Music": "rw"}}),
              'timeout 2 pw-record "$HOME/Music/rec.wav"; ls -l "$HOME/Music/rec.wav" >&2\n')
 r = subprocess.run([lp], capture_output=True, text=True, timeout=30)

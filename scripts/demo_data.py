@@ -37,7 +37,7 @@ from appkata_core.http import Http  # noqa: E402
 GH = "https://github.com/"
 SOURCES = ["localsend/localsend", "signalapp/Signal-Desktop", "keepassxreboot/keepassxc", "obsproject/obs-studio",
            "laurent22/joplin", "ventoy/Ventoy", "syncthing/syncthing", "Zettlr/Zettlr"]
-SOURCE_SETTINGS = {     # Source settings (requirement 2.6); Zettlr's are all set, for its review's Settings section
+SOURCE_SETTINGS = {     # Source settings (R2.6); Zettlr's are all set, for its review's Settings section
     "laurent22/joplin": {"track_only": True},
     "Zettlr/Zettlr": {"track_only": False, "prereleases": False, "forge": "github", "asset_filters": {"linux-x86_64": "x86_64\\.AppImage$"}},
 }
@@ -237,7 +237,7 @@ def build(d: str) -> None:
     db = DB(os.path.join(d, "appkata.db"))
     http = Http()
 
-    # your own AppKata.md, in a repo with an origin (requirement 8.3)
+    # your own AppKata.md, in a repo with an origin (R8.3)
     mine = os.path.join(d, "home", "src", "reviews")
     bare = os.path.join(repos, "reviews-origin.git")
     subprocess.run(["git", "init", "-q", "--bare", bare], check=True)
@@ -253,7 +253,7 @@ def build(d: str) -> None:
         json.dump({"reviewPath": path, "autoCommit": True, "autoPush": True, "theme": "dark", "minAgeDefault": 20}, f)
     sync.sync_own(db, sync.own_trust(db, path))
 
-    # Mara's FOSS picks: OpenPGP, key published in .appkata/keys/ (requirement 10.7)
+    # Mara's FOSS picks: OpenPGP, key published in .appkata/keys/ (R10.7)
     mara = os.path.join(repos, "foss-picks")
     subprocess.run(["git", "init", "-q", "-b", "main", mara], check=True)
     home = os.path.join(d, "gnupg-mara")
@@ -266,7 +266,7 @@ def build(d: str) -> None:
     assert not p.error, p.error
     sync.add_trust(db, p)
 
-    # The desk collective: six SSH-signing members, one of them disabled, and a new signer (10.8)
+    # The desk collective: six SSH-signing members, one of them disabled, and a new signer (R10.8)
     desk = os.path.join(repos, "desk-reviews")
     subprocess.run(["git", "init", "-q", "-b", "main", desk], check=True)
     write(desk, "# Desk Collective reviews\n\nReviewed by the Desk Collective members.\n\n" + DESK.replace("| 5 | 4 |\n| OBS", "| 4 | 4 |\n| OBS"), "docs/AppKata.md")
@@ -303,7 +303,7 @@ def build(d: str) -> None:
     db.x("INSERT INTO authorities(trust_id, kind, fingerprint, key, name, email, first_commit, first_at) VALUES(?,?,?,?,?,?,?,?)",
          (tid, "ssh", sshsig.fingerprint(blob), sshsig.key_line(blob), name, email, p.commit, "2025-06-01T08:00:00Z"))
 
-    # Scores (requirement 10.6.2): Kenji's reviews weigh most, the collective's least
+    # Scores (R10.6.2): Kenji's reviews weigh most, the collective's least
     for name, score in (("Mara's FOSS picks", 4), ("Desk Collective reviews", 3), ("Kenji's app reviews", 5)):
         db.x("UPDATE trusts SET score=? WHERE name=?", (score, name))
     db.put("tokens", {"git.example.net": "demo-token-not-real-9F2a"})     # a made-up host and token, for Settings
@@ -311,7 +311,7 @@ def build(d: str) -> None:
         db.x("INSERT OR IGNORE INTO sources(url, input_url, added_at, settings) VALUES(?,?,?,?)",
              (GH + s, GH + s, now(), json.dumps(SOURCE_SETTINGS.get(s, {}))))
 
-    # OBS installed outside AppKata (requirement 4.5): a launcher entry like a distro package's
+    # OBS installed outside AppKata (R4.5): a launcher entry like a distro package's
     apps = os.path.join(d, "xdg", "applications")
     os.makedirs(apps)
     with open(os.path.join(apps, "com.obsproject.Studio.desktop"), "w") as f:
@@ -461,7 +461,7 @@ PROMISES: dict = {
         ("Syncthing updates itself, a newer version out", lambda s: s["Syncthing"]["state"] == "selfupdating" and s["Syncthing"]["newer"]),
         ("\"Kenji's app reviews says it updates itself\"", lambda s: s["Syncthing"]["autoUpdateBy"] == "Kenji's app reviews"),
         # the tour's working system runs an app sandboxed unless it's Off, and AppKata updates a
-        # sandboxed app (17.12): so A01's and A07's "Updates itself" rest on this too (R3-27)
+        # sandboxed app (R17.12): so A01's and A07's "Updates itself" rest on this too (R3-27)
         ("Syncthing's sandbox Off, as the Audit says you set it", lambda s: s.sandbox_choice("Syncthing") == {"template": "off"}, "linux"),
     ],
     "A10-confirm-uninstall": [("KeePassXC installed", lambda s: bool(s["KeePassXC"]["installed"]))],
@@ -744,11 +744,11 @@ def finish(d: str) -> None:
     inst("keepassxreboot/keepassxc", 0, "appimage")     # current
     inst("syncthing/syncthing", 1, "tarball")           # updates itself, a version behind ("N is out")
     inst("VSCodium/vscodium", 1, "rpm")
-    # a version the Desk Collective says to avoid (requirement 10.6.5): xz 5.6.1, the backdoored release
+    # a version the Desk Collective says to avoid (R10.6.5): xz 5.6.1, the backdoored release
     db.x("INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
          (GH + "tukaani-project/xz", "XZ Utils", "5.6.1", "2024-03-09T08:00:00Z", "xz-5.6.1.tar.gz", "tarball", "{}", now()))
-    # per-app sandbox choices (requirement 17): KeePassXC customized off the reviewer's Offline editor;
-    # Zettlr kept at the user's grants while a review suggests more access (the review badge, 17.11).
+    # per-app sandbox choices (R17): KeePassXC customized off the reviewer's Offline editor;
+    # Zettlr kept at the user's grants while a review suggests more access (the review badge, R17.11).
     def set_sandbox(repo, cfg):
         row = db.one("SELECT install FROM app_settings WHERE url=?", (GH + repo,))
         cur = json.loads(row["install"]) if row and row["install"] else {}
@@ -763,7 +763,7 @@ def finish(d: str) -> None:
         "network": False, "ports": None, "sound": [], "devices": [], "caps": [], "exec_deny": True, "write_app": False}})
     # Syncthing Off, as the Audit says you set it (history): so it updates itself (A01, A07, A09). The
     # tour's working system runs every other app sandboxed, and a sandboxed app is updated by AppKata
-    # (17.12; review 3, R3-27)
+    # (R17.12; review 3, R3-27)
     set_sandbox("syncthing/syncthing", {"template": "off"})
     version_review(db, d)
     v = inst("ventoy/Ventoy", 2, "tarball")             # pinned at an older version
@@ -780,7 +780,7 @@ def finish(d: str) -> None:
 
 
 def version_review(db: DB, d: str) -> None:
-    """Your review of an older LocalSend release (requirement 10.3.2), so the review dialog offers a
+    """Your review of an older LocalSend release (R10.3.2), so the review dialog offers a
     new review of the installed version (8.4.1.1)."""
     from appkata_core import review, trustfile
     rs = [x for x in json.loads((db.one("SELECT releases FROM apps WHERE url=?", (GH + "localsend/localsend",)) or {"releases": "[]"})["releases"] or "[]")
@@ -800,14 +800,14 @@ def version_review(db: DB, d: str) -> None:
 
 
 def demo_channels(d: str) -> None:
-    """DEV ONLY: package-channel facts for the tour's channel screens (requirement 16), read by the app
+    """DEV ONLY: package-channel facts for the tour's channel screens (R16), read by the app
     when the tour asks (backend.demoChannels) or with APPKATA_DEMO_CHANNELS=1. This computer may have no
     flatpak, apt or AppStream catalog, so these stand in for an Ubuntu 24.04 desktop with Flathub.
     The Ubuntu package versions and the Flathub search results are sample data."""
     mara = "Mara's FOSS picks"
     facts = {
         "os": "Ubuntu 24.04 (x86_64)", "manager": "apt", "distro": "Ubuntu", "catalog": True,
-        # GNOME Software updates Flatpaks; unattended-upgrades installs security updates only (16.5.2)
+        # GNOME Software updates Flatpaks; unattended-upgrades installs security updates only (R16.5.2)
         "autoupdate": {"flatpak": ["GNOME Software"], "packages": [], "aptOrigins": ["o=Ubuntu,a=noble-security"],
                        "aptUnattended": True},
         "links": {
@@ -860,7 +860,7 @@ def demo_channels(d: str) -> None:
 
 
 def portable_records(db: DB, d: str) -> None:
-    """Real files for the AppImage installs: the current version and kept older ones (req 4.3.1.5)."""
+    """Real files for the AppImage installs: the current version and kept older ones (R4.3.1.5)."""
     for r in db.all("SELECT url, name, version, kind FROM installs WHERE kind='appimage'"):
         slug = r["name"].lower().replace(" ", "-")
         target = os.path.join(d, "apps", slug)
@@ -881,7 +881,7 @@ def portable_records(db: DB, d: str) -> None:
 
 
 def self_app(db: DB, d: str) -> None:
-    """AppKata itself (requirement 2.11): its repository isn't published yet, so its metadata and
+    """AppKata itself (R2.11): its repository isn't published yet, so its metadata and
     two releases are made up here; the running AppImage is adopted at the current version."""
     from appkata_core import __version__
     cache = os.path.join(d, "cache", "appkata"); os.makedirs(cache, exist_ok=True)
@@ -913,7 +913,7 @@ def self_app(db: DB, d: str) -> None:
 
 
 def history(db: DB, tz=None, now=None) -> None:
-    """The demo's Audit (requirement 13), as if the last two weeks had happened up to now: stage
+    """The demo's Audit (R13), as if the last two weeks had happened up to now: stage
     writes it again before each tour, so U01 ends on the tour's day (review 3, R3-25). The Audit
     lists by id, as entries happen, so its rows go in by time; and build's own entries go, which
     history tells again ("found a new signer" was there twice). The Audit is append-only: its
@@ -951,7 +951,7 @@ def history(db: DB, tz=None, now=None) -> None:
         (at(1, 7, 0), "sync", "trust", "refused a change to", "Desk Collective reviews", "", '{"reason": "unknown-signer"}'),
         (at(0, 9, 12), "you", "source", "added", "laurent22/joplin", GH + "laurent22/joplin", '{"track only": true}'),
         (at(0, 9, 30), "you", "app", "uninstalled", "Flameshot", GH + "flameshot-org/flameshot", '{"version": "13.1.0"}'),
-        # sandbox changes (requirement 17.16)
+        # sandbox changes (R17.16)
         (at(2, 12, 30), "you", "setting", "enabled system sandbox support", "AppArmor", "", '{"profile": "/etc/apparmor.d/appkata-sandbox"}'),
         # in the shape the product writes them (review 2, F11): what was added and removed, the launcher's hash
         (at(1, 21, 3), "you", "app", "set the sandbox of", "KeePassXC", GH + "keepassxreboot/keepassxc", json.dumps(

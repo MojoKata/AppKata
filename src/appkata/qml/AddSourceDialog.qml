@@ -2,17 +2,17 @@ import QtQuick
 import QtQuick.Controls.Basic
 import "."
 
-// Adding a Source (requirement 7.2): detect the forge, preview, then add (or add and install).
+// Adding a Source (R7.2): detect the forge, preview, then add (or add and install).
 Dialog {
     id: root
     property var p: null
     property bool checking: false
     property alias urlField: urlBox
     property alias settingsDialog: ssd
-    property var pendingSettings: ({})      // chosen in Source settings before adding (requirement 7.2)
+    property var pendingSettings: ({})      // chosen in Source settings before adding (R7.2)
     title: "Add source"
     dialogWidth: 600
-    // `link`: a Flatpak or package found by Explore, kept as the Source's channel link (requirement 16.2.4)
+    // `link`: a Flatpak or package found by Explore, kept as the Source's channel link (R16.2.4)
     function openWith(text, link) { p = null; checking = false; pendingSettings = link || ({}); urlBox.text = text || ""; open(); if (text) check() }
     SourceSettingsDialog { id: ssd; onSaved: st => root.pendingSettings = st }
     function check() { if (!urlBox.text.trim()) return; checking = true; p = null; backend.previewSource(urlBox.text.trim()) }
@@ -61,7 +61,7 @@ Dialog {
             }
         }
         Text { visible: !!root.p && root.p.exists; text: "This source is already in your list."; color: Theme.warn; font.pixelSize: 13 }
-        Row {       // requirement 7.2 step 3
+        Row {       // R7.2 step 3
             visible: !!root.p && !root.p.exists
             spacing: 6
             readonly property int n: Object.keys(root.pendingSettings).filter(k => { const v = root.pendingSettings[k]; return v !== "" && v !== null && v !== false }).length

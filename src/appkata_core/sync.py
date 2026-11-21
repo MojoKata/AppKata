@@ -1,4 +1,4 @@
-"""Sync (requirement 9.2): refresh every Catalog app's releases and metadata, and every Trust."""
+"""Sync (R9.2): refresh every Catalog app's releases and metadata, and every Trust."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def release_dict(r: forges.Release) -> dict:
 
 # ---------------------------------------------------------------- apps
 def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
-    """Releases, README, icon and hero for one app (Source or Trust-listed; requirement 3, 9.2.3)."""
+    """Releases, README, icon and hero for one app (Source or Trust-listed; R3, R9.2.3)."""
     src = db.one("SELECT * FROM sources WHERE url=?", (url,)) or {}
     settings = json.loads(src.get("settings") or "{}")
     repo = urls.parse(url)
@@ -80,7 +80,7 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
     try:
         if repo.kind != "forge":
             raise forges.Unsupported("ngit sources aren't supported yet")
-        from .catalog import recommended_for          # a Trust's recommended Source settings (requirement 10.3.1)
+        from .catalog import recommended_for          # a Trust's recommended Source settings (R10.3.1)
         rec = recommended_for(db, url)[0]
         kind = settings.get("forge") or rec.get("forge") or src.get("forge") or old.get("forge") or None
         if not kind:
@@ -111,7 +111,7 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                     break
             except SourceError:
                 pass
-        # icon (requirement 3.2): manifest → metainfo → fastlane / icon files → owner avatar
+        # icon (R3.2): manifest → metainfo → fastlane / icon files → owner avatar
         icon_urls = ([meta_info["icon"]] if meta_info.get("icon") else []) + \
             [f.raw_url(p, info.default_branch) for p in metadata.icon_candidates(paths, info.name)[:4]] + \
             ([info.avatar_url] if info.avatar_url else [])
@@ -121,7 +121,7 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                 break
             except SourceError:
                 continue
-        # hero (requirement 3.3): metainfo screenshot → fastlane feature graphic → README image
+        # hero (R3.3): metainfo screenshot → fastlane feature graphic → README image
         hero_urls = ([meta_info["screenshot"]] if meta_info.get("screenshot") else []) + \
             [f.raw_url(p, info.default_branch) for p in metadata.hero_candidates(paths)[:2]] + \
             [metadata.resolve(u, raw_base, os.path.dirname(readme_path)) for u in metadata.readme_images(readme)[:3]]
@@ -144,7 +144,7 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                   int(info.archived), now()))
             if src and not src.get("forge"):
                 db.x("UPDATE sources SET forge=? WHERE url=?", (kind, url))
-            if meta_info.get("id"):          # links a Flatpak or package by its AppStream ID (requirement 16.1.3)
+            if meta_info.get("id"):          # links a Flatpak or package by its AppStream ID (R16.1.3)
                 db.x("INSERT OR REPLACE INTO app_meta(url, appstream_id) VALUES(?,?)", (url, meta_info["id"]))
     except SourceError as e:
         log.warning("%s: %s (%s)", url, e, e.code)
@@ -162,7 +162,7 @@ def trust_dir(url: str, root: str | None = None) -> str:
 
 @dataclass
 class Preview:
-    """What adding a Trust would accept (requirement 7.6.2), shown before the user confirms."""
+    """What adding a Trust would accept (R7.6.2), shown before the user confirms."""
     url: str
     name: str
     path: str
@@ -241,7 +241,7 @@ def gitsig_short(fp: str) -> str:
 
 
 def add_trust(db: DB, p: Preview, root: str | None = None) -> int:
-    """Create the Trust and its first Authorities (requirement 7.6.2, 10.7.1)."""
+    """Create the Trust and its first Authorities (R7.6.2, R10.7.1)."""
     dest = trust_dir(p.url, root)
     shutil.rmtree(dest, ignore_errors=True)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -269,7 +269,7 @@ def _store_reviews(db: DB, tid: int, tf: trustfile.TrustFile) -> None:
 
 
 def own_trust(db: DB, path: str) -> int:
-    """The user's own AppKata.md, always applied (requirement 10.5.1)."""
+    """The user's own AppKata.md, always applied (R10.5.1)."""
     row = db.one("SELECT id FROM trusts WHERE own=1")
     if row:
         db.x("UPDATE trusts SET url=?, path=? WHERE id=?", ("file://" + path, path, row["id"]))
@@ -292,7 +292,7 @@ def sync_own(db: DB, tid: int) -> None:
 
 
 def sync_trust(db: DB, http: Http, tid: int, root: str | None = None) -> None:
-    """Fetch a Trust and apply only changes signed by its enabled Authorities (requirement 10.7, 10.8)."""
+    """Fetch a Trust and apply only changes signed by its enabled Authorities (R10.7, R10.8)."""
     t = db.one("SELECT * FROM trusts WHERE id=?", (tid,))
     if t["own"]:
         return sync_own(db, tid)
@@ -393,7 +393,7 @@ def ensure_assets(db: DB, http: Http, url: str, version: str) -> dict | None:
 
 
 def trust_signer(db: DB, tid: int, fingerprint: str) -> None:
-    """Accept a pending signer as an Authority (requirement 7.6.6)."""
+    """Accept a pending signer as an Authority (R7.6.6)."""
     db.x("UPDATE authorities SET pending=0, enabled=1, pending_commits=0 WHERE trust_id=? AND fingerprint=?", (tid, fingerprint))
 
 
@@ -416,7 +416,7 @@ def catalog_urls(db: DB) -> list[str]:
 
 def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | None = None, workers: int = 4,
              on_item=None) -> None:
-    """Trusts first (they add Catalog apps), then every app, four hosts at a time (requirement 9.2.1)."""
+    """Trusts first (they add Catalog apps), then every app, four hosts at a time (R9.2.1)."""
     progress = progress or Progress()
     trusts = [t["id"] for t in db.all("SELECT id FROM trusts WHERE enabled=1")]
     progress.total = len(trusts)
@@ -446,11 +446,11 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
     db.put("last_sync", now())
 
 
-# ---------------------------------------------------------------- package channels (requirement 16)
+# ---------------------------------------------------------------- package channels (R16)
 def sync_channels(db: DB, http: Http) -> None:
-    """Every sync: who updates what (16.5.2), channel installs still there or changed elsewhere
-    (16.4.1, 16.5.4), pending updates (16.5.5) and the link checks (16.1.5). Skipped off Linux and
-    inside a Flatpak sandbox (16.10). Never fails the sync."""
+    """Every sync: who updates what (R16.5.2), channel installs still there or changed elsewhere
+    (R16.4.1, R16.5.4), pending updates (R16.5.5) and the link checks (R16.1.5). Skipped off Linux and
+    inside a Flatpak sandbox (R16.10). Never fails the sync."""
     if not channels.enabled():
         return
     from . import autoupdate
@@ -467,7 +467,7 @@ def sync_channels(db: DB, http: Http) -> None:
 
 
 def track_channel_installs(db: DB, http: Http | None = None) -> None:
-    """Requirement 16.4.1, 16.5.4, 16.5.5, 16.5.6, 16.6.3."""
+    """R16.4.1, R16.5.4, R16.5.5, R16.5.6, R16.6.3."""
     from . import autoupdate, flatpak, pkgbackend
     rows = [r for r in db.all("SELECT * FROM installs") if json.loads(r["record"] or "{}").get("channel")]
     if not rows:
@@ -528,7 +528,7 @@ def track_channel_installs(db: DB, http: Http | None = None) -> None:
 
 
 def _changed_elsewhere(db: DB, row: dict, rec: dict, raw: str, version: str, who: str, when: str, det, kind: str) -> None:
-    """A version AppKata didn't install (requirement 16.5.4)."""
+    """A version AppKata didn't install (R16.5.4)."""
     audit.record(db, "system", "app", "was updated outside AppKata", row["name"], row["url"],
                  {"version": raw, **({"by": who} if who else {})})
     rec["updatedBy"], rec["updatedAt"] = who, when
@@ -540,7 +540,7 @@ def _changed_elsewhere(db: DB, row: dict, rec: dict, raw: str, version: str, who
 
 
 def check_links(db: DB, http: Http) -> None:
-    """The link checks, each when its answer can change (requirement 16.1.5)."""
+    """The link checks, each when its answer can change (R16.1.5)."""
     from . import appstream, flatpak, pkgbackend
     try:
         cat = appstream.load_cached()

@@ -1,4 +1,4 @@
-"""Launching an installed app (requirement 14.2): its output is kept and a failed launch is reported."""
+"""Launching an installed app (R14.2): its output is kept and a failed launch is reported."""
 
 import json
 import os

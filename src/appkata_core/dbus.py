@@ -1,4 +1,4 @@
-"""A minimal D-Bus client for the system bus, enough to drive PackageKit (requirement 16.8.1):
+"""A minimal D-Bus client for the system bus, enough to drive PackageKit (R16.8.1):
 method calls with typed arguments and the signals of one object. Pure Python, so no new
 dependency; PySide6's QtDBus can't send the unsigned 64-bit flags PackageKit's methods take."""
 

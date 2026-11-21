@@ -187,7 +187,7 @@ def test_the_check_finds_each_way_an_input_moves():
 
 
 def test_one_python_for_the_appimage_the_installer_and_the_tests():
-    """Requirement 1.2: PY_SERIES is PYTHON_BUILD's series, and the Wine image is tagged with it
+    """R1.2: PY_SERIES is PYTHON_BUILD's series, and the Wine image is tagged with it
     (build-windows.sh checks the image's own Python is PYTHON_BUILD's version when it runs)."""
     env = _read("packaging/versions.env")
     build = _assigned(env, "PYTHON_BUILD")
@@ -199,7 +199,7 @@ def test_one_python_for_the_appimage_the_installer_and_the_tests():
     assert SHA.match(_assigned(env, "PYTHON_WINDOWS_SHA256"))
 
 
-# Every tier's Python (requirement 1.2). How the Windows one got past: the test above read only what
+# Every tier's Python (R1.2). How the Windows one got past: the test above read only what
 # the release builds and CI run ("the local tiers' scripts aren't release inputs"), and the Windows
 # tier fetched python-build-standalone's newest release itself, with pytest and truststore at
 # whatever pip resolved that day. The class: a tier that tests AppKata on another Python than the

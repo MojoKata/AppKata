@@ -1,4 +1,4 @@
-# PyInstaller spec: one folder, AppKata/appkata.exe (requirement 1.6).
+# PyInstaller spec: one folder, AppKata/appkata.exe (R1.6).
 # Built under Wine by scripts/build-windows.sh.
 import os
 import sys

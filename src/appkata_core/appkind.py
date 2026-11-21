@@ -1,4 +1,4 @@
-"""Whether a portable app is a command-line tool or an app with a window (requirement 17.3.3).
+"""Whether a portable app is a command-line tool or an app with a window (R17.3.3).
 
 An unreviewed command-line tool gets the cli-tool template (it sees the folder it is run in) and an
 unreviewed app Strict, so AppKata has to tell them apart. Review 2, F4: it did so by "a command link
@@ -120,7 +120,7 @@ def kind_of_folder(folder: str, exec_rel: str) -> str | None:
 def kind_of_appimage(img: str, timeout: float = 60) -> str | None:
     """An AppImage's kind from the Terminal key of the .desktop at its root, read by its own runtime
     inside a bwrap that can write only a staging folder and has no network (the launcher's unpacking,
-    17.7). None where bwrap can't run or the runtime gives no .desktop."""
+    R17.7). None where bwrap can't run or the runtime gives no .desktop."""
     if not shutil.which("bwrap") or not os.path.isfile(img):
         return None
     with tempfile.TemporaryDirectory(prefix="appkata-kind-") as stg:

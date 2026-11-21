@@ -1,4 +1,4 @@
-"""Combining reviews across Trusts (requirement 10.6)."""
+"""Combining reviews across Trusts (R10.6)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _weighted(pairs: list[tuple[float, float]]) -> float | None:
 
 def combine(reviews: list[tuple]) -> Score:
     """reviews: (trust, rating) or (trust, rating, weight) from each enabled Trust that lists the
-    app. The weight is the Trust's Score, 1–5 (requirement 10.6.2); a 0 still vetoes (10.6.1)."""
+    app. The weight is the Trust's Score, 1–5 (R10.6.2); a 0 still vetoes (R10.6.1)."""
     rows = [(r[0], r[1], r[2] if len(r) > 2 and r[2] else 1) for r in reviews]
     trusts = [(t, w) for t, _, w in rows if t is not None]
     ratings = [(r, w) for _, r, w in rows if r is not None]
@@ -34,7 +34,7 @@ def combine(reviews: list[tuple]) -> Score:
 
 
 def sort_key(name: str, score: Score, by: str = "trust"):
-    """Catalog order (requirement 12.2): Trust (highest first), then name; unreviewed last."""
+    """Catalog order (R12.2): Trust (highest first), then name; unreviewed last."""
     if by == "name":
         return (name.lower(),)
     v = score.trust if by == "trust" else score.rating

@@ -55,7 +55,7 @@ is expected: the fingerprint is the check. Windows' installer isn't signed yet; 
 | Portable vs system package decided from the file; install options asked on the first install only when needed, saved per app | Done |
 | Installing on Windows: portable `.zip`/`.exe` first, then `.msi`, `.exe` installers (Inno, NSIS, electron-builder, WiX, Squirrel) and `.msix`; Just me or Everyone; junctions, Start-menu shortcuts, `.cmd` command links; uninstalling through the registry; files in use; Authenticode; Mark of the Web; the Visual C++ run-time (MSVCRT) | Done; real installs of six apps tested in a Windows 10 VM; UAC prompts, SmartScreen and Windows 11 Snap Layouts need a manual check |
 | Pinning, minimum age, held updates, background sync, notifications; install queue with progress, Cancel and resumable downloads; apps that update themselves | Done |
-| AppKata's own AppImage (the only Linux download: no Flatpak, `.deb` or `.rpm`, 1.6), installing itself on first start | Done: `scripts/build-appimage.sh`, tested on Mint 21.3 and 22.1 (`scripts/test-appimage.sh`) |
+| AppKata's own AppImage (the only Linux download: no Flatpak, `.deb` or `.rpm`, R1.6), installing itself on first start | Done: `scripts/build-appimage.sh`, tested on Mint 21.3 and 22.1 (`scripts/test-appimage.sh`) |
 | AppKata's Windows setup (per user by default, no UAC prompt) and its own updates | Done: `scripts/build-windows.sh`, tested by `scripts/test-windows-vm.sh`; signing needs a certificate |
 | App sandboxing on Linux (portable apps and AppImages in bubblewrap: Off/Standard/Strict, templates, per-app grants, filtered D-Bus, the AppArmor pkexec setup) | Implemented, reviewed ([`docs/reviews/`](docs/reviews/); [`docs/app-sandboxing.md`](docs/app-sandboxing.md), [R17](docs/requirements/R17-app-sandboxing/README.md); mechanisms validated in containers + a KVM VM, `scripts/sandbox/`; real-desktop checklist [`docs/local-proxy-test-plan.md`](docs/local-proxy-test-plan.md)) |
 | macOS app and installers | Planned ([`docs/build.md`](docs/build.md)); the signing hand-off exists |
@@ -66,7 +66,7 @@ is expected: the fingerprint is the check. Windows' installer isn't signed yet; 
 
 ## Run from source (development)
 
-For development only; AppKata is installed from its AppImage (requirement 1.6). It runs on the
+For development only; AppKata is installed from its AppImage (R1.6). It runs on the
 Python its release carries (`packaging/versions.env`), which `scripts/python-standalone.sh` fetches:
 
 Its PySide6 needs glibc 2.34 or newer; on an older machine (RHEL 8), `scripts/test-tier1.sh` runs

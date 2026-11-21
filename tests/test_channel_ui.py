@@ -1,6 +1,6 @@
-"""The package-channel glue the screens use (requirement 16): what the Apps view and App Detail
+"""The package-channel glue the screens use (R16): what the Apps view and App Detail
 panel show for a channel install, Explore on Flathub and the distribution, Source settings' links,
-the Audit's System filter, and "Same file as … reviewed" (10.3.4)."""
+the Audit's System filter, and "Same file as … reviewed" (R10.3.4)."""
 
 import json
 import os
@@ -42,7 +42,7 @@ def test_flatpak_updated_by_the_system(db):
     a = _app(db)
     assert a["state"] == "system" and a["ch"]["updates"] == "system" and a["ch"]["updatesBy"] == "GNOME Software"
     assert a["ch"]["label"] == "Flathub" and a["ch"]["addedPerms"] == ["Home folder"] and a["permsGrow"]
-    assert a["updateTo"] == "" and a["newer"]                   # 2.7.10 is out, but the system updates it (16.5.1)
+    assert a["updateTo"] == "" and a["newer"]                   # 2.7.10 is out, but the system updates it (R16.5.1)
     db.x("INSERT INTO channel_checks(url, kind, value, state, verified) VALUES(?,?,?,?,?)",
          (KEEPASSXC, "flatpak", "org.keepassxc.KeePassXC", "matches", 1))
     assert _app(db)["ch"]["label"] == "Flathub · verified"
@@ -57,7 +57,7 @@ def test_package_not_updated_offers_its_update(db):
     assert a["ch"]["behind"] == 3 and a["ch"]["label"] == "Fedora" and not a["permsGrow"]
     rec = json.loads(db.one("SELECT record FROM installs")["record"])
     _install(db, {**rec, "held": True})
-    assert _app(db)["ch"]["updates"] == "held" and _app(db)["state"] == "installed"       # 16.5.6
+    assert _app(db)["ch"]["updates"] == "held" and _app(db)["state"] == "installed"       # R16.5.6
     _install(db, {**rec, "updates": "appkata"})
     assert _app(db)["ch"]["updates"] == "appkata" and _app(db)["state"] == "update"
 
@@ -85,7 +85,7 @@ def test_explore_flathub_offline_and_distro(db):
     assert "Couldn't reach Flathub" in r["note"] and "on this computer" in r["note"]
     assert explore.search(_Down(), "flathub", "password", catalog=None)["error"].startswith("Couldn't reach Flathub")
     d = explore.search(Http(), "distro", "keepass", catalog=cat)["matches"]
-    assert d[0]["channel"] == "package" and d[0]["link"] == "keepassxc" and d[0]["url"] == "" and not d[0]["addable"]   # 16.2.4
+    assert d[0]["channel"] == "package" and d[0]["link"] == "keepassxc" and d[0]["url"] == "" and not d[0]["addable"]   # R16.2.4
     assert explore.search(Http(), "distro", "keepass", catalog=None)["error"] == "No AppStream catalog on this computer."
 
 
