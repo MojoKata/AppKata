@@ -51,7 +51,7 @@ def _installed(be) -> None:
 
 
 def test_a_changed_review_never_changes_an_installed_apps_grants(be):
-    # Regression (decision 5, R17.11): with no choice saved by the user, every update re-resolved the
+    # Regression (A1.12.5, R17.11): with no choice saved by the user, every update re-resolved the
     # grants from the current reviews, so a new review asking for network widened access silently.
     _review(be, "offline-editor")
     r = be._resolved_sandbox(URL, kind="appimage")
@@ -553,7 +553,7 @@ def test_the_install_dialogs_sandbox_card_is_what_planfor_computes(be, monkeypat
 
 
 def test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_choice(be, monkeypatch):
-    # Regression (decision 5, R17.11): installWith rewrote app_settings.install from the dialog's fields
+    # Regression (A1.12.5, R17.11): installWith rewrote app_settings.install from the dialog's fields
     # alone, so "Install options…" saved without touching the Sandbox card dropped the pin, the "seen"
     # marker and the user's own sandbox choice; the next install then re-pinned from the current
     # reviews — the silent widening the pin exists to prevent, one step earlier.

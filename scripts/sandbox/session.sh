@@ -1,5 +1,5 @@
 # Sourced as the test user: a desktop session in the container. A session bus, a headless sway
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # (Wayland only, no XWayland), PipeWire with its PulseAudio server, and the portals (activated on the bus).
 export HOME=/home/kata XDG_RUNTIME_DIR=/run/user/$(id -u) XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

@@ -1,5 +1,6 @@
-"""The requirements as the tests read them: every section file under docs/requirements/, in order,
-as one text (docs/requirements/README.md says how they're laid out).
+"""The requirements and the architecture as the tests read them: every section file under
+docs/requirements/ (or docs/architecture/), in order, as one text (docs/requirements/README.md says
+how they're laid out).
 
 A section is `RN-name.md`, or `RN-name/README.md` with its first-level items in `RN.K-name.md`
 beside it once it passes 500 lines. Each item starts its own line with its id (`R17.4. `), so a
@@ -12,30 +13,32 @@ import re
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REQ = os.path.join(ROOT, "docs", "requirements")
+ARCH = os.path.join(ROOT, "docs", "architecture")
 # where an item's text ends: the next item's id, or a heading
-NEXT = r"(?=^R\d+\.\d+(?:\.\d+)*\. |^#|\Z)"
+NEXT = r"(?=^[RA]\d+\.\d+(?:\.\d+)*\. |^#|\Z)"
 
 
 def _number(path: str) -> list[int]:
-    m = re.match(r"R(\d+(?:\.\d+)*)", os.path.basename(path))
+    m = re.match(r"[RA](\d+(?:\.\d+)*)", os.path.basename(path))
     return [int(x) for x in m.group(1).split(".")] if m else []
 
 
-def files() -> list[str]:
+def files(top: str = REQ) -> list[str]:
     """The section files in order: R1 … R17, a split section's README before its items."""
     out = []
-    for path in sorted(glob.glob(os.path.join(REQ, "R*")), key=_number):
+    letter = "A" if top == ARCH else "R"
+    for path in sorted(glob.glob(os.path.join(top, f"{letter}[0-9]*")), key=_number):
         if os.path.isdir(path):
-            items = sorted(glob.glob(os.path.join(path, "R*.md")), key=_number)
+            items = sorted(glob.glob(os.path.join(path, f"{letter}[0-9]*.md")), key=_number)
             out += [os.path.join(path, "README.md"), *items]
         else:
             out.append(path)
     return out
 
 
-def text() -> str:
+def text(top: str = REQ) -> str:
     parts = []
-    for path in files():
+    for path in files(top):
         with open(path, encoding="utf-8") as f:
             parts.append(f.read())
     return "\n".join(parts)
@@ -47,10 +50,11 @@ def item(rid: str, req: str | None = None) -> str:
     return m.group(1) if m else ""
 
 
-def section(number: int) -> str:
+def section(number: int, top: str = REQ) -> str:
     """One section's files as one text: R17's README and its items."""
-    own = [p for p in files() if _number(p)[:1] == [number]
-           or os.path.basename(os.path.dirname(p)).startswith(f"R{number}-")]
+    letter = "A" if top == ARCH else "R"
+    own = [p for p in files(top) if _number(p)[:1] == [number]
+           or os.path.basename(os.path.dirname(p)).startswith(f"{letter}{number}-")]
     parts = []
     for path in own:
         with open(path, encoding="utf-8") as f:

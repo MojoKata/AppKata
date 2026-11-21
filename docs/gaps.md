@@ -949,7 +949,7 @@ GitHub in the test VM, the unit tests under Python on Windows, and AppKata's own
 ## 16. App sandboxing (resolved 2026-10-09)
 
 These answers are now part of [`requirements.md`](requirements/README.md) (§17); the rationale, experiments
-(three rounds, `scripts/sandbox/`) and mockups are in [`app-sandboxing.md`](app-sandboxing.md), and the
+(three rounds, `scripts/sandbox/`) and mockups are in [`app-sandboxing.md`](architecture/A1-app-sandboxing/README.md), and the
 human validation checklist in [`local-proxy-test-plan.md`](local-proxy-test-plan.md).
 
 1. **Mechanism:** bubblewrap + xdg-dbus-proxy, unprivileged; no Firejail (setuid), no systemd-run.

@@ -1,4 +1,4 @@
-"""What a sandboxed app can see is exactly docs/sandbox-exposure.md (review 3, harness 3).
+"""What a sandboxed app can see is exactly docs/architecture/A2-sandbox-exposure.md (review 3, harness 3).
 
 How review 2's F18 slipped past: every test asked whether one thing the tester thought of was
 hidden -- ~/.ssh, ~/.bashrc, the real bus, the desktop entries, the agent socket. None listed what
@@ -6,7 +6,7 @@ is in view, so a bind nobody thought to ask about stood unrecorded: /sys, for GP
 with every network card's MAC address and the USB serials in it, even for a Strict app with no
 network. The class: the sandbox shows something nobody listed.
 
-This harness turns the question round. docs/sandbox-exposure.md is the inventory of everything in
+This harness turns the question round. docs/architecture/A2-sandbox-exposure.md is the inventory of everything in
 view, each row with the sentence of R17 that says so or the finding that keeps it
 unstated. The harness fails on anything seen that the inventory doesn't list for that run, and on
 a row that should be seen and isn't. Tier 1 runs each template's launcher with a stand-in bwrap

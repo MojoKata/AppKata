@@ -20,7 +20,9 @@ from test_requirements_trace import _finding_exists
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 REQ = "docs/requirements/"                 # every section file, as one text (reqdocs)
-COUNTED_DOCS = (REQ, "docs/app-sandboxing.md", "docs/gaps.md", "docs/local-proxy-test-plan.md", "README.md")
+A1 = "docs/architecture/A1-app-sandboxing/"  # the sandboxing design's files, as one text
+RECORD = "docs/reviews/app-sandboxing-build.md"
+COUNTED_DOCS = (REQ, A1, "docs/gaps.md", "docs/local-proxy-test-plan.md", "README.md")
 WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 # Facts the documents still state wrongly, and the finding that keeps each
@@ -30,6 +32,8 @@ STILL_WRONG: dict = {}
 def _read(rel):
     if rel == REQ:
         return reqdocs.text()
+    if rel == A1:
+        return reqdocs.section(1, reqdocs.ARCH)
     with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
         return f.read()
 
@@ -95,9 +99,9 @@ def _facts() -> dict:
         for m in re.finditer(r"\b(" + "|".join(WORDS) + r") (?:built-in )?templates\b", text, re.I):
             f[f"{doc}: “{text[max(0, m.start() - 30):m.end()].strip()}”"] = (WORDS[m.group(1).lower()], len(sb.TEMPLATES))
     # the design doc's own table of the templates names every built-in one
-    table = re.search(r"^\| Template \| Level \|.*?\n((?:\|.*\n)+)", _read("docs/app-sandboxing.md"), re.M)
+    table = re.search(r"^\| Template \| Level \|.*?\n((?:\|.*\n)+)", _read(A1), re.M)
     rows = re.findall(r"^\| \*\*([^*]+)\*\* \|", table.group(1), re.M) if table else []
-    f["app-sandboxing.md: the templates in its table"] = (_labels_to_keys(", ".join(r.split(" / ")[0] for r in rows)), set(sb.TEMPLATES))
+    f["A1: the templates in its table"] = (_labels_to_keys(", ".join(r.split(" / ")[0] for r in rows)), set(sb.TEMPLATES))
 
     m = re.search(r"allow (.*?) \(and the Request", re.sub(r"\s+", " ", _req("R17.5")))
     f["R17.5: the portal interfaces every app may call"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.PORTAL_INTERFACES))
@@ -168,12 +172,12 @@ def _facts() -> dict:
     f["the Windows 10 release the documents name, and Setup's"] = (named, dict.fromkeys(named, releases.get(build.group(1)) if build else None))
     readme = next((l for l in _read("README.md").splitlines() if l.startswith("| App sandboxing")), "")
     f["README: sandboxing's status"] = ("Planned" if "| Planned" in readme else "implemented", "implemented")
-    doc = _read("docs/app-sandboxing.md")
-    f["app-sandboxing.md: its title's status"] = ("planning" if "planning" in doc.splitlines()[0] else "implemented", "implemented")
+    doc = _read(A1)
+    f["A1: its title's status"] = ("planning" if "planning" in doc.splitlines()[0] else "implemented", "implemented")
     # round one has no "Round" heading of its own: it is the file's first part
     rounds = 1 + len(re.findall(r"^## Round \w+", _read("docs/reviews/app-sandboxing-1.md"), re.M))
-    m = re.search(r"taken through (\w+) review rounds", doc)
-    f["app-sandboxing.md: how many review rounds"] = (WORDS.get(m.group(1).lower()) if m else None, rounds)
+    m = re.search(r"taken through (\w+) review rounds", _read(RECORD))
+    f["A1: how many review rounds"] = (WORDS.get(m.group(1).lower()) if m else None, rounds)
     if sys.platform.startswith("linux"):               # it runs the warning, which speaks Wayland over a Unix socket
         import tempfile
         os_was = sb.OS
@@ -202,8 +206,8 @@ def _facts() -> dict:
         for i, m in enumerate(re.finditer(pattern, _read(rel), re.M)):
             named = sorted({booted.series(s) for s in re.findall(DISTRO, m.group(1))})
             f[f"{rel}, {where}" + (f" ({i + 1})" if i else "")] = (named, sorted(set(named) & truth()))
-    for i, m in enumerate(re.finditer(r"(Mint \d+|Ubuntu \d\d\.\d\d)'s (\d+\.\d+) kernel", _read("docs/app-sandboxing.md"))):
-        f[f"app-sandboxing.md: {m.group(1)}'s kernel ({i + 1})"] = (m.group(2), booted.kernels().get(booted.series(m.group(1))))
+    for i, m in enumerate(re.finditer(r"(Mint \d+|Ubuntu \d\d\.\d\d)'s (\d+\.\d+) kernel", _read(A1))):
+        f[f"A1: {m.group(1)}'s kernel ({i + 1})"] = (m.group(2), booted.kernels().get(booted.series(m.group(1))))
     return f
 
 
@@ -217,10 +221,10 @@ BOOTED_CLAIMS = (
     ("R17.10's heading: where the setup is needed", REQ, r"R17\.10\. \*\*AppArmor setup \(([^)]*)\)", booted.needs_setup),
     ("R17.10.2: a machine where the setup ran", REQ, r"— (an? [^—]*?machine where the setup ran)", booted.needs_setup),
     ("R16.6: where the sandbox needs a profile", "docs/gaps.md", r"\*\*AppArmor:\*\* ([^;]+?) the sandbox needs a profile", booted.needs_setup),
-    ("the Approach: where the privileged step is", "docs/app-sandboxing.md", r"One privileged step (.+?) \(found", booted.needs_setup),
-    ("bubblewrap: where the privileged requirement is", "docs/app-sandboxing.md", r"\*\*One privileged requirement, ([^*]+)\.\*\*", booted.needs_setup),
-    ("the Limits: where AppArmor is needed", "docs/app-sandboxing.md", r"^- \*\*AppArmor ([^*]+)\.\*\*", booted.needs_setup),
-    ("the claims table: who restricts", "docs/app-sandboxing.md", r"^\| (.+?) restricts? unprivileged user namespaces through AppArmor", booted.restricted),
+    ("the Approach: where the privileged step is", A1, r"One privileged step (.+?) \(found", booted.needs_setup),
+    ("bubblewrap: where the privileged requirement is", A1, r"\*\*One privileged requirement, ([^*]+)\.\*\*", booted.needs_setup),
+    ("the Limits: where AppArmor is needed", A1, r"^- \*\*AppArmor ([^*]+)\.\*\*", booted.needs_setup),
+    ("the claims table: who restricts", A1, r"^\| (.+?) restricts? unprivileged user namespaces through AppArmor", booted.restricted),
     ("A1-prompt: where it's asked", "docs/local-proxy-test-plan.md", r"\*\*A1-prompt\.\*\* (.+?), before the setup", booted.needs_setup),
     ("A1-pkexec: where it's asked", "docs/local-proxy-test-plan.md", r"\*\*A1-pkexec\.\*\* (.+?), Settings", booted.needs_setup),
     ("the field test's A1-pkexec question", "scripts/sandbox/fieldtest.py", r'"A1-pkexec", "([^"]+)"', booted.needs_setup),
@@ -266,7 +270,7 @@ def test_the_harness_catches_a_template_added_without_the_documents(monkeypatch)
     # ...and every other count of them, wherever it is written, and the design doc's table
     counts = {k: v for k, v in facts.items() if "templates”" in k}
     assert counts and all(stated != true for stated, true in counts.values()), counts
-    assert facts["app-sandboxing.md: the templates in its table"][0] != facts["app-sandboxing.md: the templates in its table"][1]
+    assert facts["A1: the templates in its table"][0] != facts["A1: the templates in its table"][1]
 
 
 def test_the_harness_catches_setup_and_the_documents_naming_different_windows_10s(monkeypatch):

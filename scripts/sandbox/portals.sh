@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # Portals: does the file chooser hand a non-Flatpak sandboxed app a path it can't see, and does
 # marking it as a Flatpak (xdg-document-portal) fix that? Also: can the app use OpenURI/the launcher
 # portal to start a program outside the sandbox? Run with the bus FILTERED to the Desktop portal only.

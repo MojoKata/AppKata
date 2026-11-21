@@ -146,8 +146,8 @@ from its first check:
   PASS     D-sound        a sound grant reaches the sound server
   BLOCKED  D-nosound      no sound server without the grant
   PASS     D-gpu          OpenGL renderer inside: llvmpipe (LLVM 20.1.2, 256 bits)
-  PASS     EXP-strict     strict: everything it sees is listed in docs/sandbox-exposure.md
-  PASS     EXP-online-app online-app: everything it sees is listed in docs/sandbox-exposure.md
+  PASS     EXP-strict     strict: everything it sees is listed in docs/architecture/A2-sandbox-exposure.md
+  PASS     EXP-online-app online-app: everything it sees is listed in docs/architecture/A2-sandbox-exposure.md
   PASS     T-cli          a command-line tool works in the folder it's run in
   BLOCKED  T-cli-home     run from the home folder, it gets its private home and says why
   N/A      A1-prompt      the AppArmor setup's first-install prompt  -- no setup here: the kernel doesn't restrict user namespaces, or the system has a bwrap profile of its own

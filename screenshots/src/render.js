@@ -559,7 +559,7 @@ function detailPanel(T, key, o = {}) {
     s += text(x0 + 40, y + 48, `${v.by} · Avoid from ${v.from} · “${v.note}”`, { size: 11.5, fill: T.text });
     y += 76;
   }
-  if (inst && inst.reviewBadge) {   // a new version kept the user's grants; a standing nudge to review (decision 5)
+  if (inst && inst.reviewBadge) {   // a new version kept the user's grants; a standing nudge to review (A1.12.5)
     const q = inst.reviewBadge;
     const body = para(x0 + 40, y + 48, pw - 150, `Updated to ${q.ver}, running with your current sandbox. ${q.by} suggests ${q.what.join(' and ')}.`, T, { size: 11.5, lh: 16, fill: T.text });
     s += rect(x0, y, pw, 40 + body.h + 6, 11, T.accentSoft, { stroke: T.accent });
@@ -568,7 +568,7 @@ function detailPanel(T, key, o = {}) {
     s += button(x0 + pw - 12, y + 16, 'Review…', T, { soft: true, anchor: 'end', h: 30, size: 12 }).s;
     y += 40 + body.h + 18;
   }
-  if (inst && inst.setupNeeded) {   // Ubuntu 24.04, AppArmor setup declined: running Off, re-engageable (decision 6)
+  if (inst && inst.setupNeeded) {   // Ubuntu 24.04, AppArmor setup declined: running Off, re-engageable (A1.12.6)
     const body = para(x0 + 40, y + 48, pw - 150, 'This system blocks the sandbox until a one-time setup (asks for your password once). Until then it runs unsandboxed.', T, { size: 11.5, lh: 16, fill: T.text });
     s += rect(x0, y, pw, 40 + body.h + 6, 11, T.warnSoft, { stroke: T.warn });
     s += icon('warn', x0 + 14, y + 14, 16, T.warn, 1.7);
@@ -676,7 +676,7 @@ function detailPanel(T, key, o = {}) {
     });
     y += 66;
   }
-  if (inst && inst.sandbox) {      // what the sandbox lets it use (app-sandboxing.md)
+  if (inst && inst.sandbox) {      // what the sandbox lets it use (A1)
     const sb = inst.sandbox;
     s += text(x0, y, 'Sandbox', { size: 14, weight: 700, fill: T.text });
     s += text(x0 + pw, y, 'Change…', { size: 12.5, weight: 700, fill: T.accent, anchor: 'end' });
@@ -926,7 +926,7 @@ function appRow(x, y, w, key, T, o = {}) {
   const om = originMini(mx, y + 22, key, T, { bg: o.selected ? T.accentSoft : T.surface });
   s += om.s + text(mx + om.w + 6, y + 27, originText(key), { size: 12.5, fill: T.muted });
   s += text(mx, y + 46, `${a.host} · ${inst.type}`, { size: 11.5, fill: T.faint });
-  if (inst.sandbox) {             // app-sandboxing.md
+  if (inst.sandbox) {             // A1
     const sx = mx + tw(`${a.host} · ${inst.type}`, 11.5) + 10, off = inst.sandbox.level === 'Off';
     s += icon(off ? 'shield' : 'shieldCheck', sx, y + 36, 13, off ? T.faint : T.ok, 1.6);
     s += text(sx + 17, y + 46, off ? 'No sandbox' : inst.sandbox.level, { size: 11.5, weight: off ? 400 : 700, fill: off ? T.faint : T.ok });
@@ -1714,7 +1714,7 @@ function settingsStanza(T, v = '') {
     [31, 33, 'Settings for 3.5.1 on', 'Only what changed; Rating, Tags and the other options carry forward (10.3)'],
   ];
   let foot = 'Track only and pre-releases are personal settings, so they aren’t in any Settings.';
-  if (v === 'sandbox') {         // the sandbox a reviewer suggests (app-sandboxing.md)
+  if (v === 'sandbox') {         // the sandbox a reviewer suggests (A1)
     L = [
       [['| App | Source | Tags | Trust | Rating |', dim]],
       [['|---|---|---|---|---|', dim]],
@@ -2182,7 +2182,7 @@ function installDialog(T, o = {}) {
   s += checkbox(x0 + 440, y + 40, true, T) + text(x0 + 468, y + 54, 'Stable name link', { size: 13, weight: 700, fill: T.text });
   s += text(x0 + 16, y + 82, 'Options recommended by mara-dev / foss-picks', { size: 12, fill: T.accent });
   y += 108;
-  if (o.sandbox) {   // app-sandboxing.md
+  if (o.sandbox) {   // A1
     const right = x0 + iw;
     s += rect(x0, y, iw, 100, 12, T.input, { stroke: T.border });
     s += icon('shieldCheck', x0 + 16, y + 14, 16, T.ok) + text(x0 + 40, y + 27, 'Sandbox', { size: 13, weight: 700, fill: T.text });
@@ -2197,7 +2197,7 @@ function installDialog(T, o = {}) {
     s += text(x0 + 16 + tw(sug, 12), y + 88, '\u00a0· unpacked to run sandboxed: 312 MB → about 870 MB', { size: 12, fill: T.muted });
     y += 112;
   }
-  // "Disable the app's own updater" — its own option; required (and on) when sandboxed (app-sandboxing.md)
+  // "Disable the app's own updater" — its own option; required (and on) when sandboxed (A1)
   s += rect(x0, y, iw, 80, 12, T.input, { stroke: T.border });
   s += checkbox(x0 + 16, y + 14, !!o.sandbox, T, o.sandbox ? { disabled: true } : {}) + text(x0 + 44, y + 28, 'Disable the app’s own updater — AppKata updates it', { size: 13, weight: 700, fill: T.text });
   s += para(x0 + 16, y + 50, iw - 32, o.sandbox
@@ -2452,7 +2452,7 @@ function selfInstallScene(T) {
   return s;
 }
 
-// ---------------------------------------------------------------- app sandboxing (docs/app-sandboxing.md)
+// ---------------------------------------------------------------- app sandboxing (A1)
 // Portable apps and AppImages on Linux, run in bubblewrap: Off / Standard / Strict and what each app may use
 const SANDBOXED = {
   keepassxc: { from: '2.7.10', type: 'AppImage', sandbox: { level: 'Standard', x11: true,
@@ -2467,7 +2467,7 @@ const SANDBOXED = {
 function sandboxScene(patch, draw) {
   return withData({ INSTALLED: { ...SANDBOXED, ...patch } }, draw);
 }
-// The six built-in templates (docs/app-sandboxing.md): name, summary, the chips the summary shows.
+// The six built-in templates (A1): name, summary, the chips the summary shows.
 const TEMPLATES = {
   'Strict': ['Private home only. No network, no devices.', [['Strict', 'lock']]],
   'Offline editor': ['A documents folder, no network, display only.',
@@ -2488,7 +2488,7 @@ function dropdown(x, y, w, value, T, o = {}) {
   return s;
 }
 // the per-app Sandbox dialog (App Detail ▸ Sandbox ▸ Change…): a template dropdown, a live summary,
-// and a collapsed Customize disclosure (the groups open in A25). app-sandboxing.md.
+// and a collapsed Customize disclosure (the groups open in A25). A1.
 function sandboxDialog(T) {
   let s = appsView(T, { detail: 'keepassxc' }) + scrim(T);
   const a = APPS.keepassxc, tpl = 'Offline editor', [summary, chips] = TEMPLATES[tpl];
@@ -2534,7 +2534,7 @@ function sandboxDialog(T) {
   return s;
 }
 // the Customize section expanded, scrolled to Connections / Devices / Advanced so the Landlock
-// controls (the defense-in-depth layer inside bwrap) are visible. app-sandboxing.md.
+// controls (the defense-in-depth layer inside bwrap) are visible. A1.
 function sandboxAdvanced(T) {
   let s = appsView(T, { detail: 'keepassxc' }) + scrim(T);
   const dw = 620, dh = 700, dx = (W - dw) / 2, dy = (H - dh) / 2, x0 = dx + 30, iw = dw - 60, right = x0 + iw;
@@ -2687,7 +2687,7 @@ const SCREENS = [
   ['X09-confirm-quit', T => confirmDialog(T, appsView(T, { busy: true }), { title: 'Quit while installing?', action: 'Quit AppKata', ic: 'power',
     body: 'The install in progress is stopped. A download picks up where it left off the next time you install or update.',
     list: 'Installing: LocalSend (Downloading 45%), AppKata (Waiting), Signal Desktop (Waiting)' }), ['dark']],
-  // App sandboxing on Linux (docs/app-sandboxing.md)
+  // App sandboxing on Linux (A1)
   ['C11-install-sandbox', T => installDialog(T, { sandbox: true }), ['dark', 'light']],
   ['A20-apps-detail-sandbox', sandboxScene({}, T => appsView(T, { detail: 'keepassxc' })), ['dark', 'light']],
   ['A21-sandbox-dialog', sandboxScene({}, T => sandboxDialog(T)), ['dark', 'light']],

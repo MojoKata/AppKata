@@ -1,11 +1,11 @@
 # Sandbox launcher & bus proxy: how they work, and the real-desktop checklist
 
-Companion to [`app-sandboxing.md`](app-sandboxing.md) (the rationale) and R17 (the spec).
+Companion to [A1](architecture/A1-app-sandboxing/README.md) (the rationale) and R17 (the spec).
 Two parts:
 
 1. **[How the launcher works](#how-the-launcher-works)**: the parts of the text AppKata writes for
    each sandboxed app, the filtered D-Bus proxy, the identity marker and the capability mapping.
-   The launcher's **exact text is the goldens** in [`tests/data/launchers/`](../tests/data/launchers/),
+   The launcher's **exact text is the goldens** in [`tests/data/launchers/`](../tests/data/launchers),
    one per grant set. `tests/test_launcher_golden.py` keeps them byte for byte, so any change to the
    launcher shows in review as a shell diff (R17.4).
 2. **[The real-desktop checklist](#the-real-desktop-checklist)**: what a logged-in desktop can answer
@@ -194,7 +194,7 @@ that updates itself (Obsidian).
 | D-sound, D-nosound | a sound grant reaches the sound server; no grant, no server | R17.8 |
 | D-gpu | the OpenGL renderer inside | R17.4 |
 | T-cli, T-cli-home | a command-line tool works in its folder; run from the home, it gets its private home and says why | R17.3.3 |
-| EXP-strict, EXP-online-app | everything a Strict and an Online app see of this desktop is listed in [`sandbox-exposure.md`](sandbox-exposure.md), each row stated by a requirement | R17.4, R17.17 |
+| EXP-strict, EXP-online-app | everything a Strict and an Online app see of this desktop is listed in [A2](architecture/A2-sandbox-exposure.md), each row stated by a requirement | R17.4, R17.17 |
 | GUI-run (`--app`) | a real app installed by AppKata starts from its launcher and keeps running | R17.4 |
 
 ### What it asks the tester

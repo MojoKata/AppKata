@@ -219,7 +219,7 @@ Dialog {
                                     onClicked: { let f = Object.assign({}, root.gs.folders); delete f[modelData[0]]; root.setField("folders", f) } }
                     }
                 }
-                Flow {      // the user folders in one click, by this system's names for them (R17.2.1, decision 4)
+                Flow {      // the user folders in one click, by this system's names for them (R17.2.1, A1.12.4)
                     width: body.width; spacing: 8
                     Repeater {
                         model: (root.info.userFolders || []).filter(x => !(x.path in (root.gs.folders || {})))

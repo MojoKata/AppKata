@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # Real apps on Wayland only (sway, no XWayland): unpacked AppImages in the Standard profile with the
 # Wayland socket, sound and the filtered bus; screenshots taken outside with grim.
 . /x/session.sh; . /x/lib.sh

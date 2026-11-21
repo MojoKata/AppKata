@@ -1,4 +1,4 @@
-"""The claims tables in docs/app-sandboxing.md name their evidence, and an inferred row is a
+"""The claims tables in docs/architecture/A1-app-sandboxing/ name their evidence, and an inferred row is a
 deliberate one (round seven).
 
 Six rounds in, the findings that mattered most were claims written from reading source that
@@ -11,7 +11,9 @@ quietly dropping one that should have been run -- is a change to this test too.
 import os
 import re
 
-DOC = os.path.join(os.path.dirname(__file__), "..", "docs", "app-sandboxing.md")
+import reqdocs
+
+DOC = os.path.join(os.path.dirname(__file__), "..", "docs", "architecture", "A1-app-sandboxing", "A1.11-claims.md")
 
 # what is still inferred, and why it stays so for now
 STILL_INFERRED = {
@@ -20,10 +22,10 @@ STILL_INFERRED = {
 
 
 def rows(section: str) -> list[tuple[str, str]]:
-    text = open(DOC).read()
-    i = text.index(f"## {section}")
+    text = reqdocs.section(1, reqdocs.ARCH)
+    i = re.search(rf"^#+ A1\.\d+\. {re.escape(section)}", text, re.M).start()
     body = text[i:]
-    body = body[:body.index("\n## ", 10)] if "\n## " in body[10:] else body
+    body = body[:body.index("\n#", 10)] if "\n#" in body[10:] else body
     out = []
     for line in body.splitlines():
         if line.startswith("| ") and not line.startswith("| Claim") and not line.startswith("|---") and not line.startswith("| Hint"):

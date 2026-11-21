@@ -803,7 +803,7 @@ class Backend(QObject):
 
     def _answer_install_dialog(self, url: str, answer: dict) -> None:
         """Replace the install dialog's keys in the app's settings row with this answer, keeping the
-        rest. Regression (decision 5, R17.11): the row was rewritten from the dialog's fields alone, so
+        rest. Regression (A1.12.5, R17.11): the row was rewritten from the dialog's fields alone, so
         re-saving Install options dropped `sandboxPinned`, `sandboxReviewSeen` and a `sandbox` choice
         the dialog didn't send (it only sends the card when it was touched), and the next install
         re-pinned from the current reviews — the silent widening the pin exists to prevent."""

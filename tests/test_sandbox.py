@@ -1282,7 +1282,7 @@ def test_ordinary_folders_are_no_secrets(fake_home):
 
 
 def test_the_user_folders_are_this_systems_own_names_and_only_those_that_exist(tmp_path, monkeypatch):
-    # Review 2, F10 (decision 4): one-click Documents, Downloads, Pictures, Videos and Music, under the
+    # Review 2, F10 (A1.12.4): one-click Documents, Downloads, Pictures, Videos and Music, under the
     # names this system gives them (a German desktop's Dokumente), from ~/.config/user-dirs.dirs
     home = tmp_path / "home"
     for d in ("Dokumente", "Bilder", "Musik", "Downloads"):

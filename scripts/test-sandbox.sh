@@ -1,5 +1,5 @@
 #!/bin/sh
-# The app-sandboxing experiment (docs/app-sandboxing.md).
+# The app-sandboxing experiment (docs/architecture/A1-app-sandboxing/).
 #   probe    a "hostile app" probe (a Mint 22.3 container): Neovim's AppImage runs
 #            scripts/sandbox/probe.lua unsandboxed and under the Standard and Strict bwrap profiles,
 #            and the real files are checked afterwards.
@@ -12,7 +12,7 @@
 #   launcher tests/test_sandbox_run.py in a Linux Mint 22.3 container, the current release (bwrap 0.9,
 #            xdg-dbus-proxy, the document portal on FUSE): the launchers AppKata generates, actually
 #            run, as an ordinary user; tests/test_sandbox_exposure.py, everything they show checked
-#            against docs/sandbox-exposure.md (review 3, harness 3); tests/test_sandbox_one_fact.py's
+#            against docs/architecture/A2-sandbox-exposure.md (review 3, harness 3); tests/test_sandbox_one_fact.py's
 #            support status against what each level's launcher does (harness 4); and
 #            tests/test_sandbox_user_shaped.py's arguments as users give them, through the real
 #            document portal (harness 6). Extra args go to pytest.

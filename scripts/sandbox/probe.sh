@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh (docs/app-sandboxing.md).
+# Part of scripts/test-sandbox.sh (A1).
 # Runs inside the Mint container as root: sets up a user with secrets, installs Neovim's AppImage the
 # way AppKata lays out portable apps, then runs the probe unsandboxed and under several bwrap profiles.
 set -u

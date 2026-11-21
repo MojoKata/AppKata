@@ -235,7 +235,7 @@ def _dialog_can_make(ui, be, start: dict) -> list[tuple[str, dict]]:
              and o.property("tip") in ("Remove", "Make read-only", "Make read-write")][i]
         b.clicked.emit()
         out.append((tip, sb.normalize(_prop(dlg, "gs"))))
-    # the user folders in one click (decision 4), as this system names them
+    # the user folders in one click (A1.12.4), as this system names them
     for i, label in enumerate(f["label"] for f in be.sandboxInfo(URL)["userFolders"]):
         fresh()
         b = next(o for o in _items(dlg) if o.metaObject().className().startswith("FButton") and o.property("text") == label)

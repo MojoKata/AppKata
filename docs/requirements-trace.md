@@ -11,7 +11,7 @@ differ from its list (review 3, harness B).
 **Shown by** names, comma-separated:
 - a test function (`test_…`, found in `tests/`), or a harness mode (`harness:<mode>`, in
   `scripts/test-sandbox.sh`);
-- `claim` — a third-party fact, with its evidence in `docs/app-sandboxing.md`'s claims table;
+- `claim` — a third-party fact, with its evidence in A1.11's claims table;
 - `open: <id>` — a finding that keeps it unshown (`R2-…` in `docs/reviews/app-sandboxing-2.md`,
   `R3-…` in `app-sandboxing-3.md`);
 - `deferred` — listed in R17.18; `statement` — explains, names a file or a limit, promises nothing

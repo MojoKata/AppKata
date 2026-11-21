@@ -188,7 +188,7 @@ def check(w: World, op: str, before: dict, after: dict, toasts: list) -> set[str
         if any(a[k] != b[k] and not all(w in said for w in words[k]) for k in words):
             broken.add("audited-with-what-changed")
     if op in NOT_USER and before["runs"] != after["runs"]:
-        broken.add("reviews-never-change-what-runs")         # decision 5: nothing but the user changes what runs
+        broken.add("reviews-never-change-what-runs")         # A1.12.5: nothing but the user changes what runs
     if op == "install-options-resave" and (before["runs"] != after["runs"] or before["choice"] != after["choice"]):
         broken.add("a-resave-changes-nothing")
     if after["self-launcher"]:

@@ -1,4 +1,4 @@
-# What a sandboxed app can see
+# A2. What a sandboxed app can see
 
 Everything of the host a sandboxed app can see: each mount, environment variable, device, socket,
 identifier and network reach a generated launcher gives it, when, and which sentence of the
@@ -45,7 +45,7 @@ launch, a GPU, an identifier.
 **Stated in** is either a requirement and a phrase from it, `no host data` (something private to
 the sandbox), or `open:` and the finding that keeps it unstated.
 
-## The inventory
+## A2.1. The inventory
 
 | Seen inside | When | Stated in |
 |---|---|---|

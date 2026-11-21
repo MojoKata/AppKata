@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "apparmor" (docs/app-sandboxing.md). Runs inside the Ubuntu 24.04 KVM VM.
+# Part of scripts/test-sandbox.sh "apparmor" (A1). Runs inside the Ubuntu 24.04 KVM VM.
 # Question: can AppKata (a plain-user AppImage, no root) satisfy the userns requirement on first need,
 # and what needs privilege? Runs each check as the unprivileged 'ubuntu' user unless noted.
 exec > /dev/ttyS0 2>&1

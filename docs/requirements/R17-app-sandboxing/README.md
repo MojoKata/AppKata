@@ -3,7 +3,7 @@
 AppKata installs apps from the projects' own releases, so it can't vouch for what's inside them;
 Trusts and reviews lower the odds of a hostile app, they don't contain one. This section limits the
 harm a **portable app or AppImage** can do to the rest of the computer once installed. The rationale,
-the experiments behind each decision, and the mockups are in [`app-sandboxing.md`](../../app-sandboxing.md);
+the experiments behind each decision, and the mockups are in [A1](../../architecture/A1-app-sandboxing/README.md);
 the human validation checklist and an explanation of the launcher and the proxy are in
 [`local-proxy-test-plan.md`](../../local-proxy-test-plan.md) (`scripts/sandbox/field-test.sh`); the launcher's
 exact text is the goldens in `tests/data/launchers/` (R17.4). Deferred

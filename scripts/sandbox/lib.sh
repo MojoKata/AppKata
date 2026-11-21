@@ -1,5 +1,5 @@
 # Sourced after session.sh. sbx <name> <command...> runs a command in the Standard profile, varied by:
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 #   SBX_DISPLAY = wayland | x11 | none     the display socket bound in (only that socket)
 #   SBX_SOUND   = 1                        the PipeWire and PulseAudio sockets
 #   SBX_BUS     = none | talk | flatpak    no session bus; xdg-dbus-proxy --talk=portal.Desktop; the same proxy

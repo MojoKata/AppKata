@@ -43,7 +43,7 @@ Containers run on the test machine's kernel; the VMs on their own.
 | 6 | Ubuntu 26.04 LTS | 3 | 3 min | ~1 GB | **3:** `scripts/test-sandbox.sh launcher-vm26`: the newest sandbox versions (bwrap 0.11.1, portal 1.21), under the system's own bwrap profile |
 
 The AppImage checks are described in [`build.md`](build.md) ("AppImage"), the sandbox runs in
-[`app-sandboxing.md`](app-sandboxing.md) ("Tests, in four tiers"), the Windows VM in `build.md`
+[the sandboxing record](reviews/app-sandboxing-build.md) ("Tests, in four tiers"), the Windows VM in `build.md`
 ("Windows").
 
 ## What each environment boots with

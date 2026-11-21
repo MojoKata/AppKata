@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of scripts/test-sandbox.sh "session" (docs/app-sandboxing.md round 2). Runs inside the Mint 22.1 Wayland container.
+# Part of scripts/test-sandbox.sh "session" (A1.8.1). Runs inside the Mint 22.1 Wayland container.
 # Display tests: what a sandboxed app can do to the user's other windows on Wayland (sway) and X11.
 . /x/session.sh; . /x/lib.sh
 H=$HOME/.local/share/appkata/sandboxes/probe

@@ -6,7 +6,7 @@ AppKata installs and updates them, and reviewers publish trust and ratings in si
 `AppKata.md` files.
 
 These files say what AppKata is and does. Why a part of it is built the way it is, where that
-takes more than a sentence, is in the design documents beside them, such as [`../app-sandboxing.md`](../app-sandboxing.md). Mockups live in
+takes more than a sentence, is in the [architecture](../architecture/README.md). Mockups live in
 [`../../screenshots`](../../screenshots/README.md), and
 [`../requirements-trace.md`](../requirements-trace.md) maps the sentences of R17 to the tests that
 show them.

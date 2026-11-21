@@ -37,7 +37,7 @@ step unattended (`COWORKER_UNATTENDED=1`).
 
 Which tests run when, on which environment, and how long each takes is in [`testing.md`](testing.md).
 The sandbox's own runs are in containers and VMs (`scripts/test-sandbox.sh`; what each shows is in
-[`app-sandboxing.md`](app-sandboxing.md), "Tests, in four tiers"): `launcher` (Linux Mint 22.3),
+[the sandboxing record](reviews/app-sandboxing-build.md), "Tests, in four tiers"): `launcher` (Linux Mint 22.3),
 `launcher-lmde7` (LMDE 7), `launcher-vm` (Ubuntu 24.04 under KVM, the AppArmor profile applied),
 `launcher-vm26` (Ubuntu 26.04 under its own bwrap profile), and on Mint 22.3 `filedialogs`,
 `consumers`, `wayland`, `kwin` and `inputmethod`, with `filedialogs-lmde7` and `kwin-lmde7` on LMDE 7

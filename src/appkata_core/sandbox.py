@@ -683,7 +683,7 @@ def choose(user: dict | None, pinned: dict | None, reviews: list[dict], default:
     2. `pinned` — the grant set the installed app has been running with (`{"grants", "template"}`).
        Reviews **never** change an installed app's grants on their own: a newer or changed review only
        raises the review badge, and an update keeps the pinned grants, so access is never silently
-       widened (decision 5);
+       widened (A1.12.5);
     3. `reviews` — each Trust's sandbox config, merged least-privilege (a fresh install);
     4. `default` — the default config by app kind and review state (R17.3.3).
     """

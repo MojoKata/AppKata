@@ -285,13 +285,13 @@ def _checks(r: Report, p: Probe, warn: dict, a) -> None:
 def _exposure(r: Report, p: Probe, templates: tuple) -> None:
     """Review 3's harness 3 on a real desktop: everything the probe can see from inside AppKata's
     launcher -- mounts, variables, devices, sockets, identifiers, network reach -- against
-    docs/sandbox-exposure.md. A container can't show a real session's sockets, GPU or resolver."""
+    docs/architecture/A2-sandbox-exposure.md. A container can't show a real session's sockets, GPU or resolver."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import exposure as ex
     try:
         rows = ex.load()
     except OSError:
-        r.rec("N/A", "EXP", "the exposure inventory", "docs/sandbox-exposure.md isn't beside this checkout")
+        r.rec("N/A", "EXP", "the exposure inventory", "docs/architecture/A2-sandbox-exposure.md isn't beside this checkout")
         return
     host = ex.parse(subprocess.run([sys.executable, "-c", ex.PROBE], capture_output=True, text=True, timeout=120).stdout)
     session = "wayland" if REAL["WAYLAND_DISPLAY"] else "x11"
@@ -311,7 +311,7 @@ def _exposure(r: Report, p: Probe, templates: tuple) -> None:
                "marker": None, "abstract_bus": REAL["DBUS_SESSION_BUS_ADDRESS"].startswith("unix:abstract=")}
         seen = ex.items(inside, host, ctx)
         extra = sorted(seen - ex.expected(rows, ex.facts_for(sb.resolve_template(name), session, False, False), ctx, host))
-        r.rec("FAIL" if extra else "PASS", f"EXP-{name}", f"{name}: everything it sees is listed in docs/sandbox-exposure.md",
+        r.rec("FAIL" if extra else "PASS", f"EXP-{name}", f"{name}: everything it sees is listed in docs/architecture/A2-sandbox-exposure.md",
               ("not listed: " + "; ".join(extra)) if extra else "")
         opened = sorted({row["stated"][6:] for row in rows for i in seen if i in row["items"] and row["stated"].startswith("open: ")})
         if opened:
