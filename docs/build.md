@@ -20,9 +20,10 @@ scripts/test-tier1.sh                      # the same in a container, on a host 
 scripts/test-clock.sh                      # tier 1 at seven times and zones: the day's start and end, a year's end, UTC+14, UTC-12
 scripts/demo_data.py build build/tour-data && scripts/demo_data.py sync build/tour-data \
     && scripts/demo_data.py finish build/tour-data
-scripts/test-layout.sh                     # the tour in tier 1's container: no text drawn outside its box
-scripts/test-layout.sh --shots             # the same, and its screens replace screenshots/linux
-scripts/test-screenshot-text.sh            # after any screenshots are made again: no private name or other repository address in them
+scripts/tour-data.sh                       # or as CI makes it: kept, remade, synced, else from tests/data/demo
+scripts/test-layout.sh                     # the tour in tier 1's container: no text drawn outside its box; screens in build/layout-tour
+scripts/test-screenshot-text.sh            # after the committed screenshots are made again: no private name or other repository address in them
+scripts/test-screenshot-text.sh build/layout-tour/*/*.png   # the same for a Linux tour
 ```
 
 What the machine needs for these (Qt's system libraries for the `.venv`, bubblewrap and
@@ -52,14 +53,17 @@ saves `DIR/{dark,light}/<screen>.png`. It runs offscreen, so it works over SSH a
 containers. Its window is at the design point (R5.2.1): 1920 × 1040 offscreen and, on
 Windows, what the screen leaves beside the taskbar (`test-windows-vm.sh` sets the VM's screen to
 1920 × 1080 for it). Tier 1's container prefers Nimbus Sans for sans-serif, the font the Linux
-screenshots were first taken with, and the screenshots come from it (`--shots`), so they're the
-same on any host, even one whose glibc can't run the release's PySide6. `APPKATA_TOUR_THEMES=dark` limits it to one theme; `--tour-only A01-apps,C01-catalog`
+screenshots were first taken with, and the Linux screenshots come from it (CI's `tour` job runs
+`scripts/test-layout.sh`), so they're the same on any host, even one whose glibc can't run the
+release's PySide6. `APPKATA_TOUR_THEMES=dark` limits it to one theme; `--tour-only A01-apps,C01-catalog`
 to some screens. On each screen it saves, it checks every visible text against the card, chip,
 menu or dialog it is drawn in (`src/appkata/layout.py`). It writes what runs past to
 `DIR/layout.txt` and exits 1 if anything does, apart from what `STILL_OUTSIDE` in `tour.py` lists.
-`scripts/test-layout.sh` runs it on `build/tour-data` in tier 1's container. Run it after a change
-to the QML. `tests/test_layout.py` opens the Install dialog with long values (Windows' paths, long
-names) and checks it the same way in tier 1.
+`scripts/test-layout.sh` runs it on `build/tour-data` in tier 1's container, into
+`build/layout-tour`. Run it after a change to the QML; CI runs it on every pull request, and the
+screens it makes are the pull request's `tour` artifact ([`github-workflows.md`](github-workflows.md#the-tour)).
+`tests/test_layout.py` opens the Install dialog with long values (Windows' paths, long names) and
+checks it the same way in tier 1.
 
 The Audit groups its entries by day, so the tour shows its times in UTC, but in the first hour of a
 UTC day an hour behind it, where the day is ending (`scripts/demo_data.py offset`; `stage` would stop

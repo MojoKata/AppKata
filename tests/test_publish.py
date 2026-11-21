@@ -426,7 +426,7 @@ def test_git_keeps_every_file_the_release_reads():
     # version (the 0.1.0 re-cut, 2026-11-08, the first record).
     if not shutil.which("git"):
         pytest.skip("needs git")
-    for path in ("docs/releases/9.9.9.md", "tests/data/state/9.9.9.json", "screenshots/linux/dark/X.png"):
+    for path in ("docs/releases/9.9.9.md", "tests/data/state/9.9.9.json", "screenshots/windows/dark/X.png"):
         r = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)
         assert r.returncode == 1, f"git ignores {path}"
     r = subprocess.run(["git", "check-ignore", "-q", "--no-index", "releases/AppKata-9.9.9-x86_64.AppImage"], cwd=ROOT)

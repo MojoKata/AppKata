@@ -4,15 +4,15 @@
 # APPKATA_TOUR_THEMES says otherwise; extra args go to the tour (--tour-only A01-apps,C10-install-channels).
 # It runs on build/tour-data itself (scripts/demo_data.py), at the same path: the paths it shows are
 # part of what is laid out. The screens, at the design point (R5.2.1), go to
-# build/layout-tour; with --shots, a passing tour also replaces screenshots/linux/{dark,light}.
+# build/layout-tour/{dark,light}: CI's tour job makes them on each run and publishes master's on the
+# Pages site (docs/github-workflows.md, "The tour").
 # APPKATA_TOUR_OFFSET=+HH:MM is the tour's time zone, UTC by default and an hour behind it in the
 # first hour of a UTC day, whose Audit has no room yet (demo_data.py offset, stage).
-#   scripts/test-layout.sh [--shots] [--tour-only NAMES]
+#   scripts/test-layout.sh [--tour-only NAMES]
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 "$HERE/coworker/bin/deps" register "$HERE"   # the coworker protocol (the coworker/ submodule, MojoKata/coworker): remembers AppKata, mentions what the host lacks
-SHOTS=0
-[ "${1:-}" != --shots ] || { SHOTS=1; shift; }
+[ "${1:-}" != --shots ] || { echo "test-layout.sh: --shots is gone: screenshots/linux left the tree; the screens are in build/layout-tour (docs/build.md)" >&2; exit 2; }
 OFF=${APPKATA_TOUR_OFFSET:-}
 [ -n "$OFF" ] || OFF=$(python3 "$HERE/scripts/demo_data.py" offset)
 case $OFF in [+-][0-9][0-9]:[0-9][0-9]) ;; *) echo "APPKATA_TOUR_OFFSET is +HH:MM or -HH:MM, not $OFF" >&2; exit 2 ;; esac
@@ -59,14 +59,7 @@ set -e
 grep '^layout (listed)' "$OUT/tour.log" || true
 N=$(find "$OUT" -name '*.png' | wc -l)
 if [ "$RC" = 0 ]; then
-    echo "$N screens: every text inside its box"
-    if [ "$SHOTS" = 1 ]; then
-        for t in dark light; do
-            [ "$#" -gt 0 ] || rm -rf "$HERE/screenshots/linux/$t"      # the whole tour: what it no longer takes goes
-            [ ! -d "$OUT/$t" ] || { mkdir -p "$HERE/screenshots/linux/$t" && cp "$OUT/$t"/*.png "$HERE/screenshots/linux/$t/"; }
-        done
-        echo "saved screenshots/linux/{dark,light}"
-    fi
+    echo "$N screens: every text inside its box (build/layout-tour/{dark,light})"
 else
     echo "the tour exited $RC after $N screens (build/layout-tour/tour.log)"
     [ ! -s "$OUT/layout.txt" ] || cat "$OUT/layout.txt"

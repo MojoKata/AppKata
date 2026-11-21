@@ -4,6 +4,7 @@ the hardening page (scripts/hardening.py) and the screenshots, published to the 
 Pages on each push to master.
 
     coverage_site.py build [--coverage DIR] [--screenshots DIR] [--out DIR]
+    coverage_site.py release-tours DIR
 
 builds the site into build/site/ (--out) from what `coverage_report.py report` wrote into
 build/coverage/ (--coverage: totals.json, files.json and the HTML report), the history the published
@@ -19,7 +20,8 @@ that answers with no history.json starts one only while there is no site at all;
 read it fails the build in CI, so a bad moment never starts the history over. The screenshots are kept
 the same way: the published ones, under screenshots/<version>/ as screenshots/index.json lists them, are
 carried into each build, and --screenshots DIR adds or replaces the versions DIR holds
-(DIR/<version>/...)."""
+(DIR/<version>/...). CI's site job puts its run's Linux tour in DIR/master/, and release-tours DIR
+puts there each published release's that the site doesn't hold yet, from its tag's run."""
 
 import argparse
 import html
@@ -628,6 +630,58 @@ def screenshots(base, nonce, dest, new=None, fetch=True):
     return dict(sorted(index.items(), key=lambda kv: _version_key(kv[0]), reverse=True))
 
 
+# The folder of the newest tour, master's, replaced by each push; a release's own is kept under its
+# version (release_tours).
+LATEST = "master"
+
+
+def gh(*args):
+    """gh's output (GH_TOKEN, or GITHUB_TOKEN in CI), or None when it fails; what it said goes to stderr."""
+    env = dict(os.environ)
+    env.setdefault("GH_TOKEN", os.environ.get("GITHUB_TOKEN", ""))
+    if not env["GH_TOKEN"]:
+        del env["GH_TOKEN"]
+    r = subprocess.run([shutil.which("gh") or "gh", *args], capture_output=True, text=True, env=env)
+    if r.returncode:
+        print(r.stderr.strip(), file=sys.stderr)
+        return None
+    return r.stdout
+
+
+def notice(text):
+    print(f"::warning title=release tours::{text}" if in_ci() else text)
+
+
+def release_tours(dest):
+    """Each published release whose tour the site doesn't hold yet, into dest/<version>/: the `tour`
+    artifact of CI's run of its tag, which made it from the tagged commit. A release whose run or
+    artifact can't be had (GitHub keeps an artifact 90 days) is named in a warning and left out, so
+    the site goes on without it. Returns the versions brought."""
+    base, nonce, repo = site_url(), os.environ.get("GITHUB_RUN_ID") or str(os.getpid()), repository()
+    held = set((published(base, nonce, "screenshots/index.json") or {}).get("versions", {}))
+    out = gh("api", f"repos/{repo}/releases", "--paginate", "--jq",
+             '.[] | select(.draft | not) | .tag_name')
+    if out is None:
+        raise SystemExit(f"the releases of {repo} couldn't be read")
+    brought = []
+    for tag in out.split():
+        version = tag[1:] if tag.startswith("v") else tag
+        if version in held or version == LATEST or not VERSION.match(version):
+            continue
+        run = gh("run", "list", "--repo", repo, "--workflow", "ci.yml", "--branch", tag, "--event", "push",
+                 "--status", "success", "--limit", "1", "--json", "databaseId", "--jq", ".[].databaseId")
+        if not run or not run.strip():
+            notice(f"{tag}: no passing CI run of the tag, so no tour of {version}")
+            continue
+        if gh("run", "download", run.strip(), "--repo", repo, "--name", "tour", "--dir", str(Path(dest) / version)) is None:
+            shutil.rmtree(Path(dest) / version, ignore_errors=True)
+            notice(f"{tag}: run {run.strip()} has no tour artifact (gone after 90 days?), so no tour of {version}")
+            continue
+        brought.append(version)
+    print(f"release tours: {', '.join(brought) or 'none new'} (the site holds {', '.join(sorted(held)) or 'none'})")
+    return brought
+
+
 def screenshots_page(index):
     """The screenshots' page: each version's, newest first, each image linked to itself."""
     out = []
@@ -635,9 +689,12 @@ def screenshots_page(index):
         images = [n for n in names if n.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]
         tiles = "".join(f"<a href='{html.escape(version)}/{html.escape(n)}'><img loading='lazy' alt='{html.escape(n)}' "
                         f"src='{html.escape(version)}/{html.escape(n)}'><span>{html.escape(n)}</span></a>" for n in images)
+        what = (f"The newest push to {LATEST}, replaced by each one: {len(images)} screens." if version == LATEST
+                else f"Release {html.escape(version)}, from CI's run of its tag: {len(images)} screens.")
         out.append(f"<h2 id='v{html.escape(version)}'>{html.escape(version)}</h2>"
-                   f"<p>{len(images)} screens.</p><div class='shots'>{tiles}</div>")
-    body = "\n".join(out) or ("<p class='none'>None are published. CI's Linux tour publishes each version's under "
+                   f"<p>{what}</p><div class='shots'>{tiles}</div>")
+    body = "\n".join(out) or ("<p class='none'>None are published. CI's Linux tour publishes master's under "
+                              f"<code>screenshots/{LATEST}/</code>, and each release's under "
                               "<code>screenshots/&lt;version&gt;/</code>.</p>")
     return f"""<!doctype html>
 <html lang="en">
@@ -735,7 +792,12 @@ def main(argv=None):
     b.add_argument("--coverage", default=str(COVERAGE), help="what coverage_report.py report wrote (build/coverage)")
     b.add_argument("--screenshots", help="a folder of <version>/ folders of screenshots to add")
     b.add_argument("--out", default=str(SITE), help="where to build it (build/site)")
+    r = sub.add_parser("release-tours", help="each published release's tour the site doesn't hold yet, into DIR/<version>/")
+    r.add_argument("dir")
     args = p.parse_args(argv)
+    if args.what == "release-tours":
+        release_tours(args.dir)
+        return 0
     return build(args.coverage, args.out, args.screenshots)
 
 

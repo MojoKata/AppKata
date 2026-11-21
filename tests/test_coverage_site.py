@@ -243,3 +243,68 @@ def test_the_command_line_builds_into_the_folder_given(monkeypatch, tmp_path):
     monkeypatch.setattr(cs, "get", site({}))
     assert cs.main(["build", "--coverage", str(coverage), "--out", str(tmp_path / "out")]) == 0
     assert (tmp_path / "out" / "index.html").exists()
+
+
+def test_master_s_tour_comes_first_and_says_what_it_is(monkeypatch, tmp_path):
+    monkeypatch.setattr(cs, "get", site({"screenshots/index.json": b'{"versions": {}}'}))
+    new = tmp_path / "new"
+    for v in ("master", "0.2.0"):
+        (new / v / "dark").mkdir(parents=True)
+        (new / v / "dark" / "A01-apps.png").write_bytes(v.encode())
+    got = cs.screenshots(BASE, "1", tmp_path / "site", new)
+    assert list(got) == ["master", "0.2.0"]
+    page = cs.screenshots_page(got)
+    assert "The newest push to master, replaced by each one: 1 screens." in page
+    assert "Release 0.2.0, from CI's run of its tag: 1 screens." in page
+
+
+def test_a_published_release_s_tour_is_brought_from_its_tag_s_run_once(monkeypatch, tmp_path, capsys):
+    """release_tours brings each published release's tour the site doesn't hold, from its tag's CI run;
+    a draft, a release the site holds, and one whose run or artifact is gone bring nothing, and the
+    site goes on."""
+    monkeypatch.setattr(cs, "get", site({"screenshots/index.json": b'{"versions": {"0.1.0": ["dark/a.png"]}}'}))
+    asked = []
+
+    def gh(*args):
+        asked.append(args)
+        if args[0] == "api":
+            assert "select(.draft | not)" in args[-1]             # drafts aren't releases yet
+            return "v0.1.0\nv0.2.0\nv0.3.0\nv0.4.0\n"
+        if args[:2] == ("run", "list"):
+            tag = args[args.index("--branch") + 1]
+            return {"v0.2.0": "11\n", "v0.4.0": "44\n"}.get(tag, "")
+        if args[:2] == ("run", "download"):
+            if args[2] == "44":
+                return None
+            d = tmp_path / "shots" / "0.2.0" / "dark"
+            d.mkdir(parents=True)
+            (d / "A01-apps.png").write_bytes(b"0.2.0")
+            return ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cs, "gh", gh)
+    assert cs.release_tours(tmp_path / "shots") == ["0.2.0"]
+    lists = [a for a in asked if a[:2] == ("run", "list")]
+    assert [a[a.index("--branch") + 1] for a in lists] == ["v0.2.0", "v0.3.0", "v0.4.0"]     # not v0.1.0: held
+    assert all("--status" in a and "success" in a for a in lists)
+    assert sorted(p.name for p in (tmp_path / "shots").iterdir()) == ["0.2.0"]          # 0.4.0's partial one gone
+    out = capsys.readouterr().out
+    assert "v0.3.0: no passing CI run" in out and "v0.4.0: run 44 has no tour artifact" in out
+
+    monkeypatch.setattr(cs, "gh", lambda *a: None)
+    with pytest.raises(SystemExit, match="releases of SomeOne/Store couldn't be read"):
+        cs.release_tours(tmp_path / "shots")
+
+
+def test_gh_passes_ci_s_token_and_says_none_when_it_fails(monkeypatch, tmp_path, capsys):
+    fake = tmp_path / "gh"
+    fake.write_text('#!/bin/sh\n[ "$1" = fail ] && { echo "no such thing" >&2; exit 1; }\necho "$GH_TOKEN $*"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "t0ken")
+    assert cs.gh("api", "x") == "t0ken api x\n"
+    assert cs.gh("fail") is None and "no such thing" in capsys.readouterr().err
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    cs.notice("gone")
+    assert capsys.readouterr().out == "::warning title=release tours::gone\n"
