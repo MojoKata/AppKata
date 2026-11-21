@@ -13,8 +13,13 @@ Its source is the repository's issues, read from GitHub's GraphQL API (the proje
   fixed when closed as completed, else closed;
 - the gaps and questions are the open issues labelled `gap` or `question` that aren't findings.
 
-Only an issue's number, title, labels, state and severity reach the page: no body text does."""
+Only an issue's number, title, labels, state and severity reach the page: no body text does.
 
+Each area's mutation testing comes from its latest record in docs/hardening/mutation/
+(scripts/mutate.py, docs/testing.md "Mutation testing"): its changes and survivors, and the
+modules changed since that record or in none, which mark it "baseline, changed since"."""
+
+import importlib.util
 import json
 import os
 import re
@@ -24,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 PAGE = Path(__file__).with_name("hardening.html")
+ROOT = Path(__file__).resolve().parent.parent
 LABEL = "hardening"
 # a step's title, "H1.6 Trust and signatures"; a finding's, "H1.6-2 What goes wrong (CR1-14)"
 TITLE = re.compile(r"^H(\d+)\.(\d+)(?:-(\d+))? +(.*?)(?: \((CR\d+-\d+)\))?$")
@@ -195,12 +201,40 @@ def _change(now, was):
     return None if now is None or was is None else round(now - was, 1)
 
 
+# ---------- mutation testing ----------
+
+
+def _mutate():
+    """scripts/mutate.py, which keeps the records and knows what changed since."""
+    spec = importlib.util.spec_from_file_location("appkata_mutate_records", Path(__file__).with_name("mutate.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def mutation(root=ROOT, records=None):
+    """Each area's mutation testing: its latest record's name and counts, the modules changed since
+    it (`changed`) and those it doesn't hold (`new`). An area with modules and no record has its
+    record None."""
+    m = _mutate()
+    records = Path(records) if records else Path(root) / "docs" / "hardening" / "mutation"
+    out = {}
+    for area, (name, r) in m.latest_records(records).items():
+        out[area] = {"record": name, **{k: r.get(k, 0) for k in ("mutants", "killed", "timeout", "survived")},
+                     "noTests": r.get("no tests", 0), "changed": [], "new": []}
+    for f in m.stale_modules(Path(root), records):
+        entry = out.setdefault(f["area"], {"record": None, "changed": [], "new": []})
+        entry["changed" if f["state"] == "changed since" else "new"].append(f["module"])
+    return out
+
+
 # ---------- the page ----------
 
 
-def data(history, area_names, repo, issues):
+def data(history, area_names, repo, issues, mutated=None):
     """What the page shows: the steps with their results, the areas with their coverage (now, and at
-    the first entry the history has) and their findings, and the gaps and questions."""
+    the first entry the history has), their findings and their mutation testing (`mutation`, read
+    from the checkout unless given), and the gaps and questions."""
     path, found, others = from_issues(issues)
     last = history[-1]
     base = history[0] if len(history) > 1 else None
@@ -215,10 +249,11 @@ def data(history, area_names, repo, issues):
         "areas": [{"area": a, "now": last["areas"].get(a), "was": base["areas"].get(a) if base else None}
                   for a in names],
         "others": others,
+        "mutation": mutation() if mutated is None else mutated,
     }
 
 
-def page(history, area_names, repo, issues):
+def page(history, area_names, repo, issues, mutated=None):
     """The page: hardening.html with its data in place."""
-    script = json.dumps(data(history, area_names, repo, issues), separators=(",", ":")).replace("</", "<\\/")
+    script = json.dumps(data(history, area_names, repo, issues, mutated), separators=(",", ":")).replace("</", "<\\/")
     return PAGE.read_text(encoding="utf-8").replace("/*DATA*/", script)

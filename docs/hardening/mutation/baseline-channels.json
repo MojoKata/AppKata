@@ -1,0 +1,71 @@
+{
+  "area": "channels",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 5348,
+  "killed": 1999,
+  "timeout": 13,
+  "survived": 1718,
+  "no tests": 1618,
+  "other": 0,
+  "not run": 0,
+  "files": {
+    "src/appkata/channelui.py": {
+      "content": "7406ac90e0b86e1943f486c1c20b89d30fa79d94",
+      "mutants": 556,
+      "killed": 156,
+      "timeout": 0,
+      "survived": 322,
+      "no tests": 78,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/appstream.py": {
+      "content": "0816bf873a871eb1ca0df1fc704785b71120ebc0",
+      "mutants": 1018,
+      "killed": 494,
+      "timeout": 10,
+      "survived": 433,
+      "no tests": 81,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/channels.py": {
+      "content": "48b87fc5d9b4a0a7c8ef876bb3cd8ee45e6a0ac9",
+      "mutants": 1449,
+      "killed": 784,
+      "timeout": 0,
+      "survived": 583,
+      "no tests": 82,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/flatpak.py": {
+      "content": "9e5f79af1a0f8468853d8b1600ba723b48b79751",
+      "mutants": 723,
+      "killed": 206,
+      "timeout": 3,
+      "survived": 105,
+      "no tests": 409,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/pkgbackend.py": {
+      "content": "c0c8434b1b1420e488c2c93cd7e52149311edc51",
+      "mutants": 1602,
+      "killed": 359,
+      "timeout": 0,
+      "survived": 275,
+      "no tests": 968,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}

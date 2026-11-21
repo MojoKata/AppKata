@@ -1,0 +1,41 @@
+{
+  "area": "sandbox",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 4868,
+  "killed": 2424,
+  "timeout": 1302,
+  "survived": 791,
+  "no tests": 350,
+  "other": 1,
+  "not run": 0,
+  "files": {
+    "src/appkata_core/dbus.py": {
+      "content": "6be5fca34361647b5a4ad8501463590ac97ddc36",
+      "mutants": 832,
+      "killed": 394,
+      "timeout": 7,
+      "survived": 102,
+      "no tests": 329,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/sandbox.py": {
+      "content": "a440483d0473fd1aa3838b51367be3b26b61db7a",
+      "mutants": 4036,
+      "killed": 2030,
+      "timeout": 1295,
+      "survived": 689,
+      "no tests": 21,
+      "other": 1,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}

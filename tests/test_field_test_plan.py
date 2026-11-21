@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 
+import written
 from test_requirements_trace import _finding_exists
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -32,7 +33,7 @@ NOT_A_RESULT = {"FAIL", "N/A", "INFO"}
 
 
 def _read(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+    with open(written.path(rel), encoding="utf-8") as f:     # the script's source as written, in a mutation run too
         return f.read()
 
 

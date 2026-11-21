@@ -1,0 +1,41 @@
+{
+  "area": "windows",
+  "made": {
+    "repo": "a fork",
+    "runs": [
+      44880064155
+    ],
+    "commit": "7a4b7cdf5313c2a451d23432a699a83fdf290d70",
+    "mutmut": "3.8.1"
+  },
+  "mutants": 2344,
+  "killed": 599,
+  "timeout": 2,
+  "survived": 254,
+  "no tests": 1489,
+  "other": 0,
+  "not run": 0,
+  "files": {
+    "src/appkata/winframe.py": {
+      "content": "a42a28817177d288910ad2c690302078239286d4",
+      "mutants": 186,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no tests": 186,
+      "other": 0,
+      "not run": 0
+    },
+    "src/appkata_core/windows.py": {
+      "content": "ac1bbe83dec33796e73dcffab5b6394e1c923847",
+      "mutants": 2158,
+      "killed": 599,
+      "timeout": 2,
+      "survived": 254,
+      "no tests": 1303,
+      "other": 0,
+      "not run": 0
+    }
+  },
+  "dropped": {}
+}

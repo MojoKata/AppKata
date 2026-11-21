@@ -114,7 +114,9 @@ findings.</p>
 
 <h2>By area</h2>
 <p>Each area of the coverage page, the same as the <code>area:</code> labels. A finding counts in the area
-its label names, else in its step's. Click an area for its findings.</p>
+its label names, else in its step's. Click an area for its findings. Mutation: the changes mutmut made
+to the area's code and how many no test caught, from its latest record; <span class="chip">baseline, changed since</span>
+when a module has changed since that record or isn't in it, so the figures are out of date.</p>
 <div class="legend">
   <span><b>Coverage:</b></span>
   <span><span class="star">★</span> 95% and up</span><span><i class="sw good"></i>80% and up</span>
@@ -168,6 +170,14 @@ function covCell(p, was) {
   const dt = d == null || Math.abs(d) < 0.05 ? '<span class="delta"></span>' : `<span class="delta ${d > 0 ? 'up' : ''}">${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}</span>`;
   return `<td class="l"><span class="meter"><b class="${band(p)}" style="width:${p}%"></b></span>${star(p)}<span class="pct">${f1(p)}</span>${dt}</td>`;
 }
+function mutCell(area) {
+  const m = (D.mutation || {})[area];
+  if (!m) return '<td class="l"><span class="na">—</span></td>';
+  const moved = [...m.changed.map(x => `${x} (changed)`), ...m.new.map(x => `${x} (not in it)`)];
+  const flag = moved.length ? ` <span class="chip" title="${esc(moved.join(', '))}">baseline, changed since</span>` : '';
+  if (!m.record) return `<td class="l"><span class="na">no record</span>${flag}</td>`;
+  return `<td class="l"><span class="n">${m.survived} survived of ${m.mutants}</span>${flag}</td>`;
+}
 function flist(list, withStep) {
   if (!list.length) return '<p class="na">No findings.</p>';
   const sorted = [...list].sort((x, y) => (!isOpen(x)) - (!isOpen(y)) || ORDER[sevOf(x)] - ORDER[sevOf(y)] || x.id - y.id);
@@ -210,18 +220,18 @@ for (const s of D.steps) {
 
 // by area
 const areas = $('#areas');
-areas.innerHTML = '<thead><tr><th class="l">Area</th><th class="l">Lines</th><th class="l">Branches</th><th class="l">Findings closed</th><th>Open</th><th class="l">High / Med open</th></tr></thead>';
+areas.innerHTML = '<thead><tr><th class="l">Area</th><th class="l">Lines</th><th class="l">Branches</th><th class="l">Mutation</th><th class="l">Findings closed</th><th>Open</th><th class="l">High / Med open</th></tr></thead>';
 for (const a of D.areas) {
   const own = F.filter(f => f.area === a.area), t = count(own);
   const severe = own.filter(f => isOpen(f) && (f.sev === 'High' || f.sev === 'Med'));
-  const head = `<th class="l"><span class="caret"></span>${esc(a.area)}</th>${covCell(a.now && a.now.lines, a.was && a.was.lines)}${covCell(a.now && a.now.branches, a.was && a.was.branches)}
+  const head = `<th class="l"><span class="caret"></span>${esc(a.area)}</th>${covCell(a.now && a.now.lines, a.was && a.was.lines)}${covCell(a.now && a.now.branches, a.was && a.was.branches)}${mutCell(a.area)}
     <td class="l">${findBar(t)}</td><td>${t.open || '<span class="na">0</span>'}</td>
     <td class="l">${severe.map(f => `<a class="chip ${f.sev}" href="${esc(D.repo)}/issues/${f.id}" title="${esc(f.desc)}">${f.id}</a>`).join('')}</td>`;
-  group(areas, head, flist(own, true), 6);
+  group(areas, head, flist(own, true), 7);
 }
 const all = count(F);
 const tf = document.createElement('tfoot');
-tf.innerHTML = `<tr><th class="l">Every area</th><td></td><td></td><td class="l">${findBar(all)}</td><td>${all.open}</td><td class="l">${all.severe ? all.severe + ' High or Med' : ''}</td></tr>`;
+tf.innerHTML = `<tr><th class="l">Every area</th><td></td><td></td><td></td><td class="l">${findBar(all)}</td><td>${all.open}</td><td class="l">${all.severe ? all.severe + ' High or Med' : ''}</td></tr>`;
 areas.append(tf);
 
 // gaps and questions
