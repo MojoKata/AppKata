@@ -877,6 +877,13 @@ def survivors_path(area: str, records: Path = RECORDS) -> Path:
     return records / "survivors" / f"{area}.json"
 
 
+def made_by(made: dict, dirs: list[Path]) -> dict:
+    """`made` with the runs that ran an area's jobs alone: a run's folder is named for it
+    (`downloaded`)."""
+    runs = [r for r in made.get("runs", []) if any(d.parent.name.endswith(f"-{r}") for d in dirs)]
+    return {**made, "runs": runs} if runs else made     # folders not a download's: as given
+
+
 def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, records: Path = RECORDS) -> int:
     """Each area's baseline from the jobs' directories, in baseline-<area>.json, and its survivors, in
     survivors/<area>.json; an area whose job ran nothing isn't written."""
@@ -895,7 +902,7 @@ def write_baselines(dirs: list[Path], made: dict, commit: str, repo: str, record
             empty += sorted(set(by_name) - set(ran))
             continue
         content = {rel: blob_at(commit, rel, repo) for rel in held(ds)}
-        record = baseline(area, ds, made, content)
+        record = baseline(area, ds, made_by(made, ds), content)
         missing = unshown(ds)
         again = remade(missing, content) if missing else {}
         baseline_path(area, records).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

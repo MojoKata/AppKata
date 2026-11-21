@@ -650,3 +650,11 @@ def test_own_diff_reads_a_change_whose_functions_name_holds_mutmuts_marker(tmp_p
     assert mutate.hunk(plugin.own_diff("m.xǁKǁget__mutmut_1", str(mutated))) == [" def get(self):", "-    return 1", "+    return 2"]
     assert plugin.own_diff("m.x_gone__mutmut_1", str(mutated)) == ""
     assert plugin.own_diff("m.x_gone__mutmut_1", str(tmp_path / "none.py")) == ""
+
+
+def test_an_areas_record_names_the_runs_that_ran_its_jobs(tmp_path):
+    a, b = tmp_path / "o_r-1" / "mutation-store-1", tmp_path / "o_r-2" / "mutation-trust-1"
+    made = {"repo": "a fork", "runs": [1, 2], "commit": "c"}
+    assert mutate.made_by(made, [a]) == {**made, "runs": [1]}
+    assert mutate.made_by(made, [a, b])["runs"] == [1, 2]
+    assert mutate.made_by({"runs": []}, [a]) == {"runs": []}
