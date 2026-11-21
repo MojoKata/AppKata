@@ -12,7 +12,7 @@ R4.2. **Choosing an asset.** For the current OS and architecture:
 1. The Source's asset filter (R2.6.4), if set.
 2. Otherwise the manifest (R2.7).
 3. Otherwise the asset file names are matched to the platform's formats in order of
-   preference, then to the architecture (`x86_64|amd64|x64`, `aarch64|arm64`, `universal`).
+   preference, then to the architecture (`x86_64|amd64|x64`).
    A filter is applied only if it narrows the list without emptying it.
 
 Format order on Linux:
@@ -24,8 +24,6 @@ Format order on Linux:
 
 A Linux package wrapped in a `.zip` isn't looked inside: [G#?zipped-linux].
 
-On macOS: `.dmg`, `.pkg`, a zipped `.app`.
-
 On Windows, portable first (R15.3): a portable `.zip`, a portable `.exe`, `.msi`, a `.exe`
 installer, `.msix`. Only x64 files are chosen.
 
@@ -33,21 +31,19 @@ R4.2.1. **Portable or system package.** AppKata decides from the file, without a
 
 | File | Install |
 |---|---|
-| AppImage, `.tar.*` with a program inside, macOS `.app` (in a `.dmg` or `.zip`), Windows `.zip` with a `.exe` inside | Portable (R4.3.1) |
-| `.deb`, `.rpm`, Flatpak bundle, `.msi`, `.msix`, `.pkg` | System package (R4.3.2, R4.3.3) |
+| AppImage, `.tar.*` with a program inside, Windows `.zip` with a `.exe` inside | Portable (R4.3.1) |
+| `.deb`, `.rpm`, Flatpak bundle, `.msi`, `.msix` | System package (R4.3.2, R4.3.3) |
 | Windows `.exe` | Probed: AppKata reads the file's first megabyte (a ranged download) for Inno Setup, NSIS, WiX and InstallShield markers, which also give the silent-install arguments (R4.3.3). Otherwise its name decides (`portable`, `standalone` → portable; `setup`, `installer` → installer). If neither does, it's **unknown** and the install dialog asks (R4.9). |
 
 R4.3. **Install types.**
 
-R4.3.1. **Portable** (AppImage, tarball, zipped `.app`, portable `.zip`). Each app gets its own
+R4.3.1. **Portable** (AppImage, tarball, portable `.zip`). Each app gets its own
 folder, `<install folder>/<app>/`, holding its versions side by side: an AppImage as its
 versioned file (`LocalSend-1.18.2-x86_64.AppImage`), an archive unpacked into a folder named
 after its version (`2.1/`). The install folder is a setting (R11.1.4); by default it is:
 
 - `~/bin/apps` on Linux, with command links (R4.3.1.3) directly in `~/bin`. Ubuntu, Debian and
   Mint put `~/bin` on the PATH at login when it exists.
-- `~/Applications` on macOS: the per-user Applications folder, shown by Finder and Launchpad,
-  writable without an admin password.
 - On Windows, by who the app is for (R15.4): `%LOCALAPPDATA%\Programs` for **Just me** (the
   default), `C:\Programs` for **Everyone**. Neither needs administrator rights.
 
@@ -85,7 +81,7 @@ Trust recommends for it (R10.3.1, yours first), then Settings.
 
 R4.3.2. **Flatpak bundle.** Installed with `flatpak install --user`.
 
-R4.3.3. **System packages** (`.deb`, `.rpm`, `.pkg`, `.msi`, `.exe` installers, `.msix`).
+R4.3.3. **System packages** (`.deb`, `.rpm`, `.msi`, `.exe` installers, `.msix`).
 These need elevation (R1.3). Installers run silently when the installer type is recognized:
 
 | Installer | Silent arguments |
@@ -106,8 +102,7 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
 1. Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest, when one
    exists.
 2. Checks a minisign or GPG signature, or a sigstore bundle, when one exists.
-3. Reads the OS code-signing status: Authenticode on Windows (R15.11); notarization and Gatekeeper on
-   macOS.
+3. Reads Windows' code-signing status, Authenticode (R15.11).
 
 The App Detail panel shows the result as a chip: **Verified** (a signature checked),
 **Checksum** (a checksum only), or **Unverified**. Unverified downloads can still be

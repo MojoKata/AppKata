@@ -20,7 +20,7 @@ within seconds of the launcher starting it — the user is told so, with the las
 instead of nothing happening.
 
 R14.3. The files are in the platform's log folder (R1.8): `~/.local/state/appkata` on Linux
-(`$XDG_STATE_HOME`), `%LOCALAPPDATA%\AppKata\Logs` on Windows, `~/Library/Logs/AppKata` on macOS.
+(`$XDG_STATE_HOME`), and `%LOCALAPPDATA%\AppKata\Logs` on Windows.
 
 R14.4. There are two files: **AppKata.log** (current) and **AppKata-prev.log** (previous).
 
@@ -35,4 +35,4 @@ R14.5. **Show app log** in the ⋮ menu (R5.4):
 R14.5.1. Joins the two files, previous first, into `AppKata-log.txt` in the system's temp folder.
 
 R14.5.2. Opens that file in the system's text editor (the desktop's default for text files on
-Linux, `open -t` on macOS, Notepad on Windows).
+Linux, Notepad on Windows).

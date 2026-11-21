@@ -1,6 +1,6 @@
 # AppKata: requirements
 
-AppKata is a cross-platform (Linux, macOS, Windows 10+) FOSS app store built on Git and ngit
+AppKata is a FOSS app store for Linux and Windows 10, built on Git and ngit
 (Nostr Git). Each app is a git project. Its releases are found from the project's forge,
 AppKata installs and updates them, and reviewers publish trust and ratings in signed
 `AppKata.md` files.

@@ -12,15 +12,13 @@ R1.1. AppKata runs on what its tests cover (`docs/testing.md`):
 
   A later Mint or LMDE release joins once the tests move to it. Package channels (R16) use apt and
   Flatpak. Fedora, RHEL and the other RPM-based distributions aren't supported until RPM packaging
-  is taken up again, and openSUSE isn't supported. Linux on arm64 is a later target.
+  is taken up again, and openSUSE isn't supported.
 - Windows 10 22H2, the last release, with every update up to its end of support, x64. Windows 11
   isn't tested yet. Earlier Windows 10 releases aren't supported, nor is Windows on arm64.
-- macOS is a later target: no macOS build is made or tested yet (R1.2, R1.6). PySide6 6.11's floor,
-  macOS 13, would be its own.
 
 R1.2. Everything is written in Python, and AppKata runs on the Python its release carries: the
-AppImage, the Windows installer and, once built, the macOS app each carry one, of one version for
-all, with one PySide6, both set in `packaging/versions.env`. Running from source is for development
+AppImage and the Windows installer each carry one, of one version for
+both, with one PySide6, both set in `packaging/versions.env`. Running from source is for development
 only, never a way to install AppKata, and uses that same version (`scripts/python-standalone.sh`
 fetches it); the tests run AppKata's code on it too (review 3, R3-21: from source on Debian 12's own
 Python 3.11.2, no tarball could be installed). The one exception is what a sandboxed app's launcher
@@ -34,7 +32,6 @@ update or uninstall needs administrator rights, AppKata asks for them for that a
 
 - `pkexec` on Linux.
 - UAC on Windows (R15.2).
-- The system authorization prompt on macOS.
 
 R1.4. Git operations use the system `git`, which must be 2.34 or newer for SSH signature
 verification. If `git` is missing, AppKata explains how to install it.
@@ -44,7 +41,7 @@ relays (R11.1).
 
 R1.6. Distribution:
 
-- Linux: an AppImage, x86_64 (arm64 is a later target, R1.1). It needs no installation and updates itself
+- Linux: an AppImage, x86_64. It needs no installation and updates itself
   (R2.11.3), and it installs itself into the app menu on first start (R2.11.3.1). There is no Flatpak
   of AppKata: the sandbox would have to be opened to the host for portable installs into `~/bin`,
   for package channels (R16) and for PackageKit, which defeats the sandbox and which Flathub is
@@ -57,11 +54,10 @@ R1.6. Distribution:
   and Kerberos (GSSAPI), each listed by library in `packaging/appimage-host-libs.txt` (R3-31). Qt
   also uses GTK 3 for its theme and the desktop portal where the desktop has them, and does without
   them otherwise.
-- macOS: a signed, notarized `.dmg`.
 - Windows: a signed Inno Setup installer, for the current user by default, without a UAC prompt
   (R15.10).
 
-R1.7. **Running in the background.** AppKata has a tray icon (the menu-bar extra on macOS).
+R1.7. **Running in the background.** AppKata has a tray icon.
 
 R1.7.1. Closing the window leaves AppKata running in the tray, where it keeps checking for
 updates (R9.3).
@@ -84,7 +80,6 @@ database; the App log (R14) is kept in text files.
 |---|---|---|
 | Linux | `~/.local/share/appkata/` (`$XDG_DATA_HOME`) | `~/.local/state/appkata/` (`$XDG_STATE_HOME`) |
 | Windows | `%LOCALAPPDATA%\AppKata\` | `%LOCALAPPDATA%\AppKata\Logs\` |
-| macOS | `~/Library/Application Support/AppKata/` | `~/Library/Logs/AppKata/` (shown by Console) |
 
 These follow each platform's convention: per-user, not synced to other machines (Windows
 roaming profiles use `%APPDATA%`; AppKata's cache is machine-specific), and logs kept apart from

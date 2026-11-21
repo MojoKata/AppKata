@@ -11,7 +11,7 @@ AppKata limits the harm an app does to the user's computer once it's installed.
 
 Out of scope: `.deb`/`.rpm` (their scripts run as root at install time, so a run-time sandbox can't
 undo what they did), Flatpak (already sandboxed; AppKata shows its permissions, R16.6.3), shell
-installers (`.run`/`.sh`, not supported, and they stay unsupported), Windows and macOS.
+installers (`.run`/`.sh`, not supported, and they stay unsupported), and Windows.
 
 The requirements are [R17](../../requirements/R17-app-sandboxing/README.md); this is why each choice
 was made, the evidence behind it and the mockups. Each first-level item has a file of its own.

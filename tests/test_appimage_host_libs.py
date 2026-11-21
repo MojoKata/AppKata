@@ -76,7 +76,7 @@ def test_requirement_1_6_names_each_group_of_the_listed_libraries():
     groups = {comment.strip() for _, comment in rows}
     assert len(rows) == len(m.named()) and all(g for g in groups)
     req = reqdocs.text()
-    para = req[req.index("R1.6. Distribution:"):req.index("- macOS: a signed")]
+    para = req[req.index("R1.6. Distribution:"):req.index("- Windows: a signed Inno Setup")]
     para = " ".join(para.split())
     assert "packaging/appimage-host-libs.txt" in para
     assert [g for g in sorted(groups) if g not in para] == []

@@ -38,7 +38,7 @@ R5.4. **App menu (⋮).** In this order:
    - **Install AppKata…**, after About, only for an AppImage running from outside the install
      folder that wasn't installed (R2.11.3.1).
 6. **Close window**.
-7. **Quit AppKata**, with its shortcut: Alt+Q (⌘Q on macOS), which works anywhere in the window.
+7. **Quit AppKata**, with its shortcut: Alt+Q, which works anywhere in the window.
 
 R5.4.1. **About AppKata** opens a dialog with the app icon, name and version, a one-line
 description, the license (GPL-3.0-or-later), the project link (R2.11.1), the platforms it runs on, what it's built with,

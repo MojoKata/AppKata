@@ -57,7 +57,7 @@ R2.4.3.1. **Zapstore events.** AppKata reads the event format defined by Zapstor
 |---|---|---|
 | 32267 | Software application | Name, summary, icon, images, platforms. Identified by its `d` tag, the app ID. |
 | 30063 | Software release | One version of the app, pointing to its assets |
-| 3063 | Software asset | One file: `url` (often a Blossom server), `x` (SHA-256), `version`, `f` platform tags such as `linux-x86_64`, `windows-aarch64`, `darwin-arm64`, and its MIME type and size |
+| 3063 | Software asset | One file: `url` (often a Blossom server), `x` (SHA-256), `version`, `f` platform tags such as `linux-x86_64`, and its MIME type and size |
 
 - The legacy kind 1063 (NIP-94 file metadata) is also read, as an asset.
 - AppKata finds these events on the repository's relays and on the user's relays (R11.1.4).
