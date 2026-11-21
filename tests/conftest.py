@@ -12,10 +12,13 @@ so the test that exists for their DNS skipped, and tier 1 skipped the ISO downlo
 run: its image has no curl."""
 
 import functools
+import json
 import os
 import re
 
 import pytest
+
+import parts
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIPS = os.path.join(ROOT, "tests", "skips")
@@ -94,9 +97,33 @@ def pytest_make_collect_report(collector):
             _modules.append(failed)
 
 
+# CI's parts of tier 1 (tests/parts.py): APPKATA_PART=k/n keeps part k of n of the tests collected,
+# and APPKATA_DURATIONS=<file> writes what each test took, for the next split.
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    part = parts.env_part()
+    if not part:
+        return
+    keep = parts.choose([(case_id(item), parts.unit(item)) for item in items], *part, *parts.load())
+    config.hook.pytest_deselected(items=[item for item, ok in zip(items, keep) if not ok])
+    items[:] = [item for item, ok in zip(items, keep) if ok]
+
+
+_took = parts.Recorder()
+
+
+def pytest_runtest_logreport(report):
+    if os.environ.get("APPKATA_DURATIONS"):
+        _took.add(report.nodeid, report.duration)      # tier 1 runs from the root: the nodeid is the case_id
+
+
 def pytest_sessionfinish(session, exitstatus):
     if _modules:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    if out := os.environ.get("APPKATA_DURATIONS"):
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(json.dumps(_took.written(), indent=1) + "\n")
 
 
 def pytest_terminal_summary(terminalreporter):
