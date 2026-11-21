@@ -1,8 +1,8 @@
 # A1. App sandboxing (Linux)
 
 AppKata installs apps from the projects' own releases, so it can't vouch for what's inside them;
-Trusts and reviews lower the odds of a hostile app, they don't contain one. This document plans
-how AppKata could limit the harm an app does to the user's computer once it's installed.
+Trusts and reviews lower the odds of a hostile app, they don't contain one. A1 is how
+AppKata limits the harm an app does to the user's computer once it's installed.
 
 **Scope.** Linux only, and only the two portable kinds AppKata installs itself (R4.2.1):
 
