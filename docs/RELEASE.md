@@ -27,7 +27,7 @@ Each command checks that the step before it is done, and refuses otherwise, sayi
 
 | Command | Refuses until |
 |---|---|
-| `publish.sh release` | you're on `master`, up to date, with nothing changed; `v<version>` isn't tagged yet; the release pull request is merged: `docs/releases/<version>.md` has every step ticked, the state snapshot is there, and the README names the version; CI has passed on `master` at that commit |
+| `publish.sh release` | you're on `master`, up to date, with nothing changed; `v<version>` isn't tagged yet; the release pull request is merged: `docs/releases/<version>.md` has every step ticked, the state snapshot is there, and `DEVELOP.md`'s Status heading names the version; CI has passed on `master` at that commit |
 | `publish.sh publish` | the draft is there, and verifies; the release's field-test issues are there, and every one is closed |
 
 If anything stops, see [7](#7-when-a-step-stops).

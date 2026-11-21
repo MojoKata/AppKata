@@ -32,7 +32,7 @@ The owner says: **"Prepare release `<version>`"**. `<last>` is the version relea
    pinned it saying why). Its table also shows the pins that could move. Moving one is a change of
    its own, proven like any other, so say in the record which could, and leave them unless the owner
    asks.
-6. **`version`:** `__version__` in `src/appkata_core/__init__.py` and the README's "Status" heading
+6. **`version`:** `__version__` in `src/appkata_core/__init__.py` and `DEVELOP.md`'s "Status" heading
    say `<version>`. `publish.sh release` tags `v<version>`, and CI's `version` job stops a tag that
    doesn't match `__version__`.
 7. **`state`:** freeze the release's on-disk state for the upgrade tests:
@@ -64,11 +64,11 @@ The owner says: **"Prepare release `<version>`"**. `<last>` is the version relea
    - [x] **sandbox** not needed: `git diff --stat v<last>..HEAD -- …` prints nothing
    - [x] **github-paths** 43 projects, no difference
    - [x] **pins** pins-newest.py: none younger than 14 days; could move: pytest 9.1.1 → 9.2.0
-   - [x] **version** `__version__` and the README's Status heading say <version>
+   - [x] **version** `__version__` and DEVELOP.md's Status heading say <version>
    - [x] **state** tests/data/state/<version>.json
    - [x] **screenshots** the tour artifact looked at; Windows not needed: no QML or demo data changed since v<last>
    ```
-10. **The pull request**, "Prepare for `<version>`": the version, the README, the snapshot, the
+10. **The pull request**, "Prepare for `<version>`": the version, `DEVELOP.md`, the snapshot, the
    record, and any Windows screenshots, with a body that links the record. Run `tests/test_public_text.py`
    first, since the repository is public. Wait for its CI to pass.
 

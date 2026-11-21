@@ -327,7 +327,7 @@ def _gate_repo(tmp_path, record=RECORD, state=True, status="0.9.9: Linux and Win
     shutil.copy(SCRIPT, work / "scripts" / "publish.sh")
     (work / "src/appkata_core/__init__.py").write_text(
         '__version__ = "0.9.9"\nAPPKATA_REPO = "https://github.com/owner/name"\n')
-    (work / "README.md").write_text(f"# AppKata\n\n## Status ({status})\n")
+    (work / "DEVELOP.md").write_text(f"# Developing AppKata\n\n## Status ({status})\n")
     if record is not None:
         (work / "docs/releases/0.9.9.md").write_text("# AppKata 0.9.9\n\n" + record)
     if state:
@@ -361,18 +361,18 @@ def _gate(work, *args, **env):
     ("a step left out", "the step screenshots isn't ticked"),
     ("a step not done", "has steps not done: - [ ] **notes**"),
     ("no state", "tests/data/state/0.9.9.json is missing"),
-    ("README", "README.md's Status heading doesn't name 0.9.9"),
+    ("DEVELOP", "DEVELOP.md's Status heading doesn't name 0.9.9"),
     ("CI not run", "CI hasn't run on master"),
     ("CI running", "CI is still running on master"),
     ("CI failed", "CI failed on master"),
 ])
 def test_release_tags_nothing_before_the_release_pull_request_is_merged_and_ci_passed_on_it(tmp_path, case, says):
     """release used to tag whatever master held: a missing state snapshot only asked "tag anyway?",
-    and that CI had passed on master, the steps the release pull request takes and the README's
-    version were the owner's to remember (docs/RELEASE.md). Each is a refusal now, before the tag."""
+    and that CI had passed on master, the steps the release pull request takes and the Status
+    heading's version (the README's then, DEVELOP.md's since H1.4) were the owner's to remember (docs/RELEASE.md). Each is a refusal now, before the tag."""
     repo = {"no record": dict(record=None), "a step left out": dict(record=RECORD.replace("**screenshots**", "**other**")),
             "a step not done": dict(record=RECORD + "- [ ] **notes** the release notes\n"), "no state": dict(state=False),
-            "README": dict(status="0.9.8: Linux and Windows")}.get(case, {})
+            "DEVELOP": dict(status="0.9.8: Linux and Windows")}.get(case, {})
     ci = {"CI not run": "", "CI running": "in_progress \n", "CI failed": "completed failure\n"}.get(case, "completed success\n")
     work, bare = _gate_repo(tmp_path, **repo)
     r = _gate(work, "release", FAKE_CI=ci)
