@@ -58,9 +58,10 @@ def test_the_check_finds_a_name_however_it_is_written(monkeypatch):
         assert not public_text.found(text), text
 
 
-# The mutation baselines (docs/testing.md, "Mutation testing") keep each surviving change mutmut
-# made, and one that changes the address's case is a change to it, not an address written there.
-MUTATIONS = "docs/hardening/mutation/"
+# The mutation baselines' survivors (docs/testing.md, "Mutation testing") keep each surviving change
+# mutmut made, and one that changes the address's case is a change to it, not an address written
+# there. The baselines' counts and every other file are checked.
+MUTATIONS = "docs/hardening/mutation/survivors/"
 
 
 def test_the_repository_address_is_appkata_core_s():
