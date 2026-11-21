@@ -409,6 +409,8 @@ def test_a_test_failing_in_the_copy_is_named_and_why():
     assert mutate.failure_line("\n".join(out), test) == "AttributeError: 'Constant' object has no attribute 'elts'"
     assert mutate.failed_tests(["1 passed"]) == []
     assert mutate.failure_line("", "tests/test_x.py::test_y") == "failed in the copy"
+    assert mutate.failure_line("FAILED tests/test_x.py::test_y", "tests/test_x.py::test_y") == "failed in the copy"
+    assert mutate.reason("FAILED tests/test_x.py::test_y") == mutate.reason("") == "failed in the copy"
 
 
 def test_a_dropped_test_is_deselected_and_kept_in_the_baseline(tmp_path, monkeypatch):

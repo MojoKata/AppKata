@@ -438,7 +438,7 @@ def first_failure(selected: list[str], dropped: dict[str, str] | None = None) ->
     """The tests failing in a pass like mutmut's first, in the copy, counting calls as it does and
     with mutate_plugin loaded: what mutmut's pass stopped on, which it doesn't name. Their ids (at
     most DROPPED), and pytest's short summary."""
-    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rfE", f"--maxfail={DROPPED + 1}", *PYTEST_ARGS,
+    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=line", "-rfE", f"--maxfail={DROPPED + 1}", *PYTEST_ARGS,
            *deselected(dropped), *selected]  # fmt: skip
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}
     env["PYTHONUSERBASE"] = str(USERBASE)
@@ -459,12 +459,22 @@ def failed_tests(lines: list[str]) -> list[str]:
     return out
 
 
+FAILED_IN_COPY = "failed in the copy"
+
+
 def failure_line(shown_: str, test: str) -> str:
-    """Why a test failed, in a line: pytest's short summary's for it."""
+    """Why a test failed, in a line: pytest's short summary's for it, or FAILED_IN_COPY."""
     for x in shown_.splitlines():
         if x.startswith(("FAILED " + test, "ERROR " + test)):
-            return x.partition(" - ")[2].strip() or x
-    return "failed in the copy"
+            return reason(x.partition(" - ")[2])
+    return FAILED_IN_COPY
+
+
+def reason(text: str) -> str:
+    """A dropped test's reason as kept: pytest's message, or FAILED_IN_COPY where it gave none
+    (a run whose summary named the test alone kept the summary's line)."""
+    text = text.strip()
+    return FAILED_IN_COPY if not text or text.startswith(("FAILED ", "ERROR ")) else text
 
 
 def _progress() -> str:
@@ -710,7 +720,7 @@ def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -
     for rel in named:
         c = by_file.get(rel, Counter())
         files[rel] = {"content": content.get(rel), "mutants": sum(c.values()), **{k: c[k] for k in COUNTED}}
-    dropped = {t: why for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
+    dropped = {t: reason(why) for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
     return {"area": area, "made": made, **counts(by_file), "files": files, "dropped": dropped,
             "survivors": survivor_entries(dirs, content)}  # fmt: skip
 
