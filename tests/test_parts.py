@@ -101,16 +101,18 @@ def test_a_run_writes_its_long_tests_by_name_and_the_short_ones_as_a_total_by_ar
 def test_a_runs_parts_are_gathered_into_a_file_per_area(tmp_path):
     a = {"trust": {"tests": {"tests/test_trust.py::x": 3.0}, "shortTotal": 1.0, "shortCount": 4}}
     b = {"trust": {"tests": {}, "shortTotal": 1.0, "shortCount": 4},
-         "windows": {"tests": {"tests/test_windows.py::y": 2.0}, "shortTotal": 0.0, "shortCount": 0}}
+         "windows": {"tests": {"tests/test_windows.py::y": 2.0}, "shortTotal": 0.0, "shortCount": 0},
+         "store": {"tests": {}, "shortTotal": 0.0, "shortCount": 9}}
     found = parts.gathered([a, b])
-    assert found == {"trust": {"short": 0.25, "tests": {"tests/test_trust.py::x": 3.0}},
+    assert found == {"store": {"short": 0.001, "tests": {}},
+                     "trust": {"short": 0.25, "tests": {"tests/test_trust.py::x": 3.0}},
                      "windows": {"short": parts.SHORT, "tests": {"tests/test_windows.py::y": 2.0}}}
     (tmp_path / "old.json").write_text("{}")
     parts.write(found, tmp_path)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["trust.json", "windows.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["store.json", "trust.json", "windows.json"]
     assert json.loads((tmp_path / "trust.json").read_text()) == found["trust"]
     assert parts.load(tmp_path) == ({"tests/test_trust.py::x": 3.0, "tests/test_windows.py::y": 2.0},
-                                    {"trust": 0.25, "windows": parts.SHORT})
+                                    {"store": 0.001, "trust": 0.25, "windows": parts.SHORT})
     assert parts.load(tmp_path / "none") == ({}, {})
 
 

@@ -133,7 +133,8 @@ def gathered(runs):
             a["tests"].update(d["tests"])
             a["total"] += d["shortTotal"]
             a["count"] += d["shortCount"]
-    return {area: {"short": round(a["total"] / a["count"], 3) if a["count"] else SHORT,
+    # a short test weighs at least a millisecond: weighing nothing, every one would go to part 1
+    return {area: {"short": max(round(a["total"] / a["count"], 3), 0.001) if a["count"] else SHORT,
                    "tests": dict(sorted(a["tests"].items()))}
             for area, a in sorted(out.items())}
 
