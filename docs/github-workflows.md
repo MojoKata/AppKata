@@ -124,7 +124,8 @@ The `tour` job makes the Linux screenshots on every run, a pull request's includ
    master's, then the new ones, the ones gone and, folded away, the rest. It is uploaded unzipped
    (`actions/upload-artifact`'s `archive: false`), so the run's list of artifacts opens it in the
    browser rather than downloading a zip. The screens that show the day (the Audit's) differ from
-   master's whenever the two were made on different days.
+   master's whenever the two were made on different days. The job's summary, which a pull request's
+   checks link to, names the screens that changed and links the page.
 
 The job runs from `~/kata/AppKata`, a link to the checkout, so the paths the screens show read as on
 a development machine (`~/kata/AppKata/build/tour-data/…`). In the first hour of a UTC day the tour

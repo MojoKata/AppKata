@@ -76,3 +76,18 @@ def test_a_site_with_no_master_tour_compares_nothing_but_lists_every_screen(monk
 def test_names_are_escaped(tmp_path, name):
     page = tp.page({name: b"x"}, {}, "t", True)
     assert "&lt;x&gt;" in page and "<x>" not in page
+
+
+def test_the_summary_names_what_changed(monkeypatch, tmp_path):
+    tour = _tour(tmp_path / "t", {"dark/A01.png": b"new", "dark/B.png": b"b"})
+    index = {"versions": {"master": ["dark/A01.png", "dark/B.png", "dark/C.png"]}}
+    served = {"screenshots/index.json": json.dumps(index).encode(), "screenshots/master/dark/A01.png": b"old",
+              "screenshots/master/dark/B.png": b"b", "screenshots/master/dark/C.png": b"c"}
+    monkeypatch.setattr(tp, "_site", lambda: _fake(_site(served)))
+    summary = tmp_path / "summary.md"
+    summary.write_text("before\n")
+    assert tp.main([str(tour), str(tmp_path / "tour.html"), "--summary", str(summary), "--title", "T"]) == 0
+    text = summary.read_text()
+    assert text.startswith("before\n## T\n")
+    assert "2 screens: 1 differ from master's published tour, 0 new, 1 gone." in text
+    assert "Changed: `dark/A01.png`" in text and "Gone: `dark/C.png`" in text and "New:" not in text

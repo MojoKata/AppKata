@@ -137,6 +137,7 @@ def main(argv=None):
     p.add_argument("out")
     p.add_argument("--master", help="the Pages site to compare with (default: the repository's); none: no comparison")
     p.add_argument("--title", default="AppKata's Linux tour")
+    p.add_argument("--summary", help="also append what changed to this Markdown file (CI's job summary)")
     args = p.parse_args(argv)
     new = screens(args.tour)
     if not new:
@@ -154,6 +155,15 @@ def main(argv=None):
     changed, added, gone, _ = compare(new, old)
     print(f"{args.out}: {len(new)} screens, {len(changed)} changed, {len(added)} new, {len(gone)} gone, "
           f"{Path(args.out).stat().st_size / 1e6:.1f} MB")
+    if args.summary:
+        lines = [f"## {args.title}", "",
+                 (f"{len(new)} screens: {len(changed)} differ from master's published tour, {len(added)} new, "
+                  f"{len(gone)} gone." if compared else f"{len(new)} screens, not compared with master's."), ""]
+        for what, names in (("Changed", changed), ("New", added), ("Gone", gone)):
+            if names:
+                lines += [f"{what}: " + ", ".join(f"`{n}`" for n in names), ""]
+        with open(args.summary, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
     return 0
 
 
