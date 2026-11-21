@@ -399,29 +399,82 @@ def test_a_run_goes_on_from_an_earlier_ones_outcomes(work, tmp_path):
     assert mutate.codes(work / "copy" / "mutants") == mutate.codes(earlier)
 
 
-def test_a_test_failing_in_the_copy_is_named_and_why():
+def test_a_test_failing_in_the_copy_is_named_with_its_traceback_and_kind():
     out = ["....F", "=== short test summary info ===",
            "FAILED tests/test_field_test_plan.py::test_the_plan - AttributeError: 'Constant' object has no attribute 'elts'",
-           "1 failed, 206 passed"]  # fmt: skip
-    out += ["ERROR tests/test_x.py::test_y", "FAILED tests/test_field_test_plan.py::test_the_plan"]
+           "1 failed, 206 passed", "ERROR tests/test_x.py::test_y",
+           "FAILED tests/test_field_test_plan.py::test_the_plan"]  # fmt: skip
     assert mutate.failed_tests(out) == ["tests/test_field_test_plan.py::test_the_plan", "tests/test_x.py::test_y"]
-    test = "tests/test_field_test_plan.py::test_the_plan"
-    assert mutate.failure_line("\n".join(out), test) == "AttributeError: 'Constant' object has no attribute 'elts'"
     assert mutate.failed_tests(["1 passed"]) == []
-    assert mutate.failure_line("", "tests/test_x.py::test_y") == "failed in the copy"
-    assert mutate.failure_line("FAILED tests/test_x.py::test_y", "tests/test_x.py::test_y") == "failed in the copy"
-    assert mutate.reason("FAILED tests/test_x.py::test_y") == mutate.reason("") == "failed in the copy"
+    shown = ["....F", "=== FAILURES ===", "___ test_the_plan ___", "tests/x.py:84: in _script",
+             "    exposure = tuple(e.value for e in node.args[2].elts)",
+             "E   AttributeError: 'Constant' object has no attribute 'elts'", "",
+             "=== short test summary info ===", "FAILED tests/x.py::test_the_plan"]  # fmt: skip
+    trace = mutate.short_trace(shown)
+    assert trace.splitlines()[0] == "tests/x.py:84: in _script" and trace.endswith("no attribute 'elts'")
+    assert len(mutate.short_trace(["___ t ___", *[f"line {i}" for i in range(50)]]).splitlines()) == mutate.TRACE_LINES
+    assert mutate.kind_of(trace) == "reads the mutated source"
+    assert mutate.kind_of("fatal: pathspec 'docs/x' is beyond a symbolic link") == "git or links in the copy"
+    assert mutate.kind_of("E   subprocess.CalledProcessError: ... returned 1") == "leaks into processes tests start"
+    assert mutate.kind_of("E   assert 1 == 2") == mutate.UNKNOWN
+
+
+def test_a_dropped_tests_unfit_entry_is_printed_unless_unfit_has_it(capsys):
+    unfit = next(iter(mutate.UNFIT))
+    dropped = {"tests/test_x.py::test_y": {"kind": "reads the mutated source", "trace": "..."}, unfit: {"kind": "x"}}
+    assert mutate.unfit_entries(dropped) == ['    "tests/test_x.py::test_y": "reads the mutated source: <why, in a line>",']
+    mutate.print_unfit(dropped)
+    assert '"tests/test_x.py::test_y"' in capsys.readouterr().out
+    mutate.print_unfit({})
+    assert capsys.readouterr().out == ""
+    # an earlier run kept a line, or the summary's own
+    assert mutate.as_kept("FAILED tests/test_x.py::test_y") == {"kind": mutate.UNKNOWN, "trace": ""}
+    assert mutate.as_kept("AttributeError: 'Constant' object has no attribute 'elts'")["kind"] == "reads the mutated source"
+
+
+def test_a_test_failing_on_the_checkout_too_stops_the_run_and_one_failing_in_the_copy_only_is_dropped(work, monkeypatch, capsys):
+    passes = {"tests/test_a.py::test_copy": True, "tests/test_b.py::test_real": False}
+    rounds = iter([["tests/test_a.py::test_copy"], ["tests/test_b.py::test_real"]])
+    monkeypatch.setattr(mutate, "modules", lambda: {"src/appkata_core/urls.py": ("sources", 10)})
+    for name in ("make_copy", "link_mutmut", "configure"):
+        monkeypatch.setattr(mutate, name, lambda *a, **k: None)
+    monkeypatch.setattr(mutate, "tests", lambda: ["tests/test_a.py"])
+    monkeypatch.setattr(mutate, "summary", lambda _a: 0)
+
+    def mutmut_fails(args):
+        (work / "mutmut.log").write_text("failed to collect stats. runner returned 1\n")
+        return 1, False
+
+    monkeypatch.setattr(mutate, "mutmut", mutmut_fails)
+    monkeypatch.setattr(mutate, "first_failure", lambda selected, dropped: (next(rounds), "FAILED"))
+    monkeypatch.setattr(mutate, "passes_as_written", lambda t: passes[t])
+    monkeypatch.setattr(mutate, "traceback_of", lambda t: "E   AttributeError: 'Constant' object has no attribute 'elts'")
+    assert mutate.main(["run", "src/appkata_core/urls.py"]) == 3
+    out = capsys.readouterr().out
+    assert "left out of this run" in out and "a real failure" in out and "tests/test_b.py::test_real" in out
+    kept = json.loads((work / mutate.DROPPED_FILE).read_text())
+    assert kept == {"tests/test_a.py::test_copy": {"kind": "reads the mutated source",
+                                                  "trace": "E   AttributeError: 'Constant' object has no attribute 'elts'"}}
+
+
+def test_passes_as_written_runs_the_test_on_the_checkout(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mutate.subprocess, "run", lambda cmd, cwd, env, **k: seen.update(cmd=cmd, cwd=cwd, env=env)
+                        or subprocess.CompletedProcess(cmd, 0))  # fmt: skip
+    monkeypatch.setenv("MUTANT_UNDER_TEST", "stats")
+    assert mutate.passes_as_written("tests/test_x.py::test_y")
+    assert seen["cwd"] == mutate.ROOT and "MUTANT_UNDER_TEST" not in seen["env"] and seen["cmd"][-1] == "tests/test_x.py::test_y"
 
 
 def test_a_dropped_test_is_deselected_and_kept_in_the_baseline(tmp_path, monkeypatch):
-    text = mutate.settings([], [], "", dropped={"tests/test_x.py::test_y": "why"})
+    text = mutate.settings([], [], "", dropped={"tests/test_x.py::test_y": {"kind": "unknown", "trace": "why"}})
     assert '"--deselect", "tests/test_x.py::test_y"' in text
     monkeypatch.setattr(mutate, "source", lambda blob: "")
     d, _ = job(tmp_path, "store-1", "store", ["src/appkata_core/db.py"], {"src/appkata_core/db.py": [1]})
     j = json.loads((d / "job.json").read_text())
     (d / "job.json").write_text(json.dumps({**j, "dropped": {"tests/test_x.py::test_y": "why"}}))
     record = mutate.baseline("store", [d], {}, {"src/appkata_core/db.py": "b"})
-    assert record["dropped"] == {"tests/test_x.py::test_y": "why"}
+    assert record["dropped"] == {"tests/test_x.py::test_y": {"kind": "unknown", "trace": "why"}}
 
 
 # --- inside a run (mutate_plugin) ----------------------------------------------------------------

@@ -71,6 +71,11 @@ LIMIT_GB = 5.0  # the run stops past this (PSS); CI's runners give it more (--li
 WORKER_GB = 2.0  # one change's worker past this much of its own is stopped, the change killed
 OUT_OF_MEMORY = -signal.SIGUSR1  # mutmut keeps a worker stopped so as this exit code
 
+# Where the code as written is, for a test that reads a module's source rather than running it
+# (tests/written.py): in a run, the checkout, since the copy's modules are mutmut's, every change in
+# one file.
+WRITTEN = "APPKATA_WRITTEN_ROOT"
+
 # Tier 1's tests a mutation run can't use, and why: mutmut runs every test once first, and stops
 # at the first that fails. None of them runs AppKata's code in pytest's process, which is all
 # mutmut can trace.
@@ -232,7 +237,7 @@ def resume(earlier: Path) -> int:
 
 
 def settings(mutate: list[str], selected: list[str], text: str, debug: bool = False,
-             dropped: dict[str, str] | None = None) -> str:
+             dropped: dict | None = None) -> str:
     """pyproject.toml with mutmut's settings: the modules, the tests, PYTEST_ARGS; with `debug`,
     mutmut prints each pytest run's command and output (a first run that fails says which test)."""
     text = re.sub(r"\n\[tool\.mutmut\][^\[]*", "\n", text)
@@ -252,12 +257,12 @@ def settings(mutate: list[str], selected: list[str], text: str, debug: bool = Fa
     )
 
 
-def deselected(dropped: dict[str, str] | None = None) -> list[str]:
+def deselected(dropped: dict | None = None) -> list[str]:
     """pytest's arguments that leave out UNFIT's tests and those a run dropped."""
     return [x for t in sorted({*UNFIT, *(dropped or {})}) for x in ("--deselect", t)]
 
 
-def configure(mutate: list[str], selected: list[str], debug: bool = False, dropped: dict[str, str] | None = None) -> None:
+def configure(mutate: list[str], selected: list[str], debug: bool = False, dropped: dict | None = None) -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     (COPY / "pyproject.toml").write_text(settings(mutate, selected, text, debug, dropped), encoding="utf-8")
 
@@ -347,7 +352,7 @@ def run(args) -> int:
     link_mutmut()
     if args.resume:
         print(f"going on from {resume(Path(args.resume))} outcomes of an earlier run")
-    dropped: dict[str, str] = {}
+    dropped: dict[str, dict] = {}
     (WORK / DROPPED_FILE).write_text("{}\n")
     while True:
         configure(only_mutate(args.modules), selected, args.debug, dropped)
@@ -356,16 +361,24 @@ def run(args) -> int:
         if not rc or stopped or not FIRST_PASS_FAILED.search(text):
             break
         # A test fails in mutmut's first pass, which doesn't say which: one that reads a module's
-        # source, which in the copy is mutmut's, say. It is left out of this run, and says so.
+        # source, which in the copy is mutmut's, say. Each such test is run once on the checkout
+        # itself: one that fails there too is a real failure, and stops the run; the others are
+        # left out of this run, each with its traceback and the kind of failure it looks like.
         print("mutmut's first pass over the tests failed, and says no more; pytest on the copy:")
         failing, shown_ = first_failure(selected, dropped)
         print(shown_)
         new = [t for t in failing if t not in dropped]
         if not new or len(dropped) + len(new) > DROPPED:
             break
-        dropped.update({t: failure_line(shown_, t) for t in new})
+        real = [t for t in new if not passes_as_written(t)]
+        if real:
+            print(f"failing on the checkout too, so a real failure, not the copy's: {' '.join(real)}")
+            return 3
+        for t in new:
+            trace = traceback_of(t)
+            dropped[t] = {"kind": kind_of(trace), "trace": trace}
         (WORK / DROPPED_FILE).write_text(json.dumps(dropped, indent=1) + "\n")
-        print(f"left out of this run, and run again: {' '.join(new)}")
+        print(f"left out of this run, and run again (each passes on the checkout): {' '.join(new)}")
     if rc:
         print("its log's last lines:\n" + "\n".join(log_lines(text)[-30:]))
     if dropped:
@@ -382,6 +395,7 @@ def mutmut(args) -> tuple[int, bool]:
     log = (WORK / "mutmut.log").open("w")
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}  # tier 1 checks skips; not here
     env["PYTHONUSERBASE"] = str(USERBASE)
+    env[WRITTEN] = str(ROOT)
     proc = subprocess.Popen(mutmut_command(args), cwd=COPY, stdout=log, stderr=subprocess.STDOUT, env=env)  # noqa: S603
     peak, largest, stopped = 0.0, 0.0, threading.Event()
 
@@ -434,20 +448,81 @@ def log_lines(text: str) -> list[str]:
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
-def first_failure(selected: list[str], dropped: dict[str, str] | None = None) -> tuple[list[str], str]:
-    """The tests failing in a pass like mutmut's first, in the copy, counting calls as it does and
-    with mutate_plugin loaded: what mutmut's pass stopped on, which it doesn't name. Their ids (at
-    most DROPPED), and pytest's short summary."""
-    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=line", "-rfE", f"--maxfail={DROPPED + 1}", *PYTEST_ARGS,
-           *deselected(dropped), *selected]  # fmt: skip
+def copy_env() -> dict[str, str]:
+    """The environment of a pass like mutmut's first, in the copy: counting calls as it does, with
+    the run's user site, and the copy's code ahead of the rest."""
     env = {k: v for k, v in os.environ.items() if k != "APPKATA_SKIPS"}
     env["PYTHONUSERBASE"] = str(USERBASE)
     env["MUTANT_UNDER_TEST"] = "stats"  # as in mutmut's pass: each changed function counts its calls
+    env[WRITTEN] = str(ROOT)
     env["PYTHONPATH"] = os.pathsep.join([str(MUTANTS / "src"), str(MUTANTS), env.get("PYTHONPATH", "")])
-    r = subprocess.run(cmd, cwd=MUTANTS, env=env, capture_output=True, text=True)  # noqa: S603
+    return env
+
+
+def first_failure(selected: list[str], dropped: dict | None = None) -> tuple[list[str], str]:
+    """The tests failing in a pass like mutmut's first, in the copy, with mutate_plugin loaded: what
+    mutmut's pass stopped on, which it doesn't name. Their ids (at most DROPPED), and pytest's short
+    summary."""
+    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rfE", f"--maxfail={DROPPED + 1}", *PYTEST_ARGS,
+           *deselected(dropped), *selected]  # fmt: skip
+    r = subprocess.run(cmd, cwd=MUTANTS, env=copy_env(), capture_output=True, text=True)  # noqa: S603
     out = (r.stdout + r.stderr).splitlines()
     summary_at = next((i for i, x in enumerate(out) if "short test summary info" in x), max(0, len(out) - 40))
     return failed_tests(out), "\n".join(out[summary_at:][-60:])
+
+
+TRACE_LINES = 20  # of a dropped test's short traceback, the last
+
+
+def traceback_of(test: str) -> str:
+    """A test's short traceback in the copy (pytest's --tb=short), its last TRACE_LINES lines."""
+    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=short", "-p", "no:cacheprovider", *PYTEST_ARGS[2:], test]
+    r = subprocess.run(cmd, cwd=MUTANTS, env=copy_env(), capture_output=True, text=True)  # noqa: S603
+    return short_trace((r.stdout + r.stderr).splitlines())
+
+
+def short_trace(lines: list[str]) -> str:
+    """The failure's own lines of pytest's output: after its "___ name ___" header, before the
+    summary, the last TRACE_LINES of them."""
+    start = next((i + 1 for i, x in enumerate(lines) if re.match(r"^_{3,} .* _{3,}$", x)), 0)
+    end = next((i for i, x in enumerate(lines) if "short test summary info" in x or re.match(r"^=+ .*(failed|error)", x)
+                and i > start), len(lines))  # fmt: skip
+    return "\n".join([x.rstrip() for x in lines[start:end] if x.strip()][-TRACE_LINES:])
+
+
+def passes_as_written(test: str) -> bool:
+    """Whether a test passes on the checkout itself, as tier 1 runs it: what makes a test failing in
+    the copy the copy's, not a real failure."""
+    env = {k: v for k, v in os.environ.items() if k not in ("APPKATA_SKIPS", "MUTANT_UNDER_TEST", WRITTEN)}
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "src"), env.get("PYTHONPATH", "")])
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", test]
+    return subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True).returncode == 0  # noqa: S603
+
+
+# The kinds of failure a test in the copy shows, by what its traceback says, the first that fits.
+KINDS = (
+    ("git or links in the copy", r"not a git repository|beyond a symbolic link|symlink|\bgit\b"),
+    ("reads the mutated source", r"mutmut|trampoline|XX\w|\bast\b|object has no attribute '(elts|id|value|args)'"),
+    ("leaks into processes tests start", r"subprocess|CalledProcessError|returncode|Popen|MUTANT_UNDER_TEST"),
+)
+UNKNOWN = "unknown"
+
+
+def kind_of(trace: str) -> str:
+    """The kind of failure a dropped test's traceback looks like (KINDS), or UNKNOWN: a guess, for the
+    one who settles it."""
+    return next((k for k, pattern in KINDS if re.search(pattern, trace)), UNKNOWN)
+
+
+def unfit_entries(dropped: dict) -> list[str]:
+    """For each dropped test UNFIT doesn't name, a line to paste into UNFIT, its kind the reason to
+    write over."""
+    out = []
+    for test, why in sorted(dropped.items()):
+        if test not in UNFIT:
+            kind = why.get("kind", UNKNOWN) if isinstance(why, dict) else UNKNOWN
+            out.append(f'    "{test}": "{kind}: <why, in a line>",')
+    return out
 
 
 def failed_tests(lines: list[str]) -> list[str]:
@@ -459,22 +534,13 @@ def failed_tests(lines: list[str]) -> list[str]:
     return out
 
 
-FAILED_IN_COPY = "failed in the copy"
-
-
-def failure_line(shown_: str, test: str) -> str:
-    """Why a test failed, in a line: pytest's short summary's for it, or FAILED_IN_COPY."""
-    for x in shown_.splitlines():
-        if x.startswith(("FAILED " + test, "ERROR " + test)):
-            return reason(x.partition(" - ")[2])
-    return FAILED_IN_COPY
-
-
-def reason(text: str) -> str:
-    """A dropped test's reason as kept: pytest's message, or FAILED_IN_COPY where it gave none
-    (a run whose summary named the test alone kept the summary's line)."""
-    text = text.strip()
-    return FAILED_IN_COPY if not text or text.startswith(("FAILED ", "ERROR ")) else text
+def as_kept(why) -> dict:
+    """A dropped test's entry as a record keeps it, {"kind", "trace"}: an earlier run kept a line."""
+    if isinstance(why, dict):
+        return {"kind": why.get("kind", UNKNOWN), "trace": why.get("trace", "")}
+    text = str(why).strip()
+    text = "" if text.startswith(("FAILED ", "ERROR ")) else text
+    return {"kind": kind_of(text), "trace": text}
 
 
 def _progress() -> str:
@@ -530,7 +596,18 @@ def summary(_args) -> int:
             print(f"  {c['survived']:4} of {sum(c.values()):4}  {fn}")
     write_survivors(WORK / "survivors.txt", survivors, files_of(MUTANTS))
     print(f"\n{len(survivors)} survivors; each change in {WORK / 'survivors.txt'}")
+    dropped = json.loads((WORK / DROPPED_FILE).read_text()) if (WORK / DROPPED_FILE).exists() else {}
+    print_unfit(dropped)
     return 0
+
+
+def print_unfit(dropped: dict) -> None:
+    """The tests a run left out, and for those UNFIT doesn't name, the lines to settle them with in
+    UNFIT, if leaving them out is right (else the test is changed so it doesn't depend on the copy)."""
+    lines = unfit_entries(dropped)
+    if lines:
+        print(f"\n{len(lines)} tests left out, failing in the copy only; for UNFIT, each with its real reason:")
+        print("\n".join(lines))
 
 
 def files_of(mutants: Path) -> dict[str, str]:
@@ -720,7 +797,7 @@ def baseline(area: str, dirs: list[Path], made: dict, content: dict[str, str]) -
     for rel in named:
         c = by_file.get(rel, Counter())
         files[rel] = {"content": content.get(rel), "mutants": sum(c.values()), **{k: c[k] for k in COUNTED}}
-    dropped = {t: reason(why) for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
+    dropped = {t: as_kept(why) for j in jobs for t, why in sorted(j.get("dropped", {}).items())}
     return {"area": area, "made": made, **counts(by_file), "files": files, "dropped": dropped,
             "survivors": survivor_entries(dirs, content)}  # fmt: skip
 
