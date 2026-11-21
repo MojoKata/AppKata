@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppKata hardening</title>
+<!-- scripts/hardening.py fills in the data; scripts/coverage_site.py builds the page beside the coverage page -->
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb; --raised: #f3f2ee; --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --track: #e9e8e2; --border: rgba(11, 11, 11, 0.10);
+  --lines: #2a78d6; --bad: #c8312b; --good: #2f9e55; --fair: #d79b0f; --low: #b9b7ae; --gold: #b8860b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #1a1a19; --raised: #232321; --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --track: #34342f; --border: rgba(255, 255, 255, 0.10);
+    --lines: #3987e5; --bad: #e5534b; --good: #3fb768; --fair: #e2ab2b; --low: #5c5b55; --gold: #f2c94c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 1400px; padding: 24px 16px 48px; background: var(--surface); color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: inherit; }
+h1 { font-size: 27px; margin: 0 0 4px; }
+h2 { font-size: 20px; margin: 32px 0 8px; }
+p { margin: 4px 0; color: var(--text-2); max-width: 80ch; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 9px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+th:first-child, td.l, th.l { text-align: left; }
+td.l { white-space: normal; }
+thead th { color: var(--text-2); font-weight: 600; font-size: 14px; vertical-align: bottom; }
+.scroll { overflow-x: auto; }
+nav { margin: 0 0 12px; color: var(--text-2); }
+
+.banner { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px 32px;
+  margin: 20px 0 8px; padding: 18px 22px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--raised); color: var(--text-2); }
+.banner .label { font-weight: 600; font-size: 14px; }
+.banner .big { font-size: 36px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--text); }
+.banner .big small { font-size: 17px; font-weight: 600; color: var(--text-2); }
+.banner .sub { font-size: 14px; }
+.banner .meter { width: 100%; height: 10px; margin-top: 6px; }
+
+.meter { display: inline-flex; width: 90px; height: 12px; vertical-align: middle; border-radius: 6px;
+  background: var(--track); overflow: hidden; }
+.meter b { display: block; height: 100%; }
+.meter b.good, .meter b.fixed { background: var(--good); } .meter b.fair, .meter b.severe { background: var(--fair); }
+.meter b.low { background: var(--bad); } .meter b.lowsev { background: var(--low); } .meter b.q { background: var(--muted); }
+.pct { display: inline-block; width: 3.6em; text-align: right; }
+.star { display: inline-block; width: 1.1em; text-align: right; color: var(--gold); }
+.delta { display: inline-block; width: 3.4em; text-align: right; font-size: 13px; color: var(--text-2); }
+.delta.up { color: var(--good); }
+.na { color: var(--muted); font-size: 14px; }
+.n { color: var(--text-2); }
+.chip { display: inline-block; padding: 0 6px; margin: 1px 2px 1px 0; border-radius: 9px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--surface); text-decoration: none; color: var(--text-2); }
+a.chip:hover { color: var(--text); border-color: var(--text-2); }
+.chip.High { border-color: var(--bad); color: var(--text); } .chip.Med { border-color: var(--fair); color: var(--text); }
+code { font-size: 0.92em; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--text-2); font-size: 14px; margin: 8px 0 12px; }
+.sw { display: inline-block; width: 18px; height: 10px; vertical-align: middle; margin-right: 5px; border-radius: 5px; }
+.sw.fixed, .sw.good { background: var(--good); } .sw.severe, .sw.fair { background: var(--fair); }
+.sw.lowsev { background: var(--low); } .sw.q { background: var(--muted); } .sw.low { background: var(--bad); }
+
+tbody.group tr.head { cursor: pointer; }
+tbody.group tr.head:hover { background: var(--raised); }
+tbody.group tr.head:focus-visible { outline: 2px solid var(--lines); outline-offset: -2px; }
+.caret { display: inline-block; width: 1em; color: var(--muted); }
+.caret::before { content: "▸"; }
+tbody.open .caret::before { content: "▾"; }
+tr.detail { display: none; }
+tbody.open tr.detail { display: table-row; }
+tr.detail > td { text-align: left; white-space: normal; background: var(--raised); padding: 10px 16px 14px 32px; }
+#steps tr.done th, #steps tr.done td { color: var(--text-2); }
+#steps tr.next { background: var(--raised); }
+#steps tr.next th .next { display: block; font-size: 11px; color: var(--lines); font-weight: 700; }
+#steps input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--good); margin: 0; }
+.areas code { font-size: 13px; margin-right: 6px; white-space: nowrap; }
+.res { font-size: 14px; color: var(--text-2); }
+#areas tfoot th, #areas tfoot td { font-weight: 600; border-bottom: 0; border-top: 2px solid var(--grid); }
+
+.flist { list-style: none; margin: 0; padding: 0; font-size: 14px; max-width: 110ch; }
+.flist li { display: grid; grid-template-columns: 4.2em 5.4em minmax(0, 1fr) auto; gap: 8px; padding: 3px 0;
+  border-bottom: 1px solid var(--border); align-items: baseline; }
+.flist li .sev { font-weight: 600; font-size: 13px; }
+.sev.High { color: var(--bad); } .sev.Med { color: var(--fair); } .sev.Low, .sev.unrated { color: var(--muted); }
+.flist li.closed { color: var(--muted); }
+.flist li.closed .desc { text-decoration: line-through; text-decoration-color: var(--muted); }
+ul.others { padding-left: 1.2em; max-width: 100ch; }
+ul.others li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<h1>AppKata hardening</h1>
+<nav><a href="index.html">Coverage</a> · <b>Hardening</b> · <a href="screenshots/index.html">Screenshots</a></nav>
+<p id="asof"></p>
+
+<div class="banner" id="banner"></div>
+
+<h2>The steps</h2>
+<p>Each step of the sweep is an issue, and its findings are its sub-issues. A step is checked when its issue
+is closed, and then shows what changed in its areas at its pull request's merge. Click a step for its
+findings.</p>
+<div class="legend">
+  <span><b>Findings:</b></span>
+  <span><i class="sw fixed"></i>closed</span><span><i class="sw severe"></i>High or Med, open</span>
+  <span><i class="sw lowsev"></i>Low or unrated, open</span><span><i class="sw q"></i>question</span>
+</div>
+<div class="scroll"><table id="steps"></table></div>
+
+<h2>By area</h2>
+<p>Each area of the coverage page, the same as the <code>area:</code> labels. A finding counts in the area
+its label names, else in its step's. Click an area for its findings.</p>
+<div class="legend">
+  <span><b>Coverage:</b></span>
+  <span><span class="star">★</span> 95% and up</span><span><i class="sw good"></i>80% and up</span>
+  <span><i class="sw fair"></i>60% to 80%</span><span><i class="sw low"></i>under 60%</span>
+</div>
+<div class="scroll"><table id="areas"></table></div>
+
+<h2>Gaps and questions</h2>
+<p>The open issues labelled <code>gap</code> (what the requirements describe and AppKata doesn't do) and
+<code>question</code> (a decision the owner makes).</p>
+<div id="others"></div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById('data').textContent);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const pct = (a, b) => b ? 100 * a / b : null;
+const band = p => p == null ? '' : p >= 80 ? 'good' : p >= 60 ? 'fair' : 'low';
+const star = p => p != null && p >= 95 ? '<span class="star" title="95% and up">★</span>' : '<span class="star"></span>';
+const f1 = p => p == null ? '—' : p.toFixed(1) + '%';
+const signed = v => v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1);
+const issue = n => `<a href="${esc(D.repo)}/issues/${n}">#${n}</a>`;
+const prLink = n => `<a class="chip" href="${esc(D.repo)}/pull/${n}">#${n}</a>`;
+const commit = c => `<a href="${esc(D.repo)}/commit/${esc(c)}"><code>${esc(String(c).slice(0, 7))}</code></a>`;
+const isOpen = f => f.state === 'open' || f.state === 'question';
+const sevOf = f => f.sev || 'unrated';
+const ORDER = { High: 0, Med: 1, Low: 2, unrated: 3 };
+const F = D.findings;
+
+$('#asof').innerHTML = `As of ${commit(D.head.commit)}${D.head.pr ? ` (${prLink(D.head.pr)})` : ''}, ${esc((D.head.date || '').slice(0, 10))}: ${esc(D.head.subject)}. From <a href="${esc(D.issues)}">the sweep's issues</a>.`
+  + (D.base ? ` Coverage changes are since ${commit(D.base.commit)}, the first push this site measured.` : '');
+
+function count(list) {
+  const t = { all: list.length, closed: 0, open: 0, severe: 0, low: 0, q: 0 };
+  for (const f of list) {
+    if (!isOpen(f)) t.closed++;
+    else { t.open++; if (f.state === 'question') t.q++; else if (f.sev === 'High' || f.sev === 'Med') t.severe++; else t.low++; }
+  }
+  return t;
+}
+function findBar(t) {
+  if (!t.all) return '<span class="na">none</span>';
+  const w = n => `${100 * n / t.all}%`;
+  return `<span class="meter"><b class="fixed" style="width:${w(t.closed)}"></b><b class="severe" style="width:${w(t.severe)}"></b><b class="lowsev" style="width:${w(t.low)}"></b><b class="q" style="width:${w(t.q)}"></b></span> <span class="n">${t.closed} of ${t.all}</span>`;
+}
+function covCell(p, was) {
+  if (p == null) return '<td class="l"><span class="na">—</span></td>';
+  const d = was == null ? null : p - was;
+  const dt = d == null || Math.abs(d) < 0.05 ? '<span class="delta"></span>' : `<span class="delta ${d > 0 ? 'up' : ''}">${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}</span>`;
+  return `<td class="l"><span class="meter"><b class="${band(p)}" style="width:${p}%"></b></span>${star(p)}<span class="pct">${f1(p)}</span>${dt}</td>`;
+}
+function flist(list, withStep) {
+  if (!list.length) return '<p class="na">No findings.</p>';
+  const sorted = [...list].sort((x, y) => (!isOpen(x)) - (!isOpen(y)) || ORDER[sevOf(x)] - ORDER[sevOf(y)] || x.id - y.id);
+  return `<ul class="flist">${sorted.map(f => `<li class="${isOpen(f) ? '' : 'closed'}"><span>${issue(f.id)}</span><span class="sev ${sevOf(f)}">${sevOf(f)}</span><span class="desc">${esc(f.desc)} <span class="chip">${esc(withStep ? f.step : f.area)}</span>${f.state === 'open' ? '' : ` <span class="chip">${esc(f.state)}</span>`}</span><span>${f.pr ? prLink(f.pr) : ''}</span></li>`).join('')}</ul>`;
+}
+function group(table, head, detail, cols, cls) {
+  const tb = document.createElement('tbody');
+  tb.className = 'group';
+  tb.innerHTML = `<tr class="head ${cls || ''}" tabindex="0">${head}</tr><tr class="detail"><td colspan="${cols}">${detail}</td></tr>`;
+  const toggle = () => tb.classList.toggle('open');
+  tb.firstElementChild.addEventListener('click', e => { if (!e.target.closest('a')) toggle(); });
+  tb.firstElementChild.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  table.append(tb);
+}
+
+// the steps
+const areaNow = Object.fromEntries(D.areas.map(a => [a.area, a.now]));
+const next = D.steps.find(s => !s.done);
+const steps = $('#steps');
+steps.innerHTML = '<thead><tr><th></th><th class="l">Step</th><th>PR</th><th class="l">What</th><th class="l">Findings closed</th><th>Open</th><th class="l">High / Med open</th><th>Coverage now<br>lines / branches</th></tr></thead>';
+for (const s of D.steps) {
+  const own = F.filter(f => f.step === s.id), t = count(own);
+  const severe = own.filter(f => isOpen(f) && (f.sev === 'High' || f.sev === 'Med'));
+  const c = s.areas.map(a => areaNow[a]).filter(Boolean).reduce((x, n) => { x[0] += n.linesReached; x[1] += n.lineCount; x[2] += n.branchesReached; x[3] += n.branchCount; return x; }, [0, 0, 0, 0]);
+  let res = '';
+  if (s.done && s.result) {
+    const parts = Object.entries(s.result).map(([a, x]) => `${esc(a)}: ${signed(x.lines)} / ${signed(x.branches)}, ${x.fixed} findings closed`);
+    if (parts.length) res = `<div class="res">At its merge: ${parts.join('; ')}.</div>`;
+  }
+  const areas = s.areas.length ? `<div class="areas">${s.areas.map(a => `<code>${esc(a)}</code>`).join('')}</div>` : '';
+  const head = `<td><input type="checkbox" disabled ${s.done ? 'checked' : ''} aria-label="${esc(s.id)} ${s.done ? 'done' : 'to do'}"></td>
+    <th class="l"><span class="caret"></span><a href="${esc(D.repo)}/issues/${s.issue}">${esc(s.id)}</a>${s === next ? '<span class="next">next</span>' : ''}</th>
+    <td>${s.pr ? prLink(s.pr) : '<span class="na">—</span>'}</td>
+    <td class="l"><div>${esc(s.what)}</div>${areas}${res}</td>
+    <td class="l">${findBar(t)}</td><td>${t.open || '<span class="na">0</span>'}</td>
+    <td class="l">${severe.map(f => `<a class="chip ${f.sev}" href="${esc(D.repo)}/issues/${f.id}" title="${esc(f.desc)}">${f.id}</a>`).join('')}</td>
+    <td>${c[1] ? `${f1(pct(c[0], c[1]))} / ${f1(pct(c[2], c[3]))}` : '<span class="na">—</span>'}</td>`;
+  group(steps, head, flist(own, false), 8, s.done ? 'done' : s === next ? 'next' : '');
+}
+
+// by area
+const areas = $('#areas');
+areas.innerHTML = '<thead><tr><th class="l">Area</th><th class="l">Lines</th><th class="l">Branches</th><th class="l">Findings closed</th><th>Open</th><th class="l">High / Med open</th></tr></thead>';
+for (const a of D.areas) {
+  const own = F.filter(f => f.area === a.area), t = count(own);
+  const severe = own.filter(f => isOpen(f) && (f.sev === 'High' || f.sev === 'Med'));
+  const head = `<th class="l"><span class="caret"></span>${esc(a.area)}</th>${covCell(a.now && a.now.lines, a.was && a.was.lines)}${covCell(a.now && a.now.branches, a.was && a.was.branches)}
+    <td class="l">${findBar(t)}</td><td>${t.open || '<span class="na">0</span>'}</td>
+    <td class="l">${severe.map(f => `<a class="chip ${f.sev}" href="${esc(D.repo)}/issues/${f.id}" title="${esc(f.desc)}">${f.id}</a>`).join('')}</td>`;
+  group(areas, head, flist(own, true), 6);
+}
+const all = count(F);
+const tf = document.createElement('tfoot');
+tf.innerHTML = `<tr><th class="l">Every area</th><td></td><td></td><td class="l">${findBar(all)}</td><td>${all.open}</td><td class="l">${all.severe ? all.severe + ' High or Med' : ''}</td></tr>`;
+areas.append(tf);
+
+// gaps and questions
+const others = kind => D.others.filter(o => o.kind === kind);
+const olist = list => list.length ? `<ul class="others">${list.map(o => `<li>${issue(o.id)} ${esc(o.title)}${o.areas.map(a => ` <span class="chip">${esc(a)}</span>`).join('')}</li>`).join('')}</ul>` : '<p class="na">None open.</p>';
+$('#others').innerHTML = `<h3>Gaps (${others('gap').length})</h3>${olist(others('gap'))}<h3>Questions (${others('question').length})</h3>${olist(others('question'))}`;
+
+const doneN = D.steps.filter(s => s.done).length;
+$('#banner').innerHTML = `
+  <div><div class="label">Steps done</div><div class="big">${doneN} <small>of ${D.steps.length}</small></div>
+    <span class="meter"><b class="fixed" style="width:${pct(doneN, D.steps.length) || 0}%"></b></span>
+    <div class="sub">${next ? `next: ${esc(next.id)}, ${esc(next.what)}` : D.steps.length ? 'the sweep is done' : 'no steps'}</div></div>
+  <div><div class="label">Findings closed</div><div class="big">${all.closed} <small>of ${all.all}</small></div>
+    <span class="meter"><b class="fixed" style="width:${pct(all.closed, all.all) || 0}%"></b><b class="severe" style="width:${pct(all.severe, all.all) || 0}%"></b><b class="lowsev" style="width:${pct(all.low, all.all) || 0}%"></b><b class="q" style="width:${pct(all.q, all.all) || 0}%"></b></span>
+    <div class="sub">${all.open} open: ${all.severe} High or Med, ${all.low} Low or unrated, ${all.q} questions</div></div>
+  <div><div class="label">Open gaps</div><div class="big">${others('gap').length}</div>
+    <div class="sub">what the requirements describe and AppKata doesn't do</div></div>
+  <div><div class="label">Open questions</div><div class="big">${others('question').length}</div>
+    <div class="sub">decisions the owner makes</div></div>`;
+})();
+</script>
+</body>
+</html>
