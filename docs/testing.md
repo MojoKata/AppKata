@@ -132,7 +132,9 @@ pytest over the copy itself and runs each test that fails there once more on the
 left out of the run, and mutmut starts again; the run's export and the area's baseline name each
 (`dropped`) with its short traceback and the kind of failure it looks like: reads the mutated source,
 git or links in the copy, leaks into processes tests start, or unknown. `summary` and `gather`
-print, for each one `UNFIT` doesn't name, the line to add there. A test that
+print, for each one `UNFIT` doesn't name, the line to add there. A committed baseline has none left
+(`tests/test_mutate.py`): each is settled first, by adding it to `UNFIT` with its real reason or by
+changing the test so it doesn't depend on the copy, never by weakening what it checks. A test that
 reads a module's source rather than running it reads it as written (`tests/written.py`): in a run,
 from the checkout, since the copy's file holds every change at once.
 Two things make the copy behave as the checkout for the rest (`scripts/mutate_plugin.py`): a script

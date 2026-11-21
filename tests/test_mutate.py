@@ -261,6 +261,13 @@ def test_the_baselines_kept_name_files_that_exist_and_add_up():
     assert on_disk == {a for a, _, _ in kept()}
 
 
+def test_no_baseline_kept_has_a_test_left_out():
+    """A test a run leaves out is settled before its baseline is committed: in UNFIT with its real
+    reason, or changed so it doesn't depend on the copy (docs/testing.md, "Mutation testing")."""
+    for area, record, _ in kept():
+        assert record["dropped"] == {}, (area, sorted(record["dropped"]))
+
+
 @pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, ".git")), reason="the copy isn't a checkout")
 def test_a_files_content_is_its_blob_at_the_commit():
     rel = "scripts/areas.py"
