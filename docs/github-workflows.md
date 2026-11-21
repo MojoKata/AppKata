@@ -12,6 +12,7 @@ the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a dow
 |---|---|---|
 | A pull request, a push to `master` | `tier1` in 3 parts, `appimage`, `windows`, then `coverage` and `ci-times`, then `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days) |
 | A `v*` tag | the same, built without the caches, and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256` |
+| By hand, [`mutate.yml`](../.github/workflows/mutate.yml) (and a trial on a pull request that changes it or its tools) | `plan`, then a `mutate` job per 1000 code lines or so, 14 at once: mutation testing ([`testing.md`](testing.md#mutation-testing)) | each job's outcomes, survivors and log (`mutation-<job>`, 90 days), which `scripts/mutate.py gather` turns into the areas' baselines |
 
 All of it runs on GitHub's hosted `ubuntu-24.04` runners, free for a public repository. Each job runs
 the script it would run on a development machine, so a CI failure reproduces locally:
