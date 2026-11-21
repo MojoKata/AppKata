@@ -130,8 +130,8 @@ The `tour` job makes the Linux screenshots on every run, a pull request's includ
 The job runs from `~/kata/AppKata`, a link to the checkout, so the paths the screens show read as on
 a development machine (`~/kata/AppKata/build/tour-data/…`). In the first hour of a UTC day the tour
 shows its times an hour behind UTC, since the Audit's day has no room for today's entries yet
-(`demo_data.py offset`). It takes about 6 minutes, and isn't part of `ci`: it holds the site, not a
-merge.
+(`demo_data.py offset`). It takes about 7 minutes (the tour 4½, the text check 1½), and isn't part of
+`ci`: it holds the site, not a merge.
 
 The Windows screenshots and the mockups stay committed; the Windows VM makes the Windows set
 ([`build.md`](build.md), "Windows"), never a GitHub runner.
