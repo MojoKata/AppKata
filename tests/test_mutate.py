@@ -212,6 +212,7 @@ def test_each_areas_baseline_keeps_its_outcomes_content_and_survivors(tmp_path, 
 
 def test_a_job_run_again_later_is_the_later_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(mutate, "blob_at", lambda commit, rel, repo: "b")
+    monkeypatch.setattr(mutate, "remade", lambda missing, content: {})       # no copy made here
     monkeypatch.setattr(mutate, "source", lambda blob: "")
     first, again = tmp_path / "1", tmp_path / "2"
     first.mkdir(), again.mkdir()
@@ -284,9 +285,11 @@ def test_main_names_every_command():
 # --- the commands, on made-up runs ------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def work(tmp_path, monkeypatch):
-    """A work folder of its own, as APPKATA_MUTATE_WORK names one."""
+    """A work folder of its own, as APPKATA_MUTATE_WORK names one, for every test: a test never
+    reaches the real one, which a mutation run running these tests is using (a remake makes the
+    copy afresh, and the run's copy went with it)."""
     w = tmp_path / "work"
     monkeypatch.setattr(mutate, "WORK", w)
     monkeypatch.setattr(mutate, "COPY", w / "copy")
