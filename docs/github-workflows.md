@@ -120,7 +120,9 @@ and published by GitHub Actions on each push to `master`. It has three pages:
 The `site` job builds it on every run, a pull request's included, after `coverage`: it downloads the
 `coverage` artifact, reads the issues with the job's token (`issues: read`, `pull-requests: read`),
 runs `scripts/public_text.py check` on the pages and keeps the site as the `site` artifact, so a pull
-request's site can be downloaded and opened (`gh run download RUN -n site`). The `pages` job runs on
+request's site can be downloaded and opened (`gh run download RUN -n site`). A fork's own pushes
+skip both jobs (`github.event.repository.fork`): its site would name the fork, which the check refuses,
+and a pull request from a fork runs in this repository, so it still builds the site. The `pages` job runs on
 a push to `master` only, after `ci` and `site`: it alone has `pages: write` and `id-token: write`,
 deploys to the `github-pages` environment, which takes deployments from `master` alone, and publishes
 the `site` artifact with `actions/upload-pages-artifact` and `actions/deploy-pages`.

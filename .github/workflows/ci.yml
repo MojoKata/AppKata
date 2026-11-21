@@ -107,6 +107,7 @@ jobs:
   # repository's issues and the screenshots, kept as the `site` artifact; `pages` publishes master's
   site:
     needs: [coverage]
+    if: ${{ !github.event.repository.fork }}   # a fork's push builds no site: it would carry the fork's name
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -216,7 +217,7 @@ jobs:
   # a push to master only, once `ci` passes: the site to the repository's GitHub Pages; the github-pages
   # environment takes deployments from master alone
   pages:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !github.event.repository.fork
     needs: [ci, site]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
