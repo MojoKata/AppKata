@@ -21,7 +21,9 @@ read it fails the build in CI, so a bad moment never starts the history over. Th
 the same way: the published ones, under screenshots/<version>/ as screenshots/index.json lists them, are
 carried into each build, and --screenshots DIR adds or replaces the versions DIR holds
 (DIR/<version>/...). CI's site job puts its run's Linux tour in DIR/master/, and release-tours DIR
-puts there each published release's that the site doesn't hold yet, from its tag's run."""
+puts there each published release's that the site doesn't hold yet, from its tag's run. Each build
+also writes screenshots/latest/, a copy of the newest release's tour, or master's while there is no
+release, which the README's screenshot comes from."""
 
 import argparse
 import html
@@ -609,11 +611,11 @@ def screenshots(base, nonce, dest, new=None, fetch=True):
     added = {}
     if new and Path(new).is_dir():
         for d in sorted(Path(new).iterdir()):
-            if d.is_dir() and VERSION.match(d.name):
+            if d.is_dir() and VERSION.match(d.name) and d.name != LATEST:
                 added[d.name] = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
     old = (published(base, nonce, "screenshots/index.json") or {}).get("versions", {}) if fetch else {}
     for version, names in old.items():
-        if version in added or not VERSION.match(version):
+        if version in added or version == LATEST or not VERSION.match(version):
             continue
         for rel in names:
             if not _safe(rel):
@@ -631,8 +633,10 @@ def screenshots(base, nonce, dest, new=None, fetch=True):
 
 
 # The folder of the newest tour, master's, replaced by each push; a release's own is kept under its
-# version (release_tours).
-LATEST = "master"
+# version (release_tours). LATEST is a copy the site makes on each build, never carried: the newest
+# release's tour, or master's while there is no release (the README's screenshot comes from it).
+MASTER = "master"
+LATEST = "latest"
 
 
 def gh(*args):
@@ -666,7 +670,7 @@ def release_tours(dest):
     brought = []
     for tag in out.split():
         version = tag[1:] if tag.startswith("v") else tag
-        if version in held or version == LATEST or not VERSION.match(version):
+        if version in held or version in (MASTER, LATEST) or not VERSION.match(version):
             continue
         run = gh("run", "list", "--repo", repo, "--workflow", "ci.yml", "--branch", tag, "--event", "push",
                  "--status", "success", "--limit", "1", "--json", "databaseId", "--jq", ".[].databaseId")
@@ -682,19 +686,29 @@ def release_tours(dest):
     return brought
 
 
-def screenshots_page(index):
+def latest_of(index):
+    """The version screenshots/latest/ copies: the newest release's (index is newest first), else
+    master's; None while the site holds no tour."""
+    releases = [v for v in index if v not in (MASTER, LATEST)]
+    return releases[0] if releases else (MASTER if MASTER in index else None)
+
+
+def screenshots_page(index, latest=None):
     """The screenshots' page: each version's, newest first, each image linked to itself."""
     out = []
     for version, names in index.items():
         images = [n for n in names if n.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]
         tiles = "".join(f"<a href='{html.escape(version)}/{html.escape(n)}'><img loading='lazy' alt='{html.escape(n)}' "
                         f"src='{html.escape(version)}/{html.escape(n)}'><span>{html.escape(n)}</span></a>" for n in images)
-        what = (f"The newest push to {LATEST}, replaced by each one: {len(images)} screens." if version == LATEST
+        what = (f"The newest push to {MASTER}, replaced by each one: {len(images)} screens." if version == MASTER
                 else f"Release {html.escape(version)}, from CI's run of its tag: {len(images)} screens.")
         out.append(f"<h2 id='v{html.escape(version)}'>{html.escape(version)}</h2>"
                    f"<p>{what}</p><div class='shots'>{tiles}</div>")
+    if latest:
+        out.insert(0, f"<p><code>{LATEST}/</code> holds {html.escape(latest)}'s screens: the newest release's, or "
+                      f"{MASTER}'s while there is none.</p>")
     body = "\n".join(out) or ("<p class='none'>None are published. CI's Linux tour publishes master's under "
-                              f"<code>screenshots/{LATEST}/</code>, and each release's under "
+                              f"<code>screenshots/{MASTER}/</code>, and each release's under "
                               "<code>screenshots/&lt;version&gt;/</code>.</p>")
     return f"""<!doctype html>
 <html lang="en">
@@ -776,8 +790,11 @@ def build(coverage=COVERAGE, out=SITE, shots=None):
     (out / "files.json").write_text(json.dumps(files, indent=1) + "\n")
     (out / "screenshots").mkdir()
     index = screenshots(base, nonce, out / "screenshots", shots, fetch=reachable)
-    (out / "screenshots" / "index.json").write_text(json.dumps({"versions": index}, indent=1) + "\n")
-    (out / "screenshots" / "index.html").write_text(screenshots_page(index), encoding="utf-8")
+    latest = latest_of(index)
+    if latest:
+        shutil.copytree(out / "screenshots" / latest, out / "screenshots" / LATEST)
+    (out / "screenshots" / "index.json").write_text(json.dumps({"versions": index, LATEST: latest}, indent=1) + "\n")
+    (out / "screenshots" / "index.html").write_text(screenshots_page(index, latest), encoding="utf-8")
     (out / "index.html").write_text(page(history, cr.floors(), files, base, repo), encoding="utf-8")
     (out / "hardening.html").write_text(hardening.page(history, list(areas.AREAS), repo, issues), encoding="utf-8")
     print(f"{out / 'index.html'}: {len(history)} pushes, {len(issues)} issues, {len(index)} screenshot versions"

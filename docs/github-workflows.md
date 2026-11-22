@@ -166,7 +166,11 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   published release's tour the site doesn't hold yet, the `tour` artifact of CI's passing run of its
   tag (`gh run download`, with the job's token and `actions: read`). A release's tour joins the site at
   the first push to `master` after the release is published; one whose run or artifact is gone (90
-  days) is named in a warning and left out, and the site is built without it.
+  days) is named in a warning and left out, and the site is built without it. Each build also writes
+  `screenshots/latest/`, a copy of the newest release's tour, or of master's while no release is on
+  the site, and names its version as `latest` in `screenshots/index.json`; it is made afresh each
+  time, never carried. The README's screenshot is `screenshots/latest/dark/A01-apps.png`, so the
+  front page shows what users download once a release exists.
 
 The `site` job builds it on every run, a pull request's included, after `coverage` and `tour`: it
 downloads the `coverage` and `tour` artifacts, brings the published releases' tours (`contents: read`,

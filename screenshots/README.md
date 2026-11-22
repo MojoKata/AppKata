@@ -9,8 +9,9 @@ screenshots/
 
 The real app on Linux, with the same screen names, isn't in the tree: CI makes its tour on every run
 and publishes it on the [screenshots page](https://mojokata.github.io/AppKata/screenshots/), master's
-under `screenshots/master/{dark,light}/` and each release's under `screenshots/<version>/{dark,light}/`
-("Real screenshots", below).
+under `screenshots/master/{dark,light}/` and each release's under `screenshots/<version>/{dark,light}/`;
+`screenshots/latest/` is the newest release's, or master's while there is none ("Real screenshots",
+below).
 
 The Linux and Windows screens are 1920 × 1040, the design point (R5.2.1): AppKata
 maximized on a 1920 × 1080 screen. The mockups are drawn at 1280 × 800.

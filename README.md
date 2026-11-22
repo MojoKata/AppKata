@@ -6,10 +6,11 @@ signed by the Trust's Authorities. AppKata installs and updates apps from the pr
 own releases (GitHub, GitLab, Forgejo/Gitea), and you can publish your own reviews from a
 git repository.
 
-[![The Apps view: updates first, AppKata itself among them, then every installed app by name](https://mojokata.github.io/AppKata/screenshots/master/dark/A01-apps.png)](https://mojokata.github.io/AppKata/screenshots/)
+[![The Apps view: updates first, AppKata itself among them, then every installed app by name](https://mojokata.github.io/AppKata/screenshots/latest/dark/A01-apps.png)](https://mojokata.github.io/AppKata/screenshots/)
 
 Every screen, in both themes, is on the [screenshots page](https://mojokata.github.io/AppKata/screenshots/):
-CI's tour of the real app on demo data, for `master` and for each release.
+CI's tour of the real app on demo data, for `master` and for each release. The one above is the
+newest release's, or `master`'s while there is none.
 
 ## Download
 

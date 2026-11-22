@@ -167,7 +167,8 @@ def test_the_site_holds_the_report_the_history_and_its_pages(monkeypatch, tmp_pa
     assert "<!-- built from " + BASE + " -->" in page
     hard = (out / "hardening.html").read_text()
     assert "<title>AppKata hardening</title>" in hard and '"what":"Pages site"' in hard
-    assert json.loads((out / "screenshots" / "index.json").read_text()) == {"versions": {}}
+    assert json.loads((out / "screenshots" / "index.json").read_text()) == {"versions": {}, "latest": None}
+    assert not (out / "screenshots" / "latest").exists()
     assert "None are published" in (out / "screenshots" / "index.html").read_text()
 
 
@@ -308,3 +309,41 @@ def test_gh_passes_ci_s_token_and_says_none_when_it_fails(monkeypatch, tmp_path,
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     cs.notice("gone")
     assert capsys.readouterr().out == "::warning title=release tours::gone\n"
+
+
+def _shots(tmp_path, versions):
+    new = tmp_path / "shots"
+    for v in versions:
+        (new / v / "dark").mkdir(parents=True)
+        (new / v / "dark" / "A01-apps.png").write_bytes(v.encode())
+    return new
+
+
+@pytest.mark.parametrize("published, brought, latest", [
+    ({}, ["master"], "master"),                                   # no release yet: master's tour
+    ({"0.1.0": ["dark/A01-apps.png"]}, ["master"], "0.1.0"),     # a release on the site: the newest one
+    ({"0.1.0": ["dark/A01-apps.png"]}, ["master", "0.2.0"], "0.2.0"),
+])
+def test_latest_is_the_newest_release_s_tour_else_master_s(monkeypatch, tmp_path, published, brought, latest):
+    """screenshots/latest/, which the README's screenshot comes from, is a copy the build makes: the
+    newest release's tour, or master's while there is none. It is never carried from the published
+    site (a stale latest/ there, or in --screenshots, is ignored)."""
+    served = {"screenshots/index.json": json.dumps({"versions": {**published, "latest": ["dark/A01-apps.png"]},
+                                                    "latest": "0.0.1"}).encode(),
+              "screenshots/latest/dark/A01-apps.png": b"stale"}
+    served.update({f"screenshots/{v}/{n}": v.encode() for v, names in published.items() for n in names})
+    monkeypatch.setattr(cs, "get", site({"history.json": b"[]", **served}))
+    coverage = coverage_dir(tmp_path, {}, [])
+    shots = _shots(tmp_path, brought + ["latest"])
+    out = tmp_path / "site"
+    assert cs.build(coverage, out, shots) == 0
+    index = json.loads((out / "screenshots" / "index.json").read_text())
+    assert index["latest"] == latest and "latest" not in index["versions"]
+    assert (out / "screenshots" / "latest" / "dark" / "A01-apps.png").read_bytes() == latest.encode()
+    assert f"<code>latest/</code> holds {latest}'s screens" in (out / "screenshots" / "index.html").read_text()
+
+
+def test_latest_of():
+    assert cs.latest_of({}) is None
+    assert cs.latest_of({"master": []}) == "master"
+    assert cs.latest_of({"master": [], "0.10.0": [], "0.9.0": []}) == "0.10.0"
