@@ -115,7 +115,8 @@ The `tour` job makes the Linux screenshots on every run, a pull request's includ
    data isn't a release input, and a release's tour should show what `master`'s did.
 2. **The tour and its layout check**: a text drawn outside its box fails the job.
 3. **The screenshot text check**, `scripts/test-screenshot-text.sh` on every screen (tesseract, in a
-   container): a private name, another repository's address or a screen it couldn't read fails the
+   container built from tier 1's pinned Ubuntu 24.04, `NOBLE_IMAGE`, so what it reads changes only
+   when the pin moves): a private name, another repository's address or a screen it couldn't read fails the
    job, before anything is uploaded.
 4. **The `tour` artifact**: `dark/` and `light/`, kept 90 days, so a tag's lasts until its release is
    published and the site takes it. `site` publishes master's.

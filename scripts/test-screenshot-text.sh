@@ -9,16 +9,28 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$HERE/build/screenshot-text"
-# tesseract from Ubuntu 24.04's tag, not a digest (.coworker/deps.json says why)
-if ! docker image inspect appkata-ocr >/dev/null 2>&1; then
-    printf 'FROM ubuntu:24.04\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tesseract-ocr >/dev/null\n' \
-        | timeout 600 docker build -q -t appkata-ocr - >/dev/null
+. "$HERE/packaging/versions.env"
+# tesseract on tier 1's pinned Ubuntu 24.04 (NOBLE_IMAGE), as scripts/lib-tier1.sh builds its image: a
+# CI gate's tool, so what it reads changes only when the pin moves. The image's tag follows this
+# recipe, so a change makes a new image; a failed build shows its own output.
+_df="FROM $NOBLE_IMAGE
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tesseract-ocr >/dev/null"
+IMG=appkata-ocr:$(printf '%s' "$_df" | sha256sum | cut -c1-12)
+if ! docker image inspect "$IMG" >/dev/null 2>&1; then
+    _log=$(mktemp)
+    if ! printf '%s\n' "$_df" | timeout 600 docker build --progress=plain -t "$IMG" - >"$_log" 2>&1; then
+        echo "test-screenshot-text.sh: building $IMG failed or took over 10 minutes; docker build said:" >&2
+        cat "$_log" >&2
+        rm -f "$_log"
+        exit 1
+    fi
+    rm -f "$_log"
 fi
 rm -rf "$OUT" && mkdir -p "$OUT"
 cd "$HERE"
 if [ $# -gt 0 ]; then printf '%s\n' "$@" | sed "s|^$HERE/||"; else git ls-files -co --exclude-standard 'screenshots/*.png'; fi > "$OUT/list.txt"
 # a tesseract per core, each on one thread
-docker run --rm --user "$(id -u):$(id -g)" -e OMP_THREAD_LIMIT=1 -v "$HERE:/src:ro" -v "$OUT:/out" appkata-ocr sh -c '
+docker run --rm --user "$(id -u):$(id -g)" -e OMP_THREAD_LIMIT=1 -v "$HERE:/src:ro" -v "$OUT:/out" "$IMG" sh -c '
     cd /src && xargs -P "$(nproc)" -I{} sh -c '\''mkdir -p "$(dirname "/out/$1")" && tesseract "$1" "/out/$1" >/dev/null 2>&1 || { rm -f "/out/$1.txt"; echo "could not read $1"; }'\'' sh {} < /out/list.txt'
 echo "read $(wc -l < "$OUT/list.txt") screenshots"
 python3 - "$OUT" <<'PY'
