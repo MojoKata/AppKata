@@ -10,9 +10,9 @@ the release checklist, in [`RELEASE.md`](RELEASE.md); what users can check a dow
 
 | Event | Jobs | What it leaves |
 |---|---|---|
-| A pull request, a push to `master` | `tier1` in 3 parts, `appimage`, `windows`, then `coverage` and `ci-times`, then `site` and `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days); the Pages site as this commit would publish it (`site`, 30 days) |
-| A push to `master` | the same, then `pages` | the site, published at the repository's GitHub Pages ("The Pages site", below) |
-| A `v*` tag | the same, built without the caches, and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256` |
+| A pull request, a push to `master` | `tier1` in 3 parts, `tour`, `appimage`, `windows`, then `coverage` and `ci-times`, then `site` and `ci` | the AppImage and `setup.exe`, each with its `.sha256`, unsigned, as the run's artifacts (`appimage`, `windows`; GitHub keeps them 90 days); the Linux screenshots (`tour`, 90 days); the coverage report (`coverage`, 30 days); each part's tests' times (`durations-1` to `-3`, 30 days); the Pages site as this commit would publish it (`site`, 30 days) |
+| A push to `master` | the same, then `pages` | the site, published at the repository's GitHub Pages ("The Pages site", below), with this push's tour |
+| A `v*` tag | the same, built without the caches (but the tour's demo data), and `version`; then, once the owner approves, `sign` and `release` | a **draft** release: the AppImage, its `.sha256` and `.asc`, `setup.exe` and its `.sha256`; the release's tour (`tour`), which the site keeps once the release is published |
 | By hand, [`mutate.yml`](../.github/workflows/mutate.yml) (and a trial on a pull request that changes it or its tools) | `plan`, then a `mutate` job per 1000 code lines or so, 14 at once: mutation testing ([`testing.md`](testing.md#mutation-testing)) | each job's outcomes, survivors and log (`mutation-<job>`, 90 days), which `scripts/mutate.py gather` turns into the areas' baselines |
 
 All of it runs on GitHub's hosted `ubuntu-24.04` runners, free for a public repository. Each job runs
@@ -22,8 +22,9 @@ the script it would run on a development machine, so a CI failure reproduces loc
 |---|---|---|
 | `tier1 1 of 3` to `3 of 3` | `scripts/test-tier1.sh`, a part each, measured ("Tier 1's parts", below) | 1 min each |
 | `coverage` | `scripts/coverage_report.py report --check` on the parts' data ("Coverage", below) | ½ min |
+| `tour` | `scripts/tour-data.sh`, `scripts/test-layout.sh`, then `scripts/test-screenshot-text.sh` on its screens ("The tour", below) | |
 | `ci-times` | `scripts/ci_times.py` on its own run: each part within 5 minutes, the parts within 1.4:1 | |
-| `site` | `scripts/coverage_site.py build` on the coverage report ("The Pages site", below) | |
+| `site` | `scripts/coverage_site.py release-tours` and `build` on the coverage report and the tour ("The Pages site", below) | |
 | `appimage` | `scripts/build-appimage.sh` | 1 min |
 | `windows` | `scripts/build-windows.sh`: PyInstaller and Inno Setup under Wine, in Docker, as the Windows VM tests it (`build.md`, "Windows") | 3 min |
 | `ci` | passes only when tier 1's parts, `coverage` and both builds did | |
@@ -34,7 +35,8 @@ the script it would run on a development machine, so a CI failure reproduces loc
 
 `ci` is the one check the `master` ruleset requires (GENESIS.md, step 4): a pull request can't
 merge while tier 1 fails, an area's coverage falls below its floor or either build breaks, and jobs
-can be added without changing the ruleset. `ci-times` and `site` report beside it and don't hold a merge.
+can be added without changing the ruleset. `ci-times`, `tour` and `site` report beside it and don't hold
+a merge; a `tour` that fails leaves `site`, and so `pages`, without a run.
 The tiers that need KVM or a desktop (2 and 3, [`testing.md`](testing.md)) stay on the development
 machine: GitHub advises against self-hosted runners for a public repository, since anyone can open a
 pull request and run code on them.
@@ -96,6 +98,45 @@ the commit it describes (`gh run download RUN -n coverage -D build/coverage-ci`,
 holds the HTML report (`html/index.html`), `totals.json`, `files.json` (each file's counts) and
 coverage.py's own `coverage.json` (each file's lines and branches missed).
 
+## The tour
+
+The `tour` job makes the Linux screenshots on every run, a pull request's included: every screen of
+`src/appkata/tour.py` in both themes, at the design point (1920 × 1040), in tier 1's container
+(`scripts/test-layout.sh`, [`build.md`](build.md#running-from-source-tests-and-screenshots)). In order:
+
+1. **The demo data**, `build/tour-data`, by `scripts/tour-data.sh`: as the cache brought it when
+   `scripts/demo_data.py` hasn't changed since it was made; made again from its own synced Catalog
+   (`demo_data.py remake`, no network) when it has; else built and synced from GitHub with the job's
+   token (`GITHUB_TOKEN`: the API's own limit, not the 60 an hour a runner's address shares), and kept
+   only when `demo_data.py check` passes; and when that fails, restored from the snapshot in
+   `tests/data/demo` (`demo_data.py restore`, no network) with a warning on the run. The cache is
+   keyed on `demo_data.py`, so a change to it remakes the data from the entry before; GitHub drops an
+   entry unused for 7 days, and the next run syncs afresh. A tag's run uses the cache too: the demo
+   data isn't a release input, and a release's tour should show what `master`'s did.
+2. **The tour and its layout check**: a text drawn outside its box fails the job.
+3. **The screenshot text check**, `scripts/test-screenshot-text.sh` on every screen (tesseract, in a
+   container built from tier 1's pinned Ubuntu 24.04, `NOBLE_IMAGE`, so what it reads changes only
+   when the pin moves): a private name, another repository's address or a screen it couldn't read fails the
+   job, before anything is uploaded.
+4. **The `tour` artifact**: `dark/` and `light/`, kept 90 days, so a tag's lasts until its release is
+   published and the site takes it. `site` publishes master's.
+5. **The `tour.html` artifact**, for a review in the browser: `scripts/tour_page.py` writes one page
+   with every screen inlined, those whose bytes differ from master's published tour first, each beside
+   master's, then the new ones, the ones gone and, folded away, the rest. It is uploaded unzipped
+   (`actions/upload-artifact`'s `archive: false`), so the run's list of artifacts opens it in the
+   browser rather than downloading a zip. The screens that show the day (the Audit's) differ from
+   master's whenever the two were made on different days. The job's summary, which a pull request's
+   checks link to, names the screens that changed and links the page.
+
+The job runs from `~/kata/AppKata`, a link to the checkout, so the paths the screens show read as on
+a development machine (`~/kata/AppKata/build/tour-data/…`). In the first hour of a UTC day the tour
+shows its times an hour behind UTC, since the Audit's day has no room for today's entries yet
+(`demo_data.py offset`). It takes about 7 minutes (the tour 4½, the text check 1½), and isn't part of
+`ci`: it holds the site, not a merge.
+
+The Windows screenshots and the mockups stay committed; the Windows VM makes the Windows set
+([`build.md`](build.md), "Windows"), never a GitHub runner.
+
 ## The Pages site
 
 The repository's GitHub Pages site, at `https://<owner>.github.io/<name>/` (for this repository
@@ -117,12 +158,23 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   Each area also shows its mutation testing, from its latest record in `docs/hardening/mutation/`
   (its survivors of its changes), marked "baseline, changed since" when a module has changed since
   that record or isn't in it ([`testing.md`](testing.md#mutation-testing), `mutate.py stale`).
-- **Screenshots** (`screenshots/index.html`): each version's screens under
-  `screenshots/<version>/`, listed in `screenshots/index.json`. `--screenshots DIR` adds the
-  versions a folder holds (`DIR/<version>/…`) and replaces those already published.
+- **Screenshots** (`screenshots/index.html`): the Linux tour ("The tour", above), master's under
+  `screenshots/master/`, replaced by each push, and each release's under `screenshots/<version>/`,
+  kept; all listed in `screenshots/index.json`. `--screenshots DIR` adds the versions a folder holds
+  (`DIR/<version>/…`) and replaces those already published: the `site` job puts its run's `tour`
+  artifact in `DIR/master/`, and `coverage_site.py release-tours DIR` puts in `DIR/<version>/` each
+  published release's tour the site doesn't hold yet, the `tour` artifact of CI's passing run of its
+  tag (`gh run download`, with the job's token and `actions: read`). A release's tour joins the site at
+  the first push to `master` after the release is published; one whose run or artifact is gone (90
+  days) is named in a warning and left out, and the site is built without it. Each build also writes
+  `screenshots/latest/`, a copy of the newest release's tour, or of master's while no release is on
+  the site, and names its version as `latest` in `screenshots/index.json`; it is made afresh each
+  time, never carried. The README's screenshot is `screenshots/latest/dark/A01-apps.png`, so the
+  front page shows what users download once a release exists.
 
-The `site` job builds it on every run, a pull request's included, after `coverage`: it downloads the
-`coverage` artifact, reads the issues with the job's token (`issues: read`, `pull-requests: read`),
+The `site` job builds it on every run, a pull request's included, after `coverage` and `tour`: it
+downloads the `coverage` and `tour` artifacts, brings the published releases' tours (`contents: read`,
+`actions: read`), reads the issues with the job's token (`issues: read`, `pull-requests: read`),
 runs `scripts/public_text.py check` on the pages and keeps the site as the `site` artifact, so a pull
 request's site can be downloaded and opened (`gh run download RUN -n site`). A fork's own pushes
 skip both jobs (`github.event.repository.fork`): its site would name the fork, which the check refuses,
@@ -227,9 +279,10 @@ change to them.
 ## Caches
 
 `build/appimage-cache` (Python, PySide6's wheels, appimagetool, the runtime; the coverage job's
-Python too), tier 1's PySide6 folder and `build/wine-cache` are cached between runs, keyed on `packaging/versions.env` (and, for
-the Windows build, its script and the `icuuc.dll` stand-in's source). A tag's run uses no cache: a
-release is built from the pinned sources alone. The pinned files are checked against their
+Python too), tier 1's PySide6 folder (tier 1's and the tour's) and `build/wine-cache` are cached between runs, keyed on `packaging/versions.env` (and, for
+the Windows build, its script and the `icuuc.dll` stand-in's source). A tag's run uses none of these: a
+release is built from the pinned sources alone. The tour's demo data, `build/tour-data`, is cached on
+tags too, keyed on `scripts/demo_data.py` ("The tour"). The pinned files are checked against their
 SHA-256s each time they're used, cached or not.
 
 ## When a job fails

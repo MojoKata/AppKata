@@ -19,7 +19,10 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # the files the builds and CI run (the local tiers' scripts aren't release inputs)
 FILES = ["packaging/versions.env", "scripts/build-appimage.sh", "scripts/build-windows.sh", "scripts/lib-python.sh",
-         "scripts/python-standalone.sh", "scripts/lib-tier1.sh", "scripts/test-tier1.sh", "scripts/test-mutate.sh"]
+         "scripts/python-standalone.sh", "scripts/lib-tier1.sh", "scripts/test-tier1.sh", "scripts/test-mutate.sh",
+         # CI's tour job: the demo data, the tour, and the screenshot text check (its tesseract image is
+         # built FROM NOBLE_IMAGE, pinned like tier 1's)
+         "scripts/tour-data.sh", "scripts/test-layout.sh", "scripts/test-screenshot-text.sh"]
 
 # what the test found when it was written, each to be pinned (item 7); the test fails on anything
 # new, and on a listed item that is gone, so the list only shrinks

@@ -364,7 +364,7 @@ prepared() {        # the release pull request is merged, with every step done, 
     done
     ! grep -q '^- \[ \]' "$rec" || die "$rec has steps not done: $(grep '^- \[ \]' "$rec" | cut -c1-60 | paste -sd'|' -)"
     [ -f "tests/data/state/$VERSION.json" ] || die "tests/data/state/$VERSION.json is missing: the release pull request freezes it"
-    grep -Eq "^## Status \($(echo "$VERSION" | sed 's/\./\\./g')[:)]" README.md || die "README.md's Status heading doesn't name $VERSION"
+    grep -Eq "^## Status \($(echo "$VERSION" | sed 's/\./\\./g')[:)]" DEVELOP.md || die "DEVELOP.md's Status heading doesn't name $VERSION"
     ci=$(gh run list --repo "$REPO" --workflow ci.yml --branch master --event push --commit "$(git rev-parse HEAD)" --limit 1 \
         --json status,conclusion --jq '.[] | "\(.status) \(.conclusion)"') || die "can't read CI's runs on $REPO"
     case $ci in

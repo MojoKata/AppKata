@@ -256,9 +256,9 @@
       "image": "appkata-ocr",
       "built": "scripts/test-screenshot-text.sh",
       "from": [
-        "ubuntu:24.04"
+        "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
       ],
-      "why": "reads the text in every screenshot with tesseract; from its base's tag, not a digest, on purpose: a test image, never shipped, it tests the distribution as users have it today"
+      "why": "reads the text in every screenshot with tesseract (CI's tour job and by hand); a CI gate's tool, so pinned like tier 1, from NOBLE_IMAGE (packaging/versions.env): its reading changes only when the pin moves"
     },
     {
       "image": "appkata-vmtools",

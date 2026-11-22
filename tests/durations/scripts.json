@@ -1,6 +1,6 @@
 {
- "short": 0.033,
+ "short": 0.034,
  "tests": {
-  "tests/test_publish.py::test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey": 2.9
+  "tests/test_publish.py::test_key_new_makes_a_certify_only_main_key_and_a_signing_subkey": 3.0
  }
 }

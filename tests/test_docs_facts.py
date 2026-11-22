@@ -23,7 +23,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 REQ = "docs/requirements/"                 # every section file, as one text (reqdocs)
 A1 = "docs/architecture/A1-app-sandboxing/"  # the sandboxing design's files, as one text
 RECORD = "docs/reviews/app-sandboxing-build.md"
-COUNTED_DOCS = (REQ, A1, "docs/local-proxy-test-plan.md", "README.md")
+COUNTED_DOCS = (REQ, A1, "docs/local-proxy-test-plan.md", "README.md", "DEVELOP.md")
 WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 # Facts the documents still state wrongly, and the finding that keeps each
@@ -145,7 +145,7 @@ def _facts() -> dict:
     # R1.6: the AppImage is AppKata's only Linux form (R3-21's decision); README and build.md still said
     # ".deb/.rpm maybe later" after R1.6 dropped it
     only = "no `.deb` or `.rpm`" in re.sub(r"\s+", " ", _req("R1.6"))
-    maybe = sorted(rel for rel in ("README.md", "docs/build.md")
+    maybe = sorted(rel for rel in ("README.md", "DEVELOP.md", "docs/build.md")
                    if re.search(r"\.deb.{0,40}\bmaybe\b|\bmaybe\b.{0,40}\.rpm", re.sub(r"\s+", " ", _read(rel)), re.I))
     f["README and build.md: a .deb or .rpm of AppKata"] = (maybe, [] if only else None)
 
@@ -159,8 +159,8 @@ def _facts() -> dict:
              for where, text in (("1.1", _req("R1.1")), ("15.1", _req("R15.1")), ("15.10", _req("R15.10")),
                                  ("build.md's platform table", row and row.group(1)))}
     f["the Windows 10 release the documents name, and Setup's"] = (named, dict.fromkeys(named, releases.get(build.group(1)) if build else None))
-    readme = next((l for l in _read("README.md").splitlines() if l.startswith("| App sandboxing")), "")
-    f["README: sandboxing's status"] = ("Planned" if "| Planned" in readme else "implemented", "implemented")
+    readme = next((l for l in _read("DEVELOP.md").splitlines() if l.startswith("| App sandboxing")), "")
+    f["DEVELOP.md: sandboxing's status"] = ("Planned" if "| Planned" in readme else "implemented", "implemented")
     doc = _read(A1)
     f["A1: its title's status"] = ("planning" if "planning" in doc.splitlines()[0] else "implemented", "implemented")
     # round one has no "Round" heading of its own: it is the file's first part
@@ -252,7 +252,7 @@ def test_the_documented_dev_setup_installs_the_releases_pyside6():
     """The documents' `pip install -e .` pins PySide6 to versions.env's PYSIDE: without the pin, pip took
     the newest (6.12.0 while the release carried 6.11.2, 2026-11-07), so tests ran on a PySide6 no
     release carried. pyproject.toml's range is what AppKata runs on, not what the release ships."""
-    for doc in ("README.md", "docs/build.md"):
+    for doc in ("DEVELOP.md", "docs/build.md"):
         with open(os.path.join(ROOT, doc), encoding="utf-8") as f:
             installs = [line for line in f if re.search(r"pip install .*-e \.", line)]
         assert installs, doc

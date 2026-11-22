@@ -6,17 +6,22 @@
     scripts/demo_data.py finish DIR    installs as of "a while ago", pins and a minimum age, from the real releases
     scripts/demo_data.py stage DIR [--utc-offset +HH:MM]
                                        before a tour: the minimum age, the sync times and the Audit, as of now,
-                                       the Audit's days in the time zone the tour shows them in (UTC by default)
+                                       the Audit's days in the time zone the tour shows them in (tour_offset: UTC,
+                                       but an hour behind in the first hour of a UTC day)
+    scripts/demo_data.py offset        that default zone, as +HH:MM
     scripts/demo_data.py check DIR     before a tour, after stage: exit 1 if an app's last sync failed (but for the errors the
                                        demo shows), or the data doesn't show what screenshots/README.md says
     scripts/demo_data.py retry DIR     sync again the apps whose last sync failed (GitHub answers 5xx at times)
     scripts/demo_data.py remake DIR    build and finish again, keeping DIR's synced Catalog for the apps the build
                                        lists (it stops on one DIR never synced); no network
+    scripts/demo_data.py snapshot DIR  DIR's synced Catalog into tests/data/demo/, the snapshot restore makes data from
+    scripts/demo_data.py restore DIR   build and finish from the snapshot in tests/data/demo/, as remake does from DIR's
+                                       own Catalog; no network (CI's fallback, scripts/tour-data.sh)
 
 The apps are real GitHub projects. Every reviewer and signer is made up, and so is
 TurboShield VPN (on the reserved git.example.org domain). Then:
 
-    APPKATA_DATA=DIR XDG_DATA_HOME=DIR/xdg appkata --tour screenshots/linux
+    APPKATA_DATA=DIR XDG_DATA_HOME=DIR/xdg appkata --tour build/my-tour
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "src"))
@@ -621,6 +627,30 @@ def carry_over(was: DB, db: DB) -> list[str]:
     return [u for u in listed if u not in synced]
 
 
+def _stop_agent(d: str) -> None:
+    # gpg 2.2 finds a key folder's agent by the folder's path: the one build started for d would
+    # serve d's new key folder from the old one's files, and the key can't be made (exit 2)
+    subprocess.run(["gpgconf", "--kill", "gpg-agent"], env={**os.environ, "GNUPGHOME": os.path.join(d, "gnupg-mara")},
+                   capture_output=True)
+
+
+def _carry(d: str, was: DB, cache: str, where: str) -> None:
+    """Into d, just built: was's synced Catalog for the apps the build lists (carry_over), its Sources'
+    forges and the system's updaters, and cache, the Catalog's icons and hero images. It stops on a
+    listed app was never synced, which it can't fetch; `where` names was in that message."""
+    db = DB(os.path.join(d, "appkata.db"))
+    missing = carry_over(was, db)
+    if missing:
+        raise SystemExit(f"{where} has no synced data for what the build now lists, which can't be fetched "
+                         f"without the network: {', '.join(missing)}; run scripts/demo_data.py sync {d} instead")
+    for r in was.all("SELECT url, forge FROM sources"):
+        db.x("UPDATE sources SET forge=? WHERE url=?", (r["forge"], r["url"]))
+    if was.get("autoupdate") is not None:
+        db.put("autoupdate", was.get("autoupdate"))
+    if os.path.isdir(cache):
+        shutil.copytree(cache, os.path.join(d, "cache"), dirs_exist_ok=True)
+
+
 def remake(d: str) -> None:
     """build and finish again, keeping what sync brought into d: for a change to what build or
     finish writes, without the network or a new set of releases (and the screens they change).
@@ -628,29 +658,81 @@ def remake(d: str) -> None:
     it, d as it was."""
     old = d.rstrip("/") + ".old"
     shutil.rmtree(old, ignore_errors=True)
-    # gpg 2.2 finds a key folder's agent by the folder's path: the one build started for d would
-    # serve d's new key folder from the old one's files, and the key can't be made (exit 2)
-    subprocess.run(["gpgconf", "--kill", "gpg-agent"], env={**os.environ, "GNUPGHOME": os.path.join(d, "gnupg-mara")},
-                   capture_output=True)
+    _stop_agent(d)
     os.rename(d, old)
     try:
         build(d)
-        db, was = DB(os.path.join(d, "appkata.db")), DB(os.path.join(old, "appkata.db"))
-        missing = carry_over(was, db)
-        if missing:
-            raise SystemExit(f"{d.rstrip('/')}.old has no synced data for what the build now lists, which remake can't "
-                             f"fetch: {', '.join(missing)}; run scripts/demo_data.py sync {d} instead")
-        for r in was.all("SELECT url, forge FROM sources"):
-            db.x("UPDATE sources SET forge=? WHERE url=?", (r["forge"], r["url"]))
-        if was.get("autoupdate") is not None:
-            db.put("autoupdate", was.get("autoupdate"))
-        shutil.copytree(os.path.join(old, "cache"), os.path.join(d, "cache"), dirs_exist_ok=True)
+        _carry(d, DB(os.path.join(old, "appkata.db")), os.path.join(old, "cache"), f"{d.rstrip('/')}.old")
         finish(d)
     except BaseException:
         shutil.rmtree(d, ignore_errors=True)
         os.rename(old, d)
         raise
     shutil.rmtree(old)
+
+
+# The fallback when the tour's data can't be synced (CI, scripts/tour-data.sh): the synced Catalog
+# of the data the screens were last made from, kept in the tree. Its apps' rows (each release list as
+# JSON, not a string of it), their AppStream ids, the Sources' forges and the system's updaters, in
+# catalog.json; the icons and hero images under cache/. Only what sync fetches: build and finish
+# write the rest, so the snapshot moves only when the synced data does.
+SNAPSHOT = os.path.normpath(os.path.join(HERE, "..", "tests", "data", "demo"))
+
+
+def snapshot(d: str, out: str = SNAPSHOT) -> None:
+    """d's synced Catalog into out (catalog.json and cache/), for restore. AppKata's own row comes too,
+    as a Trust lists it; finish writes it again (self_app)."""
+    db = DB(os.path.join(d, "appkata.db"))
+    apps = []
+    for r in db.all("SELECT * FROM apps ORDER BY url"):
+        row = dict(r)
+        row["releases"] = json.loads(row["releases"]) if row["releases"] else None
+        apps.append(row)
+    data = {"apps": apps,
+            "app_meta": [dict(r) for r in db.all("SELECT * FROM app_meta ORDER BY url")],
+            "forges": {r["url"]: r["forge"] for r in db.all("SELECT url, forge FROM sources ORDER BY url")},
+            "autoupdate": db.get("autoupdate")}
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    with open(os.path.join(out, "catalog.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    used = {p.split("/")[1] for a in apps for p in (a["icon"], a["hero"]) if p and p.startswith("cache/")}
+    for name in sorted(used):
+        if os.path.isdir(os.path.join(d, "cache", name)):
+            shutil.copytree(os.path.join(d, "cache", name), os.path.join(out, "cache", name))
+    print(f"snapshot of {d}: {len(apps)} apps, {len(used)} cache folders, in {out}")
+
+
+def snapshot_db(src: str, path: str) -> DB:
+    """The snapshot at src as a database at path, in the shape sync leaves: what _carry reads."""
+    data = json.load(open(os.path.join(src, "catalog.json"), encoding="utf-8"))
+    db = DB(path)
+    for table, rows in (("apps", data["apps"]), ("app_meta", data["app_meta"])):
+        for row in rows:
+            row = dict(row)
+            if table == "apps" and row.get("releases") is not None:
+                row["releases"] = json.dumps(row["releases"])
+            cols = list(row)
+            db.x(f"INSERT INTO {table}({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})", tuple(row[c] for c in cols))
+    for url, forge in data["forges"].items():
+        db.x("INSERT INTO sources(url, input_url, forge) VALUES(?,?,?)", (url, url, forge))
+    if data.get("autoupdate") is not None:
+        db.put("autoupdate", data["autoupdate"])
+    return db
+
+
+def restore(d: str, src: str = SNAPSHOT) -> None:
+    """build and finish from the snapshot at src, as remake does from d's own Catalog: no network.
+    The releases are the snapshot's, so the screens show what they showed when it was taken, but for
+    what the day changes (stage)."""
+    if os.path.isdir(d):
+        _stop_agent(d)
+    build(d)
+    with tempfile.TemporaryDirectory() as t:
+        _carry(d, snapshot_db(src, os.path.join(t, "appkata.db")), os.path.join(src, "cache"), f"the snapshot in {src}")
+    finish(d)
+    print(f"restored {d} from {src}")
 
 
 # The update A01 shows held back by the global minimum age, and the days it has to go (R3-24). The
@@ -692,13 +774,24 @@ def reroot(d: str) -> None:
     print(f"moved {d}'s paths from {old}")
 
 
-def stage(d: str, utc_offset: str = "+00:00") -> None:
+def tour_offset(t=None) -> str:
+    """The time zone a tour shows its times in, as +HH:MM: UTC, but in the first hour of a UTC day an
+    hour behind it, where the day is ending: the Audit's day has no room yet then (history).
+    APPKATA_TOUR_OFFSET sets another; scripts/test-layout.sh gives its container the same."""
+    from datetime import datetime, timezone
+    if os.environ.get("APPKATA_TOUR_OFFSET"):
+        return os.environ["APPKATA_TOUR_OFFSET"]
+    return "-01:00" if (t or datetime.now(timezone.utc)).hour == 0 else "+00:00"
+
+
+def stage(d: str, utc_offset: str | None = None) -> None:
     """Before a tour: what the screens show of time, as of now (R3-24). The data is made once and
     toured for weeks, so a minimum age set when it was made runs out, and its last sync ages. The
     minimum age is set so that HELD's newest release has HELD_DAYS_LEFT days to go, in the database
     and in Settings, the last sync and each Trust's are put 50 minutes back, and the Audit is
     written again to end half an hour back (R3-25), its days those of utc_offset's time zone, the
-    one the tour shows them in (history). First, the data's paths name where it is now (reroot)."""
+    one the tour shows them in (history; tour_offset by default). First, the data's paths name where
+    it is now (reroot)."""
     import math
     from datetime import datetime, timedelta, timezone
     reroot(d)
@@ -717,6 +810,7 @@ def stage(d: str, utc_offset: str = "+00:00") -> None:
     synced = (t - timedelta(minutes=50)).isoformat()
     db.put("last_sync", synced)
     db.x("UPDATE trusts SET synced_at=?", (synced,))
+    utc_offset = utc_offset or tour_offset(t)
     sign, hh, mm = utc_offset[0], int(utc_offset[1:3]), int(utc_offset[4:6])
     history(db, timezone(timedelta(hours=hh, minutes=mm) * (-1 if sign == "-" else 1)))
     print(f"staged {d}: minimum age {days} days ({HELD.split('/')[1]} {newest['version']} held, {HELD_DAYS_LEFT} days left), synced 50 min ago")
@@ -901,7 +995,13 @@ def self_app(db: DB, d: str) -> None:
          (APPKATA_REPO, "AppKata", "A FOSS app store built on git", readme, readme, "", "cache/appkata/icon.svg", "", "github",
           "github.com", APPKATA_REPO.split("github.com/", 1)[1], json.dumps(rels), now()))
     if not db.one("SELECT 1 FROM sources WHERE url=?", (APPKATA_REPO,)):
-        db.x("INSERT INTO sources(url, input_url, settings, added_at) VALUES(?,?,?,?)", (APPKATA_REPO, APPKATA_REPO, '{"builtin": true}', now()))
+        # a second after the last Source build added, so it lists last (Sources go by when they were
+        # added, then by URL): finish, run straight after build (remake, restore), was often within
+        # the same second, and AppKata's capital M put it first
+        from datetime import datetime, timedelta
+        last = db.one("SELECT max(added_at) AS t FROM sources")["t"]
+        added = (datetime.fromisoformat(last) + timedelta(seconds=1)).isoformat() if last else now()
+        db.x("INSERT INTO sources(url, input_url, settings, added_at) VALUES(?,?,?,?)", (APPKATA_REPO, APPKATA_REPO, '{"builtin": true}', added))
     target = os.path.join(d, "apps", "appkata"); os.makedirs(target, exist_ok=True)
     image = os.path.join(d, "Downloads", f"AppKata-{__version__}-x86_64.AppImage"); os.makedirs(os.path.dirname(image), exist_ok=True)
     open(image, "w").write("demo"); os.chmod(image, 0o755)
@@ -991,8 +1091,12 @@ def history(db: DB, tz=None, now=None) -> None:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["offset"]:
+        print(tour_offset())
+        sys.exit(0)
     cmd, d = sys.argv[1], os.path.abspath(sys.argv[2])
     os.environ["APPKATA_DATA"] = d
     if cmd == "stage" and sys.argv[3:4] == ["--utc-offset"]:
         sys.exit(stage(d, sys.argv[4]))
-    {"build": build, "sync": do_sync, "finish": finish, "remake": remake, "stage": stage, "check": check, "retry": retry}[cmd](d)
+    {"build": build, "sync": do_sync, "finish": finish, "remake": remake, "stage": stage, "check": check, "retry": retry,
+     "snapshot": snapshot, "restore": restore}[cmd](d)
