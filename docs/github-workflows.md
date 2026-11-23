@@ -23,7 +23,7 @@ the script it would run on a development machine, so a CI failure reproduces loc
 | `tier1 1 of 3` to `3 of 3` | `scripts/test-tier1.sh`, a part each, measured ("Tier 1's parts", below) | 1 min each |
 | `coverage` | `scripts/coverage_report.py report --check` on the parts' data ("Coverage", below) | ½ min |
 | `tour` | `scripts/tour-data.sh`, `scripts/test-layout.sh`, then `scripts/test-screenshot-text.sh` on its screens ("The tour", below) | |
-| `ci-times` | `scripts/ci_times.py` on its own run: each part within 5 minutes, the parts within 1.4:1 | |
+| `ci-times` | `scripts/ci_times.py` on its own run: each part within 5 minutes; the parts more than 1.4:1 apart are a warning | |
 | `site` | `scripts/coverage_site.py release-tours` and `build` on the coverage report and the tour ("The Pages site", below) | |
 | `appimage` | `scripts/build-appimage.sh` | 1 min |
 | `windows` | `scripts/build-windows.sh`: PyInstaller and Inno Setup under Wine, in Docker, as the Windows VM tests it (`build.md`, "Windows") | 3 min |
@@ -55,9 +55,12 @@ Each part keeps what its tests took (`APPKATA_DURATIONS=1`, the `durations-k` ar
 `scripts/ci_times.py durations RUN` gathers a run's into `tests/durations/`, to refresh the split
 after tests are added or moved, or when the parts come apart.
 
-`ci-times` ([`scripts/ci_times.py`](../scripts/ci_times.py)) checks the run's times: each part within
-**5 minutes**, and the slowest part at most **1.4 times** the quickest. Past either, the parts are
-split again, by fresh times or into more parts; making a test itself quicker is the owner's call.
+`ci-times` ([`scripts/ci_times.py`](../scripts/ci_times.py)) checks the run's times: a part past
+**5 minutes** fails it, and the parts are split again, by fresh times or into more parts. The slowest
+part more than **1.4 times** the quickest is a warning: one GitHub runner can be half again as slow as
+another at setup and tests alike, so one run can't tell an uneven split from a slow runner, and a
+warning that keeps coming back is the sign to refresh the times. Making a test itself quicker is the
+owner's call.
 The script runs by hand too, on a run or a pull request (`scripts/ci_times.py --pr N`).
 
 Within a part the tests run one at a time, without pytest-xdist. Measured on GitHub's runners, two

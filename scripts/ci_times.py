@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """A CI run's times (docs/github-workflows.md, "Tier 1's parts"): each job's wall time, slowest first,
-the run's own, and how evenly tier 1's parts split the work. A part past BUDGET, or parts further
-apart than SPREAD (the slowest over the quickest), fails the check: the parts are then split again,
-by fresh times (`durations`) or into more parts. A change to what a test does to make it quicker is
-the owner's to decide.
+the run's own, and how evenly tier 1's parts split the work. A part past BUDGET fails the check: the
+parts are then split again, by fresh times (`durations`) or into more parts. Parts further apart than
+SPREAD (the slowest over the quickest) are a warning, not a failure: one GitHub runner can be half
+again as slow as another at setup and tests alike, so a single run can't tell an uneven split from a
+slow runner; a warning that keeps coming back is the sign to refresh the times. A change to what a
+test does to make it quicker is the owner's to decide.
 
     scripts/ci_times.py [RUN | --pr N] [--attempt A]
 
@@ -52,8 +54,8 @@ def clock(s):
 
 
 def report(jobs):
-    """The run's lines, and what fails the check: each part past the budget, and each family of parts
-    (tier1 1 of 3, ...) whose slowest is more than SPREAD times its quickest."""
+    """The run's lines, what fails the check (each part past the budget) and what it warns of (each
+    family of parts, tier1 1 of 3 ..., whose slowest is more than SPREAD times its quickest)."""
     ran = [j for j in jobs if j.get("conclusion") not in ("skipped", None) and j.get("started_at")]
     times = {j["name"]: seconds(j["started_at"], j.get("completed_at")) for j in ran}
     starts = [j["started_at"] for j in ran]
@@ -69,14 +71,15 @@ def report(jobs):
         mark = "  ⚠ over budget" if name in parts and s is not None and s > BUDGET else ""
         lines.append(f"  {clock(s):>8}  {name}{mark}")
     todo = [f"{n}: {clock(s)}, past the {clock(BUDGET)} budget" for ps in families.values() for n, s in ps if s > BUDGET]
+    warn = []
     for family, ps in sorted(families.items()):
         ts = [s for _, s in ps]
         if len(ts) > 1:
             lines.append(f"{family}: {len(ts)} parts, {clock(min(ts))} to {clock(max(ts))}, "
                          f"{max(ts) / min(ts):.2f}:1 (at most {SPREAD}:1)")
             if max(ts) > SPREAD * min(ts):
-                todo.append(f"{family}: parts from {clock(min(ts))} to {clock(max(ts))}, more than {SPREAD}:1")
-    return lines, todo
+                warn.append(f"{family}: parts from {clock(min(ts))} to {clock(max(ts))}, more than {SPREAD}:1")
+    return lines, todo, warn
 
 
 def find_run(pr):
@@ -127,9 +130,10 @@ def main(argv=None):
     args = p.parse_args(argv)
     run = args.run or find_run(args.pr)
     path = f"repos/{REPO}/actions/runs/{run}" + (f"/attempts/{args.attempt}" if args.attempt else "") + "/jobs?per_page=100"
-    lines, todo = report(json.loads(gh("api", path))["jobs"])
+    lines, todo, warn = report(json.loads(gh("api", path))["jobs"])
     text = "\n".join([f"CI run {run}", *lines, "",
-                      *(["to split again:", *(f"  {t}" for t in todo)] if todo else ["within budget: nothing to split"])])
+                      *(["to split again:", *(f"  {t}" for t in todo)] if todo else ["within budget: nothing to split"]),
+                      *(["uneven, a slow runner or stale times (a warning):", *(f"  {w}" for w in warn)] if warn else [])])
     print(text)
     if os.environ.get("GITHUB_ACTIONS") == "true":
         if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -137,6 +141,8 @@ def main(argv=None):
                 f.write("## CI times\n\n```\n" + text + "\n```\n")
         for t in todo:
             print(f"::error title=ci-times::{t}")
+        for w in warn:
+            print(f"::warning title=ci-times::{w}")
     return 1 if todo else 0
 
 
