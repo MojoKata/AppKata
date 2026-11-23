@@ -18,8 +18,11 @@ The sweeps are those of the review skill (agents/skills/review/SKILL.md, "Planni
 - a step's findings are the issues below it, its sub-issues and theirs at any depth (the anchor's:
   those below it that aren't steps or below one), each in the area its `area:` label names, else its
   step's, with the severity its body gives ("severity High", "Med" or "Low"; none given reads as
-  unrated). A finding is open, or a question while open and labelled `question`; fixed when closed
-  as completed, else closed;
+  unrated). A finding is open; or, while open, waiting on the owner under one of the review-triage
+  skill's labels: `refine` (it can't be worked until the owner decides), `dismiss` (the work showed
+  it to be no defect, and it is proposed for dismissal) or `question` (a question issue filed under
+  the step); fixed when closed as completed, else closed, and closed whatever the reason when it
+  carries `dismiss`;
 - a closed issue labelled `question` is a question answered, never a fix, and is no finding: what
   its answer opened is, whether filed below it or as other issues. A question that became the work
   has lost the label and is a finding like any other;
@@ -50,6 +53,8 @@ NAME = re.compile(r"^([A-Za-z]+)(\d+)$")
 SEVERITY = re.compile(r"\bseverity:? *\**(High|Med|Low)\b", re.I)
 SEVERITIES = ("High", "Med", "Low")
 NO_AREA = "no area"
+# the labels under which an open issue below a step waits on the owner, and the state each gives
+WAITING = ("question", "refine", "dismiss")
 # the end of a part's title: "docs (2 of 3)"
 PART = re.compile(r" *\((\d+) of (\d+)\)$")
 API = "https://api.github.com/graphql"
@@ -182,8 +187,10 @@ def _finding(i, step):
     m = re.match(rf"{re.escape(step['id'])}-\d+ +(.*)$", i["title"])
     sev = SEVERITY.search(i["body"])
     closed = i["state"] == "closed"
-    state = (("fixed" if i["reason"] == "completed" else "closed") if closed
-             else "question" if "question" in i["labels"] else "open")
+    if closed:
+        state = "fixed" if i["reason"] == "completed" and "dismiss" not in i["labels"] else "closed"
+    else:
+        state = next((w for w in WAITING if w in i["labels"]), "open")
     areas = _areas(i["labels"]) or step["areas"]
     return {"id": i["number"], "step": step["id"], "sev": sev[1].capitalize() if sev else None,
             "desc": m[1] if m else i["title"], "state": state, "pr": _pr(i),
@@ -241,7 +248,7 @@ def from_issues(issues):
 
 
 def is_open(f):
-    return f["state"] in ("open", "question")
+    return f["state"] in ("open", *WAITING)
 
 
 # ---------- the figures ----------

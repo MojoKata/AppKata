@@ -105,13 +105,15 @@ ul.others li { margin: 3px 0; }
 <p>Each sweep is a label <code>sweep:&lt;name&gt;</code>. Its anchor, the issue with that label and no parent,
 is the sweep's own step, for the findings with no area; its steps are the anchor's sub-issues, and a
 step's findings are the issues below it, at any depth. A question the owner has answered (closed,
-and labelled <code>question</code>) is no finding. A step with more findings than an issue takes
+and labelled <code>question</code>) is no finding. An open finding labelled <code>refine</code> waits
+on the owner's decision, and one labelled <code>dismiss</code> on its dismissal. A step with more
+findings than an issue takes
 sub-issues is in parts, shown as one step. A step is checked when its issue is closed, and then shows what
 changed in its areas at its pull request's merge. Click a step for its findings.</p>
 <div class="legend">
   <span><b>Findings:</b></span>
   <span><i class="sw fixed"></i>closed</span><span><i class="sw severe"></i>High or Med, open</span>
-  <span><i class="sw lowsev"></i>Low or unrated, open</span><span><i class="sw q"></i>question</span>
+  <span><i class="sw lowsev"></i>Low or unrated, open</span><span><i class="sw q"></i>waits on the owner</span>
 </div>
 <div class="scroll" id="sweeps"><table id="steps"></table></div>
 
@@ -146,7 +148,8 @@ const signed = v => v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Mat
 const issue = n => `<a href="${esc(D.repo)}/issues/${n}">#${n}</a>`;
 const prLink = n => `<a class="chip" href="${esc(D.repo)}/pull/${n}">#${n}</a>`;
 const commit = c => `<a href="${esc(D.repo)}/commit/${esc(c)}"><code>${esc(String(c).slice(0, 7))}</code></a>`;
-const isOpen = f => f.state === 'open' || f.state === 'question';
+const isOpen = f => f.state !== 'fixed' && f.state !== 'closed';
+const waits = f => isOpen(f) && f.state !== 'open';
 const sevOf = f => f.sev || 'unrated';
 const ORDER = { High: 0, Med: 1, Low: 2, unrated: 3 };
 const F = D.findings;
@@ -158,7 +161,7 @@ function count(list) {
   const t = { all: list.length, closed: 0, open: 0, severe: 0, low: 0, q: 0 };
   for (const f of list) {
     if (!isOpen(f)) t.closed++;
-    else { t.open++; if (f.state === 'question') t.q++; else if (f.sev === 'High' || f.sev === 'Med') t.severe++; else t.low++; }
+    else { t.open++; if (waits(f)) t.q++; else if (f.sev === 'High' || f.sev === 'Med') t.severe++; else t.low++; }
   }
   return t;
 }
@@ -252,7 +255,7 @@ $('#banner').innerHTML = `
     <div class="sub">${next ? `next: ${esc(next.id)}, ${esc(next.what)}` : STEPS.length ? 'every sweep is done' : 'no steps'}</div></div>
   <div><div class="label">Findings closed</div><div class="big">${all.closed} <small>of ${all.all}</small></div>
     <span class="meter"><b class="fixed" style="width:${pct(all.closed, all.all) || 0}%"></b><b class="severe" style="width:${pct(all.severe, all.all) || 0}%"></b><b class="lowsev" style="width:${pct(all.low, all.all) || 0}%"></b><b class="q" style="width:${pct(all.q, all.all) || 0}%"></b></span>
-    <div class="sub">${all.open} open: ${all.severe} High or Med, ${all.low} Low or unrated, ${all.q} questions</div></div>
+    <div class="sub">${all.open} open: ${all.severe} High or Med, ${all.low} Low or unrated, ${all.q} waiting on the owner</div></div>
   <div><div class="label">Open gaps</div><div class="big">${others('gap').length}</div>
     <div class="sub">what the requirements describe and AppKata doesn't do</div></div>
   <div><div class="label">Open questions</div><div class="big">${others('question').length}</div>
