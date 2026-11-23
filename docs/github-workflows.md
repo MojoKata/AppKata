@@ -148,12 +148,15 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   over the pushes, with the sums *App* (every area but the scripts') and *Overall*. Beside it are
   `history.json`, a point per push (its commit, pull request, totals by area and findings by area),
   and `files.json`.
-- **Hardening** (`hardening.html`, [`scripts/hardening.py`](../scripts/hardening.py)): the sweep's
-  steps, each an issue labelled `hardening` titled "H1.n …", with the pull request GitHub links as
-  closing it; each step's findings, its sub-issues, with their severity (a body's "severity High",
-  "Med" or "Low"), area (the `area:` label, else the step's) and state; the coverage and findings by
-  area; and the open issues labelled `gap` or `question`. It reads the issues, not the project board.
-  Only an issue's number, title, labels, state and severity reach the page; its body text doesn't.
+- **Hardening** (`hardening.html`, [`scripts/hardening.py`](../scripts/hardening.py)): each sweep
+  of the review skill ([`REVIEW.md`](REVIEW.md)), a label `sweep:<name>` such as `sweep:CR1`: its
+  anchor, the issue with that label and no parent, which is the sweep's own step, and its steps, the
+  anchor's sub-issues titled "CR1.n …", each with the pull request GitHub links as closing it; each
+  step's findings, its sub-issues, with their severity (a body's "severity High", "Med" or "Low"),
+  area (the `area:` label, else the step's) and state; the coverage and findings by area; and the
+  open issues labelled `gap` or `question` that aren't findings. With no sweep label on any issue the
+  page shows no sweeps and the rest as usual. It reads the issues, not the project board. Only an
+  issue's number, title, labels, state and severity reach the page; its body text doesn't.
   A closed step shows what changed in its areas at its pull request's merge, from the history.
   Each area also shows its mutation testing, from its latest record in `docs/hardening/mutation/`
   (its survivors of its changes), marked "baseline, changed since" when a module has changed since

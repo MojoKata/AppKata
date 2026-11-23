@@ -143,8 +143,10 @@ def test_the_site_holds_the_report_the_history_and_its_pages(monkeypatch, tmp_pa
     monkeypatch.setattr(cs, "get", site({"history.json": json.dumps([before]).encode(),
                                          "screenshots/index.json": b'{"versions": {}}'}))
     monkeypatch.setattr(cs.hardening, "fetch_issues",
-                        lambda repo: [{"number": 37, "title": "H1.1 Pages site", "body": "", "state": "open",
-                                       "reason": None, "labels": ["hardening", "area:tooling"], "parent": None,
+                        lambda repo: [{"number": 36, "title": "CR1 Code review", "body": "", "state": "open",
+                                       "reason": None, "labels": ["sweep:CR1"], "parent": None, "prs": []},
+                                      {"number": 37, "title": "CR1.1 Pages site", "body": "", "state": "open",
+                                       "reason": None, "labels": ["sweep:CR1", "area:tooling"], "parent": 36,
                                        "prs": []}])
     out = tmp_path / "site"
     assert cs.build(coverage, out) == 0

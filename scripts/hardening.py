@@ -1,19 +1,26 @@
-"""The hardening page of the Pages site (docs/github-workflows.md, "The Pages site"): a sweep's steps,
-each step's findings with their severity, area and state, the coverage and the findings by area, and
-the open gaps and questions. scripts/coverage_site.py builds it beside the coverage page and keeps each
-push's findings by area in the history, so a step's result is what changed in its areas at its merge.
+"""The hardening page of the Pages site (docs/github-workflows.md, "The Pages site"): each sweep's
+steps, each step's findings with their severity, area and state, the coverage and the findings by
+area, and the open gaps and questions. scripts/coverage_site.py builds it beside the coverage page and
+keeps each push's findings by area in the history, so a step's result is what changed in its areas at
+its merge.
 
-Its source is the repository's issues, read from GitHub's GraphQL API (the project board isn't read):
+Its source is the repository's issues, read from GitHub's GraphQL API (the project board isn't read).
+The sweeps are those of the review skill (agents/skills/review/SKILL.md, "Planning"):
 
-- a step is an issue labelled `hardening`, with no parent, titled "H<sweep>.<n> <what>" ("H1.6 Trust
-  and signatures"); its pull request is the one GitHub links as closing it, merged or open;
-- its findings are its sub-issues, titled "H<sweep>.<n>-<m> <what>", each in the area its `area:`
-  label names, else its step's, with the severity its body gives ("severity High", "Med" or "Low";
-  none given reads as unrated). A finding is open, or a question while open and labelled `question`;
-  fixed when closed as completed, else closed;
+- a sweep is a label `sweep:<name>` ("sweep:CR1"); its anchor is the issue with that label and no
+  parent, the one whose body carries `<!-- review <name> anchor -->` when there are several, open or
+  closed. A sweep label no issue carries has nothing to show and isn't shown;
+- its steps are the anchor's sub-issues titled "<name>.<n> <what>" ("CR1.1 trust"), in the order of
+  their n; the anchor is the sweep's own step, "<name>", for the findings that have no area;
+- a step's findings are its sub-issues (the anchor's: those that aren't steps), each in the area its
+  `area:` label names, else its step's, with the severity its body gives ("severity High", "Med" or
+  "Low"; none given reads as unrated). A finding is open, or a question while open and labelled
+  `question`; fixed when closed as completed, else closed;
+- a step's or a finding's pull request is the one GitHub links as closing it, merged or open;
 - the gaps and questions are the open issues labelled `gap` or `question` that aren't findings.
 
-Only an issue's number, title, labels, state and severity reach the page: no body text does.
+With no sweep label on any issue the page has no sweeps, and shows the rest. Only an issue's number,
+title, labels, state and severity reach the page: no body text does.
 
 Each area's mutation testing comes from its latest record in docs/hardening/mutation/
 (scripts/mutate.py, docs/testing.md "Mutation testing"): its changes and survivors, and the
@@ -30,12 +37,10 @@ from pathlib import Path
 
 PAGE = Path(__file__).with_name("hardening.html")
 ROOT = Path(__file__).resolve().parent.parent
-LABEL = "hardening"
-# a step's title, "H1.6 Trust and signatures"; a finding's, "H1.6-2 What goes wrong (CR1-14)"
-TITLE = re.compile(r"^H(\d+)\.(\d+)(?:-(\d+))? +(.*?)(?: \((CR\d+-\d+)\))?$")
+SWEEP = "sweep:"
+# a sweep's name, "CR1": its letters and its number, which order the sweeps
+NAME = re.compile(r"^([A-Za-z]+)(\d+)$")
 SEVERITY = re.compile(r"\bseverity:? *\**(High|Med|Low)\b", re.I)
-# a step's or a finding's pull request, when GitHub links none: "done by #44", "Fixed by #44"
-BODY_PR = re.compile(r"\b(?:done|fixed) by #(\d+)", re.I)
 SEVERITIES = ("High", "Med", "Low")
 NO_AREA = "no area"
 API = "https://api.github.com/graphql"
@@ -108,53 +113,87 @@ def fetch_issues(repo):
 
 
 def _pr(issue):
-    """The pull request that closes an issue: a merged one, else an open one, else the one its body
-    names; None when there is none."""
+    """The pull request GitHub links as closing an issue: a merged one, else an open one; None when
+    there is none."""
     for want in ("merged", "open"):
         for n, state in issue["prs"]:
             if state == want:
                 return n
-    m = BODY_PR.search(issue["body"])
-    return int(m[1]) if m else None
+    return None
 
 
 def _areas(labels):
     return sorted(lb.removeprefix("area:") for lb in labels if lb.startswith("area:"))
 
 
+def _sweep_key(name):
+    m = NAME.match(name)
+    return (m[1], int(m[2])) if m else (name, 0)
+
+
+def _step(i, sid, sweep, n, what):
+    return {"id": sid, "sweep": sweep, "n": n, "issue": i["number"], "what": what, "areas": _areas(i["labels"]),
+            "pr": _pr(i), "done": i["state"] == "closed", "findings": []}
+
+
+def _anchor(name, issues):
+    """A sweep's anchor: its label's issue with no parent, the one with the anchor's marker when there
+    are several; None when no issue carries the label."""
+    label, marker = SWEEP + name, f"<!-- review {name} anchor -->"
+    roots = [i for i in issues if label in i["labels"] and i["parent"] is None]
+    return next((i for i in roots if marker in i["body"]), roots[0] if roots else None)
+
+
+def _finding(i, step):
+    m = re.match(rf"{re.escape(step['id'])}-\d+ +(.*)$", i["title"])
+    sev = SEVERITY.search(i["body"])
+    closed = i["state"] == "closed"
+    state = (("fixed" if i["reason"] == "completed" else "closed") if closed
+             else "question" if "question" in i["labels"] else "open")
+    areas = _areas(i["labels"]) or step["areas"]
+    return {"id": i["number"], "step": step["id"], "sev": sev[1].capitalize() if sev else None,
+            "desc": m[1] if m else i["title"], "state": state, "pr": _pr(i),
+            "area": areas[0] if areas else NO_AREA}
+
+
 def from_issues(issues):
-    """(the steps, the findings, the gaps and questions) from the issues. The steps come in order,
-    each with its findings' numbers; a sub-issue of a step is a finding whatever it is titled."""
-    steps = {}
+    """(the sweeps, the findings, the gaps and questions) from the issues. The sweeps come in order,
+    each with its anchor (its own step) and its steps in order, each step with its findings'
+    numbers; a sub-issue of a step is a finding whatever it is titled."""
+    names = sorted({lb.removeprefix(SWEEP) for i in issues for lb in i["labels"] if lb.startswith(SWEEP)},
+                   key=_sweep_key)
+    by_parent = {}
     for i in issues:
-        m = TITLE.match(i["title"])
-        if LABEL in i["labels"] and i["parent"] is None and m and m[3] is None:
-            steps[i["number"]] = {
-                "id": f"H{m[1]}.{m[2]}", "sweep": int(m[1]), "n": int(m[2]), "issue": i["number"], "what": m[4],
-                "areas": _areas(i["labels"]), "pr": _pr(i), "done": i["state"] == "closed", "findings": []}
-    found, others = [], []
+        by_parent.setdefault(i["parent"], []).append(i)
+    sweeps, found, used = [], [], set()
+    for name in names:
+        a = _anchor(name, issues)
+        if a is None or a["number"] in used:
+            continue
+        own = _step(a, name, name, 0, a["title"].removeprefix(name).strip() or a["title"])
+        steps, loose = [], []
+        for i in by_parent.get(a["number"], []):
+            m = re.match(rf"{re.escape(name)}\.(\d+)(?: +(.*))?$", i["title"])
+            if m:
+                steps.append(_step(i, f"{name}.{m[1]}", name, int(m[1]), m[2] or ""))
+            else:
+                loose.append(i)
+        steps.sort(key=lambda s: (s["n"], s["issue"]))
+        used |= {a["number"], *(s["issue"] for s in steps)}
+        for step, subs in [(own, loose), *((s, by_parent.get(s["issue"], [])) for s in steps)]:
+            for i in subs:
+                found.append(_finding(i, step))
+                step["findings"].append(i["number"])
+                used.add(i["number"])
+        for s in (own, *steps):
+            s["areas"] = s["areas"] or sorted({f["area"] for f in found if f["id"] in s["findings"]})
+        sweeps.append({"name": name, "anchor": own, "steps": steps})
+    others = []
     for i in issues:
-        if i["parent"] in steps:
-            step = steps[i["parent"]]
-            m = TITLE.match(i["title"])
-            sev = SEVERITY.search(i["body"])
-            closed = i["state"] == "closed"
-            state = (("fixed" if i["reason"] == "completed" else "closed") if closed
-                     else "question" if "question" in i["labels"] else "open")
-            areas = _areas(i["labels"]) or step["areas"]
-            found.append({"id": i["number"], "step": step["id"], "cr": m[5] if m else None,
-                          "sev": sev[1].capitalize() if sev else None, "desc": m[4] if m else i["title"],
-                          "state": state, "pr": _pr(i), "area": areas[0] if areas else NO_AREA})
-            step["findings"].append(i["number"])
-        elif i["number"] not in steps and i["state"] == "open":
-            kinds = [k for k in ("gap", "question") if k in i["labels"]]
-            if kinds:
-                others.append({"id": i["number"], "title": i["title"], "kind": kinds[0],
-                               "areas": _areas(i["labels"])})
-    path = sorted(steps.values(), key=lambda s: (s["sweep"], s["n"]))
-    for s in path:
-        s["areas"] = s["areas"] or sorted({f["area"] for f in found if f["id"] in s["findings"]})
-    return path, found, others
+        kinds = [k for k in ("gap", "question") if k in i["labels"]]
+        if kinds and i["number"] not in used and i["state"] == "open":
+            others.append({"id": i["number"], "title": i["title"], "kind": kinds[0], "areas": _areas(i["labels"])})
+    return sweeps, found, others
 
 
 def is_open(f):
@@ -232,20 +271,24 @@ def mutation(root=ROOT, records=None):
 
 
 def data(history, area_names, repo, issues, mutated=None):
-    """What the page shows: the steps with their results, the areas with their coverage (now, and at
-    the first entry the history has), their findings and their mutation testing (`mutation`, read
-    from the checkout unless given), and the gaps and questions."""
-    path, found, others = from_issues(issues)
+    """What the page shows: the sweeps with their steps' results, the areas with their coverage (now,
+    and at the first entry the history has), their findings and their mutation testing (`mutation`,
+    read from the checkout unless given), and the gaps and questions."""
+    sweeps, found, others = from_issues(issues)
     last = history[-1]
     base = history[0] if len(history) > 1 else None
     names = [*area_names, *sorted({f["area"] for f in found} - set(area_names))]
+
+    def done(s):
+        return {**s, "result": result(s, history) if s["done"] else None}
+
     return {
         "repo": repo,
         "head": {k: last.get(k) for k in ("commit", "pr", "date", "subject")},
         "base": {k: base.get(k) for k in ("commit", "pr", "date")} if base else None,
-        "issues": f"{repo}/issues?q=label%3A{LABEL}+no%3Aparent-issue",
-        "steps": [{**s, "result": result(s, history) if s["done"] else None} for s in path],
-        "findings": [{k: f[k] for k in ("id", "step", "cr", "sev", "desc", "state", "pr", "area")} for f in found],
+        "sweeps": [{"name": w["name"], "issues": f"{repo}/issues?q=label%3A{SWEEP.rstrip(':')}%3A{w['name']}",
+                    "anchor": done(w["anchor"]), "steps": [done(s) for s in w["steps"]]} for w in sweeps],
+        "findings": [{k: f[k] for k in ("id", "step", "sev", "desc", "state", "pr", "area")} for f in found],
         "areas": [{"area": a, "now": last["areas"].get(a), "was": base["areas"].get(a) if base else None}
                   for a in names],
         "others": others,
