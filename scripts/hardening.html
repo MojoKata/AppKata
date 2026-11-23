@@ -104,8 +104,9 @@ ul.others li { margin: 3px 0; }
 <h2>The sweeps</h2>
 <p>Each sweep is a label <code>sweep:&lt;name&gt;</code>. Its anchor, the issue with that label and no parent,
 is the sweep's own step, for the findings with no area; its steps are the anchor's sub-issues, and a
-step's findings are its sub-issues. A step with more findings than an issue takes sub-issues is in
-parts, shown as one step. A step is checked when its issue is closed, and then shows what
+step's findings are the issues below it, at any depth. A question the owner has answered (closed,
+and labelled <code>question</code>) is no finding. A step with more findings than an issue takes
+sub-issues is in parts, shown as one step. A step is checked when its issue is closed, and then shows what
 changed in its areas at its pull request's merge. Click a step for its findings.</p>
 <div class="legend">
   <span><b>Findings:</b></span>

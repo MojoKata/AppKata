@@ -15,10 +15,14 @@ The sweeps are those of the review skill (agents/skills/review/SKILL.md, "Planni
 - a step in parts ("CR1.11 docs (1 of 2)", "CR1.11 docs (2 of 2)": an issue takes 100 sub-issues, so
   the skill cuts a fuller step into parts) is one step, "CR1.11 docs": its findings are those of all
   its parts, and it is done when every part is closed;
-- a step's findings are its sub-issues (the anchor's: those that aren't steps), each in the area its
-  `area:` label names, else its step's, with the severity its body gives ("severity High", "Med" or
-  "Low"; none given reads as unrated). A finding is open, or a question while open and labelled
-  `question`; fixed when closed as completed, else closed;
+- a step's findings are the issues below it, its sub-issues and theirs at any depth (the anchor's:
+  those below it that aren't steps or below one), each in the area its `area:` label names, else its
+  step's, with the severity its body gives ("severity High", "Med" or "Low"; none given reads as
+  unrated). A finding is open, or a question while open and labelled `question`; fixed when closed
+  as completed, else closed;
+- a closed issue labelled `question` is a question answered, never a fix, and is no finding: what
+  its answer opened is, whether filed below it or as other issues. A question that became the work
+  has lost the label and is a finding like any other;
 - a step's or a finding's pull request is the one GitHub links as closing it, merged or open;
 - the gaps and questions are the open issues labelled `gap` or `question` that aren't findings.
 
@@ -189,7 +193,8 @@ def _finding(i, step):
 def from_issues(issues):
     """(the sweeps, the findings, the gaps and questions) from the issues. The sweeps come in order,
     each with its anchor (its own step) and its steps in order, each step with its findings'
-    numbers; a sub-issue of a step, or of one of its parts, is a finding whatever it is titled."""
+    numbers; an issue below a step, or below one of its parts, is a finding whatever it is titled
+    and however deep, but for a question answered (closed, and labelled `question`)."""
     names = sorted({lb.removeprefix(SWEEP) for i in issues for lb in i["labels"] if lb.startswith(SWEEP)},
                    key=_sweep_key)
     by_parent = {}
@@ -213,10 +218,17 @@ def from_issues(issues):
         used |= {a["number"], *(p for s in steps for p in s["parts"])}
         for step, subs in [(own, loose),
                            *((s, [i for p in s["parts"] for i in by_parent.get(p, [])]) for s in steps)]:
-            for i in subs:
+            below = list(reversed(subs))
+            while below:  # each issue, then what is below it, in the sub-issues' order
+                i = below.pop()
+                if i["number"] in used:
+                    continue
+                used.add(i["number"])
+                below += reversed(by_parent.get(i["number"], []))
+                if i["state"] == "closed" and "question" in i["labels"]:
+                    continue  # a question answered: no finding, and never a fix
                 found.append(_finding(i, step))
                 step["findings"].append(i["number"])
-                used.add(i["number"])
         for s in (own, *steps):
             s["areas"] = s["areas"] or sorted({f["area"] for f in found if f["id"] in s["findings"]})
         sweeps.append({"name": name, "anchor": own, "steps": steps})

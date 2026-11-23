@@ -108,6 +108,37 @@ def test_a_step_in_parts_is_one_step_with_every_parts_findings():
     assert '"parts":[3,30]' in text and "s.parts.map(issue)" in text
 
 
+def test_a_steps_findings_are_the_issues_below_it_at_any_depth_but_for_answered_questions():
+    issues = [
+        issue(1, "CR1 Code review", "sweep:CR1", body=ANCHOR),
+        issue(2, "CR1.1 trust", "sweep:CR1", "area:trust", parent=1),
+        # a question answered: closed, and still labelled so; what it opened is filed below it
+        issue(3, "CR1.1-1 Question: Which key?", "question", "area:trust", parent=2, state="closed",
+              reason="completed"),
+        issue(4, "A key's owner is checked", "area:trust", parent=3, body="severity Med"),
+        # a question that became the work: no label any more, and its own sub-issues
+        issue(5, "CR1.1-2 The second row is skipped", "area:trust", parent=2, body="severity Low"),
+        issue(6, "The parser warns", "area:trust", parent=5),
+        issue(7, "The warning is shown", "area:store", parent=6, state="closed", reason="completed"),
+        # a question still waiting
+        issue(8, "CR1.1-3 Question: Who decides?", "question", parent=2),
+        # under the anchor: a question answered, and what it opened
+        issue(9, "CR1-1 Question: Which runs?", "question", parent=1, state="closed", reason="completed"),
+        issue(10, "A run to make", parent=9),
+    ]
+    sweeps, found, others = hardening.from_issues(issues)
+    trust = sweeps[0]["steps"][0]
+    assert trust["findings"] == [4, 5, 6, 7, 8]
+    assert sweeps[0]["anchor"]["findings"] == [10]
+    got = {f["id"]: f for f in found}
+    assert set(got) == {4, 5, 6, 7, 8, 10} and {f["step"] for f in found} == {"CR1.1", "CR1"}
+    assert [got[n]["state"] for n in (4, 5, 6, 7, 8)] == ["open", "open", "open", "fixed", "question"]
+    assert got[7]["area"] == "store" and got[6]["desc"] == "The parser warns"
+    # the answered questions are in no count, and aren't among the open questions either
+    assert hardening.figures(["trust"], found)["trust"] == {"open": 4, "severe": 1, "fixed": 0, "all": 4}
+    assert not others
+
+
 def test_no_sweep_label_is_no_sweeps():
     issues = [issue(1, "H1.6 Trust and signatures", "hardening", "area:trust"), issue(2, "A badge?", "question"),
               issue(3, "H1.6-1 Under it", parent=1)]
