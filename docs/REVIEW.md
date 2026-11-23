@@ -106,6 +106,18 @@ reviewed, signed, verified or sandboxed when the code didn't establish it, or th
 
 ## Branch and labels
 
-The target branch is `master` and the question label is `question`. `review.json` sets no `labels`
-and no `kind_prefix`: an issue carries only the labels the skill gives it, and a finding's kind is in
-its body only.
+The target branch is `master`. The labels are the skills' defaults: `question` is a question issue,
+`refine` a finding that waits on the owner's decision, and `dismiss` a finding the work showed to be
+no defect (`wontfix` stays what it was: a real defect that won't be fixed). `review.json` sets no
+`labels` and no `kind_prefix`: an issue carries only the labels the skill gives it, and a finding's
+kind is in its body only.
+
+## After a review
+
+What follows a review is the shared `review-triage` skill's,
+[`agents/skills/review-triage/SKILL.md`](../agents/skills/review-triage/SKILL.md): the findings
+sorted, batched into work units and scheduled, and the schedule run. `review.json` sets none of its
+fields, so its defaults hold: a sweep's schedule is `docs/remediation/<sweep>-schedule.json`, a unit
+holds at most 20 findings, and at most 3 units are open at once. The hardening page shows a finding
+that waits on the owner (`refine`, `dismiss`, or a question issue below a step) apart from the open
+ones.

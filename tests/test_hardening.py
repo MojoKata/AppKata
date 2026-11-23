@@ -139,6 +139,29 @@ def test_a_steps_findings_are_the_issues_below_it_at_any_depth_but_for_answered_
     assert not others
 
 
+def test_a_finding_waits_on_the_owner_under_refine_dismiss_or_question():
+    issues = [
+        issue(1, "CR1 Code review", "sweep:CR1", body=ANCHOR),
+        issue(2, "CR1.1 trust", "sweep:CR1", "area:trust", parent=1),
+        issue(3, "CR1.1-1 Which reading?", "refine", parent=2, body="severity High"),
+        issue(4, "CR1.1-2 Not a defect", "dismiss", parent=2, body="severity Med"),
+        issue(5, "CR1.1-3 Question: Who decides?", "question", parent=2),
+        issue(6, "CR1.1-4 Plain", parent=2, body="severity Low"),
+        # dismissed by the owner: closed, and never a fix, whatever reason the close was given
+        issue(7, "CR1.1-5 Dismissed", "dismiss", parent=2, state="closed", reason="completed"),
+        issue(8, "CR1.1-6 Fixed", parent=2, state="closed", reason="completed"),
+    ]
+    _, found, _ = hardening.from_issues(issues)
+    got = {f["id"]: f["state"] for f in found}
+    assert got == {3: "refine", 4: "dismiss", 5: "question", 6: "open", 7: "closed", 8: "fixed"}
+    assert [hardening.is_open(f) for f in found] == [True, True, True, True, False, False]
+    # waiting or not, an open High or Med finding is counted as severe
+    assert hardening.figures(["trust"], found)["trust"] == {"open": 4, "severe": 2, "fixed": 2, "all": 6}
+    text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store", issues, {})
+    assert "const waits = f => isOpen(f) && f.state !== 'open';" in text
+    assert '"state":"refine"' in text
+
+
 def test_no_sweep_label_is_no_sweeps():
     issues = [issue(1, "H1.6 Trust and signatures", "hardening", "area:trust"), issue(2, "A badge?", "question"),
               issue(3, "H1.6-1 Under it", parent=1)]

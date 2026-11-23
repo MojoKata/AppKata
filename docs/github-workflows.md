@@ -157,7 +157,8 @@ and published by GitHub Actions on each push to `master`. It has three pages:
   anchor's sub-issues titled "CR1.n …", each with the pull request GitHub links as closing it (a
   step the review skill cut into parts, "CR1.11 docs (1 of 2)", is shown as one step); each
   step's findings, the issues below it at any depth, with their severity (a body's "severity High",
-  "Med" or "Low"), area (the `area:` label, else the step's) and state, a question answered (closed,
+  "Med" or "Low"), area (the `area:` label, else the step's) and state (open; waiting on the owner
+  while it carries `refine`, `dismiss` or `question`; fixed; closed), a question answered (closed,
   and labelled `question`) left out; the coverage and findings by area; and the
   open issues labelled `gap` or `question` that aren't findings. With no sweep label on any issue the
   page shows no sweeps and the rest as usual. It reads the issues, not the project board. Only an
