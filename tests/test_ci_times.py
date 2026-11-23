@@ -1,5 +1,5 @@
-"""scripts/ci_times.py, the check on CI's times: tier 1's parts within the budget and within SPREAD of
-each other, from the jobs GitHub's API lists."""
+"""scripts/ci_times.py, the check on CI's times: tier 1's parts within the budget (a failure) and
+within SPREAD of each other (a warning), from the jobs GitHub's API lists."""
 
 import importlib.util
 import os
@@ -19,18 +19,18 @@ def test_parts_within_the_budget_and_the_spread_pass():
     jobs = [job("tier1 1 of 3", "00:00", "02:00"), job("tier1 2 of 3", "00:00", "02:30"),
             job("tier1 3 of 3", "00:05", "02:10"), job("windows", "00:00", "03:00"),
             job("release", "00:00", "00:00", "skipped")]
-    lines, todo = ct.report(jobs)
-    assert todo == []
+    lines, todo, warn = ct.report(jobs)
+    assert todo == [] and warn == []
     assert lines[0] == "run: 3m00s from the first job's start to the last one's end"
     assert lines[1].split() == ["3m00s", "windows"]
     assert "tier1: 3 parts, 2m00s to 2m30s, 1.25:1 (at most 1.4:1)" in lines
     assert not any("release" in line for line in lines)
 
 
-def test_a_part_past_the_budget_or_parts_too_uneven_fail():
-    lines, todo = ct.report([job("tier1 1 of 2", "00:00", "05:01"), job("tier1 2 of 2", "00:00", "03:00")])
-    assert todo == ["tier1 1 of 2: 5m01s, past the 5m00s budget",
-                    "tier1: parts from 3m00s to 5m01s, more than 1.4:1"]
+def test_a_part_past_the_budget_fails_and_parts_too_uneven_warn():
+    lines, todo, warn = ct.report([job("tier1 1 of 2", "00:00", "05:01"), job("tier1 2 of 2", "00:00", "03:00")])
+    assert todo == ["tier1 1 of 2: 5m01s, past the 5m00s budget"]
+    assert warn == ["tier1: parts from 3m00s to 5m01s, more than 1.4:1"]
     assert any(line.endswith("tier1 1 of 2  ⚠ over budget") for line in lines)
     # a job that isn't a part has no budget here
     assert ct.report([job("windows", "00:00", "09:00")])[1] == []

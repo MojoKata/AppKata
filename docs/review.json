@@ -1,0 +1,8 @@
+{
+  "$schema": "../agents/skills/review/review-config.schema.json",
+  "repo": "MojoKata/AppKata",
+  "area_prefix": "area:",
+  "areas_command": "python3 scripts/areas.py",
+  "question_label": "question",
+  "text_check": "python3 scripts/public_text.py check {file}"
+}

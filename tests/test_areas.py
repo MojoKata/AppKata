@@ -7,6 +7,8 @@ total, and its tests' times fall into no durations file, with nothing to say so.
 import glob
 import importlib.util
 import os
+import subprocess
+import sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 _spec = importlib.util.spec_from_file_location("appkata_areas", os.path.join(ROOT, "scripts", "areas.py"))
@@ -45,3 +47,10 @@ def test_each_pattern_matches_something_and_the_areas_are_the_area_values():
 def test_a_file_in_two_areas_is_in_none():
     assert areas._area({"a": ["x/*.py"], "b": ["x/y.py"]}, "x/y.py") is None
     assert areas._area({"a": ["x/*.py", "x/y.py"]}, "x/y.py") == "a"
+
+
+def test_run_it_prints_the_areas_one_per_line():
+    # docs/review.json's areas_command: the review's steps, one per line, in AREAS' order
+    out = subprocess.run([sys.executable, "-B", os.path.join(ROOT, "scripts", "areas.py")],
+                         capture_output=True, text=True, check=True).stdout
+    assert out == "".join(f"{a}\n" for a in areas.AREAS)

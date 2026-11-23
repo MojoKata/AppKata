@@ -101,16 +101,17 @@ ul.others li { margin: 3px 0; }
 
 <div class="banner" id="banner"></div>
 
-<h2>The steps</h2>
-<p>Each step of the sweep is an issue, and its findings are its sub-issues. A step is checked when its issue
-is closed, and then shows what changed in its areas at its pull request's merge. Click a step for its
-findings.</p>
+<h2>The sweeps</h2>
+<p>Each sweep is a label <code>sweep:&lt;name&gt;</code>. Its anchor, the issue with that label and no parent,
+is the sweep's own step, for the findings with no area; its steps are the anchor's sub-issues, and a
+step's findings are its sub-issues. A step is checked when its issue is closed, and then shows what
+changed in its areas at its pull request's merge. Click a step for its findings.</p>
 <div class="legend">
   <span><b>Findings:</b></span>
   <span><i class="sw fixed"></i>closed</span><span><i class="sw severe"></i>High or Med, open</span>
   <span><i class="sw lowsev"></i>Low or unrated, open</span><span><i class="sw q"></i>question</span>
 </div>
-<div class="scroll"><table id="steps"></table></div>
+<div class="scroll" id="sweeps"><table id="steps"></table></div>
 
 <h2>By area</h2>
 <p>Each area of the coverage page, the same as the <code>area:</code> labels. A finding counts in the area
@@ -148,7 +149,7 @@ const sevOf = f => f.sev || 'unrated';
 const ORDER = { High: 0, Med: 1, Low: 2, unrated: 3 };
 const F = D.findings;
 
-$('#asof').innerHTML = `As of ${commit(D.head.commit)}${D.head.pr ? ` (${prLink(D.head.pr)})` : ''}, ${esc((D.head.date || '').slice(0, 10))}: ${esc(D.head.subject)}. From <a href="${esc(D.issues)}">the sweep's issues</a>.`
+$('#asof').innerHTML = `As of ${commit(D.head.commit)}${D.head.pr ? ` (${prLink(D.head.pr)})` : ''}, ${esc((D.head.date || '').slice(0, 10))}: ${esc(D.head.subject)}. From the repository's issues.`
   + (D.base ? ` Coverage changes are since ${commit(D.base.commit)}, the first push this site measured.` : '');
 
 function count(list) {
@@ -195,10 +196,13 @@ function group(table, head, detail, cols, cls) {
 
 // the steps
 const areaNow = Object.fromEntries(D.areas.map(a => [a.area, a.now]));
-const next = D.steps.find(s => !s.done);
+const STEPS = D.sweeps.flatMap(w => w.steps);
+const next = STEPS.find(s => !s.done);
 const steps = $('#steps');
 steps.innerHTML = '<thead><tr><th></th><th class="l">Step</th><th>PR</th><th class="l">What</th><th class="l">Findings closed</th><th>Open</th><th class="l">High / Med open</th><th>Coverage now<br>lines / branches</th></tr></thead>';
-for (const s of D.steps) {
+const rows = D.sweeps.flatMap(w => [{ ...w.anchor, query: w.issues }, ...w.steps]);
+if (!rows.length) $('#sweeps').innerHTML = '<p class="na">No sweeps.</p>';
+for (const s of rows) {
   const own = F.filter(f => f.step === s.id), t = count(own);
   const severe = own.filter(f => isOpen(f) && (f.sev === 'High' || f.sev === 'Med'));
   const c = s.areas.map(a => areaNow[a]).filter(Boolean).reduce((x, n) => { x[0] += n.linesReached; x[1] += n.lineCount; x[2] += n.branchesReached; x[3] += n.branchCount; return x; }, [0, 0, 0, 0]);
@@ -211,7 +215,7 @@ for (const s of D.steps) {
   const head = `<td><input type="checkbox" disabled ${s.done ? 'checked' : ''} aria-label="${esc(s.id)} ${s.done ? 'done' : 'to do'}"></td>
     <th class="l"><span class="caret"></span><a href="${esc(D.repo)}/issues/${s.issue}">${esc(s.id)}</a>${s === next ? '<span class="next">next</span>' : ''}</th>
     <td>${s.pr ? prLink(s.pr) : '<span class="na">—</span>'}</td>
-    <td class="l"><div>${esc(s.what)}</div>${areas}${res}</td>
+    <td class="l"><div>${esc(s.what)}${s.query ? ` (<a href="${esc(s.query)}">its issues</a>)` : ''}</div>${areas}${res}</td>
     <td class="l">${findBar(t)}</td><td>${t.open || '<span class="na">0</span>'}</td>
     <td class="l">${severe.map(f => `<a class="chip ${f.sev}" href="${esc(D.repo)}/issues/${f.id}" title="${esc(f.desc)}">${f.id}</a>`).join('')}</td>
     <td>${c[1] ? `${f1(pct(c[0], c[1]))} / ${f1(pct(c[2], c[3]))}` : '<span class="na">—</span>'}</td>`;
@@ -239,11 +243,11 @@ const others = kind => D.others.filter(o => o.kind === kind);
 const olist = list => list.length ? `<ul class="others">${list.map(o => `<li>${issue(o.id)} ${esc(o.title)}${o.areas.map(a => ` <span class="chip">${esc(a)}</span>`).join('')}</li>`).join('')}</ul>` : '<p class="na">None open.</p>';
 $('#others').innerHTML = `<h3>Gaps (${others('gap').length})</h3>${olist(others('gap'))}<h3>Questions (${others('question').length})</h3>${olist(others('question'))}`;
 
-const doneN = D.steps.filter(s => s.done).length;
+const doneN = STEPS.filter(s => s.done).length;
 $('#banner').innerHTML = `
-  <div><div class="label">Steps done</div><div class="big">${doneN} <small>of ${D.steps.length}</small></div>
-    <span class="meter"><b class="fixed" style="width:${pct(doneN, D.steps.length) || 0}%"></b></span>
-    <div class="sub">${next ? `next: ${esc(next.id)}, ${esc(next.what)}` : D.steps.length ? 'the sweep is done' : 'no steps'}</div></div>
+  <div><div class="label">Steps done</div><div class="big">${doneN} <small>of ${STEPS.length}</small></div>
+    <span class="meter"><b class="fixed" style="width:${pct(doneN, STEPS.length) || 0}%"></b></span>
+    <div class="sub">${next ? `next: ${esc(next.id)}, ${esc(next.what)}` : STEPS.length ? 'every sweep is done' : 'no steps'}</div></div>
   <div><div class="label">Findings closed</div><div class="big">${all.closed} <small>of ${all.all}</small></div>
     <span class="meter"><b class="fixed" style="width:${pct(all.closed, all.all) || 0}%"></b><b class="severe" style="width:${pct(all.severe, all.all) || 0}%"></b><b class="lowsev" style="width:${pct(all.low, all.all) || 0}%"></b><b class="q" style="width:${pct(all.q, all.all) || 0}%"></b></span>
     <div class="sub">${all.open} open: ${all.severe} High or Med, ${all.low} Low or unrated, ${all.q} questions</div></div>

@@ -6,6 +6,9 @@ times are kept in a file per area (tests/durations/), by which CI splits tier 1 
     area_of_code("src/appkata_core/sync.py") == "sources"
     area_of_test("tests/test_trust.py") == "trust"
 
+Run as a script, it prints the areas one per line, in AREAS' order: the review skill's areas_command
+(docs/review.json).
+
 Paths are from the repository's root, with "/". A pattern is an fnmatch one."""
 
 import fnmatch
@@ -83,3 +86,7 @@ def area_of_code(rel):
 def area_of_test(rel):
     """The area a test file (or a test's id, tests/test_x.py::test_y) belongs to, or None."""
     return _area(TESTS, rel.split("::")[0])
+
+
+if __name__ == "__main__":
+    print("\n".join(AREAS))

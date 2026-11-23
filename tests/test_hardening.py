@@ -1,6 +1,6 @@
-"""scripts/hardening.py, the Pages site's hardening page: a sweep's steps and their findings from the
-repository's issues, read from GitHub's GraphQL API, the findings by area as the history keeps them,
-and a step's result at its merge."""
+"""scripts/hardening.py, the Pages site's hardening page: each sweep's steps and their findings from
+the repository's issues (the review skill's sweep labels, anchors and sub-issues), read from GitHub's
+GraphQL API, the findings by area as the history keeps them, and a step's result at its merge."""
 
 import importlib.util
 import io
@@ -21,53 +21,82 @@ def issue(n, title, *labels, parent=None, state="open", reason=None, body="", pr
             "parent": parent, "prs": list(prs)}
 
 
+ANCHOR = "<!-- review CR1 anchor -->"
 ISSUES = [
-    issue(1, "H1.0 CI parts and coverage", "hardening", "area:tooling", state="closed", reason="completed",
+    issue(1, "CR1 Code review", "sweep:CR1", body=f"The steps.\n\n{ANCHOR}"),
+    issue(2, "CR1.2 trust", "sweep:CR1", "area:trust", parent=1, prs=[(70, "open"), (69, "closed")]),
+    issue(3, "CR1.1 tooling", "sweep:CR1", "area:tooling", parent=1, state="closed", reason="completed",
           prs=[(54, "merged")]),
-    issue(2, "H1.6 Trust and signatures", "hardening", "area:trust", prs=[(70, "open"), (69, "closed")]),
-    issue(3, "H1.6-1 A signature's key isn't checked (CR1-14)", "hardening", parent=2,
-          body="severity High, kind bug.\n\nThe key ..."),
-    issue(4, "H1.6-2 Who decides", "area:store", "question", parent=2, body="Severity: **Med**"),
-    issue(5, "H1.6-3 Fixed one", "hardening", parent=2, state="closed", reason="completed",
-          body="severity Low. Fixed by #71."),
-    issue(6, "H1.6-4 Not a bug", parent=2, state="closed", reason="not_planned", body="severity low"),
-    issue(7, "A finding titled otherwise", parent=2),
-    issue(8, "H1.5 Code review 1 (CR1)", "hardening", body="done by #66"),
-    issue(9, "H1.5-1 A process finding", parent=8),
-    issue(10, "H1.16 Release readiness", "hardening"),
-    issue(11, "Generic HTML Sources", "gap", "area:sources"),
-    issue(12, "A badge?", "question"),
-    issue(13, "An old gap", "gap", state="closed", reason="completed"),
-    issue(14, "Field test: 0.1.0", "field-test"),
-    issue(15, "H1.7-1 Not under a step", "hardening", parent=14),
-    issue(16, "H1.9 not a step: no label"),
+    issue(4, "CR1.2-1 A signature's key isn't checked", "sweep:CR1", "area:trust", parent=2,
+          body="severity High\n\n**Kind:** bug\n\nThe key ..."),
+    issue(5, "CR1.2-2 Who decides", "area:store", "question", parent=2, body="Severity: **Med**"),
+    issue(6, "CR1.2-3 Fixed one", parent=2, state="closed", reason="completed",
+          body="severity Low. Fixed by #71.", prs=[(72, "merged")]),
+    issue(7, "CR1.2-4 Not a bug", parent=2, state="closed", reason="not_planned", body="severity low"),
+    issue(8, "A finding titled otherwise", parent=2),
+    issue(9, "CR1-1 A finding with no area", "sweep:CR1", parent=1),
+    issue(10, "Generic HTML Sources", "gap", "area:sources"),
+    issue(11, "A badge?", "question"),
+    issue(12, "An old gap", "gap", state="closed", reason="completed"),
+    issue(13, "Field test: 0.1.0", "field-test"),
+    issue(14, "CR1.3-1 Not under a step", "sweep:CR1", parent=13),
+    # a finding's question is its own, not among the gaps and questions
+    issue(15, "CR1.2-5 Which one?", "question", parent=2),
+    # the label `hardening` and its titles aren't read
+    issue(16, "H1.6 Trust and signatures", "hardening", "area:trust"),
+    issue(17, "H1.6-1 Under an old step", parent=16),
+    # a later sweep, closed, whose anchor isn't the only issue with its label and no parent
+    issue(18, "CR2-3 Strayed", "sweep:CR2"),
+    issue(19, "CR2 Code review", "sweep:CR2", body="<!-- review CR2 anchor -->", state="closed",
+          reason="completed"),
+    issue(20, "CR2.1 sources", "sweep:CR2", "area:sources", parent=19, state="closed", reason="completed"),
 ]
 
 
-def test_the_steps_findings_gaps_and_questions_come_from_the_issues():
-    path, found, others = hardening.from_issues(ISSUES)
-    assert [(s["id"], s["issue"], s["done"], s["pr"]) for s in path] == [
-        ("H1.0", 1, True, 54), ("H1.5", 8, False, 66), ("H1.6", 2, False, 70), ("H1.16", 10, False, None)]
-    trust = path[2]
-    assert trust["areas"] == ["trust"] and trust["findings"] == [3, 4, 5, 6, 7]
-    # a step with no area of its own covers its findings' areas
-    assert path[1]["areas"] == [hardening.NO_AREA]
+def test_the_sweeps_steps_findings_gaps_and_questions_come_from_the_issues():
+    sweeps, found, others = hardening.from_issues(ISSUES)
+    assert [w["name"] for w in sweeps] == ["CR1", "CR2"]
+    cr1, cr2 = sweeps
+    assert (cr1["anchor"]["id"], cr1["anchor"]["issue"], cr1["anchor"]["what"]) == ("CR1", 1, "Code review")
+    # the steps in their numbers' order, whatever the issues' order
+    assert [(s["id"], s["issue"], s["done"], s["pr"]) for s in cr1["steps"]] == [
+        ("CR1.1", 3, True, 54), ("CR1.2", 2, False, 70)]
+    trust = cr1["steps"][1]
+    assert trust["areas"] == ["trust"] and trust["findings"] == [4, 5, 6, 7, 8, 15]
+    # the anchor, with no area of its own, covers its findings' areas
+    assert cr1["anchor"]["findings"] == [9] and cr1["anchor"]["areas"] == [hardening.NO_AREA]
+    assert cr2["anchor"]["issue"] == 19 and cr2["anchor"]["done"] and [s["id"] for s in cr2["steps"]] == ["CR2.1"]
     got = {f["id"]: f for f in found}
-    assert got[3] == {"id": 3, "step": "H1.6", "cr": "CR1-14", "sev": "High",
-                      "desc": "A signature's key isn't checked", "state": "open", "pr": None, "area": "trust"}
-    assert [got[n]["state"] for n in (4, 5, 6, 7)] == ["question", "fixed", "closed", "open"]
-    assert [got[n]["sev"] for n in (4, 5, 6, 7)] == ["Med", "Low", "Low", None]
-    assert got[4]["area"] == "store" and got[5]["pr"] == 71
-    assert got[7]["desc"] == "A finding titled otherwise" and got[9]["area"] == hardening.NO_AREA
-    assert 15 not in got and 16 not in got
-    assert others == [{"id": 11, "title": "Generic HTML Sources", "kind": "gap", "areas": ["sources"]},
-                      {"id": 12, "title": "A badge?", "kind": "question", "areas": []}]
+    assert got[4] == {"id": 4, "step": "CR1.2", "sev": "High", "desc": "A signature's key isn't checked",
+                      "state": "open", "pr": None, "area": "trust"}
+    assert [got[n]["state"] for n in (5, 6, 7, 8, 15)] == ["question", "fixed", "closed", "open", "question"]
+    assert [got[n]["sev"] for n in (5, 6, 7, 8)] == ["Med", "Low", "Low", None]
+    # the pull request is GitHub's link, never one the body names
+    assert got[5]["area"] == "store" and got[6]["pr"] == 72
+    assert got[8]["desc"] == "A finding titled otherwise"
+    assert got[9]["step"] == "CR1" and got[9]["desc"] == "A finding with no area" and got[9]["area"] == hardening.NO_AREA
+    assert not {14, 16, 17, 18} & set(got)
+    assert others == [{"id": 10, "title": "Generic HTML Sources", "kind": "gap", "areas": ["sources"]},
+                      {"id": 11, "title": "A badge?", "kind": "question", "areas": []}]
+
+
+def test_no_sweep_label_is_no_sweeps():
+    issues = [issue(1, "H1.6 Trust and signatures", "hardening", "area:trust"), issue(2, "A badge?", "question"),
+              issue(3, "H1.6-1 Under it", parent=1)]
+    sweeps, found, others = hardening.from_issues(issues)
+    assert sweeps == [] and found == [] and [o["id"] for o in others] == [2]
+    assert hardening.from_issues([]) == ([], [], [])
+
+
+def test_the_sweeps_go_by_their_numbers():
+    issues = [issue(n, f"{name} Code review", f"sweep:{name}") for n, name in ((1, "CR10"), (2, "CR2"), (3, "AB1"))]
+    assert [w["name"] for w in hardening.from_issues(issues)[0]] == ["AB1", "CR2", "CR10"]
 
 
 def test_the_findings_are_counted_by_area():
     found = hardening.from_issues(ISSUES)[1]
     got = hardening.figures(["trust", "store", "docs"], found)
-    assert got["trust"] == {"open": 2, "severe": 1, "fixed": 2, "all": 4}
+    assert got["trust"] == {"open": 3, "severe": 1, "fixed": 2, "all": 5}
     # a question is open, and its severity counts
     assert got["store"] == {"open": 1, "severe": 1, "fixed": 0, "all": 1}
     assert got["docs"] == {"open": 0, "severe": 0, "fixed": 0, "all": 0}
@@ -82,8 +111,8 @@ def node(n, title, labels=(), parent=None, state="OPEN", reason=None, prs=()):
 
 def test_the_issues_are_read_page_by_page_with_the_token(monkeypatch):
     pages = [{"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
-              "nodes": [node(1, "H1.0 x", ["hardening"], state="CLOSED", reason="COMPLETED", prs=[(54, "MERGED")])]},
-             {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node(2, "H1.0-1 y", parent=1)]}]
+              "nodes": [node(1, "CR1 x", ["sweep:CR1"], state="CLOSED", reason="COMPLETED", prs=[(54, "MERGED")])]},
+             {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node(2, "CR1-1 y", parent=1)]}]
     asked = []
 
     def urlopen(req, timeout):
@@ -97,8 +126,8 @@ def test_the_issues_are_read_page_by_page_with_the_token(monkeypatch):
     assert [v for v, _ in asked] == [{"owner": "SomeOne", "name": "Store", "after": None},
                                      {"owner": "SomeOne", "name": "Store", "after": "c1"}]
     assert asked[0][1] == "Bearer t"
-    assert got[0] == {"number": 1, "title": "H1.0 x", "body": "", "state": "closed", "reason": "completed",
-                      "labels": ["hardening"], "parent": None, "prs": [(54, "merged")]}
+    assert got[0] == {"number": 1, "title": "CR1 x", "body": "", "state": "closed", "reason": "completed",
+                      "labels": ["sweep:CR1"], "parent": None, "prs": [(54, "merged")]}
     assert got[1]["parent"] == 1 and got[1]["reason"] is None
 
 
@@ -142,25 +171,40 @@ def test_a_step_s_result_is_what_changed_at_its_merge():
     assert hardening.result({"pr": None, "areas": ["trust"]}, history) is None
 
 
+def _data(text):
+    return json.loads(text.split('type="application/json">', 1)[1].split("</script>", 1)[0])
+
+
 def test_the_page_carries_its_data_and_no_body_text():
     history = [point(40, 80.0, 1), point(54, 81.0, 1)]
     text = hardening.page(history, ["trust", "tooling"], "https://github.com/SomeOne/Store", ISSUES)
-    assert "/*DATA*/" not in text and "The key ..." not in text
-    data = json.loads(text.split('type="application/json">', 1)[1].split("</script>", 1)[0])
-    assert [s["id"] for s in data["steps"]] == ["H1.0", "H1.5", "H1.6", "H1.16"]
-    assert data["steps"][0]["result"] == {"tooling": {"fixed": 0, "lines": None, "branches": None}}
-    assert data["steps"][2]["result"] is None
-    assert data["issues"] == "https://github.com/SomeOne/Store/issues?q=label%3Ahardening+no%3Aparent-issue"
+    assert "/*DATA*/" not in text and "The key ..." not in text and "Fixed by" not in text
+    data = _data(text)
+    assert [(w["name"], w["anchor"]["id"], [s["id"] for s in w["steps"]]) for w in data["sweeps"]] == [
+        ("CR1", "CR1", ["CR1.1", "CR1.2"]), ("CR2", "CR2", ["CR2.1"])]
+    cr1 = data["sweeps"][0]
+    assert cr1["steps"][0]["result"] == {"tooling": {"fixed": 0, "lines": None, "branches": None}}
+    assert cr1["steps"][1]["result"] is None and cr1["anchor"]["result"] is None
+    assert cr1["issues"] == "https://github.com/SomeOne/Store/issues?q=label%3Asweep%3ACR1"
     # the areas given, then any other a finding is in
     assert [a["area"] for a in data["areas"]] == ["trust", "tooling", hardening.NO_AREA, "store"]
     assert data["areas"][0]["now"] == {"lines": 81.0, "branches": 70.0}
     assert data["areas"][0]["was"] == {"lines": 80.0, "branches": 70.0}
-    assert len(data["findings"]) == 6 and len(data["others"]) == 2
+    assert len(data["findings"]) == 7 and len(data["others"]) == 2
+    assert "cr" not in data["findings"][0]
     assert data["head"]["pr"] == 54 and data["base"]["pr"] == 40
 
 
+def test_the_page_works_with_no_sweeps():
+    text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store",
+                          [issue(1, "A badge?", "question")])
+    data = _data(text)
+    assert data["sweeps"] == [] and data["findings"] == [] and [o["id"] for o in data["others"]] == [1]
+    assert "No sweeps." in text
+
+
 def test_a_title_cannot_close_the_page_s_script():
-    issues = [issue(1, "H1.0 x", "hardening"), issue(2, "H1.0-1 </script><script>alert(1)", parent=1)]
+    issues = [issue(1, "CR1 x", "sweep:CR1"), issue(2, "CR1-1 </script><script>alert(1)", parent=1)]
     text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store", issues)
     assert "</script><script>alert" not in text and "<\\/script><script>alert(1)" in text
 
@@ -183,8 +227,7 @@ def test_an_areas_mutation_testing_is_its_latest_records_and_what_changed_since(
                               "survived": 3, "noTests": 0, "changed": ["src/appkata_core/http.py"], "new": []}
     assert got["trust"] == {"record": None, "changed": [], "new": ["src/appkata_core/review.py"]}
     text = hardening.page([point(1, 50.0, 0)], ["trust"], "https://github.com/SomeOne/Store", [], got)
-    data = json.loads(text.split('type="application/json">', 1)[1].split("</script>", 1)[0])
-    assert data["mutation"] == got
+    assert _data(text)["mutation"] == got
     assert "baseline, changed since" in hardening.PAGE.read_text(encoding="utf-8")
 
 
