@@ -74,8 +74,9 @@ doesn't carry; its header says which of those fail the run.
 A claim may reproduce with:
 
 - one test: `.venv/bin/pytest tests/<file>::<test>`;
-- tier 1 in its container: `scripts/test-tier1.sh -- tests/<file>`, which takes over a minute, so an
-    attended review asks first;
+- tier 1 in its container, the release's Python and PySide6: `scripts/test-tier1.sh -k <test name>`
+    (it collects the whole suite and runs the tests named), which takes over a minute, so an attended
+    review asks first;
 - CI's artifacts of the latest `master` run: the coverage report, the tour and the mutation baseline.
 
 A review never starts `scripts/test-sandbox.sh launcher-vm`, `test-windows-vm.sh`,
