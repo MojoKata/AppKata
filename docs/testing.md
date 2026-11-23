@@ -210,10 +210,11 @@ change (`check` takes it), its file, function and line, and the lines it `remove
 latest record mutated, and each module an area holds that no record covers; the hardening page
 marks those areas "baseline, changed since". Their counts are out of date until the area runs again.
 
-The baseline records the survivors; it doesn't settle them. Each area's step of a hardening sweep
-settles its own: a test that fails on the change, a change to the code, or `# pragma: no mutate` on
-the line with the reason it can't be caught (an equivalent change, say). An area with more than
-about 200 survivors is settled in a relay. A settled area runs again (`jobs`) and its baseline is
+The baseline records the survivors; it doesn't settle them. Each area settles its own (the shared
+`mutation` skill, [`agents/skills/mutation/SKILL.md`](../agents/skills/mutation/SKILL.md)): a test
+that fails on the change, a change to the code, or `# pragma: no mutate` on the line with the reason
+it can't be caught (an equivalent change, say). An area with more than about 200 survivors is
+settled in a relay. A settled area runs again (`jobs`) and its baseline is
 gathered again.
 
 ## Downloaded ISOs
