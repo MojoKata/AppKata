@@ -1,6 +1,6 @@
 {
- "short": 0.035,
+ "short": 0.033,
  "tests": {
-  "tests/test_public_text.py::test_no_private_name_in_any_tracked_file": 2.5
+  "tests/test_public_text.py::test_no_private_name_in_any_tracked_file": 3.7
  }
 }
