@@ -104,7 +104,8 @@ ul.others li { margin: 3px 0; }
 <h2>The sweeps</h2>
 <p>Each sweep is a label <code>sweep:&lt;name&gt;</code>. Its anchor, the issue with that label and no parent,
 is the sweep's own step, for the findings with no area; its steps are the anchor's sub-issues, and a
-step's findings are its sub-issues. A step is checked when its issue is closed, and then shows what
+step's findings are its sub-issues. A step with more findings than an issue takes sub-issues is in
+parts, shown as one step. A step is checked when its issue is closed, and then shows what
 changed in its areas at its pull request's merge. Click a step for its findings.</p>
 <div class="legend">
   <span><b>Findings:</b></span>
@@ -215,7 +216,7 @@ for (const s of rows) {
   const head = `<td><input type="checkbox" disabled ${s.done ? 'checked' : ''} aria-label="${esc(s.id)} ${s.done ? 'done' : 'to do'}"></td>
     <th class="l"><span class="caret"></span><a href="${esc(D.repo)}/issues/${s.issue}">${esc(s.id)}</a>${s === next ? '<span class="next">next</span>' : ''}</th>
     <td>${s.pr ? prLink(s.pr) : '<span class="na">—</span>'}</td>
-    <td class="l"><div>${esc(s.what)}${s.query ? ` (<a href="${esc(s.query)}">its issues</a>)` : ''}</div>${areas}${res}</td>
+    <td class="l"><div>${esc(s.what)}${s.query ? ` (<a href="${esc(s.query)}">its issues</a>)` : ''}${s.parts.length > 1 ? ` (in ${s.parts.length} parts: ${s.parts.map(issue).join(', ')})` : ''}</div>${areas}${res}</td>
     <td class="l">${findBar(t)}</td><td>${t.open || '<span class="na">0</span>'}</td>
     <td class="l">${severe.map(f => `<a class="chip ${f.sev}" href="${esc(D.repo)}/issues/${f.id}" title="${esc(f.desc)}">${f.id}</a>`).join('')}</td>
     <td>${c[1] ? `${f1(pct(c[0], c[1]))} / ${f1(pct(c[2], c[3]))}` : '<span class="na">—</span>'}</td>`;

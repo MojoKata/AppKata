@@ -12,6 +12,9 @@ The sweeps are those of the review skill (agents/skills/review/SKILL.md, "Planni
   closed. A sweep label no issue carries has nothing to show and isn't shown;
 - its steps are the anchor's sub-issues titled "<name>.<n> <what>" ("CR1.1 trust"), in the order of
   their n; the anchor is the sweep's own step, "<name>", for the findings that have no area;
+- a step in parts ("CR1.11 docs (1 of 2)", "CR1.11 docs (2 of 2)": an issue takes 100 sub-issues, so
+  the skill cuts a fuller step into parts) is one step, "CR1.11 docs": its findings are those of all
+  its parts, and it is done when every part is closed;
 - a step's findings are its sub-issues (the anchor's: those that aren't steps), each in the area its
   `area:` label names, else its step's, with the severity its body gives ("severity High", "Med" or
   "Low"; none given reads as unrated). A finding is open, or a question while open and labelled
@@ -43,6 +46,8 @@ NAME = re.compile(r"^([A-Za-z]+)(\d+)$")
 SEVERITY = re.compile(r"\bseverity:? *\**(High|Med|Low)\b", re.I)
 SEVERITIES = ("High", "Med", "Low")
 NO_AREA = "no area"
+# the end of a part's title: "docs (2 of 3)"
+PART = re.compile(r" *\((\d+) of (\d+)\)$")
 API = "https://api.github.com/graphql"
 QUERY = """query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -132,8 +137,33 @@ def _sweep_key(name):
 
 
 def _step(i, sid, sweep, n, what):
-    return {"id": sid, "sweep": sweep, "n": n, "issue": i["number"], "what": what, "areas": _areas(i["labels"]),
-            "pr": _pr(i), "done": i["state"] == "closed", "findings": []}
+    return {"id": sid, "sweep": sweep, "n": n, "issue": i["number"], "parts": [i["number"]], "what": what,
+            "areas": _areas(i["labels"]), "pr": _pr(i), "done": i["state"] == "closed", "findings": []}
+
+
+def _whole(steps):
+    """The steps with each step's parts joined into one: those of one n whose titles are alike but for
+    their ends, "(1 of 2)", "(2 of 2)". The step is its first part's, titled without the end, with every
+    part's issue in `parts`, in the parts' order; done when they all are."""
+    out, by_title = [], {}
+    for s in steps:
+        m = PART.search(s["what"])
+        if not m:
+            out.append(s)
+            continue
+        key = (s["n"], s["what"][:m.start()])
+        if key not in by_title:
+            by_title[key] = []
+            out.append(by_title[key])
+        by_title[key].append((int(m[1]), s))
+    for at, group in enumerate(out):
+        if isinstance(group, list):
+            parts = [s for _, s in sorted(group, key=lambda p: (p[0], p[1]["issue"]))]
+            first = parts[0]
+            out[at] = {**first, "what": PART.sub("", first["what"]), "parts": [s["issue"] for s in parts],
+                       "areas": sorted({a for s in parts for a in s["areas"]}),
+                       "pr": next((s["pr"] for s in parts if s["pr"]), None), "done": all(s["done"] for s in parts)}
+    return out
 
 
 def _anchor(name, issues):
@@ -159,7 +189,7 @@ def _finding(i, step):
 def from_issues(issues):
     """(the sweeps, the findings, the gaps and questions) from the issues. The sweeps come in order,
     each with its anchor (its own step) and its steps in order, each step with its findings'
-    numbers; a sub-issue of a step is a finding whatever it is titled."""
+    numbers; a sub-issue of a step, or of one of its parts, is a finding whatever it is titled."""
     names = sorted({lb.removeprefix(SWEEP) for i in issues for lb in i["labels"] if lb.startswith(SWEEP)},
                    key=_sweep_key)
     by_parent = {}
@@ -179,8 +209,10 @@ def from_issues(issues):
             else:
                 loose.append(i)
         steps.sort(key=lambda s: (s["n"], s["issue"]))
-        used |= {a["number"], *(s["issue"] for s in steps)}
-        for step, subs in [(own, loose), *((s, by_parent.get(s["issue"], [])) for s in steps)]:
+        steps = _whole(steps)
+        used |= {a["number"], *(p for s in steps for p in s["parts"])}
+        for step, subs in [(own, loose),
+                           *((s, [i for p in s["parts"] for i in by_parent.get(p, [])]) for s in steps)]:
             for i in subs:
                 found.append(_finding(i, step))
                 step["findings"].append(i["number"])

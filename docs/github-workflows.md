@@ -154,7 +154,8 @@ and published by GitHub Actions on each push to `master`. It has three pages:
 - **Hardening** (`hardening.html`, [`scripts/hardening.py`](../scripts/hardening.py)): each sweep
   of the review skill ([`REVIEW.md`](REVIEW.md)), a label `sweep:<name>` such as `sweep:CR1`: its
   anchor, the issue with that label and no parent, which is the sweep's own step, and its steps, the
-  anchor's sub-issues titled "CR1.n …", each with the pull request GitHub links as closing it; each
+  anchor's sub-issues titled "CR1.n …", each with the pull request GitHub links as closing it (a
+  step the review skill cut into parts, "CR1.11 docs (1 of 2)", is shown as one step); each
   step's findings, its sub-issues, with their severity (a body's "severity High", "Med" or "Low"),
   area (the `area:` label, else the step's) and state; the coverage and findings by area; and the
   open issues labelled `gap` or `question` that aren't findings. With no sweep label on any issue the

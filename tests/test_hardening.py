@@ -80,6 +80,34 @@ def test_the_sweeps_steps_findings_gaps_and_questions_come_from_the_issues():
                       {"id": 11, "title": "A badge?", "kind": "question", "areas": []}]
 
 
+def test_a_step_in_parts_is_one_step_with_every_parts_findings():
+    # An issue takes 100 sub-issues, so the review skill cuts a fuller step into parts.
+    issues = [
+        issue(1, "CR1 Code review", "sweep:CR1", body=ANCHOR),
+        issue(2, "CR1.1 trust", "sweep:CR1", "area:trust", parent=1),
+        issue(30, "CR1.2 docs (2 of 2)", "sweep:CR1", "area:docs", parent=1, prs=[(80, "open")]),
+        issue(3, "CR1.2 docs (1 of 2)", "sweep:CR1", "area:docs", parent=1, state="closed", reason="completed"),
+        issue(4, "CR1.2-1 In the first part", "area:docs", parent=3, body="severity Med"),
+        issue(31, "CR1.2-2 In the second part", "area:docs", parent=30, body="severity Low"),
+        issue(5, "CR1.3 tooling", "sweep:CR1", "area:tooling", parent=1),
+    ]
+    sweeps, found, others = hardening.from_issues(issues)
+    steps = sweeps[0]["steps"]
+    assert [(s["id"], s["what"], s["issue"], s["parts"]) for s in steps] == [
+        ("CR1.1", "trust", 2, [2]), ("CR1.2", "docs", 3, [3, 30]), ("CR1.3", "tooling", 5, [5])]
+    docs = steps[1]
+    # each finding once, under the one step; open while a part is; the pull request of the part that has one
+    assert docs["findings"] == [4, 31] and [f["step"] for f in found] == ["CR1.2", "CR1.2"]
+    assert not docs["done"] and docs["pr"] == 80 and docs["areas"] == ["docs"]
+    assert not others
+    # done once every part is closed
+    issues[2]["state"] = "closed"
+    assert hardening.from_issues(issues)[0][0]["steps"][1]["done"]
+    # the page names the parts
+    text = hardening.page([point(1, 50.0, 0)], ["docs"], "https://github.com/SomeOne/Store", issues, {})
+    assert '"parts":[3,30]' in text and "s.parts.map(issue)" in text
+
+
 def test_no_sweep_label_is_no_sweeps():
     issues = [issue(1, "H1.6 Trust and signatures", "hardening", "area:trust"), issue(2, "A badge?", "question"),
               issue(3, "H1.6-1 Under it", parent=1)]
