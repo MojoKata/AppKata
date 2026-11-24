@@ -247,7 +247,8 @@
     682,
     683,
     695,
-    697
+    697,
+    705
    ],
    "files": [
     "docs/requirements/R11-settings.md",
@@ -270,7 +271,7 @@
     "tests/test_requirements_trace.py",
     "tests/test_sync.py"
    ],
-   "oversize": "21 findings: 16 from the review, and five more that the unit's own batches found in its own files (#681, #682, #683, #695, #697), which are cheapest fixed while the unit is in them."
+   "oversize": "22 findings: 16 from the review, and six more that the unit's own batches found in its own files (#681, #682, #683, #695, #697, #705), which are cheapest fixed while the unit is in them."
   },
   {
    "id": "U08",
@@ -1262,7 +1263,8 @@
     483,
     484,
     503,
-    69
+    69,
+    706
    ],
    "files": [
     "src/appkata/backend.py",
@@ -3917,7 +3919,8 @@
     "tests/test_forges.py"
    ],
    "size": "small",
-   "proof": "tests/test_forges.py::test_the_pages_and_the_api_list_the_same_releases, tightened: the newest prerelease's files read through the pages equal the API's (its line 156 passes on an empty list today)."
+   "proof": "tests/test_forges.py::test_the_pages_and_the_api_list_the_same_releases, tightened: the newest prerelease's files read through the pages equal the API's (its line 156 passes on an empty list today).",
+   "note": " [Coordinator, 2026-11-24: U07's fourth batch ran this while writing #293's tests and found the cause: at forges.py:225 and :231 the counter of prereleases whose files are still to read is overwritten by each entry's own flag.]"
   },
   {
    "finding": 269,
@@ -10828,6 +10831,38 @@
    "size": "small",
    "proof": "A test with two stand-in servers on one name and two ports: a rate limit answered by one doesn't stop a request to the other.",
    "note": "Found by U07's third batch (2026-11-24) after #277's fix, and filed by the coordinator: Http.limited takes the same key as a token (#297)."
+  },
+  {
+   "finding": 705,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    697
+   ],
+   "related": [
+    683
+   ],
+   "size": "small",
+   "proof": "A test with a stand-in server that redirects to a second one answering 429: the limit is recorded under the second, and a request to the first still goes out.",
+   "note": "Found by U07's fourth batch (2026-11-24), and filed by the coordinator: do it with #697, which gives the record its key."
+  },
+  {
+   "finding": 706,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "related": [
+    483,
+    463
+   ],
+   "size": "small",
+   "proof": "tests/test_backend.py, with a real Backend and a stand-in forge that answers a release of another shape: Install ends in an error toast and a line in the App log.",
+   "note": "Found by U07's fourth batch (2026-11-24) while writing #293's tests, and filed by the coordinator. The same fault as #483 (the actions outside install): one change."
   }
  ],
  "shared_files": [
