@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import http.client
+import io
 import ipaddress
 import json
 import socket
 import ssl
 import threading
 import time
+import types
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -182,11 +184,10 @@ _reading = threading.local()     # .clock: the _Clock of the request this thread
 
 
 class _Clock:
-    """A request's deadline (R9.2.1) and its thread's Cancel (Http.stopping), which every read of
-    its answer is held to: its body's, in Http._read, and through the socket of Http's own
-    connection (_Held), connecting, a TLS handshake, the status line and the headers, a redirect's
-    included (CR1 #695). A host that sent those a byte at a time held its request past the deadline,
-    and Cancel waited for it."""
+    """A request's deadline (R9.2.1) and its thread's Cancel (Http.stopping), which each step of
+    the request is held to (_hold): connecting, a TLS handshake, and each read of the answer, its
+    status line and headers, a redirect's, and its body (CR1 #695). A host that sent its headers a
+    byte at a time held its request past the deadline, and Cancel waited for it."""
 
     def __init__(self, http: "Http", asked: dict):
         self.http, self.asked, self.started = http, asked, time.monotonic()
@@ -205,42 +206,65 @@ class _Clock:
                            timeout=True, deadline=True, no_answer=True)
 
 
-class _Held:
-    """A socket each of whose steps (connecting, a TLS handshake, each read) is held to the clock of
-    the request its thread is making (_Clock): a look at Cancel and the deadline first, then no
-    longer a wait than what is left of it. A step that ran out of the deadline's time is the
-    deadline's error, and isn't asked for again as a timeout would be."""
-
-    def _hold(self, step, *a, **k):
-        clock = getattr(_reading, "clock", None)
-        if clock is None:
-            return step(*a, **k)
-        wait = clock.left()
-        self.settimeout(wait)
-        try:
-            return step(*a, **k)
-        except TimeoutError:
-            if wait < clock.http.timeout:
-                raise clock.ended() from None
-            raise
-
-    def connect(self, *a, **k):
-        return self._hold(super().connect, *a, **k)
-
-    def recv_into(self, *a, **k):
-        return self._hold(super().recv_into, *a, **k)
-
-    def recv(self, *a, **k):
-        return self._hold(super().recv, *a, **k)
+def _hold(sock, step, *a, **k):
+    """One step of a connection's socket, held to the clock of the request its thread is making:
+    a look at Cancel and the deadline first, then no longer a wait than what is left of it. A step
+    that ran out of the deadline's time is the deadline's error, and isn't asked for again as a
+    timeout would be. Outside a request, the step as it is."""
+    clock = getattr(_reading, "clock", None)
+    if clock is None:
+        return step(*a, **k)
+    wait = clock.left()
+    sock.settimeout(wait)
+    try:
+        return step(*a, **k)
+    except TimeoutError:
+        if wait < clock.http.timeout:
+            raise clock.ended() from None
+        raise
 
 
-class _HeldSocket(_Held, socket.socket):
-    pass
+class _HeldReads(io.RawIOBase):
+    """A socket's reads, each held to the request's clock (_hold): what an answer of Http's own
+    connections is read through, its status line and headers as much as its body, and a proxy's
+    answer to a tunnel's CONNECT. It is the reading, not the socket, that is held, so it is the
+    same whatever made the socket: a TLS socket is made by the TLS context, which can be the
+    operating system's (platform.use_system_certificates) and make its sockets its own way."""
+
+    def __init__(self, sock):
+        super().__init__()
+        self.sock, self.reads = sock, sock.makefile("rb", buffering=0)
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int | None:
+        return _hold(self.sock, self.reads.readinto, buffer)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.reads.close()
+        super().close()
 
 
-class _HeldTLSSocket(_Held, ssl.SSLSocket):
-    def do_handshake(self, *a, **k):
-        return self._hold(super().do_handshake, *a, **k)
+class _HeldAnswer(http.client.HTTPResponse):
+    """http.client's answer, read through _HeldReads. It makes its reader with the socket's
+    makefile alone, and this one is handed a socket whose makefile is that reader."""
+
+    def __init__(self, sock, *a, **k):
+        super().__init__(types.SimpleNamespace(makefile=lambda *_a, **_k: io.BufferedReader(_HeldReads(sock))), *a, **k)
+
+
+class _HeldTLS:
+    """The TLS context of Http's connections: the system's context, whose handshake, one step
+    whatever the context does inside it, is held to the request's clock (_hold)."""
+
+    def __init__(self):
+        self.context = ssl.create_default_context()        # as urllib's own: the system's certificates, the name checked
+        self.context.set_alpn_protocols(["http/1.1"])
+
+    def wrap_socket(self, sock, **kw):
+        return _hold(sock, self.context.wrap_socket, sock, **kw)
 
 
 class _Connections(urllib.request.AbstractHTTPHandler):
@@ -248,20 +272,20 @@ class _Connections(urllib.request.AbstractHTTPHandler):
     Http._connect): the name is looked up once, held to the rule for a local address, and the socket
     connects to the addresses that were checked. urllib's own connections look the name up again
     when they connect, so a name that answered with a public address for the check and a local one
-    for the connection got its request sent into this computer or its network (CR1 #682). The
-    socket, and the TLS socket made of it, hold each step to the request's clock (_Held, CR1 #695)."""
+    for the connection got its request sent into this computer or its network (CR1 #682). Each
+    step after that is held to the request's clock (CR1 #695): connecting (Http._connect), the TLS
+    handshake (_HeldTLS) and each read of the answer (_HeldAnswer)."""
 
     def __init__(self, connect):
         super().__init__()
         self.connect = connect
-        self.tls = ssl.create_default_context()           # as urllib's own: the system's certificates, the name checked
-        self.tls.set_alpn_protocols(["http/1.1"])
-        self.tls.sslsocket_class = _HeldTLSSocket
+        self.tls = _HeldTLS()
 
     def _with(self, kind, req, **args):
         def made(host, **kw):
             conn = kind(host, **kw, **args)
             conn._create_connection = lambda address, timeout, source=None: self.connect(req, address, timeout, source)
+            conn.response_class = _HeldAnswer
             return conn
         return made
 
@@ -428,13 +452,13 @@ class Http:
         failed = OSError(f"{name} has no address")
         for each in addresses:
             family, kind, proto, _, at = socket.getaddrinfo(each, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)[0]
-            sock = _HeldSocket(family, kind, proto)
+            sock = socket.socket(family, kind, proto)
             try:
                 if isinstance(timeout, (int, float)):        # else urllib's "no timeout given"
                     sock.settimeout(timeout)
                 if source:
                     sock.bind(source)
-                sock.connect(at)                             # held to the request's clock, as each read is
+                _hold(sock, sock.connect, at)                # held to the request's clock, as each read is
                 return sock
             except OSError as e:
                 sock.close()
@@ -485,8 +509,8 @@ class Http:
         piece (CR1 #296). `timeout` alone is for each read: a host that sent one byte every few
         seconds never met it, and held its reader for as long as it liked, with the Sync's Cancel
         unable to stop it. read1 comes back with what one read of the socket gave, so no piece
-        waits for more than `timeout`; the socket of Http's own connection holds each read to the
-        clock as well (_Held), as it held what came before the body."""
+        waits for more than `timeout`; Http's own connections hold each read to the clock as well
+        (_HeldAnswer), as they held what came before the body."""
         read = getattr(r, "read1", None) or r.read
         pieces, size = [], 0
         while True:

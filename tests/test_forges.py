@@ -1526,9 +1526,29 @@ def test_through_real_sockets_headers_a_byte_at_a_time_end_at_the_deadline_and_a
     assert time.monotonic() - started < 2.0 and len(a.seen) == 2
 
 
-def test_through_real_sockets_a_tls_handshake_a_byte_at_a_time_ends_at_the_deadline():
-    """Http's own https, with no stand-in: a host that answers the TLS hello a byte at a time. The
-    handshake is one step of the socket's, which its timeout bounds as a whole; the deadline is less."""
+class Wrapping(ssl.SSLContext):
+    """A TLS context that wraps a socket with another context of its own, as truststore's does where
+    AppKata checks certificates with the operating system's (platform.use_system_certificates: on
+    Windows and macOS): what is set on it for its sockets never reaches the one that makes them."""
+
+    def __new__(cls, protocol=ssl.PROTOCOL_TLS_CLIENT):
+        return super().__new__(cls, protocol)
+
+    def __init__(self, protocol=ssl.PROTOCOL_TLS_CLIENT):
+        self.inner = ssl.SSLContext(protocol)
+
+    def wrap_socket(self, sock, **kw):
+        return self.inner.wrap_socket(sock, **kw)
+
+
+@pytest.mark.parametrize("context", ["pythons-own", "one-that-wraps-with-another"])
+def test_through_real_sockets_a_tls_handshake_a_byte_at_a_time_ends_at_the_deadline(monkeypatch, context):
+    """Http's own https, with no stand-in for it: a host that answers the TLS hello a byte at a time.
+    The handshake is one step of the socket's, which its timeout bounds as a whole; the deadline is
+    less. The TLS context is Python's own, or one like the operating system's, which AppKata uses
+    on Windows and macOS."""
+    if context != "pythons-own":
+        monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: Wrapping())
     accepted, stop = [], threading.Event()
     server = socket.create_server(("127.0.0.1", 0))
     server.settimeout(0.05)
