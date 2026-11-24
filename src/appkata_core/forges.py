@@ -51,6 +51,8 @@ class Forge:
 
     def __init__(self, http: Http, repo: Repo):
         self.http, self.repo = http, repo
+        # the form this host's token is sent in is its forge type's, not its name's (CR1 #275)
+        http.set_forge(repo.host, self.kind)
 
     # each forge implements these
     def info(self) -> RepoInfo: raise NotImplementedError
@@ -432,23 +434,25 @@ LABELS = {"github": "GitHub", "gitlab": "GitLab", "forgejo": "Forgejo", "gitea":
 
 
 def detect(http: Http, host: str) -> str:
-    """The forge type of a host (R2.4.2): known hosts first, then API probes."""
+    """The forge type of a host (R2.4.2): known hosts first, then API probes. Each probe asks one
+    forge type's API, so the host's token goes with it in that type's form (`forge`): a GitLab or a
+    GitHub Enterprise that answers nothing without a token is found too (CR1 #275)."""
     if host in KNOWN:
         return KNOWN[host]
     try:
-        d = http.json(f"https://{host}/api/v1/version")
+        d = http.json(f"https://{host}/api/v1/version", forge="gitea")
         if isinstance(d, dict) and "version" in d:
             return "forgejo" if "forgejo" in str(d).lower() or "+gitea" in str(d.get("version", "")) else "gitea"
     except Exception:
         pass
     try:
-        d = http.json(f"https://{host}/api/v4/projects?per_page=1")   # /version needs a token; this doesn't
+        d = http.json(f"https://{host}/api/v4/projects?per_page=1", forge="gitlab")   # /version needs a token; this doesn't
         if isinstance(d, list):
             return "gitlab"
     except Exception:
         pass
     try:
-        d = http.json(f"https://{host}/api/v3/meta")
+        d = http.json(f"https://{host}/api/v3/meta", forge="ghe")
         if isinstance(d, dict) and ("verifiable_password_authentication" in d or "installed_version" in d):
             return "ghe"
     except Exception:

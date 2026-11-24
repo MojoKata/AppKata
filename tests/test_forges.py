@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from appkata_core import forges, sync, urls
+from appkata_core import explore, forges, sync, urls
 from appkata_core import http as http_
 from appkata_core.db import DB
 from appkata_core.http import Http, RateLimited, SourceError, Unreachable
@@ -559,3 +559,113 @@ def test_a_redirect_to_anything_but_http_and_https_is_refused(pair, to, says):
     a.redirects["/x"] = to
     with pytest.raises(Unreachable, match=says):
         Http(timeout=10).json(f"https://{a.at}/x")
+
+
+# ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
+# CR1's #275: Http chose the token's header from the host's name, so a GitLab without "gitlab" in its
+# name (three of the hosts forges.KNOWN lists) was sent "Authorization: token", which GitLab has no use
+# for: the token did nothing, and nothing said so. No test looked at a header's form, and every host
+# in the tests had its forge in its name. The class is "what a host runs is read from what it is
+# called", so the hosts here have names that say nothing or say the wrong thing, and the stand-in
+# forge answers only the form its type takes.
+NEUTRAL = "git.example.org"
+FORMS = {"github": ("authorization", "Bearer SECRET"), "ghe": ("authorization", "Bearer SECRET"),
+         "gitlab": ("private-token", "SECRET"),
+         "forgejo": ("authorization", "token SECRET"), "gitea": ("authorization", "token SECRET")}
+
+
+def tokens_sent(seen):
+    """Of each request, the token headers it carried: [(address, {header: value})]."""
+    return [(url, {k: v for k, v in h.items() if k in http_.TOKEN_HEADERS}) for url, h in seen]
+
+
+def test_every_forge_type_has_its_form_and_a_redirect_knows_each_header():
+    assert set(http_.TOKEN_FORMS) == set(forges.LABELS) == set(FORMS)
+    assert {header.lower() for header, _ in http_.TOKEN_FORMS.values()} == set(http_.TOKEN_HEADERS)
+    assert {kind: (header.lower(), before + "SECRET") for kind, (header, before) in http_.TOKEN_FORMS.items()} == FORMS
+
+
+@pytest.mark.parametrize("host", [NEUTRAL, "gitlab.example.org", "notgithub.com", "code.gitea.example"])
+@pytest.mark.parametrize("kind", sorted(FORMS))
+def test_a_forges_requests_carry_the_token_in_its_types_form_whatever_the_host_is_called(tmp_path, kind, host):
+    seen = []
+    http = names(Http({host: "SECRET"}, opener=recording({f"https://{host}/": PNG}, seen)))
+    f = forges.forge_for(http, urls.parse(f"https://{host}/o/r"), kind)
+    with pytest.raises(Unreachable, match="JSON"):
+        f.info()                                                     # its API
+    assert f.raw("icon.png", "main") == PNG                          # a file of the repository
+    sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=host)   # and as Sync asks
+    assert len(seen) == 3 and [sent for _, sent in tokens_sent(seen)] == [dict([FORMS[kind]])] * 3, seen
+
+
+@pytest.mark.parametrize("host", sorted(forges.KNOWN))
+def test_every_host_appkata_knows_gets_the_form_of_the_forge_it_runs(host):
+    # the finding's three: invent.kde.org, salsa.debian.org and framagit.org are GitLab's
+    seen = []
+    http = names(Http({host: "SECRET"}, opener=recording({"https://": PNG}, seen)))
+    forges.forge_for(http, urls.parse(f"https://{host}/o/r")).raw("README.md", "main")
+    assert tokens_sent(seen) == [(seen[0][0], dict([FORMS[forges.KNOWN[host]]]))]
+    assert {h: forges.KNOWN[h] for h in ("invent.kde.org", "salsa.debian.org", "framagit.org")} == {
+        "invent.kde.org": "gitlab", "salsa.debian.org": "gitlab", "framagit.org": "gitlab"}
+
+
+def only_its_form(kind, routes, seen):
+    """A forge of this type that needs its token: recording(), which answers 401 unless the request
+    carries the token in the one form the type takes. (A real GitLab or Gitea takes Bearer too.)"""
+    answer = recording(routes, seen)
+
+    def open_(req, timeout=0):
+        sent = {k.lower(): v for k, v in req.header_items() if k.lower() in http_.TOKEN_HEADERS}
+        if sent != dict([FORMS[kind]]):
+            seen.append((req.full_url, sent))
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+        return answer(req, timeout)
+    return open_
+
+
+PROJECT = {"name": "r", "full_name": "o/r", "path_with_namespace": "o/r", "default_branch": "main"}
+
+
+@pytest.mark.parametrize("kind, probe, answer", [
+    ("gitlab", "/api/v4/projects?per_page=1", []),
+    ("ghe", "/api/v3/meta", {"installed_version": "3.14.0"}),
+    ("gitea", "/api/v1/version", {"version": "1.22.0"}),
+    ("forgejo", "/api/v1/version", {"version": "11.0.1+gitea-1.22.0"}),
+])
+@pytest.mark.parametrize("host", [NEUTRAL, "gitlab-mirror.example.org"])
+def test_a_forge_that_needs_its_token_is_detected_and_read_on_a_host_whose_name_says_nothing(tmp_path, host, kind, probe, answer):
+    """From the first probe to an image, as Sync goes: a host whose type nothing says yet, which
+    answers only its own form. Each probe asks in the form of the forge whose API it asks for."""
+    seen = []
+    web = f"https://{host}"
+    http = names(Http({host: "SECRET"}, opener=only_its_form(kind, {
+        web + probe: answer, web + "/api/": PROJECT, web + "/o/r/": PNG}, seen)))
+    repo = urls.parse(web + "/o/r")
+    assert forges.detect(http, host) == kind
+    f = forges.forge_for(http, repo, kind)
+    assert f.info().name == "r" and f.raw("icon.png", "main") == PNG
+    assert sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=host).endswith("icon.png")
+    assert all(url.startswith(web + "/") and len(sent) == 1 for url, sent in tokens_sent(seen)), seen
+
+
+@pytest.mark.parametrize("host, value", [
+    ("github.com", "Bearer SECRET"), ("api.github.com", "Bearer SECRET"),
+    ("notgithub.com", "token SECRET"),                       # ends in the same letters: not GitHub's form
+    ("github.com.evil.example", "token SECRET"), ("api.github.evil.example", "token SECRET"),
+    (NEUTRAL, "token SECRET"),
+])
+def test_with_no_forge_type_known_only_github_coms_own_names_get_its_form(host, value):
+    seen = []
+    _ask(names(Http({host: "SECRET"}, opener=recording({}, seen))), f"https://{host}/x")
+    assert tokens_sent(seen) == [(f"https://{host}/x", {"authorization": value})]
+
+
+def test_a_search_sends_the_token_in_the_form_of_the_forge_it_searches():
+    seen = []
+    http = names(Http({"invent.kde.org": "SECRET", "gitlab-mirror.example.org": "SECRET", "github.com": "SECRET"},
+                      opener=recording({"https://invent.kde.org/": [], "https://gitlab-mirror.example.org/": {"data": []},
+                                        "https://api.github.com/": {"items": []}}, seen)))
+    assert explore.gitlab(http, "q", host="invent.kde.org") == []
+    assert explore.codeberg(http, "q", host="gitlab-mirror.example.org") == []
+    assert explore.github(http, "q") == []
+    assert [sent for _, sent in tokens_sent(seen)] == [dict([FORMS["gitlab"]]), dict([FORMS["forgejo"]]), dict([FORMS["github"]])]

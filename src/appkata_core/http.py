@@ -59,6 +59,24 @@ def token_hosts(host: str) -> tuple[str, ...]:
     return (host, *TOKEN_HOSTS.get(host, ()))
 
 
+# How each forge type takes a token (CR1 #275): the header, and what stands before the token in it.
+# GitLab reads PRIVATE-TOKEN and has no use for "Authorization: token", which is Gitea's and
+# Forgejo's. The types are forges.LABELS'.
+TOKEN_FORMS = {"github": ("Authorization", "Bearer "), "ghe": ("Authorization", "Bearer "),
+               "gitlab": ("PRIVATE-TOKEN", ""),
+               "forgejo": ("Authorization", "token "), "gitea": ("Authorization", "token ")}
+
+
+def _forge_by_name(host: str) -> str:
+    """A guess at a host's forge type from its name, for a request made before anything says what
+    the host runs (forges.detect's last probe). Only github.com and the hosts under it are GitHub:
+    a name that merely ends in those letters isn't."""
+    name = urlsplit("//" + host).hostname or ""
+    if name == "github.com" or name.endswith(".github.com"):
+        return "github"
+    return "gitlab" if "gitlab" in name else "forgejo"
+
+
 def _host_port(parts) -> str:
     """An address's host as a Source's host is written (urls.parse): with its port, unless that is
     http's or https's own."""
@@ -166,20 +184,30 @@ class Http:
         self.timeout = timeout
         self._open = opener or _opener(_Redirects(self._allowed)).open
         self._lookup = _addresses                # host -> its addresses
+        self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
         self.limited: dict[str, float] = {}      # host -> reset time
         self.calls = 0
 
-    def _auth(self, host: str) -> dict:
+    def set_forge(self, host: str, forge: str) -> None:
+        """Says which forge type a host runs: each Forge says it of its Source's host when it is
+        made (forges.Forge), from the type the Source has (R2.6.5) or the one that was detected."""
+        if forge in TOKEN_FORMS:
+            self.forges[host.lower()] = forge
+
+    def _auth(self, host: str, forge: str | None = None) -> dict:
+        """The header a host's token is sent in, in the form its forge type takes (TOKEN_FORMS).
+        The type is the request's own `forge`, where its caller knows which forge's API it is asking
+        (a probe of forges.detect, a search of explore), else the one the host is known to run
+        (set_forge), which holds for every request made for that host, an image's too. A host's
+        name decides only when neither says (CR1 #275: three of the GitLab hosts AppKata knows have
+        no "gitlab" in their names, and were sent the form GitLab ignores)."""
         tok = self.tokens.get(host)
         if not tok:
             return {}
-        if host.endswith("github.com") or host.startswith("api.github."):
-            return {"Authorization": f"Bearer {tok}"}
-        if "gitlab" in host:
-            return {"PRIVATE-TOKEN": tok}
-        return {"Authorization": f"token {tok}"}      # Gitea / Forgejo
+        header, before = TOKEN_FORMS.get(forge or self.forges.get(host) or "") or TOKEN_FORMS[_forge_by_name(host)]
+        return {header: before + tok}
 
-    def _token(self, parts, whose: str) -> dict:
+    def _token(self, parts, whose: str, forge: str | None = None) -> dict:
         """The token header a request to this address carries (R9.2.2), decided here for every caller
         from the address itself. `whose` only says whose token is meant (a caller's `token_host`, or
         without one the address's own host): it is sent over https alone, and only when the address's
@@ -187,7 +215,7 @@ class Http:
         elsewhere, as Sync does for an image a project's README or metainfo names, sends no token."""
         if parts.scheme != "https" or not _is_for(parts, whose):
             return {}
-        return self._auth(whose)
+        return self._auth(whose, forge)
 
     def _allowed(self, url: str, whose: str | None = None):
         """The parts of an address Http may open, or Unreachable (CR1 #266). It is an http or https
@@ -222,17 +250,19 @@ class Http:
 
     def _request(self, url: str, *, token_host: str | None = None, accept: str = "application/json",
                  headers: dict | None = None, method: str = "GET", max_bytes: int = 64 << 20,
-                 body: bytes | None = None) -> tuple[bytes, dict, str]:
+                 body: bytes | None = None, forge: str | None = None) -> tuple[bytes, dict, str]:
         """`token_host` is the host the request is made for, a Source's: its token is the one that may
         be sent (_token), and it is the one host that may be on the local network (_allowed). An
-        address that a project, or a forge's answer, names is always asked with it."""
+        address that a project, or a forge's answer, names is always asked with it. `forge` is the
+        forge type whose API the address is, where the caller knows it: the form the token is sent
+        in (_auth)."""
         parts = self._allowed(url, token_host)
         host = parts.hostname.lower()
         whose = (token_host or host).lower()       # the host this request is made for
         reset = self.limited.get(host)
         if reset and reset > time.time():
             raise RateLimited(host, reset)
-        token = self._token(parts, whose)
+        token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
         req.whose = whose                          # for a redirect: _Redirects
