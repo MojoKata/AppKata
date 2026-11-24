@@ -6,3 +6,5 @@
 #309  small  CR1.3-11 Installing an app replaces the user's own symbolic link at `~/bin/<app>` and uninstalling removes it, though AppKata may only replace links it made.
 #331  small  CR1.3-32 A command links folder typed with `$HOME` is not expanded, so the link is made in a folder literally named `$HOME` under AppKata's working directory.
 #312  small  CR1.3-14 Turning off an app's menu entry, or updating to a command-line tool, leaves the old menu entry behind, unrecorded, past uninstall.
+# Added by the coordinator on 2026-11-24, found by batch 1 and filed since: take it last.
+#688  small  CR1.9-31 The install dialog still offers the command checkbox for an app whose command name will be refused, and the reason is said only after the install.

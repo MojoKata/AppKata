@@ -136,3 +136,25 @@ commit's files: I checked each file against the schedule first, and ran the guar
    sandboxed app, and one whose first app was named "bin" still can't write its shims, until that
    file is removed by hand. The record wanted the old marker removed and the brief says no such
    logic; if the owner wants it, it is three lines in `sandbox.write_flatpak_info`.
+
+### The coordinator, after batch 1 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; the touched fast tests and the
+document tests, whole. `upstream/master` (U01 and U02, merged since) is taken in by a merge, and
+the batch is pushed.
+
+- **New findings filed:** #685 (new 1, the `%` in a path: the owner's choice, so it carries
+    `refine` and is set aside in the schedule), #686 (new 2, `desktop.py`'s two entries: U14's),
+    #687 (new 3, the Windows `.cmd` links: U14's, by the same decision as #407) and #688 (new 4,
+    the install dialog's checkbox: this unit's, added to batch 2).
+- **Guard:** `tests/test_launcher_golden.py` and `tests/test_sandbox_state.py` are in U03's files now.
+- **Doubt 2** (#388 leaves an earlier version's marker where it is) is right: no logic for what an
+    earlier AppKata wrote.
+- **Doubts 3, 4 and 5** (the option stays on when a link is refused; the 57 reserved names; the
+    fixed PATH on a system whose commands live elsewhere) go to the owner under Needs your eye in
+    the pull request. Nothing for a later batch to change.
+- **Doubt 1** (other units' test files that put a stand-in bwrap on the caller's PATH) is noted for
+    those units.
+- **Needs a run** (the launcher VMs, the two desktop VMs, the Windows VM tests): the coordinator
+    runs them once, when the unit's last batch is in.
+
