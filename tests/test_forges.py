@@ -2112,3 +2112,514 @@ def test_an_image_larger_than_an_image_may_be_is_passed_over(tmp_path, clock):
     with pytest.raises(Unreachable, match="too large"):
         sync._save_image(http, "https://git.example.org/o/r/raw/branch/main/icon.png", str(tmp_path / "icon"), token_host="git.example.org")
     assert len(seen) == 1 and list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- what a Sync stores, and how it runs (R9.2, R9.2.1, R9.2.3, R3.2, R3.3)
+# CR1's #293: the forges' parsers were tested, each on its own, and nothing called the function that
+# joins them: no test ran sync_app or sync_all, so what a Sync stores for an app, the order it tries
+# the images in, which apps it syncs, how many at a time and what Cancel does were held by nothing
+# (#263, #266, #269 and #296 were all in there). The fixes of those brought a Sync's tests for
+# their own fault: what it sends where, and that it survives whatever one app's sync ends in. These
+# hold the rest, on one project that has everything a Sync reads, as GitHub, a GitLab and a Forgejo
+# serve it: every column of the row, each image by which address it came from, and the Sync as a
+# whole (the Trusts' apps, the forge type kept, four at a time, Cancel, the channels after it).
+DESCRIPTION = "The forge's own description of Widget"
+WIDGET_PATHS = [
+    "README.md", "src/main.c", "data/org.acme.widget.metainfo.xml",
+    "icon.png", "data/widget.png", "assets/logo-512.png", "assets/icon.svg", "fastlane/metadata/android/en-US/images/icon.png",
+    "docs/screenshot-main.png", "docs/screenshot-other.png", "fastlane/metadata/android/en-US/images/featureGraphic.png",
+    "docs/shot-two.png", "media/demo.png", "media/window.png",
+]
+WIDGET_METAINFO = """<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application"><id>org.acme.widget</id><name>Widget Pro</name><summary>From the metainfo</summary>
+<icon type="remote">https://cdn.example/widget-icon.png</icon>
+<screenshots><screenshot type="default"><image>https://cdn.example/widget-shot.png</image></screenshot></screenshots>
+</component>"""
+WIDGET_README = ("# Widget\n\n[![build](https://img.shields.io/badge/build-passing-green.svg)](https://ci.example/acme/widget)\n\n"
+                 "Widget turns your files into tidy little boxes, quickly and offline.\n\nIt has more to say further down.\n\n"
+                 "![the window](media/window.png)\n\n<img src=\"https://cdn.example/readme.png\">\n\n"
+                 "![a demo](media/demo.png)\n\n![shot](docs/shot-two.png)\n")
+SUMMARY = "Widget turns your files into tidy little boxes, quickly and offline."
+# R3.2 and R3.3, as addresses: the metainfo's first, then the repository's files, best first and at
+# most four and two of them, then the owner's avatar for the icon and three of the README's images
+# for the hero (a screenshot before another picture). The rest are never asked for.
+ICON_FILES = ["fastlane/metadata/android/en-US/images/icon.png", "assets/icon.svg", "assets/logo-512.png", "data/widget.png"]
+HERO_FILES = ["fastlane/metadata/android/en-US/images/featureGraphic.png", "docs/screenshot-main.png",
+              "media/demo.png", "docs/shot-two.png", "media/window.png"]
+NEVER_FILES = ["icon.png", "docs/screenshot-other.png"]
+WIDGET_RELEASES = [      # as the forge lists them, in no order: (tag, name, date, marked a prerelease, files)
+    ("v1.2.0", "1.2", "2026-03-01T00:00:00Z", False, ["widget-1.2.0-x86_64.AppImage", "widget-1.2.0.tar.gz"]),
+    ("nightly", "Nightly build", "2026-06-01T00:00:00Z", False, ["widget-nightly-x86_64.AppImage"]),
+    ("v1.10.0", "Widget 1.10", "2026-05-01T00:00:00Z", False, ["widget-1.10.0-x86_64.AppImage"]),
+    ("v1.3.0-rc1", "", "2026-04-01T00:00:00Z", True, []),
+]
+STORED = [      # as a Sync keeps them, the newest first: (tag, name, version, prerelease); a tag that is no version is a prerelease
+    ("nightly", "Nightly build", "nightly", True), ("v1.10.0", "Widget 1.10", "1.10.0", False),
+    ("v1.3.0-rc1", "v1.3.0-rc1", "1.3.0-rc1", True), ("v1.2.0", "1.2", "1.2.0", False),
+]
+WIDGETS = {
+    "github": dict(source="https://github.com/acme/widget", api="https://api.github.com/repos/acme/widget",
+                   raw="https://raw.githubusercontent.com/acme/widget/trunk/", tree="/git/trees/trunk", tags="/tags",
+                   avatar="https://avatars.githubusercontent.com/u/7", probe=None, file=dict(size=1234, digest=DIGEST, content_type="application/x-iso9660-appimage")),
+    "gitlab": dict(source="https://git.example.org/acme/widget", api="https://git.example.org/api/v4/projects/acme%2Fwidget",
+                   raw="https://git.example.org/acme/widget/-/raw/trunk/", tree="/repository/tree", tags="/repository/tags",
+                   avatar="https://git.example.org/uploads/-/system/project/avatar/7/widget", probe="https://git.example.org/api/v4/projects?per_page=1",
+                   file=dict(size=0, digest="", content_type="")),
+    "forgejo": dict(source="https://code.example.net:3000/acme/widget", api="https://code.example.net:3000/api/v1/repos/acme/widget",
+                    raw="https://code.example.net:3000/acme/widget/raw/branch/trunk/", tree="/git/trees/trunk", tags="/tags",
+                    avatar="https://code.example.net:3000/avatars/7", probe="https://code.example.net:3000/api/v1/version",
+                    file=dict(size=1234, digest="", content_type="")),
+}
+PROBE_ANSWERS = {"gitlab": [], "forgejo": {"version": "11.0.1+gitea-1.22.0"}}
+
+
+def picture(address):
+    """An image that says which address it came from, so what was kept can be read from the file."""
+    if address.endswith(".svg"):
+        return b'<svg xmlns="http://www.w3.org/2000/svg"><!-- ' + address.encode() + b" --></svg>"
+    return PNG + address.encode()
+
+
+def longest_first(routes):
+    return dict(sorted(routes.items(), key=lambda kv: -len(kv[0])))      # opener() takes the first prefix
+
+
+def widget(forge, paths=WIDGET_PATHS, **info):
+    """The Widget project as this forge serves it: its Source, its routes, and the addresses of its
+    images in the order R3.2 and R3.3 give."""
+    w = types.SimpleNamespace(kind=forge, **WIDGETS[forge])
+    w.host = urls.parse(w.source).host
+    w.info = {"name": "widget", "full_name": "acme/widget", "path_with_namespace": "acme/widget", "description": DESCRIPTION,
+              "default_branch": "trunk", "avatar_url": w.avatar, "owner": {"avatar_url": w.avatar}, "html_url": w.source,
+              "web_url": w.source, "archived": True, **info}
+    w.releases = []
+    for tag, name, date, pre, files in WIDGET_RELEASES:
+        links = [(f, f"{w.source}/releases/download/{tag}/{f}") for f in files]
+        page = f"{w.source}/releases/tag/{tag}"
+        if forge == "gitlab":
+            w.releases.append({"tag_name": tag, "name": name, "released_at": date, "upcoming_release": pre, "description": f"Notes of {tag}",
+                               "_links": {"self": page}, "assets": {"links": [{"name": f, "direct_asset_url": u} for f, u in links]}})
+        else:
+            w.releases.append({"tag_name": tag, "name": name, "published_at": date, "prerelease": pre, "draft": False,
+                               "body": f"Notes of {tag}", "html_url": page,
+                               "assets": [{"name": f, "browser_download_url": u, "size": 1234, "digest": DIGEST,
+                                           "content_type": "application/x-iso9660-appimage"} for f, u in links]})
+    if forge != "gitlab":
+        w.releases.insert(1, {"tag_name": "v2.0.0", "name": "Not out yet", "published_at": "2026-07-01T00:00:00Z", "draft": True, "assets": []})
+    blobs = [{"path": p, "type": "blob"} for p in paths] + [{"path": "docs", "type": "tree"}]
+    w.icons = ["https://cdn.example/widget-icon.png"] + [w.raw + p for p in ICON_FILES] + [w.avatar]
+    w.heroes = ["https://cdn.example/widget-shot.png"] + [w.raw + p for p in HERO_FILES]
+    w.never = [w.raw + p for p in NEVER_FILES] + ["https://cdn.example/readme.png"]
+    files = {"README.md": WIDGET_README.encode(), "data/org.acme.widget.metainfo.xml": WIDGET_METAINFO.encode(), "src/main.c": b"int main;"}
+    w.routes = {w.api: w.info, w.api + "/releases": w.releases, w.api + w.tree: blobs if forge == "gitlab" else {"tree": blobs},
+                **{w.raw + p: files.get(p) or picture(w.raw + p) for p in paths},
+                **{u: picture(u) for u in ("https://cdn.example/widget-icon.png", "https://cdn.example/widget-shot.png",
+                                           "https://cdn.example/readme.png", w.avatar)}}
+    if w.probe:
+        w.routes[w.probe] = PROBE_ANSWERS[forge]
+    return w
+
+
+def sync_of(tmp_path, monkeypatch, w, routes=None, seen=None, db=None, **kw):
+    """A whole Sync of the Catalog over these routes. Returns the database and what was asked for, in order."""
+    seen = [] if seen is None else seen
+    db = db or catalog(tmp_path, monkeypatch, [w.source])
+    http = names(Http({}, opener=recording(longest_first(w.routes if routes is None else routes), seen)))
+    sync.sync_all(db, http, root=str(tmp_path), **kw)
+    return db, [url for url, _ in seen]
+
+
+def kept(tmp_path, app, which):
+    """The image file a row names, or None where it names none."""
+    if not app[which]:
+        return None
+    assert not os.path.isabs(app[which]) and os.path.basename(os.path.dirname(app[which])) == os.path.basename(sync.cache_dir(app["url"], str(tmp_path)))
+    with open(os.path.join(str(tmp_path), app[which]), "rb") as f:
+        return f.read()
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_what_a_sync_stores_for_an_app(tmp_path, monkeypatch, forge):
+    w = widget(forge)
+    before = now()
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert {k: app[k] for k in ("name", "description", "summary", "readme", "raw_base", "forge", "host", "repo", "archived", "error",
+                                "error_code", "error_extra")} == {
+        "name": "Widget Pro",                                   # the metainfo's, before the repository's
+        "description": DESCRIPTION, "summary": SUMMARY,         # R3.4.1: the README's first prose, before the metainfo's and the forge's
+        "readme": WIDGET_README, "raw_base": w.raw.rstrip("/"), "forge": forge, "host": w.host, "repo": "acme/widget", "archived": 1,
+        "error": None, "error_code": None, "error_extra": "{}"}
+    assert before <= app["fetched_at"] <= now()
+    assert kept(tmp_path, app, "icon") == picture(w.icons[0]) and kept(tmp_path, app, "hero") == picture(w.heroes[0])
+    assert os.path.basename(app["icon"]) == "icon.png" and os.path.basename(app["hero"]) == "hero.png"
+    stored = json.loads(app["releases"])
+    assert [(r["tag"], r["name"], r["version"], r["prerelease"]) for r in stored] == STORED        # no draft among them
+    by_tag = {tag: (date, files) for tag, _, date, _, files in WIDGET_RELEASES}
+    for r in stored:
+        date, files = by_tag[r["tag"]]
+        assert r == {"tag": r["tag"], "name": r["name"], "version": r["version"], "prerelease": r["prerelease"], "date": date,
+                     "notes": f"Notes of {r['tag']}", "html_url": f"{w.source}/releases/tag/{r['tag']}",
+                     "assets": [{"name": f, "url": f"{w.source}/releases/download/{r['tag']}/{f}", **w.file} for f in files]}
+    assert db.one("SELECT forge FROM sources WHERE url=?", (w.source,))["forge"] == forge        # found once, kept for the next Sync
+    assert db.one("SELECT appstream_id FROM app_meta WHERE url=?", (w.source,))["appstream_id"] == "org.acme.widget"
+    assert db.get("last_sync") >= before
+    assert len(asked) == len(set(asked))                        # and nothing was asked for twice
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_the_images_are_tried_in_r3_2s_and_r3_3s_order_and_no_others(tmp_path, monkeypatch, forge):
+    """Every image address answers 404: each is asked for once, in the order of the two lists, then
+    the app is stored without an icon or a hero, and with no error. The files past the fourth icon,
+    the second hero and the third README image are never asked for."""
+    w = widget(forge)
+    images = w.icons + w.heroes + w.never
+    db, asked = sync_of(tmp_path, monkeypatch, w, {k: v for k, v in w.routes.items() if k not in images})
+    assert [url for url in asked if url in images] == w.icons + w.heroes
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["icon"], app["hero"], app["name"]) == (None, "", "", "Widget Pro")
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+@pytest.mark.parametrize("which, n", [(which, n) for which in ("icon", "hero") for n in range(6)])
+def test_the_first_image_that_answers_is_the_one_kept(tmp_path, monkeypatch, forge, which, n):
+    """The first n addresses of R3.2's list, or of R3.3's, give no image, each in another way: the next one is kept, and none after it is asked for."""
+    w = widget(forge)
+    wanted = w.icons if which == "icon" else w.heroes
+    no_image = [_status(404), _status(500), urllib.error.URLError(OSError(111, "Connection refused")), b"x" * (sync.MAX_IMAGE + 1)]
+    db, asked = sync_of(tmp_path, monkeypatch, w, {**w.routes, **{url: no_image[i % len(no_image)] for i, url in enumerate(wanted[:n])}})
+    app = rows(db)[w.source]
+    assert app["error_code"] is None and kept(tmp_path, app, which) == picture(wanted[n])
+    assert [url for url in asked if url in wanted] == wanted[:n + 1]
+    other = "hero" if which == "icon" else "icon"
+    assert kept(tmp_path, app, other) == picture((w.heroes if which == "icon" else w.icons)[0])
+
+
+def test_an_app_keeps_the_icon_it_had_when_none_answers(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    db, _ = sync_of(tmp_path, monkeypatch, w)
+    first = rows(db)[w.source]
+    db, asked = sync_of(tmp_path, monkeypatch, w, {k: v for k, v in w.routes.items() if k not in w.icons}, db=db)
+    app = rows(db)[w.source]
+    assert [url for url in asked if url in w.icons] == w.icons
+    assert app["error_code"] is None and app["icon"] == first["icon"] and kept(tmp_path, app, "icon") == picture(w.icons[0])
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_a_project_that_says_nothing_of_itself_is_stored_as_its_forge_describes_it(tmp_path, monkeypatch, forge):
+    # no README, no metainfo, no image in the repository: the forge's name and description, and the owner's avatar
+    w = widget(forge, paths=["src/main.c"])
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["name"], app["summary"], app["readme"], app["hero"]) == (None, "widget", DESCRIPTION, "", "")
+    assert kept(tmp_path, app, "icon") == picture(w.avatar)
+    assert db.one("SELECT appstream_id FROM app_meta WHERE url=?", (w.source,)) is None
+    assert [url for url in asked if url.startswith(w.raw)] == []
+
+
+def test_a_metainfo_whose_name_is_a_placeholder_leaves_the_forges_name(tmp_path, monkeypatch):
+    w = widget("gitlab")
+    w.routes[w.raw + "data/org.acme.widget.metainfo.xml"] = WIDGET_METAINFO.replace("Widget Pro", "@@APP_NAME@@").encode()
+    db, _ = sync_of(tmp_path, monkeypatch, w)
+    assert rows(db)[w.source]["name"] == "widget" and rows(db)[w.source]["summary"] == SUMMARY
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_a_project_that_moved_has_where_to_on_its_row(tmp_path, monkeypatch, forge):
+    w = widget(forge, full_name="acme/gadget", path_with_namespace="acme/gadget",
+               html_url=WIDGETS[forge]["source"].replace("widget", "gadget"), web_url=WIDGETS[forge]["source"].replace("widget", "gadget"))
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert app["error_code"] == "Renamed" and json.loads(app["error_extra"]) == {"new_url": w.source.replace("widget", "gadget")}
+    assert asked[-1] == w.api and asked.count(w.api) == 1                  # and nothing more is read under the old name
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+@pytest.mark.parametrize("track_only", [True, False])
+def test_tags_stand_in_for_releases_only_where_the_source_tracks_them(tmp_path, monkeypatch, forge, track_only):
+    w = widget(forge)
+    w.routes[w.api + "/releases"] = []
+    w.routes[w.api + w.tags] = [{"name": "v1.2.0", "commit": {"created": "2026-03-01T00:00:00Z", "created_at": "2026-03-01T00:00:00Z"}},
+                                {"name": "v1.3.0", "commit": {"created": "2026-04-01T00:00:00Z", "created_at": "2026-04-01T00:00:00Z"}}]
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    db.x("UPDATE sources SET settings=? WHERE url=?", (json.dumps({"track_only": track_only}), w.source))
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    app = rows(db)[w.source]
+    assert app["error_code"] is None and (w.api + w.tags in [url.split("?")[0] for url in asked]) == track_only
+    assert sorted((r["tag"], r["version"], r["assets"]) for r in json.loads(app["releases"])) == (
+        [("v1.2.0", "1.2.0", []), ("v1.3.0", "1.3.0", [])] if track_only else [])
+
+
+# ---- which forge type a Sync takes a host for (R2.4.2, R2.6.5, R10.3.1)
+def own_reviews(tmp_path, db, *listed, settings=""):
+    """The user's own review file, which lists these apps: a Trust that is always applied."""
+    path = tmp_path / "AppKata.md"
+    table = "".join(f"| App {n} | {url} | foss | 4 | 4 |\n" for n, url in enumerate(listed, 1))
+    path.write_text("# Mine\n\n| App | Source | Tags | Trust | Rating |\n|---|---|---|---|---|\n" + table + settings, encoding="utf-8")
+    return sync.own_trust(db, str(path))
+
+
+def test_a_hosts_forge_type_is_found_once_and_kept_for_the_next_sync(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    assert asked[0] == w.probe and asked.count(w.probe) == 1
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert w.probe not in asked and asked[0] == w.api and rows(db)[w.source]["error_code"] is None
+
+
+def test_an_app_a_trust_lists_keeps_the_forge_type_found_for_it_too(tmp_path, monkeypatch):
+    # it has no Source to keep the type on: its own row does
+    w = widget("gitlab")
+    db = catalog(tmp_path, monkeypatch, [])
+    own_reviews(tmp_path, db, w.source)
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert asked.count(w.probe) == 1 and rows(db)[w.source]["forge"] == "gitlab"
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert w.probe not in asked and rows(db)[w.source]["error_code"] is None
+
+
+@pytest.mark.parametrize("own, trusts, kept_on_source, taken_for", [
+    ("forgejo", "gitlab", "gitlab", "forgejo"),          # the Source's own setting first (R2.6.5)
+    (None, "forgejo", "gitlab", "forgejo"),              # then what a Trust recommends (R10.3.1)
+    (None, None, "forgejo", "forgejo"),                  # then what an earlier Sync found
+])
+def test_the_forge_type_is_the_sources_setting_then_a_trusts_then_the_one_found(tmp_path, monkeypatch, own, trusts, kept_on_source, taken_for):
+    """A Forgejo on a host whose name says GitLab, and no probe that answers: each way the type is known without asking."""
+    w = widget("forgejo")
+    source = "https://gitlab.example.org/acme/widget"
+    routes = {k.replace("https://code.example.net:3000/", "https://gitlab.example.org/"): v for k, v in w.routes.items() if k != w.probe}
+    db = catalog(tmp_path, monkeypatch, [source])
+    db.x("UPDATE sources SET settings=?, forge=? WHERE url=?", (json.dumps({"forge": own} if own else {}), kept_on_source, source))
+    if trusts:
+        own_reviews(tmp_path, db, source, settings=f"\n# App 1\n\nFine.\n\n## App 1::Settings\n\n- Forge: {forges.LABELS[trusts]}\n")
+    w.source = source
+    db, asked = sync_of(tmp_path, monkeypatch, w, routes, db=db)
+    app = rows(db)[source]
+    assert (app["error_code"], app["forge"], app["name"]) == (None, taken_for, "Widget Pro"), app["error"]
+    assert asked[0] == "https://gitlab.example.org/api/v1/repos/acme/widget"
+    assert db.one("SELECT forge FROM sources WHERE url=?", (source,))["forge"] == kept_on_source
+
+
+# ---- which apps a Sync syncs, and how it runs (R9.2, R9.2.1, R9.2.3)
+def test_a_sync_reads_the_trusts_first_and_syncs_every_app_of_the_catalog_once(tmp_path, monkeypatch):
+    """R9.2.3: a Source, an app only a Trust lists, and one that is both; an app only a disabled
+    Trust lists is left out. The user's own review file is read by this very Sync, before its apps."""
+    github, gitlab, forgejo = widget("github"), widget("gitlab"), widget("forgejo")
+    left_out = "https://codeberg.org/acme/left-out"
+    db = catalog(tmp_path, monkeypatch, [gitlab.source, forgejo.source])
+    own_reviews(tmp_path, db, github.source, forgejo.source)
+    off = db.x("INSERT INTO trusts(url, name, path, enabled, added_at) VALUES(?,?,?,0,?)",
+               ("https://example.org/reviews", "Switched off", "AppKata.md", now())).lastrowid
+    db.x("INSERT INTO reviews(trust_id, url, app) VALUES(?,?,?)", (off, left_out, "Left out"))
+    assert db.all("SELECT url FROM reviews WHERE trust_id!=?", (off,)) == []          # the file hasn't been read yet
+    progress, items, seen = sync.Progress(), [], []
+    http = names(Http({}, opener=recording(longest_first({**github.routes, **gitlab.routes, **forgejo.routes}), seen)))
+    sync.sync_all(db, http, progress, root=str(tmp_path), on_item=lambda: items.append((progress.done, progress.total)))
+    apps = rows(db)
+    assert sorted(apps) == sorted([github.source, gitlab.source, forgejo.source])
+    assert all(app["error_code"] is None and app["name"] == "Widget Pro" for app in apps.values())
+    assert [url for url, _ in seen if "left-out" in url] == []
+    assert [[url for url, _ in seen].count(w.api) for w in (github, gitlab, forgejo)] == [1, 1, 1]       # the one that is both, once
+    assert (progress.done, progress.total) == (4, 4)            # the Trust, then the three apps
+    assert items[0] == (1, 1) and sorted(items[1:]) == [(2, 4), (3, 4), (4, 4)]
+    assert db.one("SELECT synced_at FROM trusts WHERE own=1")["synced_at"] and db.get("last_sync")
+
+
+@pytest.mark.parametrize("workers", [None, 2, 1])
+def test_at_most_four_apps_are_fetched_at_the_same_time(tmp_path, monkeypatch, workers):
+    """R9.2.1. Eight Sources on eight hosts. The first requests wait for one another: that as many as
+    are allowed do run together is certain, and a request more than that is seen if it ever starts."""
+    allowed = workers or 4
+    sources = [f"https://forge{i}.example.org/acme/widget" for i in range(8)]
+    db = catalog(tmp_path, monkeypatch, sources)
+    db.x("UPDATE sources SET forge='forgejo'")
+    together, lock, state = threading.Barrier(allowed, timeout=10), threading.Lock(), {"now": 0, "most": 0, "met": False}
+
+    def open_(req, timeout=0):
+        with lock:
+            state["now"] += 1
+            state["most"] = max(state["most"], state["now"])
+            first = not state["met"]
+        try:
+            if first:
+                together.wait()                               # until `allowed` requests are under way at once
+                state["met"] = True
+            time.sleep(0.002)
+            raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+        finally:
+            with lock:
+                state["now"] -= 1
+    sync.sync_all(db, names(Http({}, opener=open_)), root=str(tmp_path), **({"workers": workers} if workers else {}))
+    assert state["met"] and state["most"] == allowed
+    assert sorted(rows(db)) == sorted(sources) and all(app["error_code"] == "NotFound" for app in rows(db).values())
+
+
+def test_a_sync_cancelled_before_it_starts_asks_for_nothing(tmp_path, monkeypatch):
+    w, seen, after = widget("forgejo"), [], []
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http: after.append("channels"))
+    for with_a_trust in (False, True):
+        folder = tmp_path / ("with-a-trust" if with_a_trust else "without")
+        folder.mkdir()
+        db = catalog(folder, monkeypatch, [w.source])
+        if with_a_trust:
+            own_reviews(folder, db, widget("gitlab").source)
+        progress = sync.Progress(cancelled=True)
+        sync.sync_all(db, names(Http({}, opener=recording(longest_first(w.routes), seen))), progress, root=str(folder))
+        assert seen == [] and rows(db) == {} and after == [] and progress.done == 0
+        assert db.all("SELECT * FROM reviews") == []           # nor was the Trust read
+
+
+def test_a_sync_cancelled_between_two_apps_leaves_the_rest_as_they_were(tmp_path, monkeypatch):
+    widgets = [widget("github"), widget("gitlab"), widget("forgejo")]
+    seen, after = [], []
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http: after.append("channels"))
+    db = catalog(tmp_path, monkeypatch, [w.source for w in widgets] + ["nostr://naddr1widget"])     # one whose sync asks for nothing
+    progress = sync.Progress()
+    http = names(Http({}, opener=recording(longest_first({k: v for w in widgets for k, v in w.routes.items()}), seen)))
+    sync.sync_all(db, http, progress, root=str(tmp_path), workers=1, on_item=lambda: setattr(progress, "cancelled", True))
+    (done,) = rows(db).values()                                # the one app that was synced before the Cancel, whole
+    assert done["error_code"] is None and done["name"] == "Widget Pro"
+    assert (progress.done, progress.total) == (1, 4) and after == []          # nor are the package channels read
+    assert [url for url, _ in seen if url.startswith(tuple(w.api for w in widgets if w.source != done["url"]))] == []
+
+
+def test_the_package_channels_are_read_once_after_the_apps_and_never_end_a_sync(tmp_path, monkeypatch):
+    w, after = widget("forgejo"), []
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    monkeypatch.setattr(sync, "sync_channels", lambda db_, http_: after.append(sorted(rows(db_))))
+    sync_of(tmp_path, monkeypatch, w, db=db)
+    assert after == [[w.source]]                               # the apps were stored by then
+    monkeypatch.undo()
+
+    def fails(db_, http_=None):
+        raise RuntimeError("the package manager isn't answering")
+    monkeypatch.setattr(channels, "enabled", lambda: True)
+    monkeypatch.setattr(sync, "track_channel_installs", fails)
+    monkeypatch.setattr(sync, "check_links", fails)
+    from appkata_core import autoupdate
+    monkeypatch.setattr(autoupdate, "detect", fails)
+    db.put("last_sync", "")
+    sync.sync_all(db, names(Http({}, opener=opener(longest_first(w.routes)))), root=str(tmp_path))
+    assert db.get("last_sync") and rows(db)[w.source]["error_code"] is None
+
+
+def test_a_source_that_is_no_forges_project_has_that_on_its_row(tmp_path, monkeypatch):
+    db = catalog(tmp_path, monkeypatch, ["nostr://naddr1widget"])
+    sync.sync_all(db, names(Http({}, opener=opener({}))), root=str(tmp_path))
+    app = rows(db)["nostr://naddr1widget"]
+    assert app["error_code"] == "Unsupported" and "ngit" in app["error"]
+
+
+# ---- each probe of forges.detect (R2.4.2)
+P1, P2, P3, P4 = ("https://git.example.org/api/v1/version", "https://git.example.org/api/v4/projects?per_page=1",
+                  "https://git.example.org/api/v3/meta", "https://git.example.org/")
+
+
+@pytest.mark.parametrize("answers, kind", [
+    ({P1: {"version": "1.22.0"}}, "gitea"),
+    ({P1: {"version": "11.0.1+gitea-1.22.0"}}, "forgejo"),                       # Forgejo, as it gives its version
+    ({P1: {"version": "9.0.3", "name": "Forgejo"}}, "forgejo"),
+    ({P1: {"message": "no version here"}, P2: []}, "gitlab"),                    # the first isn't a Gitea's answer: the next is asked
+    ({P1: ["a", "list"], P2: [{"id": 7, "path_with_namespace": "o/r"}]}, "gitlab"),
+    ({P2: {"message": "401 Unauthorized"}, P3: {"installed_version": "3.14.0"}}, "ghe"),
+    ({P3: {"verifiable_password_authentication": False}}, "ghe"),
+    ({P3: {"message": "another API"}, P4: b'<html><head><meta name="generator" content="Forgejo"></head>'}, "forgejo"),
+    ({P4: b'<META NAME="generator" CONTENT="Gitea - Git with a cup of tea">'}, "gitea"),
+    ({P4: b'<meta content="GitLab" property="og:site_name">'}, "gitlab"),
+    ({P4: b'<meta property="og:site_name" content="GitLab">'}, "gitlab"),
+    ({P4: b"<html>A page that says nothing</html>"}, None),
+    ({}, None),
+])
+def test_each_probe_of_a_hosts_forge_type_in_its_order(clock, answers, kind):
+    """R2.4.2: the probes are asked in their order, each is passed over unless its answer is that
+    forge's own, and the first that is ends the asking."""
+    seen = []
+    http = names(Http(opener=recording(longest_first(answers), seen)))
+    if kind is None:
+        with pytest.raises(forges.Unsupported, match="couldn't tell which forge git.example.org runs; set the forge type in Source settings"):
+            forges.detect(http, "git.example.org")
+        assert [url for url, _ in seen] == [P1, P2, P3, P4]
+    else:
+        assert forges.detect(http, "git.example.org") == kind
+        last = [p for p in (P1, P2, P3, P4) if p in answers][-1]
+        assert [url for url, _ in seen] == [P1, P2, P3, P4][:[P1, P2, P3, P4].index(last) + 1]
+    assert clock.waits == [] and all("authorization" not in h and "private-token" not in h for _, h in seen)
+
+
+@pytest.mark.parametrize("host", sorted(forges.KNOWN))
+def test_a_host_appkata_knows_is_never_probed(host):
+    seen = []
+    http = names(Http(opener=recording({}, seen)))
+    assert forges.detect(http, host) == forges.KNOWN[host] and forges.KNOWN[host] in forges.LABELS
+    assert forges.forge_for(http, urls.parse(f"https://{host}/o/r")).label == forges.LABELS[forges.KNOWN[host]] and seen == []
+
+
+# ---- github.com's own pages and git, the whole way (R2.4.1)
+def test_a_whole_sync_of_a_github_project_by_its_pages_and_git(tmp_path, monkeypatch):
+    """The API's limit is used up, so nothing is asked of it: the project's page, the releases feed,
+    each release's files with their digests, and git for the default branch and the file list."""
+    w = widget("github")
+    web = "https://github.com/acme/widget"
+    asked_of_git = []
+
+    def git_out(args):
+        asked_of_git.append(args)
+        if args[:2] == ["ls-remote", "--symref"]:
+            return "ref: refs/heads/trunk\tHEAD\n8a1f3c\tHEAD\n"
+        if args[0] == "-C" and "ls-tree" in args:
+            return "\n".join(WIDGET_PATHS) + "\n"
+        return ""
+    monkeypatch.setattr(forges, "_git_out", git_out)
+    entry = ('<entry><updated>{d}</updated><link rel="alternate" href="' + web + '/releases/tag/{t}"/><title>{n}</title>'
+             '<content type="html">&lt;p&gt;Notes of {t}&lt;/p&gt;</content></entry>')
+    feed = '<feed xmlns="http://www.w3.org/2005/Atom">' + "".join(
+        entry.format(t=tag, n=name or tag, d=date.replace("T00:00", "T09:30")) for tag, name, date, _, _ in WIDGET_RELEASES) + "</feed>"
+    label = '<span class="Label Label--warning Label--large">Pre-release</span>'
+    listing = "".join(f'<a href="/acme/widget/releases/tag/{tag}">{name}</a>{label if pre else ""}' for tag, name, _, pre, _ in WIDGET_RELEASES)
+    routes = {k: v for k, v in w.routes.items() if not k.startswith("https://api.github.com/")}
+    routes.update({
+        web: (f'<html><head><meta name="description" content="{DESCRIPTION} - acme/widget"></head>'
+              "<p>This repository has been archived by the owner.</p></html>").encode(),
+        web + "/releases.atom": feed.encode(), web + "/releases": listing.encode(),
+        "https://github.com/acme.png?size=256": picture(w.avatar),
+        **{f"{web}/releases/expanded_assets/{tag}": ("".join(
+            f'<a href="/acme/widget/releases/download/{tag}/{f}">{f}</a><span>{DIGEST}</span><span>1.5 MB</span>' for f in files)
+            + f'<relative-time datetime="{date}">').encode() for tag, _, date, _, files in WIDGET_RELEASES}})
+    seen = []
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    http = names(Http({}, opener=recording(longest_first(routes), seen)))
+    http.limited["api.github.com"] = time.time() + 600
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["name"], app["description"], app["summary"], app["archived"], app["raw_base"]) == (
+        None, "Widget Pro", DESCRIPTION, SUMMARY, 1, w.raw.rstrip("/")), app["error"]
+    assert [url for url, _ in seen if "api.github.com" in url] == []
+    stored = json.loads(app["releases"])
+    published = {tag: date if files else date.replace("T00:00", "T09:30") for tag, _, date, _, files in WIDGET_RELEASES}
+    assert [(r["tag"], r["version"], r["prerelease"], r["date"]) for r in stored] == [      # a release's own date, where its files' page gave one
+        (tag, version, pre, published[tag]) for tag, _, version, pre in STORED]
+    assert {r["tag"]: r["assets"] for r in stored} == {
+        tag: [{"name": f, "url": f"{web}/releases/download/{tag}/{f}", "size": 1500000, "digest": DIGEST, "content_type": ""} for f in files]
+        for tag, _, _, _, files in WIDGET_RELEASES}
+    assert stored[1]["notes"] == "Notes of v1.10.0"
+    assert kept(tmp_path, app, "icon") == picture(w.icons[0]) and kept(tmp_path, app, "hero") == picture(w.heroes[0])
+    assert [a[:2] for a in asked_of_git if a[0] == "ls-remote"] == [["ls-remote", "--symref"]]
+    assert all(web in a for a in asked_of_git if a[0] in ("ls-remote", "clone"))       # git was given the project's own address, and no other
+
+
+def test_by_the_pages_a_projects_tags_come_from_git_newest_version_first(monkeypatch):
+    monkeypatch.setattr(forges, "_git_out", lambda args: "".join(f"{n:040x}\trefs/tags/{t}\n" for n, t in enumerate(
+        ["v1.9.0", "v1.10.0", "v1.2.0", "v2.0.0-rc1"])))
+    http = names(Http(opener=opener({})))
+    http.limited["api.github.com"] = time.time() + 600
+    tags = forges.forge_for(http, urls.parse("https://github.com/acme/widget"), "github").tags(limit=3)
+    assert [(t.tag, t.version, t.date) for t in tags] == [("v2.0.0-rc1", "2.0.0-rc1", ""), ("v1.10.0", "1.10.0", ""), ("v1.9.0", "1.9.0", "")]
+
+
+def test_by_the_pages_a_project_that_moved_is_renamed(monkeypatch):
+    monkeypatch.setattr(forges, "_git_out", lambda args: "")
+    http = names(Http(opener=lambda req, timeout=0: FakeResponse("https://github.com/acme/gadget", b"<html></html>")))
+    http.limited["api.github.com"] = time.time() + 600
+    with pytest.raises(forges.Renamed) as e:
+        forges.forge_for(http, urls.parse("https://github.com/acme/widget"), "github").info()
+    assert e.value.new_url == "https://github.com/acme/gadget"
