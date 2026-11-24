@@ -313,7 +313,8 @@
     404,
     691,
     692,
-    693
+    693,
+    707
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.10-ui-text.md",
@@ -10774,6 +10775,28 @@
    "size": "medium",
    "proof": "First the check: introspect org.freedesktop.ScreenSaver on each supported desktop (Cinnamon and the others the desktop VMs hold). If any has more than Inhibit and UnInhibit: a tier 1 test of the launcher's words, and the same desktop VM run showing the other members refused.",
    "note": "Found by U09's first batch (2026-11-24) after #378's fix, and filed by the coordinator. A check: nothing was run. The check needs a desktop VM, which a relay agent doesn't start: the agent writes the command under needs a run, and the coordinator runs it and settles the finding (fixed, or no defect with the evidence on the issue)."
+  },
+  {
+   "finding": 707,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "tests/test_sandbox_run.py",
+    "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
+    "docs/requirements/R17-app-sandboxing/R17.17-limits.md",
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
+    "tests/data/launchers/developer-every-capability.sh",
+    "tests/skips/tier1.txt",
+    "tests/skips/launcher-vm-24.04.txt",
+    "tests/skips/launcher-vm-26.04.txt"
+   ],
+   "depends_on": [
+    691
+   ],
+   "size": "small",
+   "proof": "Tier 1: the launcher run with a stand-in gdbus answering held and not held, its proxy words and its stderr line. The launcher containers with a real gnome-keyring holding the name: an app with Password service starts without the own, says why, and reaches neither the keyring's daemon, the Secret Service nor the name; the sole-provider test keeps passing.",
+   "note": "Found by U09's fourth batch (2026-11-24) while fixing #691, and set aside for the owner's choice. The owner decided (2026-11-24): when another program already holds org.freedesktop.secrets at the launch, the launcher starts the app without Password service and says why on stderr; R17.5.1 says so; a password manager keeps the capability where it is the only provider. Fixed in U09's pull request (#694), in its first round of answers to the review."
   }
  ],
  "shared_files": [
@@ -10876,10 +10899,5 @@
   "tests/test_version_reviews.py",
   "tests/test_windows.py"
  ],
- "set_aside": [
-  {
-   "finding": 707,
-   "why": "A new finding of U09's fourth batch (2026-11-24) whose remedy is the owner's to choose: refuse the Password service's own while another provider holds the name, or state the limit. It carries `refine` and joins a unit once decided."
-  }
- ]
+ "set_aside": []
 }
