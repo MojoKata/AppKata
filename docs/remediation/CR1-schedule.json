@@ -319,11 +319,13 @@
     "docs/architecture/A1-app-sandboxing/A1.10-ui-text.md",
     "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
     "docs/architecture/A1-app-sandboxing/A1.9-limits.md",
+    "docs/architecture/A2-sandbox-exposure.md",
     "docs/requirements-trace.md",
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
     "docs/requirements/R17-app-sandboxing/R17.17-limits.md",
     "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
     "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
+    "scripts/sandbox/exposure.py",
     "src/appkata/qml/SandboxDialog.qml",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
@@ -6219,13 +6221,17 @@
    "finding": 403,
    "readiness": "ready",
    "files": [
-    "src/appkata_core/sandbox.py",
-    "tests/test_sandbox.py",
-    "tests/test_sandbox_run.py",
-    "tests/data/launchers/cli-tool.sh",
-    "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
     "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
-    "docs/requirements-trace.md"
+    "docs/architecture/A2-sandbox-exposure.md",
+    "docs/requirements-trace.md",
+    "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
+    "scripts/sandbox/exposure.py",
+    "src/appkata_core/sandbox.py",
+    "tests/data/launchers/cli-tool.sh",
+    "tests/skips/tier1.txt",
+    "tests/test_docs_facts.py",
+    "tests/test_sandbox.py",
+    "tests/test_sandbox_run.py"
    ],
    "related": [
     404,
@@ -6233,7 +6239,7 @@
    ],
    "size": "medium",
    "proof": "Tier 1: test_the_notification_and_inhibit_portals_come_with_their_capabilities' pattern gains ProxyResolver and NetworkMonitor with the network grant, and the cli-tool golden loses the two rules. Tier 2 (scripts/test-sandbox.sh launcher, consumers): an app without the network is refused ProxyResolver.Lookup and still starts (GLib's network monitor falls back without an error the user sees); one with it gets both.",
-   "note": "Decided 2026-11-24: ProxyResolver and NetworkMonitor open only with the network grant; R17.5 moves the two portals. The sort's note, written before the decision, for what it says of the parts and the files: R17.4 withholds the proxy settings from an app without the network grant and R17.5 lists ProxyResolver and NetworkMonitor for every app on the bus; the code follows R17.5. Either option changes one of the two requirements, so which one gives way is the owner's. With the other option only R17.4's text changes (small). #202 (D3-19, docs) is about the four lists of the always-open portals, two of which leave ProxyResolver out: they are corrected to whatever is decided here. #404 is the same question for OpenURI and Email."
+   "note": "Decided 2026-11-24: ProxyResolver and NetworkMonitor open only with the network grant; R17.5 moves the two portals. The sort's note, written before the decision, for what it says of the parts and the files: R17.4 withholds the proxy settings from an app without the network grant and R17.5 lists ProxyResolver and NetworkMonitor for every app on the bus; the code follows R17.5. Either option changes one of the two requirements, so which one gives way is the owner's. With the other option only R17.4's text changes (small). #202 (D3-19, docs) is about the four lists of the always-open portals, two of which leave ProxyResolver out: they are corrected to whatever is decided here. #404 is the same question for OpenURI and Email. [Coordinator, 2026-11-24: batch 2 of U09's relay found that the decided remedy alone breaks GLib programs without the network grant (GLib asks the ProxyResolver portal before every connection, a loopback one included, and gets AccessDenied). The fix therefore also has the launcher set GIO_USE_PROXY_RESOLVER=dummy for a Standard app without the network, which needs the variable's name in scripts/sandbox/exposure.py's LAUNCHER_SET and a row of A2: both files are in U09's files now.]"
   },
   {
    "finding": 404,
