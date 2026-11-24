@@ -40,6 +40,11 @@ def env(tmp_path, monkeypatch):
     return DB(str(tmp_path / "data" / "appkata.db"))
 
 
+def _downloads():
+    """Every file in the downloads folder (R4.8.2), under whichever app's name."""
+    return sorted(os.path.join(d, n) for d, _, names in os.walk(install.downloads_dir()) for n in names)
+
+
 # Linux's layout (AppImages, symbolic links, .desktop entries); Windows' is in tests/test_windows.py
 linux_only = pytest.mark.skipif(os.name == "nt", reason="the Linux install layout")
 
@@ -73,6 +78,7 @@ def test_checksum_mismatch_installs_nothing(env, server, tmp_path):
     with pytest.raises(install.InstallError, match="doesn't match its checksum"):
         install.install(env, APP, a, "appimage", [a, sums])
     assert not (tmp_path / "apps").exists() or not os.listdir(tmp_path / "apps")
+    assert _downloads() == []                   # R4.8.2: the complete file that failed its checksum is deleted
 
 
 @linux_only
@@ -1208,3 +1214,77 @@ def test_the_versions_an_app_has_are_there_until_the_new_one_is_installed(env, s
     assert sorted(n for n in os.listdir(home) if not os.path.islink(home / n) and not n.endswith(".extracted")) == \
         sorted(os.path.relpath(k["path"], home) for k in [rec["current"]] + rec["kept"]), os.listdir(home)
     assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
+
+
+# ---------------------------------------------------------------- an update that fails part-way (CR1.3-37)
+
+_PART_WAY = {"its checksum": "doesn't match its checksum", "a Cancel once it is downloaded": "cancelled",
+             "placing it": "No space left|couldn't find the program", "its command link": "No space left"}
+
+
+def _runs(path):
+    """What the program at `path` prints: the test's versions are scripts that say which they are."""
+    return subprocess.run([str(path)], capture_output=True, text=True, timeout=30).stdout.strip()
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["appimage", "tarball"])
+@pytest.mark.parametrize("fails", list(_PART_WAY))
+def test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_no_download(env, server, tmp_path, monkeypatch, fails, kind):
+    # CR1.3-37: no test failed an update part-way and looked at what was left. R4.6: the previous
+    # version still runs, through its links, and the record is the one it had; R4.8.2: "a complete
+    # file that fails its checksum or its install is deleted" (the checksum test looked only at the
+    # apps folder, so the `finally` that deletes it could go unnoticed); R4.8.3: a Cancel before
+    # the Installing phase deletes the download and installs nothing (the Cancel test called
+    # download() alone); and the staging folder of a version that couldn't be placed is gone.
+    # CR1.3-13 and CR1.3-15 were two ways the first of these didn't hold. The update fails here at
+    # each point after its download is complete, in turn, and each is looked at by name, as well
+    # as by the snapshot of everything; then the same update goes through.
+    root, base = server
+    cmd, home = tmp_path / "cmd" / "demo-tool", tmp_path / "apps" / "demo-tool"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+
+    def release(v, name=None, program=True):
+        script = f"#!/bin/sh\necho {v}\n".encode()
+        if kind == "appimage":
+            return _appimage(server, name or f"Tool-{v}-x86_64.AppImage", script)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(f"tool-{v}/tool" if program else f"tool-{v}/README")
+            info.size, info.mode = len(script), 0o755 if program else 0o644
+            tf.addfile(info, io.BytesIO(script))
+        (root / (name or f"tool-{v}.tar.gz")).write_bytes(buf.getvalue())
+        return Asset(name or f"tool-{v}.tar.gz", f"{base}/{name or f'tool-{v}.tar.gz'}")
+
+    for v in ("1.0", "1.1"):
+        a = release(v)
+        was = install.install(env, {**APP, "installVersion": v}, a, kind, [a], portable=p)
+    assert _runs(cmd) == _runs(was["exec"]) == "1.1" and _downloads() == []
+    row = dict(env.one("SELECT * FROM installs"))
+    there = sorted(os.listdir(home))
+    before = _left(tmp_path, env)
+    good = release("2.0")
+    bad, cancel = good, None
+    with monkeypatch.context() as m:
+        if fails == "its checksum":
+            bad = Asset(good.name, good.url, good.size, "sha256:" + hashlib.sha256(b"what the project released").hexdigest())
+        elif fails == "a Cancel once it is downloaded":         # asked for while it downloads, it says no; then yes
+            cancel = lambda: os.path.exists(os.path.join(install.downloads_dir(), "demo-tool", good.name))    # noqa: E731
+        elif fails == "placing it" and kind == "tarball":
+            bad = release("2.0", "tool-2.0-no-program.tar.gz", program=False)
+        elif fails == "placing it":
+            m.setattr(install.os, "replace", _failing_once(os.replace, lambda src, dst: src.endswith(".new")))
+        else:
+            m.setattr(install, "_link", _failing_once(install._link, lambda target, link, own=None: link == str(cmd)))
+        with pytest.raises((install.InstallError, OSError), match=_PART_WAY[fails]) as e:
+            install.install(env, {**APP, "installVersion": "2.0"}, bad, kind, [bad], cancel=cancel, portable=p)
+    assert isinstance(e.value, install.Cancelled) is (fails == "a Cancel once it is downloaded")
+    assert _runs(cmd) == _runs(was["exec"]) == "1.1"                            # the previous version, through its links
+    assert os.readlink(cmd) == was["exec"] and all(os.path.islink(l) for l in was["links"])
+    assert dict(env.one("SELECT * FROM installs")) == row                       # its record, and the version AppKata shows
+    assert install.kept_versions(env, APP["url"]) == ["1.0"]
+    assert _downloads() == []                                                   # the complete file is deleted (R4.8.2, R4.8.3)
+    assert sorted(os.listdir(home)) == there                                    # no 2.0, no staging folder, nothing set aside
+    assert _changed(before, _left(tmp_path, env)) == {}
+    rec = install.install(env, {**APP, "installVersion": "2.0"}, good, kind, [good], portable=p)
+    assert _runs(cmd) == _runs(rec["exec"]) == "2.0" and [k["version"] for k in rec["kept"]] == ["1.1", "1.0"] and _downloads() == []
