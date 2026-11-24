@@ -8,7 +8,7 @@ then `docs/relay/progress.md`, then your batch file. Nothing else from earlier a
 AppKata is the owner's own project, and CR1 is its own code review. The review's findings are GitHub
 issues, and the owner approved a schedule of work units, one pull request each
 (`docs/remediation/CR1-schedule.json`). This relay is the unit **U09, "The sandbox: the session bus, portals and capabilities"**:
-12 findings (9, and three found by batch 1), fixed in three batches by one agent at a time on the
+12 findings (9, and three found by batch 1), fixed in four batches by one agent at a time on the
 branch `cr1-u09-session-bus`. You fix your batch's findings in the owner's own code and prove
 each fix. You push nothing and write nothing on GitHub.
 
@@ -16,7 +16,8 @@ each fix. You push nothing and write nothing on GitHub.
 |---|---|---|
 | 1 | #378, #631, #195 | the High finding, the Media keys capability, and the capabilities' names |
 | 2 | #393, #399, #403 | the D-Bus proxy and the portals it opens |
-| 3 | #404, #202, #201, #692, #693, #691 | what the dialog and the documents say of the portals, and three findings batch 1 found |
+| 3 | #403, #404, #202, #201, #692 | #403, left by batch 2 with its patch, and what the dialog and the documents say |
+| 4 | #693, #691 | two findings batch 1 found: what the ScreenSaver and keyring names open |
 
 Your batch is one file, `docs/relay/batch-N.txt`. Its first lines say where its items came from. The
 code at the head of `cr1-u09-session-bus` is the code you work on: earlier batches' commits are
@@ -59,6 +60,11 @@ file you are already changing for that finding, and say so in the commit. Otherw
 
 No fix carries logic for what an earlier AppKata version registered, stored or wrote: no one is
 using AppKata yet.
+
+**Begin every shell command with `cd` into this worktree** (`cd /home/dev/kata/AppKata/.claude/worktrees/cr1-u09 && ...`).
+The session's working directory can be moved under you between commands, and other checkouts of
+this repository are being worked in at the same time: a `git` command run from the wrong folder
+would land in another unit's branch.
 
 ## What you may change
 

@@ -432,3 +432,24 @@ claims.
     here, and `403.patch`. No container or process of mine is left running.
 13. No refusal and no model change on my side.
 
+### The coordinator, after batch 2 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_sandbox.py`,
+`tests/test_launcher_golden.py` and the document tests, whole; the batch pushed.
+
+- **#403 (doubt 1): take the complete fix.** The owner decided that ProxyResolver and NetworkMonitor
+    open only with the network grant. Having the launcher also set `GIO_USE_PROXY_RESOLVER=dummy`
+    for a Standard app without the network is what makes that decision work for GLib programs, not
+    a second decision: it is a way to the decided behaviour. `scripts/sandbox/exposure.py` and
+    `docs/architecture/A2-sandbox-exposure.md` are in U09's files now, so the guard lets them in.
+    **Batch 3 starts with it:** apply batch 2's patch, `/tmp/cr1-u09-b2/403.patch` (it applies to
+    this branch's head: `git apply --check` passes), read it whole, run its tests as the brief says
+    (show the new ones failing on the code before), and commit it as #403's fix. List the new
+    variable and R17.5's sentence under needs your eye.
+- **Doubt 5** (`A1.2-approach.md` is at 496 of its 500 lines): #202 is about the portals being
+    listed four times; joining those lists is where the room comes from. Don't raise the limit.
+- **Doubts 2, 3, 4 and 6** stand as built; 2 and 6 go to the owner under Needs your eye.
+- **#693 and #691** move to a fourth batch, since each needs real clients run through the filter.
+- **Needs a run** (the Ubuntu launcher VMs, the desktop VMs, #378's Cinnamon script): the
+    coordinator's, when the last batch is in.
+
