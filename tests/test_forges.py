@@ -1735,7 +1735,7 @@ def test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_liste
         with pytest.raises(RateLimited):
             forges.detect(http, a.at)
     assert [p for p, _ in a.seen] == ["/api/v1/version"] and clock.waits == []
-    assert http.limited == {"127.0.0.1": clock.now + 120}
+    assert http.limited == {a.at: clock.now + 120}
     with socket.socket() as nothing:                          # a port of this machine where nothing listens
         nothing.bind(("127.0.0.1", 0))
         closed = nothing.getsockname()[1]
@@ -2199,18 +2199,19 @@ def test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come(c
     with pytest.raises(RateLimited):
         http.json(ASKED)
     for call, url in (("json", ASKED), ("bytes", "https://git.example.org/o/r/raw/branch/main/icon.png"),
-                      ("text", "http://git.example.org/"), ("json", "https://git.example.org:3000/api/x")):
+                      ("text", "http://git.example.org/"), ("json", "https://git.example.org:443/api/x")):
         with pytest.raises(RateLimited, match="git.example.org rate limit reached") as e:
             getattr(http, call)(url)
         assert e.value.reset == clock.now + 120 and e.value.extra["status"] == 429
     assert len(seen) == 1 == http.calls and clock.waits == []            # refused here: nothing was sent, and nothing waited
     assert http.json("https://codeberg.org/api/x") == {"ok": True}       # the limit is that host's
     assert http.json("https://api.git.example.org/x") == {"ok": True}    # and not a host's whose name ends in its name
+    assert http.json("https://git.example.org:3000/x") == {"ok": True}   # nor another port of its name: another host (CR1 #697)
     clock.now += 119.5                                                   # until the time it gave, to the second
     with pytest.raises(RateLimited):
         http.json(ASKED)
     clock.now += 1
-    assert http.json(ASKED) == {"ok": True} and len(seen) == 4
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 5
 
 
 def test_a_time_to_come_back_that_has_gone_by_limits_nothing(clock):
@@ -2219,6 +2220,31 @@ def test_a_time_to_come_back_that_has_gone_by_limits_nothing(clock):
     with pytest.raises(RateLimited):
         http.json(ASKED)
     assert http.json(ASKED) == {"ok": True} and len(seen) == 2
+
+
+# CR1's #697: a host's limit was kept by its name alone, where its token, its forge type and the
+# local-address rule take a host as one address, its name and its port (#297): two forges on one
+# name shared a limit, and the Source of the one that never gave it read "rate limited". How it
+# slipped past: every host of the tests of a limit was on its default port. The class is "a record
+# of a host kept under another notion of a host", so the two servers here share a name.
+def test_through_real_sockets_a_limit_answered_on_one_port_of_a_name_leaves_its_other_ports(pair, clock):
+    a, b = pair
+    a.files, b.files = {"/api/x": saying(429)}, {"/api/x": {"ok": True}}
+    other = f"127.0.0.1:{b.server_address[1]}"                  # B by A's name, on its own port
+    http = Http(timeout=5)
+    with pytest.raises(RateLimited, match=f"^{a.at} rate limit reached$") as e:
+        http.json(f"https://{a.at}/api/x")
+    assert e.value.host == e.value.extra["host"] == a.at and http.limited == {a.at: clock.now + 60}
+    assert http.json(f"https://{other}/api/x") == {"ok": True}
+    with pytest.raises(RateLimited, match=f"^{a.at} "):          # and the host that gave it is still refused
+        http.json(f"https://{a.at}/api/y")
+    assert [p for p, _ in a.seen] == ["/api/x"] and [p for p, _ in b.seen] == ["/api/x"]
+
+
+def test_r9_2_1_says_whose_a_rate_limit_is():
+    text = " ".join(reqdocs.item("R9.2.1").split())
+    assert "A rate limit holds back the requests to the host that gave it and to no other host" in text
+    assert "another port of its name is another host (R9.2.2)" in text
 
 
 @pytest.mark.parametrize("call, kw, accept", [

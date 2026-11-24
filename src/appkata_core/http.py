@@ -345,7 +345,7 @@ class Http:
         self._open = opener or _opener(_Redirects(self._allowed), self._connect).open
         self._lookup = _addresses                # host -> its addresses: the check's and the connection's (_connect)
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
-        self.limited: dict[str, float] = {}      # host -> reset time
+        self.limited: dict[str, float] = {}      # host (_host: one address) -> reset time
         self.limit_status: dict[str, int] = {}   # host -> the status of the answer that set its reset time
         self.calls = 0
 
@@ -499,9 +499,13 @@ class Http:
         parts = self._allowed(url, token_host)
         host = parts.hostname.lower()
         whose = token_key(token_host) if token_host else _host(parts)      # the host this request is made for
-        reset = self.limited.get(host)
+        # a host's limit is kept as its token is (CR1 #697): under the one address, its name and its
+        # port (_host). Kept by the name alone, two forges on one name shared it: a limit one of
+        # them answered refused every request to the other until it ran out
+        limit = _host(parts)
+        reset = self.limited.get(limit)
         if reset and reset > time.time():
-            raise RateLimited(host, reset, self.limit_status.get(host))
+            raise RateLimited(limit, reset, self.limit_status.get(limit))
         token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
@@ -509,7 +513,7 @@ class Http:
         # the address and the host asked last, and whether the token went there: _Redirects moves
         # them on, since what comes after a redirect is another host's answer, or its failure to
         # give one, and that host may have been sent no token. Every error below is said of the
-        # host asked last (CR1 #683); `host`, the one asked first, is whose limit is kept.
+        # host asked last (CR1 #683); `limit`, the one asked first, is whose limit is kept.
         req.asked = asked = {"url": url, "host": host, "token": bool(token)}
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
@@ -530,8 +534,8 @@ class Http:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
             if e.code in (403, 429) and (hdr.get("x-ratelimit-remaining") == "0" or "retry-after" in hdr or e.code == 429):
                 reset = _reset_time(hdr)
-                self.limited[host], self.limit_status[host] = reset, e.code
-                raise RateLimited(host, reset, e.code) from None
+                self.limited[limit], self.limit_status[limit] = reset, e.code
+                raise RateLimited(limit, reset, e.code) from None
             # Retry-After on any other failing answer (R9.2.1; CR1 #277): an overloaded forge, or one
             # being maintained, answers 503 with it, and was asked again after 1.5 and 3 seconds
             # whatever it had asked for, by every app on it. Longer than the retries wait, it is
@@ -543,9 +547,9 @@ class Http:
                 reset = _reset_time({"retry-after": hdr["retry-after"]})
                 wait = max(0.0, reset - time.time())
                 if wait > WAITS[-1]:
-                    self.limited[host], self.limit_status[host] = reset, e.code
+                    self.limited[limit], self.limit_status[limit] = reset, e.code
                     if e.code >= 500:
-                        raise RateLimited(host, reset, e.code) from None
+                        raise RateLimited(limit, reset, e.code) from None
             if e.code == 404:
                 raise NotFound(f"{asked['url']} not found") from None
             # the answer is the host's that was asked last. A 401 is the token's only when the

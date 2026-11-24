@@ -12,8 +12,9 @@ While Sync runs, the header shows a progress ring with "Syncing 12 / 40". Clicki
 the current item and a **Cancel** button.
 
 R9.2.1. At most four hosts are fetched at the same time. Rate limits are respected:
-`x-ratelimit-reset`, `Retry-After`, and backoff for other failures. A request is given two minutes
-for the whole of its answer, however steadily the answer keeps coming: one that takes longer is
+`x-ratelimit-reset`, `Retry-After`, and backoff for other failures. A rate limit holds back the
+requests to the host that gave it and to no other host: another port of its name is another host
+(R9.2.2). A request is given two minutes for the whole of its answer, however steadily the answer keeps coming: one that takes longer is
 given up, as an `Unreachable` error (R2.10) or, for an image, passed over for the next one.
 **Cancel** stops the requests under way as well, an answer that is still being read included: an
 app whose sync it stops keeps what the last Sync stored.
