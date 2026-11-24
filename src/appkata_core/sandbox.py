@@ -756,10 +756,12 @@ def choose(user: dict | None, pinned: dict | None, reviews: list[dict], default:
 
 # -------------------------------------------------------------------------- UI summaries
 
-# capability/device → (chip label, icon name from the app's icon set) for the summary chips
-_CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep screen awake", "clock"),
+# capability/device → (chip label, icon name from the app's icon set) for the summary chips. A
+# chip says what the Sandbox dialog's switch for it says, word for word: one capability, one name
+# on every screen (CR1.9-32: two chips had words of their own, "Secrets" and "Keep screen awake")
+_CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep the screen awake", "clock"),
              "tray": ("Tray icon", "panel"), "mpris": ("Media keys", "play"),
-             "secrets": ("Secrets", "key"), "secrets-provide": ("Password service", "key")}
+             "secrets": ("Saved passwords", "key"), "secrets-provide": ("Password service", "key")}
 _DEVICE_CHIP = {"camera": ("Camera", "panel")}
 
 
@@ -1450,7 +1452,7 @@ CAP_PROXY_ARGS = {
 # the app's own dialog is used instead, showing exactly what the sandbox sees (R17.6.3). What
 # remains acts on the caller's behalf only, with the user in the loop where it matters, and is what
 # a Flatpak app gets too -- except Notification and Inhibit, which come with their capabilities
-# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep screen awake" chips are the truth,
+# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep the screen awake" chips are the truth,
 # and NetworkMonitor and ProxyResolver, which come with the network grant (below).
 # Properties (version probes) are not allowed either. What keeps each toolkit on its own file
 # dialog, as shown with real apps behind generated launchers (scripts/test-sandbox.sh filedialogs,

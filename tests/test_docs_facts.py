@@ -145,19 +145,19 @@ def _facts() -> dict:
     f["A1.2.3.14: the capability table"] = (stated, set(sb.CAP_LABELS))
     # ...and the one table of each capability's names (CR1.11-80: the requirement, the template table,
     # the review lines and the dialog each had their own, and only the code held the mapping): its
-    # word in a review, then what R17.5.1, R17.3's table, the dialog's switch and the summary's chip call it
+    # word in a review, then what R17.5.1, R17.3's table and the dialog's switch call it; the summary's
+    # chip has no name of its own (CR1.9-32: two had, and the table recorded both spellings)
     table = plan[plan.index("### A1.2.3.14. Capability → proxy arguments"):]
     cells = {r[0]: r for r in (tuple(c.strip() for c in line.strip("|").split(" | ")) for line in table.splitlines() if line.startswith("| "))
              if len(r) == 5}
     names = {k: _named(cells[lab][3]) for k, lab in sb.CAP_LABELS.items() if lab in cells}
     word = {k: m.group(1) for k, lab in sb.CAP_LABELS.items() if lab in cells and (m := re.match(r"`([a-z-]+)`", cells[lab][2]))}
     f["A1.2.3.14: each capability's word in a review"] = (word, sb.LINE_WORDS["caps"])
-    switch = {k: re.sub(r" \(chip: .*\)$", "", n.get("dialog", "")) for k, n in names.items()}
+    switch = {k: n.get("dialog", "") for k, n in names.items()}
     qml = _read("src/appkata/qml/SandboxDialog.qml")
     f["A1.2.3.14: each capability's switch in the dialog"] = (
         switch, {k: lab for lab, k in re.findall(r'SbxToggle \{ label: "([^"]+)"; ic: "[a-z]+";(?: warn: true;)? on: root\.has\(root\.gs\.caps, "([a-z-]+)"\)', qml)})
-    chip = {k: (m.group(1) if (m := re.search(r"\(chip: (.*)\)$", n.get("dialog", ""))) else switch[k]) for k, n in names.items()}
-    f["A1.2.3.14: each capability's chip in the summary"] = (chip, {k: v[0] for k, v in sb._CAP_CHIP.items()})
+    f["A1.2.3.14: each capability's chip in the summary"] = (switch, {k: v[0] for k, v in sb._CAP_CHIP.items()})
     f["A1.2.3.14: the names R17.5.1 gives the capabilities"] = ({n.get("R17.5.1", "").split(",")[0] for n in names.values()}, bold & set(caps17))
     services = {m.group(1): {w for w in m.group(2).split(", ") if w != "—"}
                 for m in re.finditer(r"^\| `([a-z-]+)` \|(?:[^|]*\|){5} ([^|]+) \|", _req("R17.3"), re.M)}

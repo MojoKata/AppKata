@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 
 from appkata_core import sandbox as sb
 from appkata_core import trustfile
+import written
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
@@ -837,6 +839,25 @@ def test_play_only_sound_is_not_shown_as_blocking_the_microphone():
     assert "Sound · can also record" in sb.summary(sb.resolve_template("online-app"))
     assert "Sound and microphone" in sb.summary(sb.resolve_template("messenger"))
     assert not any("ound" in c for c in sb.summary(sb.resolve_template("offline-editor")))
+
+
+def test_a_chip_names_a_capability_as_its_switch_in_the_sandbox_dialog_does():
+    # CR1.9-32: the summary's chip said "Secrets" and "Keep screen awake" where the Sandbox dialog's
+    # switch for the same capability says "Saved passwords" and "Keep the screen awake": one
+    # capability under two names on two screens, and A1.2.3.14's table of the names recorded both.
+    # How it slipped past: the chips' words were held to nothing but the table that copied them.
+    # Here every capability and the camera are held to the dialog itself: the chip a grant adds,
+    # and the name a keyring capability refused to a review is shown under (R17.3.1), are the label
+    # of its switch, word for word.
+    with open(written.path("src/appkata/qml/SandboxDialog.qml"), encoding="utf-8") as f:
+        switch = {key: label for label, key in re.findall(
+            r'SbxToggle \{ label: "([^"]+)"; ic: "[a-z]+";(?: warn: true;)? on: root\.has\(root\.gs\.(?:caps|devices), "([a-z0-9-]+)"\)', f.read())}
+    assert set(switch) == set(sb.CAP_LABELS) | set(sb.DEVICE_LABELS), switch          # each has its switch
+    bare = sb.apply_overrides(sb.resolve_template("standard"), {"caps": [], "devices": ["x11"]})
+    for field, key in [("caps", c) for c in sb.CAP_LABELS] + [("devices", "camera")]:   # x11, the default, has no chip
+        granted = sb.apply_overrides(bare, {field: sorted({*bare[field], key})})
+        assert [c for c in sb.summary(granted) if c not in sb.summary(bare)] == [switch[key]], key
+    assert {c: name for c, (name, _) in sb.SECRET_CAPS.items()} == {c: switch[c] for c in sb.SECRET_CAPS}
 
 
 def test_an_off_review_adds_no_limit_of_its_own():
