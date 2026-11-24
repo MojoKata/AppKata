@@ -84,8 +84,10 @@ app-menu entry and no command, and the install says why; its option stays on, so
 at a later update or start of AppKata once the name is free, and a link whose name has since become
 a command is removed then. AppKata never replaces or removes a file there that isn't a link it made
 (a link that leads into the install folder), whether or not it made a link at that place before: an
-install or update stops with an error instead, and uninstalling leaves it. On Windows a command
-link is a `<app>.cmd` file (R15.6).
+install or update stops with an error instead, and uninstalling leaves it. A change to an installed
+app's sandbox, and the launcher AppKata rewrites at its start (R17.4), don't stop there: they are
+made in full, without the command link, which is made at a later start or update once its place is
+free. On Windows a command link is a `<app>.cmd` file (R15.6).
 
 R4.3.1.4. Uninstalling removes the app's folder (every version), its launcher and its links.
 

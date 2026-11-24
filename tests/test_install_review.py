@@ -865,7 +865,7 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
     # command link was (a link to their program, a link to nothing, a file), and nothing AppKata
     # then does to the app touches it. On the PATH, a link to a program is a command already, so
     # the app goes on without one (R4.3.1.3); otherwise the update stops with the error, and
-    # changes nothing.
+    # changes nothing, and the launcher's rewrite at the next start is made without the command.
     cmd, their_program = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
     their_program.parent.mkdir()
     their_program.write_text("#!/bin/sh\necho theirs\n")
@@ -897,11 +897,14 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
         rec = act()
         assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({link})"
         assert str(link) not in rec["links"]
+    elif then == "the next start":          # the launcher's rewrite is no install: it is made, without the command (CR1.3-46)
+        rec = act()
+        assert rec["commandRefused"] == f"{link} exists and isn't a link AppKata made; not replacing it"
+        assert str(link) not in rec["links"] and set(_changed(before, _left(tmp_path, env))) == {"<installs>"}
     else:
         with pytest.raises(install.InstallError, match="isn't a link AppKata made"):
             act()
-        if then != "the next start":
-            assert _changed(before, _left(tmp_path, env)) == {}
+        assert _changed(before, _left(tmp_path, env)) == {}
     assert (os.readlink(link) if link.is_symlink() else link.read_text()) == was
     assert os.path.islink(link) is (theirs != "a file")
 
@@ -1337,3 +1340,64 @@ def test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_
         install.install(env, {**other, "sandbox": sbx}, b, "appimage", [b], portable=p)
         rec = install.rewrite_launcher(env, {**other, "autoUpdate": auto, "sandbox": None}, p)
         assert not rec.get("selfUpdating") and rec["current"]["path"].endswith("Other-1.0-x86_64.AppImage") and os.path.islink(rec["exec"])
+
+
+# ---------------------------------------------------------------- a change to an installed app, its command link's place taken (CR1.3-46)
+
+_CHANGES = {"its sandbox turned on": (None, "standard"), "its sandbox turned Off": ("standard", None), "its sandbox changed": ("standard", "strict")}
+
+
+@linux_only
+@pytest.mark.parametrize("on_path", [False, True], ids=["off the PATH", "on the PATH"])
+@pytest.mark.parametrize("theirs", _THEIRS)
+@pytest.mark.parametrize("change", list(_CHANGES))
+def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place(env, server, tmp_path, monkeypatch, change, theirs, on_path):
+    # CR1.3-46: an install checks the command link's place before it changes anything (CR1.3-15).
+    # The launcher's rewrite -- a sandbox change from the Sandbox dialog or Install options, and the
+    # startup pass -- did its steps in the old order: the launcher and the menu entry rewritten,
+    # then the command link, and with something of the user's at that place it stopped there with
+    # the error, its record not stored. Turned Off, the launcher was deleted and AppKata's own Open
+    # still started it, by the record; turned on, the menu started the app sandboxed and Open
+    # didn't. Checking first would leave the old launcher under the new choice, and the launcher is
+    # the enforcement (R17.4), so the rewrite is made in full, without the command link, and the
+    # record says why there is none. Afterwards the launcher, the menu entry, the record and what
+    # AppKata starts agree, the user's file is as it was, and the link comes once its place is free.
+    from appkata_core import sandbox
+    cmd, home, their_program = tmp_path / "cmd", tmp_path / "apps" / "demo-tool", tmp_path / "opt" / "their-tool"
+    their_program.parent.mkdir()
+    their_program.write_text("#!/bin/sh\necho theirs\n")
+    their_program.chmod(0o755)
+    if on_path:
+        monkeypatch.setenv("PATH", f"{cmd}:{os.environ['PATH']}")
+    before, after = (sandbox.resolve_template(t) if t else None for t in _CHANGES[change])
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    was = install.install(env, {**APP, "installVersion": "1.0", "sandbox": before}, a, "appimage", [a], portable=p)
+    link, entry = cmd / "demo-tool", tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"
+    assert os.readlink(link) == was["exec"] and ("launcher" in was) is bool(before)
+    link.unlink()
+    if theirs == "a file":
+        link.write_text("mine")
+    else:
+        link.symlink_to(their_program if theirs == "a link to their own program" else tmp_path / "gone" / "tool")
+    kept_as = os.readlink(link) if link.is_symlink() else link.read_text()
+
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])            # what was done is what is recorded
+    launcher = home / "run"
+    if after:
+        assert rec["launcher"] == rec["exec"] == str(launcher) and rec["sandbox"] == sandbox.to_json(after)
+        assert install.launcher_is_current(rec, {**APP, "sandbox": after}, p)               # the grant set chosen, enforced
+    else:
+        assert not os.path.lexists(launcher) and "launcher" not in rec and "sandbox" not in rec
+        assert rec["exec"] == str(home / "DemoTool.AppImage") and _runs(rec["exec"]) == "1.0"
+    assert os.access(rec["exec"], os.X_OK)                                                  # what AppKata's Open starts
+    assert _exec_words(_entry(entry)["Desktop Entry"]["Exec"])[0] == rec["exec"]            # and what the menu starts
+    assert (os.readlink(link) if link.is_symlink() else link.read_text()) == kept_as and str(link) not in rec["links"]
+    assert rec["options"]["commandLink"] is True and rec["commandRefused"] == (
+        f"demo-tool is already a command on this computer ({link})" if on_path and theirs == "a link to their own program"
+        else f"{link} exists and isn't a link AppKata made; not replacing it")
+    link.unlink()                                                                           # the place is free again
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
+    assert "commandRefused" not in rec and os.readlink(link) == rec["exec"] and str(link) in rec["links"]
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == []

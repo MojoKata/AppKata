@@ -665,8 +665,17 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         # that is already a command here, or a reserved one, and the record says why (R4.3.1.3). The
         # option stays as chosen, so the command comes once the name is free. Never an error: the
         # app is installed either way, with its app-menu entry.
+        #
+        # Nor is a place the user has taken (a file, or a link that isn't AppKata's) an error here:
+        # the record says why there is no link, and the place is left alone. An install, an update
+        # and a switch to a kept version stop at such a place before they change anything
+        # (_check_before_placing). By this step the launcher is rewritten, and the launcher is the
+        # enforcement (R17.4): a sandbox change and the startup pass, which come straight here,
+        # stopped with the new launcher and menu entry on disk and their record not stored, so
+        # AppKata started the app by the old record (CR1.3-46), and taking a failed install back
+        # stopped half-way at the same place.
         link = os.path.join(portable.command_folder, app_id)
-        if why := command_link_refusal(app_id, link, own):
+        if why := command_link_refusal(app_id, link, own) or _link_refusal(link, own):
             rec["commandRefused"] = why
             log.info("no command link %s: %s", link, why)
         else:

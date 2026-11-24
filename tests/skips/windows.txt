@@ -14,6 +14,7 @@ tests/test_install_review.py::test_a_link_that_is_not_appkatas_is_never_replaced
 tests/test_install_review.py::test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_folders  # the Linux install layout
 tests/test_install_review.py::test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry  # the Linux install layout
 tests/test_install_review.py::test_a_refused_install_leaves_everything_as_it_was  # the Linux install layout
+tests/test_install_review.py::test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place  # the Linux install layout
 tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (R17.1)
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs1-gui]  # the Linux install layout
