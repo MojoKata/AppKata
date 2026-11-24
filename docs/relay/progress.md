@@ -615,3 +615,141 @@ tests, whole; the batch pushed.
 - **Needs a run** (the Ubuntu launcher VMs, the desktop VMs, the tour, the project's own scripts):
     the coordinator's, after batch 4.
 
+
+## Batch 4
+
+Agent: Opus 5.5, high effort, from 4:11 PM. The worktree was clean at `fc39cdb`: nothing taken over. Head after the
+batch: the commit that adds this section; the code is at `504eebb`.
+
+### Files touched
+
+`src/appkata_core/sandbox.py`; `tests/test_sandbox.py`, `tests/test_sandbox_run.py`, `tests/skips/tier1.txt`,
+`tests/skips/launcher-vm-24.04.txt`, `tests/skips/launcher-vm-26.04.txt`; `tests/data/launchers/messenger-camera.sh`
+(#693) and `developer-every-capability.sh` (#693 and #691), the proxy's line alone, by
+`UPDATE_GOLDEN=1 pytest tests/test_launcher_golden.py`; `docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md`;
+`docs/architecture/A1-app-sandboxing/A1.2-approach.md` (496 of its 500 lines), `A1.10-ui-text.md`;
+`docs/requirements-trace.md`; this file.
+
+### Counts
+
+fixed 2 · no defect 0 · remedy changed 0 · set aside 0 · still left 0 · new 1
+
+### The findings
+
+The containers, by hand as the brief says, from scratch scripts in `/tmp/cr1-u09-b4/` (batch 2's `launcher.sh` and
+`tier1.sh`, copied; a 3 GB cap; the main checkout's `build/` Python and PySide6 read-only), one at a time.
+
+**#693 (CR1.5-44), fixed: `54f3a49`.** The check, made without a desktop VM, settles it as a defect:
+
+- KDE, in the `kwin-lmde7` harness's image: `kwin_wayland --virtual` 6.3.6 with its lock screen on owns
+  `org.freedesktop.ScreenSaver` and serves every member on both objects (Lock, SimulateUserActivity, GetActive,
+  GetActiveTime, GetSessionIdleTime, SetActive, Inhibit, UnInhibit, Throttle, UnThrottle, ActiveChanged, and KDE's
+  SwitchUser and AboutToLock). From an app behind a launcher written by `fc39cdb`'s code with Keep the screen
+  awake alone, `Lock` answered `()` and `GetActive` was true afterwards: the screen locked. The same with kwin
+  5.27.11 in the `kwin` (Mint 22.3) image. Scripts: `/tmp/cr1-u09-b4/kde/` (`run.sh IMG SRC`), logs `kde-pre-mint.log`,
+  `kde-fix.log`.
+- GNOME 42 and 46 (`gsd-screensaver-proxy`) and Cinnamon 6.6.4 on Mint 22.3 and LMDE 7 (`csd-screensaver-proxy`),
+  each started on a bus of its own in the `appkata-desktop-*` images with a logging stand-in for what it forwards
+  to: the same members are declared, and Lock, SetActive, SimulateUserActivity, GetActive and GetSessionIdleTime
+  answer `NotSupported`; Inhibit goes on to the session manager (`/tmp/cr1-u09-b4/ss/forward.sh`). No other
+  process in those images names the interface but clients (Muffin, Mutter, the portals' backends, SDL).
+- The fix: `_service_rules` takes `members` and `signals`; Keep the screen awake opens `Inhibit` and `UnInhibit`
+  alone, `Introspectable` beside them, on both objects, and no broadcast (ActiveChanged tells when the user is away).
+- Tests: tier 1, the class test of the direct names (`test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed`)
+  now holds each name's members and signals, with `test_proxy_args_map_capabilities` and
+  `test_the_notification_and_inhibit_portals_come_with_their_capabilities` on the new rule; tier 2,
+  `test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability` with a stand-in that serves the
+  interface as the desktops declare it (the old one served the pair alone: how it slipped past), calling every
+  member on both objects, and `test_standard_apps_reach_the_filtered_bus_when_there_is_one`, which now wants no
+  ScreenSaver signal heard.
+- Shown failing: the three tier 1 tests on the worktree before the fix; on an export of `fc39cdb` with the new test
+  files, in the Mint 22.3 launcher container (`pre693-launcher.log`): both tier 2 tests, every member ANSWERED and
+  `HEARD org.freedesktop.ScreenSaver.ActiveChanged`.
+- On the fix: tier 1 2734 passed, 130 skipped; the launcher tier 139 passed, 5 skipped in Mint 22.3 and in LMDE 7;
+  kwin 6.3.6 and 5.27.11 answer the app's Inhibit and refuse its Lock, GetActive and GetSessionIdleTime
+  (AccessDenied), and the screen stays unlocked.
+
+**#691 (CR1.5-43), fixed: `504eebb`.** The issue's remedy: the Secret Service alone.
+
+- Found from real clients: dbus-monitor on the outer bus while libsecret 0.21.4 (by ctypes, as Chromium, Electron and
+  QtKeychain use it) and secretstorage 3.3.3 (jeepney) ran through the old rule against gnome-keyring 46.1:
+  Service OpenSession, SearchItems, GetSecrets, Lock, Unlock; Collection CreateItem and SearchItems on
+  `/org/freedesktop/secrets/aliases/default`; Item GetSecret, Delete; Prompt.Prompt; Properties Get, GetAll, Set
+  (a relabel). gnome-keyring sends `Prompt.Completed` to the caller alone; the collection and item signals and
+  `PropertiesChanged` are broadcasts (`/tmp/cr1-u09-b4/691/explore-mint-*.log`).
+- The rules, on `/org/freedesktop/secrets/*` (xdg-dbus-proxy's subtree, which takes the object itself too):
+  `--call` for the five `org.freedesktop.Secret` interfaces, Properties and Introspectable; `--broadcast` for
+  Service, Collection and Prompt and `PropertiesChanged`. Run with and without the broadcasts first: both clients
+  work either way in these runs; the broadcasts are kept as the service rules keep a service's own signals.
+- Tests: tier 1 `test_saved_passwords_open_the_secret_service_alone` (the rules exactly), and the keyring's name
+  leaves `OPENED_WHOLE` in the class test. Tier 2 `test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves`:
+  a real gnome-keyring unlocked as a login leaves it; inside, libsecret store, lookup, a Chromium-style search
+  (unlock, load secrets), relabel, clear, and secretstorage store, relabel, delete, lock and an unlock whose prompt
+  completes; GetEnvironment, GetControlDirectory, UnlockWithMasterPassword, ChangeWithPrompt and RetrieveSecret
+  AccessDenied by the name and by the owner's unique name; nothing without the capability.
+- Shown failing: both tier 1 tests on the worktree before the fix; on an export of `54f3a49` with the new test files
+  (`pre691-launcher.log`, `pre691-launcher-lmde.log`): in Mint 22.3 (gnome-keyring 46.1) and LMDE 7 (48.0) the
+  clients work, and GetEnvironment, GetControlDirectory and ChangeWithPrompt are ANSWERED by both roads while
+  UnlockWithMasterPassword and RetrieveSecret reach the keyring (NoSession, InvalidArgs).
+- On the fix: tier 1 2735 passed, 131 skipped; the launcher tier 140 passed, 5 skipped in each container (on a
+  snapshot that differs from the commit in one table cell of A1.2.3.14, "R17.5.1: secrets, the Secret Service to
+  consume"; the document tests were run on the commit).
+
+### Listed items
+
+**new**
+
+1. `src/appkata_core/sandbox.py`, `CAP_PROXY_ARGS["secrets-provide"]` (`--own=org.freedesktop.secrets`): to the proxy
+   an own is a talk too (as #631 found of Media keys), so where gnome-keyring already holds the name, an app with
+   Password service reaches the keyring's whole connection: run in the Mint 22.3 container
+   (`/tmp/cr1-u09-b4/691/explore-provide.log`), GetEnvironment, GetControlDirectory, ChangeWithPrompt and
+   Introspect answered by the name and by the unique name. So the capability that offers a secret service also
+   reads every unlocked password of the keyring that runs. Only the user gives it (R17.3.1). No rule of
+   xdg-dbus-proxy owns a name without talking to its other owner; the fix is a choice (refuse the own while
+   another owner is there, or say it in R17.17 and the hint).
+
+**needs your eye**
+
+- `54f3a49` (#693): R17.5.1 says ScreenSaver's `Inhibit` and `UnInhibit` alone are opened, none of its signals, and
+  why; A1.2.3.14's row. What an app sees: with Keep the screen awake, Lock, SetActive, GetSessionIdleTime and the
+  rest of that interface are AccessDenied, and ActiveChanged never arrives.
+- `504eebb` (#691): R17.5.1's secrets words ("the Secret Service on it to consume") and a new sentence, "The secrets
+  name is opened the same way, for the Secret Service alone: …"; A1.2.3.14's row and paragraph, A1.10's row for the
+  hint (its evidence). What an app sees: the keyring's own interfaces are AccessDenied. The trace gains a row.
+
+**needs a run**
+
+1. #693 on the Cinnamon desktop: `VMTEST_SCRIPT=/tmp/cr1-u09-b4/vm-693.sh scripts/test-desktop-vm.sh run mint22.3`
+   (and `run lmde7`), from a checkout at this branch's head, as batch 1's. Wanted: the owner is
+   `csd-screensaver-proxy`; outside, GetActive, GetActiveTime, GetSessionIdleTime and SimulateUserActivity answer
+   `NotSupported`; inside a launcher with Keep the screen awake, Inhibit and UnInhibit answer and every other member
+   is AccessDenied; GetActive false afterwards. The script never calls Lock outside the sandbox.
+2. `scripts/test-sandbox.sh launcher-vm` and `launcher-vm26`: the new keyring test should skip there ("needs
+   gnome-keyring"), which their skip lists now say on the strength of the VMs' cloud-init packages alone; if
+   apt's recommends bring gnome-keyring in, the run fails on the listed line and the two lines come out.
+3. `scripts/test-desktop-vm.sh run mint22.3` and `run lmde7`: the launcher tests in the real session, with batches 1
+   to 3's. The keyring test starts its own gnome-keyring on its own test bus there too.
+4. The project's own commands, not run as such (the worktree has no `build/`): `scripts/test-tier1.sh`,
+   `scripts/test-sandbox.sh launcher`, `launcher-lmde7`, `kwin-lmde7`. Their container commands were run by hand.
+
+**guard**: exit 0 after each commit. `tests/skips/launcher-vm-24.04.txt` and `tests/skips/launcher-vm-26.04.txt`: no
+other unmerged unit claims them, add them to U09's files.
+
+### Doubts for the coordinator
+
+1. **#693 is settled without the desktop VM**, on KDE's real locker in the kwin harness's images (the screen locked
+   before, not after) and on GNOME's and Cinnamon's real screensaver proxies run alone; the VM run above shows
+   Cinnamon's session as a whole. If KDE is not a supported desktop, the defect is the declared members only, and
+   the fix still costs nothing: no client of the capability calls anything but the pair (SDL calls
+   SimulateUserActivity only when its Inhibit failed).
+2. **ActiveChanged is closed too**, beside the remedy's words ("open only Inhibit and UnInhibit"): it tells when the
+   screen saver goes on, so when the user is away. No client of the inhibit pair was found to need it.
+3. **#691's broadcasts were not shown necessary** by libsecret or secretstorage in these runs; they are kept for a
+   long-running client's property cache and for a service that broadcasts Completed (the comment says so).
+   KWallet's and KeePassXC's Secret Service were not run: the rules follow the specification's paths, below
+   `/org/freedesktop/secrets`.
+4. **The new tier 2 test skips without gnome-keyring**, so the two Ubuntu VM skip lists gain a line each (needs a
+   run, 2), files no record named; the guard lets them in.
+5. Scratch, outside the repository: `/tmp/cr1-u09-b4/` (the scripts, the exports `pre693`/`pre691`, the snapshots,
+   every log named here, `vm-693.sh`). No container or process of mine is left running.
+6. No refusal and no model change on my side.
