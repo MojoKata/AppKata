@@ -2027,7 +2027,7 @@ def test_the_table_has_a_row_for_each_kind_of_error_and_each_thing_a_retry_turns
 
 @pytest.mark.parametrize("headers, at, after", [
     ({}, None, 60),
-    ({"x-ratelimit-reset": str(Y2100)}, Y2100, None), ({"x-ratelimit-reset": "0"}, 0, None),
+    ({"x-ratelimit-reset": str(Y2100)}, Y2100, None), ({"x-ratelimit-reset": "1000000000"}, 1000000000, None),
     ({"x-ratelimit-reset": str(Y2100), "retry-after": "5"}, Y2100, None),               # GitHub's own header first
     ({"x-ratelimit-reset": "", "retry-after": "5"}, None, 5), ({"x-ratelimit-reset": "soon"}, None, 60),
     ({"x-ratelimit-reset": "-1"}, None, 60), ({"x-ratelimit-reset": "1.5e9"}, None, 60),
