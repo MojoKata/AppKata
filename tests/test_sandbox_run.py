@@ -2597,6 +2597,44 @@ def test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_s
     assert "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, r2.stdout
 
 
+@needs_proxy
+@pytest.mark.skipif(not shutil.which("gnome-keyring-daemon"), reason="needs gnome-keyring")
+def test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it(env):
+    # CR1.5-46 (#707; the owner's decision of 2026-11-24): with gnome-keyring holding
+    # org.freedesktop.secrets, an app with Password service alone reached the keyring's whole
+    # connection through the filter -- to it an own is a talk -- its daemon interface and every
+    # unlocked password. Now the launch finds the name held, starts the app without the own and says
+    # why. A real keyring, unlocked as a login leaves it; the sole-provider case is
+    # test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability.
+    bus = _Bus(env)
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    keyring = subprocess.Popen(["gnome-keyring-daemon", "--unlock", "--components=secrets", "--foreground"], env=on_bus,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    keyring.stdin.write(b"login-password")
+    keyring.stdin.close()
+    ask = ('gdbus call --session --dest org.freedesktop.secrets --object-path {} --method {} 2>&1 | head -1; ')
+    probe = (ask.format("/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon.GetEnvironment") +
+             ask.format("/org/freedesktop/secrets", "org.freedesktop.Secret.Service.OpenSession plain \"<\'\'>\"") +
+             _OWN.format("org.freedesktop.secrets") + "; true")
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            time.sleep(0.1)
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+        r = env.run(env.app("keeper", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+    finally:
+        keyring.terminate()
+        keyring.wait()
+        bus.close()
+    assert r.returncode == 0 and "runs without Password service" in r.stderr, (r.stdout, r.stderr)
+    out = r.stdout.splitlines()
+    assert len(out) == 3 and all("org.freedesktop.DBus.Error.ServiceUnknown" in l for l in out[:2]), out      # nothing of the keyring
+    assert out[2].startswith("Error") and "uint32" not in out[2], out                                           # nor the name
+
+
 def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):
     # The launcher serializes first launches on flock where present and goes on without it; a PATH
     # with everything the launcher runs except flock shows the "without".

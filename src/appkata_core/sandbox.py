@@ -2084,6 +2084,28 @@ def _launcher_env(net: bool = False) -> list[str]:
 # source side: a link the app plants at the outer grant lands on the host, but bwrap resolves the
 # *source* on the host too, where /oldroot does not exist, so --bind-try skips the mount, and a link
 # to a path that resolves on both sides mounts inside the private home. Checked in round two.
+# Password service (R17.5.1) owns org.freedesktop.secrets only where no other program holds it at
+# launch. To the filter a name an app may own is one it may call, whoever holds it, so with the
+# keyring (or another password manager) holding the name the app reached that program's whole
+# connection, every unlocked password included (CR1.5-46, #707; the owner's decision of 2026-11-24).
+# Asked of the session's own bus as the host's tools ask it, in the proxy's start; where nothing here
+# can ask, the name counts as held. A program that takes the name after the launch is not seen.
+_PROVIDE_CHECK = """  provide=--own=org.freedesktop.secrets
+  if command -v gdbus >/dev/null 2>&1; then
+    held=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
+      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null || true)
+  elif command -v busctl >/dev/null 2>&1; then
+    held=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
+      NameHasOwner s org.freedesktop.secrets 2>/dev/null || true)
+  else
+    held=true
+  fi
+  case "$held" in
+    *true*) provide=
+      printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\\n' {qname} >&2 ;;
+  esac
+"""
+
 _GUARD_FN = """guard() {
   case "$1" in "$HOME"/*) ;; *) return 0 ;; esac
   rel=${1#"$HOME"/}; p=$home
@@ -2218,7 +2240,9 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append("# No session bus: xdg-dbus-proxy isn't installed here, so this Standard app gets none,\n"
                    "# and no desktop services, until it is (R17.10).\n")
     if bus:
-        pargs = " ".join(shlex.quote(a) for a in proxy_args(gs, app_id))
+        # Password service's own, decided at launch (_PROVIDE_CHECK): the rest of the rules are baked
+        provide = "secrets-provide" in gs["caps"]
+        pargs = " ".join(shlex.quote(a) for a in proxy_args(gs, app_id) if not (provide and a in CAP_PROXY_ARGS["secrets-provide"]))
         # The socket is named by a hash of the id: a Unix socket path holds 107 bytes, and an id is the
         # app name's slug, of any length (review 3, R3-12: an id past ~60 characters couldn't start).
         tag = hashlib.sha256(app_id.encode()).hexdigest()[:16]
@@ -2247,12 +2271,13 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# the security domain, as entering Ubuntu 25.04+\'s unpriv_bwrap does, and every launch\n'
             '# there left its proxy running (review 2, F2; R17.10.2).\n'
             'start_proxy() {   # "$@": the bwrap words that put this session\'s bus in the proxy\'s sight\n'
+            + (_PROVIDE_CHECK.format(qname=q(name)) if provide else '') +
             '  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
             '    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
             '    --bind "$rt/appkata" "$rt/appkata" "$@" \\\n'
             '    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH /usr/bin:/bin \\\n'
             f'    --die-with-parent {psession} -- \\\n'
-            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + f'{pfilter} &\n'
+            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + (' ${provide:+"$provide"}' if provide else '') + f'{pfilter} &\n'
             '  proxy=$!\n'
             '}\n'
             '# The proxy connects to the bus once for each connection the app makes, from inside its own\n'

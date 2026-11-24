@@ -371,11 +371,11 @@ if "xdg-dbus-proxy" in argv:
 """
 
 
-def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None):
+def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
-    None): the words of the proxy's own bwrap (None where no proxy was started), the app's bwrap's,
-    the run, and the runtime folder."""
+    None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
+    where no proxy was started), the app's bwrap's, the run, and the runtime folder."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -384,6 +384,9 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     (fake / "record.py").write_text(_RECORDER)
     (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
     (fake / "bwrap").chmod(0o755)
+    for tool, script in (tools or {}).items():
+        (fake / tool).write_text(script)
+        (fake / tool).chmod(0o755)
     lp = tmp_path / "launcher"
     lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
                                     seccomp=str(fake / "record.py")))            # any file there is: nothing here reads it as a filter
@@ -529,6 +532,32 @@ def test_each_launcher_tells_its_xdg_open_why_the_app_has_no_bus(tmp_path, monke
     assert told(sb.resolve_template("standard")) == ["address"]          # decided at run time, where no proxy starts
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, None)            # and where one does, nothing
     assert proxy is not None and "APPKATA_NO_BUS" not in app, app
+
+
+# CR1.5-46 (#707; the owner's decision of 2026-11-24): Password service owned org.freedesktop.secrets
+# whoever held it, and to the filter an own is a talk, so beside gnome-keyring the app reached the
+# keyring's whole connection, every unlocked password included. The launcher now asks the session's
+# bus at the launch, and where another program holds the name starts the app without the own and
+# says why; the sole provider keeps it. Here the asking is a stand-in gdbus, answering as asked.
+@pytest.mark.parametrize("held", [True, False], ids=["another-provider", "the-only-provider"])
+def test_password_service_owns_the_name_only_where_no_other_program_holds_it(tmp_path, monkeypatch, held):
+    asked = tmp_path / "asked"
+    gdbus = f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\necho "({str(held).lower()},)"\n'
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": gdbus})
+    assert r.returncode == 0 and proxy is not None, (r.stdout, r.stderr)
+    assert ("--own=org.freedesktop.secrets" in proxy) is not held, proxy
+    if held:
+        assert r.stderr == ("AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so Demo "
+                            "runs without Password service: offering that name through the bus filter would reach that program and the "
+                            "passwords it holds.\n"), r.stderr
+    else:
+        assert r.stderr == "", r.stderr
+    assert asked.read_text().split() == ["call", "--address", f"unix:path={rt}/bus", "--timeout", "5", "--dest", "org.freedesktop.DBus",
+                                         "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner",
+                                         "org.freedesktop.secrets"]
+    # and an app without the capability asks nothing
+    assert "NameHasOwner" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("standard"))
 
 
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
