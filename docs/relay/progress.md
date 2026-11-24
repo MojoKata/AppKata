@@ -595,3 +595,23 @@ files are all in U09's files.
 6. `A1.2-approach.md` is at 497 of its 500 lines: batch 4's text there has three lines of room.
 7. No refusal and no model change on my side.
 
+### The coordinator, after batch 3 (2026-11-24)
+
+Batch 3 ran in two parts: a Fable 5.2 agent made #403, #404, #202 and #201 and stopped at its usage
+limit in the middle of #692; an Opus 5.5 agent finished #692 and wrote the section above. Checked:
+both agents' answers on their named models; the guard; `tests/test_sandbox.py` and the document
+tests, whole; the batch pushed.
+
+- **Doubt 4** (#404's message names a test that passes on its parent): the commit message is loose,
+    the fix is proven by the other tests it names. Said in the pull request, not amended.
+- **Doubt 3** (a suggestion seen under the chips' old words shows as new once): no carry-over, as
+    the brief says.
+- **Doubt 6:** `A1.2-approach.md` has three lines left. Batch 4 writes what it must say of the
+    keyring and the ScreenSaver interface in `A1.2.3.14`'s table, replacing words, not adding lines;
+    if it can't fit, it lists it and the coordinator decides.
+- **Batch 4 runs on Opus 5.5.** #693 is a check that needs a desktop: the agent writes the command
+    under needs a run and does what it can without the desktop (the launcher's words, and a test
+    that holds them); the coordinator runs the desktop and settles it.
+- **Needs a run** (the Ubuntu launcher VMs, the desktop VMs, the tour, the project's own scripts):
+    the coordinator's, after batch 4.
+
