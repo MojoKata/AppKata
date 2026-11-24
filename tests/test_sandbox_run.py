@@ -1183,7 +1183,8 @@ real, argv = sys.argv[1], sys.argv[2:]
 if "xdg-dbus-proxy" in argv:
     look = ('{ find / -mindepth 1 \\( -path /usr -o -path /etc -o -path /proc -o -path /dev \\) -prune -o -exec stat -c "PROXY-SEES %A %n" {} +; '
             'for ns in net ipc uts pid; do echo "PROXY-NS $ns $(readlink /proc/self/ns/$ns)"; done; '
-            'echo "PROXY-SECCOMP $(sed -n "s/^Seccomp:[[:space:]]*//p" /proc/self/status)"; } >&2; exec "$@"')
+            'echo "PROXY-SECCOMP $(sed -n "s/^Seccomp:[[:space:]]*//p" /proc/self/status)"; '
+            'echo "PROXY-ENV $(tr "\\0" "\\n" < /proc/$$/environ | cut -d= -f1 | sort | paste -sd, -)"; } >&2; exec "$@"')
     at = argv.index("xdg-dbus-proxy")
     argv[at:at] = ["sh", "-c", look, "sh"]
 os.execv(real, [real] + argv)
@@ -1228,6 +1229,10 @@ def test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_al
     assert (inside["net"] == mine["net"]) is (bus_on == "an-abstract-socket"), (inside, mine)
     if sb.seccomp_filter() is not None:
         assert ["PROXY-SECCOMP", "2"] in said, r.stderr                 # a filter is on: the terminal-injection one (R17.4)
+    # and none of the launcher's environment (PR #694's review, P1-B2): the run's own here, its
+    # home and its runtime folder among them, as a terminal's tokens would be. PATH is the
+    # launcher's word, PWD bwrap's own: the folder it starts the proxy in.
+    assert ["PROXY-ENV", "PATH,PWD"] in said, r.stderr
 
 
 # A stand-in for the OpenURI portal on the test bus: records what it is asked to open. For a file it

@@ -112,6 +112,8 @@ rm -f "$sock"
 # reaching this session's bus takes. Nothing else of the runtime folder, which holds the
 # ssh and gpg agents' sockets and the document portal's mount; no pid, IPC, UTS or
 # cgroup namespace of the host's, nor its network where the bus can be reached without;
+# none of the launcher's environment, which a terminal can fill with tokens and keys (its
+# address and socket are arguments: PATH alone, for bwrap to find it; PR #694's review, P1-B2);
 # and the app's own guard against typing into the terminal (R17.4).
 # What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).
 # It carries *no* /.flatpak-info: the portals judge the caller by the proxy's root, and
@@ -126,7 +128,8 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
   bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
     --bind "$rt/appkata" "$rt/appkata" "$@" \
-    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --die-with-parent --seccomp 3 -- \
+    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH /usr/bin:/bin \
+    --die-with-parent --seccomp 3 -- \
     xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Notification.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' '--call=org.freedesktop.Notifications=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/Notifications' '--broadcast=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' 3< /home/kata/.local/share/appkata/sandboxes/.identity/seccomp-tty.bpf &
   proxy=$!
 }

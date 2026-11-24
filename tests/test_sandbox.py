@@ -465,6 +465,11 @@ def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alon
     assert unshared == {"--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"} | ({"--unshare-net"} if file else set()), words
     assert "--die-with-parent" in words and not [w for w in words if w.startswith("--share")], words
     assert words[words.index("--seccomp") + 1] == "3" and "--new-session" not in words
+    # nor the launcher's environment, which a terminal can fill with tokens: the app's own bwrap
+    # clears it, the proxy's kept it whole (PR #694's review, P1-B2). Its address and socket are
+    # arguments; PATH is for bwrap to find it.
+    assert "--clearenv" in words and [words[i + 1:i + 3] for i, w in enumerate(words) if w == "--setenv"] == [["PATH", "/usr/bin:/bin"]], words
+    assert not [w for w in words if w in ("--unsetenv", "--chdir")] and words.index("--clearenv") < words.index("--setenv"), words
 
 
 def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
