@@ -1950,6 +1950,9 @@ ANSWERS = [
     answer("429-retry-after-unreadable", (429, {"Retry-After": "soon"}, b""), **limit(429, limited_in=60)),
     answer("429-the-reset-time-comes-first", (429, {"x-ratelimit-reset": str(Y2100), "Retry-After": "120"}, b""), **limit(429, limited_at=Y2100)),
     answer("429-reset-time-unreadable", (429, {"x-ratelimit-reset": "soon", "Retry-After": "120"}, b""), **limit(429, limited_in=120)),
+    answer("429-retry-after-a-digit-that-is-no-number", (429, {"Retry-After": "\u00b2"}, b""), **limit(429, limited_in=60)),
+    answer("429-retry-after-no-time-a-clock-can-show", (429, {"Retry-After": "9" * 30}, b""), **limit(429, limited_in=60)),
+    answer("403-reset-time-no-time-a-clock-can-show", (403, {**USED_UP, "x-ratelimit-reset": "9" * 17}, b""), **limit(403, limited_in=60)),
     # a Retry-After on any other failing answer (CR1 #277)
     answer("503-retry-after-long", (503, {"Retry-After": "120"}, b""), **limit(503, limited_in=120)),
     answer("500-retry-after-a-date", (500, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(500, limited_at=Y2100)),
@@ -2033,6 +2036,13 @@ def test_the_table_has_a_row_for_each_kind_of_error_and_each_thing_a_retry_turns
     ({"retry-after": "Friday, 01-Jan-00 00:00:00 GMT"}, 946684800, None),                 # the older form of a date
     ({"retry-after": ""}, None, 60), ({"retry-after": "soon"}, None, 60), ({"retry-after": "-5"}, None, 60),
     ({"retry-after": "1.5"}, None, 60), ({"retry-after": "12 seconds"}, None, 60),
+    # a digit to str.isdigit that is no number to int or float: it raised out of Http
+    ({"retry-after": "\u00b2"}, None, 60), ({"x-ratelimit-reset": "\u00b2"}, None, 60), ({"x-ratelimit-reset": "\u00b2", "retry-after": "5"}, None, 5),
+    ({"retry-after": "\u0661\u0662\u0660"}, None, 60),
+    # a number that is no time a clock can show: it raised where the Source's row was shown
+    ({"x-ratelimit-reset": "9" * 17}, None, 60), ({"x-ratelimit-reset": "9" * 400}, None, 60), ({"retry-after": "9" * 30}, None, 60),
+    ({"retry-after": "9" * 400}, None, 60), ({"x-ratelimit-reset": "9" * 17, "retry-after": "5"}, None, 5),
+    ({"retry-after": "Fri, 01 Jan 99999 00:00:00 GMT"}, None, 60),
 ])
 def test_when_a_host_may_be_asked_again_is_read_from_its_headers(clock, headers, at, after):
     """_reset_time: GitHub's reset time, else a Retry-After in seconds or as a date, else a minute."""
@@ -2623,3 +2633,67 @@ def test_by_the_pages_a_project_that_moved_is_renamed(monkeypatch):
     with pytest.raises(forges.Renamed) as e:
         forges.forge_for(http, urls.parse("https://github.com/acme/widget"), "github").info()
     assert e.value.new_url == "https://github.com/acme/gadget"
+
+
+# ---------------------------------------------------------------- whose answer an error is, after a redirect (R2.10, R9.2.2)
+# CR1's #683: Http named the host it asked first in every error, and called a 401 the token's
+# whenever the first address had carried one. Since a redirect to another host goes on without the
+# token (#264), a 401 can come from a host that was sent none: the row said the first host had
+# rejected the user's API token, and sent them to Settings to replace a token that was fine. How it
+# slipped past: a stand-in opener never redirects, and the tests of a redirect looked at what was
+# sent, not at what an error said. The class is "an answer after a redirect is taken for the first
+# host's", so each failing answer here comes from the last of two or three hosts' hops, through
+# Http's own opener, and its error is held to that host and to what that host was sent.
+def saying(status):
+    def answer(handler):
+        handler.wfile.write(f"HTTP/1.1 {status} Said\r\nContent-Length: 0\r\n\r\n".encode())
+    return answer
+
+
+@pytest.mark.parametrize("path, status, says", [
+    ("/direct", 401, "127.0.0.1 rejected the API token (HTTP 401)"),              # the token's own host, asked first
+    ("/moved-on-the-host", 401, "127.0.0.1 rejected the API token (HTTP 401)"),   # a redirect on the host keeps the token: still the token's
+    ("/to-another-host", 401, "localhost answered HTTP 401"),                     # the finding: that host was sent no token
+    ("/there-and-back", 401, "127.0.0.1 answered HTTP 401"),                      # back on the first host, without the token it lost on the way
+    ("/to-another-host", 403, "localhost answered HTTP 403"),
+    ("/to-another-host", 500, "localhost answered HTTP 500"),
+    ("/direct", 500, "127.0.0.1 answered HTTP 500"),
+], ids=["direct-401", "moved-on-the-host-401", "to-another-host-401", "there-and-back-401", "to-another-host-403", "to-another-host-500",
+        "direct-500"])
+def test_through_real_sockets_an_error_after_a_redirect_is_the_last_hosts_and_the_tokens_only_if_it_went_there(pair, clock, path, status, says):
+    a, b = pair
+    a.redirects.update({"/moved-on-the-host": "/api/new", "/to-another-host": f"https://{b.at}/elsewhere", "/there-and-back": f"https://{b.at}/back"})
+    b.redirects["/back"] = f"https://{a.at}/again"
+    a.files = {p: saying(status) for p in ("/direct", "/api/new", "/again")}
+    b.files = {"/elsewhere": saying(status)}
+    http = names(Http({a.at: "SECRET-TOKEN", b.at: "ANOTHER-HOSTS"}, timeout=10))       # B's own token isn't sent on a redirect to B either
+    with pytest.raises(Unreachable) as e:
+        http.json(f"https://{a.at}{path}")
+    assert str(e.value) == says and e.value.extra == ({"status": status} if "answered" in says else {})
+    last = (b if "localhost" in says else a).seen[-1]
+    assert ("authorization" in last[1]) == ("rejected the API token" in says or path == "/direct")      # what the answering host was sent
+    assert [k for _, h in b.seen for k in h if k in http_.TOKEN_HEADERS] == []
+
+
+def test_a_401_with_no_token_sent_is_never_the_tokens(pair, clock):
+    a, b = pair
+    a.files = {"/direct": saying(401)}
+    for tokens in ({}, {b.at: "ANOTHER-HOSTS"}, {"127.0.0.1": "ITS-DEFAULT-PORT"}):
+        with pytest.raises(Unreachable, match="^127.0.0.1 answered HTTP 401$"):
+            names(Http(tokens, timeout=10)).json(f"https://{a.at}/direct")
+    assert _secrets(a.seen) == [] and len(a.seen) == 3
+
+
+def test_a_time_no_clock_can_show_never_reaches_a_sources_row(tmp_path, monkeypatch, clock):
+    """Found beside #683: a host's Retry-After of thirty nines was kept as the time to come back,
+    which the Sources list then failed to show. Whatever a host says, what a Sync writes is a time."""
+    import datetime
+    source = "https://git.example.org/o/r"
+    for said in ({"Retry-After": "9" * 30}, {"x-ratelimit-reset": "9" * 17}, {"x-ratelimit-reset": "9" * 400}, {"Retry-After": "\u00b2"}):
+        db = catalog(tmp_path, monkeypatch, [source])
+        sync.sync_all(db, names(Http(opener=answering(429, said, []))), root=str(tmp_path))
+        app = rows(db)[source]
+        assert app["error_code"] == "RateLimited" and json.loads(app["error_extra"])["reset"] == clock.now + 60
+        assert datetime.datetime.fromtimestamp(json.loads(app["error_extra"])["reset"])
+        db.x("DELETE FROM sources")
+        db.x("DELETE FROM apps")

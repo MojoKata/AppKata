@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, IncompleteRead, InvalidURL
 from urllib.parse import urlsplit
@@ -191,7 +192,10 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     plain http of a request that carried a token is refused, the same host's too.
 
     Where a redirect points is held to the rule for a first address (`allowed`, Http._allowed): http
-    or https, and no local address but the host's the request was made for (`req.whose`)."""
+    or https, and no local address but the host's the request was made for (`req.whose`).
+
+    It also keeps `req.asked` up to where the request has got to: the host asked last, and whether
+    the token went there. An error is that host's, and is the token's only if it was sent (CR1 #683)."""
 
     def __init__(self, allowed):
         self.allowed = allowed
@@ -211,9 +215,13 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None:
             new.whose = whose
-            if _origin(to) == _origin(was):
+            carried = bool(token) and _origin(to) == _origin(was)
+            if carried:
                 for k, v in token.items():
                     new.add_unredirected_header(k, v)
+            new.asked = asked = getattr(req, "asked", None)
+            if asked is not None:
+                asked.update(host=to.hostname.lower(), token=carried)
         return new
 
 
@@ -364,6 +372,9 @@ class Http:
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
         req.whose = whose                          # for a redirect: _Redirects
+        # the host asked last and whether the token went there: _Redirects moves both on, since an
+        # answer after a redirect is another host's, which may have been sent no token (CR1 #683)
+        req.asked = asked = {"host": host, "token": bool(token)}
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1
@@ -401,9 +412,13 @@ class Http:
                         raise RateLimited(host, reset, e.code) from None
             if e.code == 404:
                 raise NotFound(f"{url} not found") from None
-            if e.code == 401 and token:
-                raise Unreachable(f"{host} rejected the API token (HTTP 401)") from None
-            raise Unreachable(f"{host} answered HTTP {e.code}", status=e.code, **({"retry_after": wait} if wait else {})) from None
+            # the answer is the host's that was asked last. A 401 is the token's only when the
+            # token went there: a redirect to another host drops it (R9.2.2), and that host's 401
+            # was said to be the first host rejecting a token it had never seen, which sent the
+            # user to Settings to replace a token that was fine (CR1 #683)
+            if e.code == 401 and asked["token"]:
+                raise Unreachable(f"{asked['host']} rejected the API token (HTTP 401)") from None
+            raise Unreachable(f"{asked['host']} answered HTTP {e.code}", status=e.code, **({"retry_after": wait} if wait else {})) from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             reason = getattr(e, "reason", e)
             raise Unreachable(f"couldn't reach {host}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason),
@@ -453,15 +468,32 @@ def _declared_length(hdr: dict, method: str) -> int | None:
     return int(length)
 
 
+def _a_time(seconds: float) -> bool:
+    """Whether a number of seconds since 1970 is a time a clock can show: one that isn't can't be
+    shown on a Source's row either."""
+    try:
+        datetime.fromtimestamp(seconds)
+    except (OverflowError, OSError, ValueError):
+        return False
+    return True
+
+
 def _reset_time(hdr: dict) -> float:
-    if hdr.get("x-ratelimit-reset", "").isdigit():
-        return float(hdr["x-ratelimit-reset"])
-    ra = hdr.get("retry-after", "")
-    if ra.isdigit():
-        return time.time() + int(ra)
-    if ra:
+    """When a host that said to come back may be asked again: GitHub's reset time, else a
+    Retry-After in seconds or as a date, else in a minute. A value that can't be read counts for
+    nothing, and that is any that isn't a plain number or a date, or isn't a time at all: "²" is a
+    digit to str.isdigit and no number to int, which raised out of Http; and thirty nines are a
+    number, and no time a clock can show, which raised where the Source's row was shown."""
+    now = time.time()
+    reset, after = hdr.get("x-ratelimit-reset", ""), hdr.get("retry-after", "")
+    if reset.isascii() and reset.isdigit() and _a_time(float(reset)):
+        return float(reset)
+    if after.isascii() and after.isdigit():
+        if _a_time(now + float(after)):
+            return now + int(after)
+    elif after:
         try:
-            return parsedate_to_datetime(ra).timestamp()
-        except (TypeError, ValueError):
+            return parsedate_to_datetime(after).timestamp()
+        except (TypeError, ValueError, OverflowError):
             pass
-    return time.time() + 60
+    return now + 60

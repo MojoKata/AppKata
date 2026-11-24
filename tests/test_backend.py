@@ -546,7 +546,8 @@ def a_forge_that_says_come_back(status, headers, asked):
     (429, {"Retry-After": "600"}, True), (429, {}, True),
     (503, {"Retry-After": "600"}, False),                              # a forge that is overloaded or being maintained
     (502, {"Retry-After": "600"}, False), (500, {"Retry-After": "600"}, False),
-], ids=["403-limit", "429-retry-after", "429", "503-retry-after", "502-retry-after", "500-retry-after"])
+    (429, {"Retry-After": "9" * 30}, True),                            # no time a clock can show: the row is still shown
+], ids=["403-limit", "429-retry-after", "429", "503-retry-after", "502-retry-after", "500-retry-after", "429-no-time"])
 def test_a_rate_limit_hints_at_a_token_and_a_forge_being_maintained_says_only_until_when(be, monkeypatch, status, headers, hint):
     """Since any failing answer's Retry-After is heard, a forge being maintained had "add a token in
     Settings" on its rows, which no token helps. Two Sources on the host, through a whole Sync: the
