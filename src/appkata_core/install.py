@@ -204,16 +204,6 @@ def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
     return (m.group(1).lower(), sums.name) if m else ("", "")
 
 
-def _elevate(cmd: list[str]) -> subprocess.CompletedProcess:
-    """Run an install command with administrator rights for this action only (R1.3)."""
-    if OS == "linux":
-        if os.geteuid() != 0:
-            if not shutil.which("pkexec"):
-                raise InstallError("pkexec isn't available to ask for administrator rights")
-            cmd = ["pkexec"] + cmd
-    return applog.run(cmd, timeout=1800)
-
-
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
