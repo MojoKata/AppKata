@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -139,7 +140,7 @@ def _package(db, package, manager="apt"):
          (URL, "Demo App", "1.0", "deb", json.dumps({"package": package, "manager": manager}), now()))
 
 
-_SHOWN = "[Desktop Entry]\nType=Application\nName=X\nExec=x %U\n"
+_SHOWN = "[Desktop Entry]\nType=Application\nName=X\nExec=prog %U\n"
 _NVIM = "[Desktop Entry]\nType=Application\nName=Neovim\nTryExec=nvim\nExec=nvim %F\nTerminal=true\n"
 
 
@@ -169,7 +170,7 @@ _PACKAGES = {
                               "org.kde.spectacle.service.desktop": _SHOWN.replace("Type=Application", "Type=Service")},
                       {}, "prog", "org.kde.spectacle.desktop"),
     # Ubuntu 24.04: neovim installs /usr/bin/nvim, and its entry is neovim-runtime's
-    "neovim": ("apt", {}, {"nvim.desktop": _NVIM, "a-vim.desktop": _SHOWN.replace("Exec=x", "Exec=other")}, "nvim", "nvim.desktop"),
+    "neovim": ("apt", {}, {"nvim.desktop": _NVIM, "a-vim.desktop": _SHOWN.replace("Exec=prog", "Exec=other")}, "nvim", "nvim.desktop"),
     "demo-suite": ("apt", {"demo-helper.desktop": _SHOWN + "NoDisplay=true\n", "zz-other.desktop": _SHOWN,
                            "demo-suite.desktop": _SHOWN, "aa-hidden.desktop": _SHOWN + "Hidden=true\n"},
                    {"nvim.desktop": _NVIM}, "nvim", "demo-suite.desktop"),
@@ -217,3 +218,79 @@ def test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name(db,
     with pytest.raises(install.InstallError, match="Demo App has no app-menu entry to open it with"):
         install.launch(db, URL)
     assert ran == []
+
+
+# What a desktop's menu shows of an entry, by the Desktop Entry Specification as GLib applies it (the
+# reader the menus of the desktops AppKata supports use), on each desktop of $XDG_CURRENT_DESKTOP
+# here: {case: (the entry's lines after its Name, the desktops it shows on)}. `{bin}` is a folder
+# on the PATH with `prog`, `my prog` and a file that can't run, `notes.txt`.
+_DESKTOPS = ("GNOME", "ubuntu:GNOME", "X-Cinnamon", "KDE", "")
+_ALL, _GNOME = set(_DESKTOPS), {"GNOME", "ubuntu:GNOME"}
+_MENU_CASES = {
+    "an app": ("Type=Application\nExec=prog %U\n", _ALL),
+    "for KDE alone": ("Type=Application\nExec=prog\nOnlyShowIn=KDE;\n", {"KDE"}),
+    "for GNOME alone": ("Type=Application\nExec=prog\nOnlyShowIn=GNOME;\n", _GNOME),
+    "for Ubuntu's session alone": ("Type=Application\nExec=prog\nOnlyShowIn=ubuntu;\n", {"ubuntu:GNOME"}),
+    "not for GNOME": ("Type=Application\nExec=prog\nNotShowIn=GNOME;\n", _ALL - _GNOME),
+    "for GNOME and not for it": ("Type=Application\nExec=prog\nOnlyShowIn=GNOME;\nNotShowIn=GNOME;\n", _GNOME),
+    "for GNOME, not for Ubuntu's": ("Type=Application\nExec=prog\nOnlyShowIn=GNOME;\nNotShowIn=ubuntu;\n", {"GNOME"}),
+    "TryExec on the PATH": ("Type=Application\nExec=prog\nTryExec=prog\n", _ALL),
+    "TryExec not installed": ("Type=Application\nExec=prog\nTryExec=no-such-program-here\n", set()),
+    "TryExec a path not there": ("Type=Application\nExec=prog\nTryExec={bin}/gone\n", set()),
+    "TryExec a file that can't run": ("Type=Application\nExec=prog\nTryExec={bin}/notes.txt\n", set()),
+    "its program not installed": ("Type=Application\nExec=no-such-program-here %F\n", set()),
+    "its program's path not there": ("Type=Application\nExec={bin}/gone %U\n", set()),
+    "its program by its path, quoted": ('Type=Application\nExec="{bin}/my\\sprog" %U\n', _ALL),
+    "through env": ("Type=Application\nExec=env FOO=1 no-such-program-here\n", _ALL),
+    "no Exec": ("Type=Application\n", _ALL),
+    "a link": ("Type=Link\nURL=https://example.org\n", set()),
+    "no Type": ("Exec=prog\n", set()),
+    "NoDisplay": ("Type=Application\nExec=prog\nNoDisplay=true\n", set()),
+    "Hidden": ("Type=Application\nExec=prog\nHidden=true\n", set()),
+}
+
+
+def _glib_shows(paths, desktop, path_env):
+    """Which of `paths` GLib's menu shows on `desktop`: loaded (Gio.DesktopAppInfo), not hidden, and
+    should_show(). None where no system python3 has python3-gi (tier 1's container has it)."""
+    py = shutil.which("python3", path="/usr/bin:/bin")
+    if not py or subprocess.run([py, "-c", "import gi"], capture_output=True).returncode:
+        return None
+    code = ("import json, sys, gi\ngi.require_version('Gio', '2.0')\nfrom gi.repository import Gio\nout = []\n"
+            "for p in sys.argv[1:]:\n"
+            "    try:\n        i = Gio.DesktopAppInfo.new_from_filename(p)\n    except TypeError:\n        i = None\n"
+            "    out.append(bool(i) and not i.get_is_hidden() and i.should_show())\n"
+            "print(json.dumps(out))\n")
+    r = subprocess.run([py, "-c", code, *paths], capture_output=True, text=True, check=True,
+                       env={"PATH": path_env, "XDG_CURRENT_DESKTOP": desktop, "HOME": os.environ.get("HOME", "/")})
+    return json.loads(r.stdout)
+
+
+@pytest.mark.skipif(install.OS == "windows", reason="system packages are Linux's (R16)")
+@pytest.mark.parametrize("desktop", _DESKTOPS, ids=[d or "no desktop" for d in _DESKTOPS])
+def test_open_takes_only_an_entry_the_desktops_menu_shows(tmp_path, monkeypatch, desktop):
+    # #689's review, P1-B4: R5.7.4's Open starts a system package's own menu entry, "never one the
+    # menu doesn't show", and AppKata read NoDisplay and Hidden alone. An entry meant for other
+    # desktops (OnlyShowIn, NotShowIn, by $XDG_CURRENT_DESKTOP's names in order) or for a program
+    # that isn't installed (TryExec, and Exec's own program, which GLib looks for too) isn't in the
+    # menu: a package whose first entry by name was KDE's was opened by it on GNOME or Cinnamon.
+    # The class is every rule a menu applies to an entry, so each case is held to GLib's own answer
+    # where it is here, and to the specification's everywhere.
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for name in ("prog", "my prog"):
+        (bin_ / name).write_text("#!/bin/sh\n")
+        (bin_ / name).chmod(0o755)
+    (bin_ / "notes.txt").write_text("not a program\n")
+    path_env = f"{bin_}:/usr/bin:/bin"
+    monkeypatch.setenv("PATH", path_env)
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+    paths = []
+    for i, (case, (lines, _)) in enumerate(_MENU_CASES.items()):
+        p = tmp_path / f"entry-{i}.desktop"
+        p.write_text(f"[Desktop Entry]\nName={case}\n" + lines.replace("{bin}", str(bin_)))
+        paths.append(str(p))
+    want = {case: desktop in shown for case, (_, shown) in _MENU_CASES.items()}
+    assert {case: install._menu_entry(p) is not None for case, p in zip(_MENU_CASES, paths)} == want
+    if (glib := _glib_shows(paths, desktop, path_env)) is not None:
+        assert dict(zip(_MENU_CASES, glib)) == want                 # and the table is GLib's

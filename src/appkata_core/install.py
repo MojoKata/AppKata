@@ -1520,9 +1520,40 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
         _launch_package(row["name"], rec["package"], rec.get("manager") or ("apt" if linux_family() == "debian" else "dnf"))
 
 
+def _entry_string(value: str) -> str:
+    """A desktop entry's string value as it reads: its escapes (`\\s`, `\\n`, `\\t`, `\\r`, `\\\\`) turned
+    back into what they stand for."""
+    return re.sub(r"\\([sntr\\])", lambda m: {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}[m.group(1)], value)
+
+
+def _shown_on_this_desktop(entry) -> bool:
+    """Whether an entry is for this desktop by its `OnlyShowIn` and `NotShowIn`: the names in
+    $XDG_CURRENT_DESKTOP, in their order, the first one either key names deciding; with none named,
+    it is shown unless it has `OnlyShowIn` (the Desktop Entry Specification, as GLib reads it)."""
+    only, never = ({d for d in entry.get(k, "").split(";") if d} for k in ("OnlyShowIn", "NotShowIn"))
+    for desktop in (d for d in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":") if d):
+        if desktop in only:
+            return True
+        if desktop in never:
+            return False
+    return not only
+
+
+def _installed_program(word: str) -> bool:
+    """Whether the program an entry names (`TryExec`, the first word of `Exec`) is here to run: a
+    path that is an executable file, or a name found on the PATH."""
+    if os.sep in word:
+        return os.path.isfile(word) and os.access(word, os.X_OK)
+    return bool(shutil.which(word))
+
+
 def _menu_entry(path: str):
-    """The [Desktop Entry] group of an app-menu entry the menu shows, or None: not an application,
-    hidden (`NoDisplay`, `Hidden`), or not readable."""
+    """The [Desktop Entry] group of an app-menu entry the desktop's menu shows here, or None: not an
+    application, hidden (`NoDisplay`, `Hidden`), for other desktops than this one (`OnlyShowIn`,
+    `NotShowIn`), its program not installed (`TryExec`, or the first word of `Exec`), or not
+    readable. These are the Desktop Entry Specification's rules as GLib applies them, which is what
+    the menus of the desktops AppKata supports read entries with (R5.7.4; #689's review, P1-B4: only
+    `NoDisplay` and `Hidden` were read, and a package's entry for KDE alone was opened on GNOME)."""
     cp = configparser.ConfigParser(interpolation=None, strict=False)
     try:
         if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
@@ -1531,8 +1562,19 @@ def _menu_entry(path: str):
         entry = cp["Desktop Entry"]
     except (configparser.Error, OSError, UnicodeDecodeError, KeyError):
         return None
-    if entry.get("Type", "Application") != "Application" or "true" in (entry.get("NoDisplay", "").lower(), entry.get("Hidden", "").lower()):
+    if entry.get("Type") != "Application" or "true" in (entry.get("NoDisplay", "").lower(), entry.get("Hidden", "").lower()):
         return None
+    if not _shown_on_this_desktop(entry):
+        return None
+    if (try_exec := _entry_string(entry.get("TryExec", ""))) and not _installed_program(try_exec):
+        return None
+    if command := _entry_string(entry.get("Exec", "")):
+        try:
+            words = shlex.split(command)
+        except ValueError:          # GLib can't read it either
+            return None
+        if not words or not _installed_program(words[0]):
+            return None
     return entry
 
 
