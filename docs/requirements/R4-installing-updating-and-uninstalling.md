@@ -47,6 +47,14 @@ folder, `<install folder>/<app>/`, holding its versions side by side: an AppImag
 versioned file (`LocalSend-1.18.2-x86_64.AppImage`: the release's own file name, with the version
 added when the name holds none or is another version's, so `Tool-x86_64.AppImage` is kept as
 `Tool-x86_64-2.0.AppImage`), an archive unpacked into a folder named after its version (`2.1/`).
+
+An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
+is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
+the app or its repository, or whose name holds one of those or is held by one (`codium` for
+VSCodium); a compiled program before a script; then the one nearest the archive's top. It is never
+a shared library, a `.sh` script, or a helper that comes with a program: Chromium's
+`chrome-sandbox` and crash handler, or `<program>-bin` beside `<program>`.
+
 The install folder is a setting (R11.1.4); by default it is:
 
 - `~/bin/apps` on Linux, with command links (R4.3.1.3) directly in `~/bin`. Ubuntu, Debian and

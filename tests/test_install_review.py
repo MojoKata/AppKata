@@ -1401,3 +1401,69 @@ def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_link
     rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
     assert "commandRefused" not in rec and os.readlink(link) == rec["exec"] and str(link) in rec["links"]
     assert install.uninstall(env, APP["url"], remove_sandbox=True) == []
+
+
+# ---------------------------------------------------------------- the program of an archive (CR1.3-17)
+
+_ELF, _SCRIPT = b"\x7fELF\x02\x01\x01" + b"\0" * 57, b"#!/bin/sh\nexec true\n"
+
+# Archives as their publishers lay them out: what is in them (a path, and its kind: an ELF, a script,
+# or a text file's own content), the app's names (its own and its repository's), and the program.
+_ARCHIVES = {
+    # CR1.3-17: no file is named after the app, and Chromium's helpers sort first
+    "VSCodium, unpacked flat": ({"chrome-sandbox": _ELF, "chrome_crashpad_handler": _ELF, "codium": _ELF,
+                                 "bin/codium": _SCRIPT, "libffmpeg.so": _ELF, "resources/app/out/cli.js": None},
+                                ["VSCodium", "vscodium"], "codium"),
+    "its own .desktop file names it": ({"bin/zed": _SCRIPT, "libexec/zed-editor": _ELF, "share/applications/dev.zed.desktop":
+                                        b"[Desktop Entry]\nType=Application\nName=Zed\nExec=env ZED_X=1 /opt/zed/libexec/zed-editor %U\n"},
+                                       ["Zed", "zed"], "libexec/zed-editor"),
+    "a compiled program before a script": ({"tool": _SCRIPT, "lib/tool": _ELF}, ["Tool", "tool"], "lib/tool"),
+    "a helper sorts first and is never taken": ({"chrome-sandbox": _ELF, "chrome_crashpad_handler": _ELF, "x/editor": _ELF},
+                                                ["Notes", "notes"], "x/editor"),
+    "a program and its -bin": ({"firefox": _ELF, "firefox-bin": _ELF, "libxul.so": _ELF, "crashreporter": _ELF,
+                                "updater": _ELF, "glxtest": _ELF}, ["Firefox", "firefox"], "firefox"),
+    "an app with no repository": ({"aaa": _ELF, "sub/thingapp": _ELF}, ["Thing", ""], "sub/thingapp"),
+    "nothing but its own program": ({"rg": _ELF, "doc/rg.1": None, "complete/rg.bash": None}, ["ripgrep", "ripgrep"], "rg"),
+}
+
+
+def _archive(folder, files):
+    for path, body in files.items():
+        p = folder / path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(body if body is not None else b"text\n")
+        p.chmod(0o755 if body in (_ELF, _SCRIPT) else 0o644)
+
+
+@linux_only
+@pytest.mark.parametrize("archive", list(_ARCHIVES))
+def test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says(tmp_path, archive):
+    # CR1.3-17: by name alone, then by depth and alphabet, VSCodium's program was chrome-sandbox,
+    # and the menu entry, the command link and the app's kind (R17.3.3) all took the helper. The
+    # archive's own .desktop file names its program, a name the app's name holds counts, a compiled
+    # program comes before a script, and a helper is never the program.
+    files, names, program = _ARCHIVES[archive]
+    _archive(tmp_path / "v", files)
+    assert install._find_executable(str(tmp_path / "v"), names) == str(tmp_path / "v" / program)
+
+
+@linux_only
+def test_an_archive_with_nothing_but_helpers_has_no_program(tmp_path):
+    _archive(tmp_path / "v", {"chrome-sandbox": _ELF, "chrome_crashpad_handler": _ELF, "libnss3.so": _ELF,
+                              "libGLESv2.so.2": _ELF, "start.sh": _SCRIPT, "notes.desktop": b"[Desktop Entry]\nExec=notes\n"})
+    with pytest.raises(install.InstallError, match="couldn't find the program"):
+        install._find_executable(str(tmp_path / "v"), ["Notes", "notes"])
+
+
+@linux_only
+def test_what_an_archive_installs_starts_its_program_not_a_helper(env, server, tmp_path):
+    # the whole road: the record, the menu entry and the command link start what was picked
+    a = _tarball(server, "VSCodium-linux-x64-1.2.0.tar.gz", {"chrome-sandbox": 0o755, "chrome_crashpad_handler": 0o755,
+                                                             "codium": 0o755, "resources/app/LICENSE.txt": 0o644})
+    p = install.Portable(folder=str(tmp_path / "apps"), app_menu=True, stable_name=True,
+                         command_dir=str(tmp_path / "cmd"), keep=0)
+    rec = install.install(env, {**APP, "name": "VSCodium", "repo": "VSCodium/vscodium"}, a, "tarball", [a], portable=p)
+    assert os.path.basename(rec["exec"]) == "codium" and _runs(rec["exec"]) == "codium"
+    assert _runs(str(tmp_path / "cmd" / "vscodium")) == "codium"
+    entry = _entry(tmp_path / "xdg" / "applications" / "appkata-vscodium.desktop")
+    assert _runs(_exec_words(entry["Desktop Entry"]["Exec"])[0]) == "codium"

@@ -4,10 +4,12 @@ macOS installers follow."""
 
 from __future__ import annotations
 
+import configparser
 import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -283,24 +285,83 @@ def _find_exe(root: str, names: list[str]) -> str:
     return exes[0]
 
 
+# what comes with a program and is never the program itself: Chromium's sandbox helper and crash
+# handler (every Electron app has both beside its program), and `<program>-bin` beside `<program>`
+_HELPER = re.compile(r"^chrome[-_]sandbox$|crashpad", re.I)
+
+
+def _squash(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _exec_program(desktop: str) -> str:
+    """The file name of the program a `.desktop` file's `Exec=` starts, "" when it can't be told: the
+    first word that isn't `env` or one of its `NAME=value` words, without its folder (an archive's
+    entry names its program as it would be installed: `codium`, `/usr/share/codium/codium`). The
+    file is someone else's: nothing is read through a link, or of a file over 1 MB."""
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        if os.path.islink(desktop) or os.path.getsize(desktop) > 1 << 20:
+            return ""
+        cp.read(desktop, encoding="utf-8")
+        words = shlex.split(cp.get("Desktop Entry", "Exec", fallback=""))
+    except (configparser.Error, OSError, UnicodeDecodeError, ValueError):
+        return ""
+    if words and os.path.basename(words[0]) == "env":
+        words = words[1:]
+        while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words = words[1:]
+    return os.path.basename(words[0]) if words else ""
+
+
+def _is_elf(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def _find_executable(root: str, names: list[str]) -> str:
-    want = [n.lower().replace(" ", "") for n in names]
-    cands = []
+    """The program of an unpacked archive (R4.3.1): what its links, its menu entry and its launcher
+    start, and what its kind is read from. Among its executable files, in this order (CR1.3-17: by
+    name alone, then depth and alphabet, VSCodium's program was `chrome-sandbox`):
+
+    1. one the archive's own `.desktop` file starts (:func:`_exec_program`);
+    2. by name: the app's or the repository's name, then a name that holds one of them, then a name
+       one of them holds (`codium` in VSCodium), compared without case or punctuation;
+    3. a compiled program (ELF) before a script;
+    4. the one nearest the archive's top, then by alphabet.
+
+    Never a shared library, a `.sh` or `.desktop` file, or a helper (:data:`_HELPER`)."""
+    want = [w for w in map(_squash, names) if w]        # no name (an app with no repository) matches nothing
+    found, started = [], set()
     for dp, dn, fn in os.walk(root):
+        runs = []
         for f in fn:
             p = os.path.join(dp, f)
+            if f.endswith(".desktop"):
+                started.add(_exec_program(p))
+                continue
             try:
                 st = os.stat(p)
             except OSError:
                 continue
-            if not (st.st_mode & stat.S_IXUSR) or f.endswith((".so", ".sh")) or ".so." in f:
+            if not stat.S_ISREG(st.st_mode) or not (st.st_mode & stat.S_IXUSR) or f.endswith((".so", ".sh")) or ".so." in f:
                 continue
-            score = 0 if f.lower() in want else 1 if any(w in f.lower() for w in want) else 3
-            cands.append((score, p.count(os.sep), p))
+            runs.append(f)
+        found += [(f, os.path.join(dp, f)) for f in runs
+                  if not (_HELPER.search(f) or (f.endswith("-bin") and f[:-4] in runs))]
+    cands = []                                          # ranked once every .desktop file has been read
+    for f, p in found:
+        n = _squash(f)
+        by_name = (0 if n in want else 1 if any(w in n for w in want)
+                   else 2 if len(n) > 2 and any(n in w for w in want) else 3)
+        cands.append((f not in started, by_name, p.count(os.sep), p))
     if not cands:
         raise InstallError("couldn't find the program in the archive")
-    cands.sort()
-    return cands[0][2]
+    first = min(c[:2] for c in cands)                   # only the files that could be picked are opened
+    return min((not _is_elf(c[3]), c[2], c[3]) for c in cands if c[:2] == first)[2]
 
 
 def _folder(path: str) -> str:
