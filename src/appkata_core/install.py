@@ -324,11 +324,24 @@ class Portable:
 
 def _points_into(link: str, roots: tuple[str, ...]) -> bool:
     """Whether `link` is a symbolic link that leads into one of `roots`: a link AppKata made there
-    (R4.3.1.3). One whose target is gone still counts, by where it led."""
+    (R4.3.1.3). One whose target is gone still counts, by where it led. This is the one test of
+    "a link AppKata made", for a link it is about to replace and for one it is about to remove: a
+    path in an install's record says where AppKata once made a link, not what is there today
+    (CR1.3-11: the user's own link at a recorded path was removed by the next update, and by
+    uninstalling)."""
     if not os.path.islink(link):
         return False
     dest = os.path.realpath(link) + os.sep
     return any(dest.startswith(os.path.realpath(r) + os.sep) for r in roots if r)
+
+
+def _remove_links(links: list[str], own: tuple[str, ...]) -> None:
+    """Remove the links an install's record names, each only while it is still a link AppKata made
+    (:func:`_points_into` `own`, the install folders). Whatever else is at a recorded path now is
+    the user's, and stays (R4.3.1.3, R4.7)."""
+    for link in links:
+        if _points_into(link, own):
+            os.remove(link)
 
 
 def _link_refusal(link: str, own: tuple[str, ...] | None = None) -> str:
@@ -503,9 +516,8 @@ def _activate(rec: dict, app: dict, portable: "Portable", target: str) -> None:
 
 def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> None:
     cur, app_id = rec["current"], app_id_of(rec, app)
-    for l in rec.get("links", []):           # the previous version's links
-        if os.path.islink(l):
-            os.remove(l)
+    own = (portable.root, os.path.dirname(target))
+    _remove_links(rec.get("links", []), own)      # the previous version's links
     rec["links"] = []
     rec["files"] = [f for f in rec.get("files", []) if not os.path.basename(f).startswith("appkata-")]
     run = os.path.join(target, cur["exec"])
@@ -537,7 +549,6 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         # option stays as chosen, so the command comes once the name is free. Never an error: the
         # app is installed either way, with its app-menu entry.
         link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
-        own = (portable.root, os.path.dirname(target))
         if why := command_link_refusal(app_id, link, own):
             rec["commandRefused"] = why
             log.info("no command link %s: %s", link, why)
@@ -758,8 +769,7 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
     if portable.command_dir:
         link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
         own = (portable.root, os.path.dirname(target))
-        replaced = link in prev.get("links", []) and os.path.islink(link)        # _activate removes the record's links first
-        if not replaced and not command_link_refusal(app_id, link, own) and (why := _link_refusal(link, own)):
+        if not command_link_refusal(app_id, link, own) and (why := _link_refusal(link, own)):
             raise InstallError(why)
 
 
@@ -804,9 +814,7 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
                 for l in rec.get("links", []):
                     windows.remove_link(l)
             else:
-                for l in rec.get("links", []):
-                    if os.path.islink(l):
-                        os.remove(l)
+                _remove_links(rec.get("links", []), (portable.root, os.path.dirname(target)))
                 if not prev.get("selfInstalled") and _menu_entry_path(app_id) not in prev.get("files", []):
                     _remove_path(_menu_entry_path(app_id))
                 if rec.get("launcher") and rec["launcher"] != prev.get("launcher"):
@@ -1093,9 +1101,7 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
             flatpak.uninstall(rec["flatpak"], system=rec.get("installation") == "system")
         except flatpak.FlatpakError as e:
             raise InstallError(str(e)) from None
-    for l in rec.get("links", []):
-        if os.path.islink(l):
-            os.remove(l)
+    _remove_links(rec.get("links", []), (rec.get("root") or apps_dir(), os.path.dirname(rec.get("target") or "")))
     root = os.path.realpath(rec.get("root") or apps_dir())
     for f in rec.get("files", []):
         if os.path.isdir(f) and os.path.realpath(f).startswith(root + os.sep):

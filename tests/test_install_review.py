@@ -817,3 +817,63 @@ def test_a_failed_first_install_takes_nothing_that_was_there_before_it(env, serv
                         portable=install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd")))
     assert _changed(before, _left(tmp_path, env)) == {}
     assert (home / "settings.ini").read_text() == "kept" and (tmp_path / "apps" / "demo-tool" / "notes.txt").read_text() == "mine"
+
+
+# ---------------------------------------------------------------- a link where a command link was (CR1.3-11)
+
+_THEIRS = ["a link to their own program", "a link that leads nowhere", "a file"]
+
+
+@linux_only
+@pytest.mark.parametrize("on_path", [False, True], ids=["off the PATH", "on the PATH"])
+@pytest.mark.parametrize("then", ["an update", "a kept version", "the next start", "uninstall"])
+@pytest.mark.parametrize("theirs", _THEIRS)
+def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced(env, server, tmp_path, monkeypatch, theirs, then, on_path):
+    # CR1.3-11, R4.3.1.3: "AppKata never replaces a file there that isn't a link it made". A first
+    # install has checked that since CR1.5-31. But an installed app's record names its command
+    # link's path, and whatever symbolic link was at a recorded path was taken for AppKata's: an
+    # update, a switch to a kept version and the startup pass removed it and put AppKata's there,
+    # and uninstalling removed it. A link is AppKata's when it leads into the install folder,
+    # wherever its path is written down. So: the user puts something of their own where the
+    # command link was (a link to their program, a link to nothing, a file), and nothing AppKata
+    # then does to the app touches it. On the PATH, a link to a program is a command already, so
+    # the app goes on without one (R4.3.1.3); otherwise the update stops with the error, and
+    # changes nothing.
+    cmd, their_program = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
+    their_program.parent.mkdir()
+    their_program.write_text("#!/bin/sh\necho theirs\n")
+    their_program.chmod(0o755)
+    if on_path:
+        monkeypatch.setenv("PATH", f"{cmd}:{os.environ['PATH']}")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    for v in ("1.0", "1.1"):
+        a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
+        install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=p)
+    link = cmd / "demo-tool"
+    assert os.readlink(link) == str(tmp_path / "apps" / "demo-tool" / "DemoTool.AppImage")
+    link.unlink()
+    if theirs == "a file":
+        link.write_text("mine")
+    else:
+        link.symlink_to(their_program if theirs == "a link to their own program" else tmp_path / "gone" / "tool")
+    was = os.readlink(link) if link.is_symlink() else link.read_text()
+    before = _left(tmp_path, env)
+    a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
+    act = {"an update": lambda: install.install(env, {**APP, "installVersion": "2.0"}, a, "appimage", [a], portable=p),
+           "a kept version": lambda: install.switch_to(env, dict(APP), "1.0", p),
+           "the next start": lambda: install.rewrite_launcher(env, dict(APP), p),
+           "uninstall": lambda: install.uninstall(env, APP["url"])}[then]
+    if then == "uninstall":
+        act()
+        assert env.one("SELECT * FROM installs") is None and not os.path.lexists(tmp_path / "apps" / "demo-tool")
+    elif on_path and theirs == "a link to their own program":
+        rec = act()
+        assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({link})"
+        assert str(link) not in rec["links"]
+    else:
+        with pytest.raises(install.InstallError, match="isn't a link AppKata made"):
+            act()
+        if then != "the next start":
+            assert _changed(before, _left(tmp_path, env)) == {}
+    assert (os.readlink(link) if link.is_symlink() else link.read_text()) == was
+    assert os.path.islink(link) is (theirs != "a file")

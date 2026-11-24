@@ -24,6 +24,7 @@ tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux inst
 tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
 tests/test_install_review.py::test_the_menu_entry_escapes_the_path_it_starts_and_refuses_one_it_cannot_write  # the Linux install layout
 tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux install layout
+tests/test_install_review.py::test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced  # the Linux install layout
 tests/test_install_review.py::test_whichever_step_of_an_install_fails_nothing_of_it_is_left  # the Linux install layout
 tests/test_install_review.py::test_zip_install  # the Linux install layout
 tests/test_launch.py::test_a_failed_launch_is_reported_with_its_last_lines  # portable launch on Linux/macOS
