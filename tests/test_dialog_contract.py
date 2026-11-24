@@ -463,3 +463,36 @@ def test_an_installed_apps_own_command_link_does_not_disable_its_checkbox(ui, be
     (tmp_path / "bin" / "demo").chmod(0o755)
     plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
     assert plan["portable"]["commandRefusal"] == f"demo is already a command on this computer ({tmp_path / 'bin' / 'demo'})"
+
+
+# ---------------------------------------------------------------- an installed app's own folder (CR1.3-12)
+
+def test_what_the_dialogs_show_of_an_installed_app_is_the_folder_it_is_in_not_the_one_settings_names_now(be, tmp_path, monkeypatch):
+    # CR1.3-12, the owner's decision: an installed app keeps its folder through its updates, and only
+    # a new install goes to the folder Settings names now. Whatever the backend says of an installed
+    # app's folder was Settings' own: "Installs to" in Install options, the folders a sandbox's
+    # chips call never shared, and the launcher's place. They are the app's own folder, from its
+    # record, so the chips still judge a folder as the launcher does (round two, R9) once the
+    # setting has changed; a new install's are Settings'.
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    old, new = tmp_path / "bin" / "apps", tmp_path / "elsewhere"
+    assert be._app_options(URL).root == be.portable().root == str(old)
+    target = _tarball_install(be, tmp_path)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps({**rec, "root": str(old)}), URL))      # as an install records it
+    be._prefs["installDir"] = str(new)                               # the setting, changed in Settings
+    assert be.portable().root == str(new) and be._app_options(URL).root == str(old)
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["folder"] == str(old)
+    gs = sb.to_json({**sb.resolve_template("standard"), "folders": {str(old / "another-app"): "rw"}})
+    assert be.summaryChips(gs, URL) == sb.summary_chips(gs, str(old)) != sb.summary_chips(gs, str(new))
+    _review(be, "online-app")
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    assert rec["launcher"] == os.path.join(target, "run") and os.path.exists(rec["launcher"]) and not os.path.lexists(new)
+    assert be._heal_launchers() == []                                # and it is the launcher AppKata would write today
+    # an app that isn't installed goes where Settings says
+    be.db.x("DELETE FROM installs WHERE url=?", (URL,))
+    assert be._app_options(URL).root == str(new) and _real_plan(be, monkeypatch, "Demo")["portable"]["folder"] == str(new)

@@ -336,6 +336,19 @@ class Portable:
         return _folder(self.command_dir) if self.command_dir else ""
 
 
+def _where_it_is(rec: dict, portable: "Portable") -> "Portable":
+    """`portable` for an app that is installed, `rec` being its record: its install folder is the
+    one it was installed into, whatever Settings names now (R4.3.1: an installed app keeps its
+    folder through its updates, and only a new install goes to the new one). Every step that
+    reads the folder from the options -- the record's root, the launcher's place and the folder it
+    protects, which links are AppKata's -- then means the folder the app is in. An update kept the
+    files where they were and took the rest from Settings: the record's root became the new
+    folder, so uninstalling left every version on disk, and a sandboxed app's launcher was written
+    to <new folder>/<app>/run (CR1.3-12)."""
+    root = rec.get("root") if rec.get("current") else ""
+    return replace(portable, folder=root, folder_everyone=root) if root else portable
+
+
 def _points_into(link: str, roots: tuple[str, ...]) -> bool:
     """Whether `link` is a symbolic link that leads into one of `roots`: a link AppKata made there
     (R4.3.1.3). One whose target is gone still counts, by where it led. This is the one test of
@@ -626,6 +639,7 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
     gs = app.get("sandbox")
     if not lp or not os.path.exists(lp) or not gs or not rec.get("current") or not rec.get("target"):
         return False
+    portable = _where_it_is(rec, portable)
     appdir, exec_rel, appimage_path = _launcher_program(rec, rec["target"])
     want = sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path)
     try:
@@ -803,8 +817,7 @@ def _options_of(rec: dict, portable: "Portable") -> "Portable":
     opts, target = rec.get("options") or {}, rec.get("target", "")
     folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) != target] + \
               [os.path.dirname(x) for x in rec.get("shims", [])]
-    root = rec.get("root") or portable.root
-    return replace(portable, folder=root, folder_everyone=root, scope=rec.get("scope") or portable.scope,
+    return replace(_where_it_is(rec, portable), scope=rec.get("scope") or portable.scope,
                    app_menu=bool(opts.get("appMenu")), stable_name=bool(opts.get("stableName")),
                    command_dir=(folders[0] if folders else portable.command_dir) if opts.get("commandLink") else "")
 
@@ -886,6 +899,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     if OS == "windows" and prev and prev.get("scope", "me") != portable.scope and not app.get("selfSetup"):
         moving_from, prev = prev, {}        # for someone else now: install afresh, then remove the old copy (R15.4.1)
         check_not_running(moving_from.get("target", ""), app["name"])
+    portable = _where_it_is(prev, portable)        # an update: the app stays in the folder it is in (R4.3.1)
     tmpdir = os.path.join(downloads_dir(), app_id)          # kept when a download breaks, to resume it
     os.makedirs(tmpdir, exist_ok=True)
     check_not_running(prev.get("target", ""), app["name"])
@@ -1050,6 +1064,7 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
     k = next((x for x in rec.get("kept", []) if x["version"] == version), None)
     if not k or not os.path.lexists(k["path"]):
         raise InstallError(f"{version} isn't kept")
+    portable = _where_it_is(rec, portable)
     check_not_running(rec.get("target", ""), app["name"])
     stored = json.loads(row["record"] or "{}")
     _check_before_placing(stored, app, portable, app_id_of(rec, app), rec["target"])
@@ -1076,6 +1091,7 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     rec = json.loads(row["record"] or "{}")
     if not rec.get("current") or OS != "linux":
         return rec
+    portable = _where_it_is(rec, portable)
     _activate(rec, app, portable, rec["target"])
     db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
     return rec
@@ -1093,13 +1109,19 @@ def remove_version(db: DB, url: str, version: str) -> None:
 
 
 def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
-              remove_sandbox: bool = False) -> None:
+              remove_sandbox: bool = False) -> list[str]:
     """Reverse what install recorded (R4.7). User data in the home folder is kept. A
     package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`.
-    `remove_sandbox`: also delete the app's private sandbox home (R17.14)."""
+    `remove_sandbox`: also delete the app's private sandbox home (R17.14).
+
+    Returns what the record names and is still there afterwards, for the caller to say: only what
+    is AppKata's is removed (a folder inside the install folder the app was installed into, a link
+    that leads there, R4.3.1.3), and a folder can fail to delete. The app's row goes either way,
+    and nothing said what stayed (CR1.3-12: every version of an app, once its record's root was
+    another folder)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (url,))
     if not row:
-        return
+        return []
     rec = json.loads(row["record"] or "{}")
     if rec.get("package"):
         # a dry run first: anything else it would remove is shown first, and some removals are refused
@@ -1131,12 +1153,16 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
             shutil.rmtree(f, ignore_errors=True)
         elif os.path.isfile(f) and os.path.basename(f).startswith("appkata-"):
             os.remove(f)
+    left = [p for p in dict.fromkeys(rec.get("files", []) + rec.get("links", [])) if os.path.lexists(p)]
+    if left:
+        log.warning("uninstalling %s left %s in place", row["name"], ", ".join(left))
     db.x("DELETE FROM installs WHERE url=?", (url,))
     if OS == "linux":                           # only once the app itself is gone, not before a step can fail
         app_id = app_id_of(rec, {"name": row["name"]})
         sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (R17.14)
         if remove_sandbox:
             sandbox.remove_sandbox_home(app_id)
+    return left
 
 
 def install_msvcrt() -> str:

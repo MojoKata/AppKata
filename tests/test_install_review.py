@@ -984,3 +984,96 @@ def test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_e
         assert entry.exists() is bool(libs) and (str(entry) in rec["files"]) is bool(libs)
     install.uninstall(env, APP["url"])
     assert _changed(nothing, _left(tmp_path, env)) == {}
+
+
+# ---------------------------------------------------------------- the install folder setting changes (CR1.3-12)
+
+def _inside(path, folder):
+    return (os.path.realpath(path) + os.sep).startswith(os.path.realpath(folder) + os.sep)
+
+
+def _version(server, kind, v):
+    """Version `v` of the test's app on the web server, as an AppImage or an archive."""
+    if kind == "appimage":
+        return _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
+    return _tarball(server, f"tool-{v}.tar.gz", {f"tool-{v}/tool": 0o755})
+
+
+@linux_only
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+@pytest.mark.parametrize("kind", ["appimage", "tarball"])
+@pytest.mark.parametrize("then", ["an update", "the same version again", "a kept version", "the next start"])
+def test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes(env, server, tmp_path, then, kind, sandboxed):
+    # CR1.3-12, the owner's decision: an installed app keeps its folder through its updates, and only
+    # a new install goes to the folder Settings names now. An update did keep the files where they
+    # were, but wrote the new folder into the record as the app's root: uninstalling then took the
+    # app's own folder for one outside its root and left every version on disk, saying nothing, and
+    # a sandboxed app's launcher went to <new folder>/<app>/run, away from its files and in no
+    # record. Every test installed, updated and uninstalled with one folder. The class is whatever
+    # AppKata does to an installed app after the setting changed -- an update, the same version
+    # again, a kept version, the launcher rewritten at a sandbox change or a start -- for both
+    # layouts, with a launcher and without: all of the app is where it was, the record says so,
+    # nothing is made in the new folder, and uninstalling leaves nothing.
+    from appkata_core import sandbox
+    nothing = _left(tmp_path, env)
+    old, new, cmd = tmp_path / "apps", tmp_path / "elsewhere", tmp_path / "cmd"
+    app = {**APP, **({"sandbox": sandbox.resolve_template("standard")} if sandboxed else {})}
+    was, now = install.Portable(folder=str(old), command_dir=str(cmd)), install.Portable(folder=str(new), command_dir=str(cmd))
+    for v in ("1.0", "1.1"):
+        a = _version(server, kind, v)
+        install.install(env, {**app, "installVersion": v}, a, kind, [a], portable=was)
+    a = _version(server, kind, "1.1" if then == "the same version again" else "2.0")
+    rec = {"an update": lambda: install.install(env, {**app, "installVersion": "2.0"}, a, kind, [a], portable=now),
+           "the same version again": lambda: install.install(env, {**app, "installVersion": "1.1"}, a, kind, [a], portable=now),
+           "a kept version": lambda: install.switch_to(env, dict(app), "1.0", now),
+           "the next start": lambda: install.rewrite_launcher(env, dict(app), now)}[then]()
+    home = old / "demo-tool"
+    assert not os.path.lexists(new)
+    assert (rec["root"], rec["target"]) == (str(old), str(home))
+    assert rec["current"]["version"] == {"an update": "2.0", "a kept version": "1.0"}.get(then, "1.1")
+    its = [rec["current"]["path"], rec["exec"], *(k["path"] for k in rec["kept"]), *(l for l in rec["links"] if os.path.dirname(l) != str(cmd)),
+           *(f for f in rec["files"] if not f.endswith(".desktop"))]
+    assert all(_inside(p, home) or p == str(home) for p in its) and all(os.path.lexists(p) for p in its), its
+    assert _inside(cmd / "demo-tool", home)                    # the command link leads to the app where it is
+    assert (rec.get("launcher") == str(home / "run")) is sandboxed and os.path.exists(home / "run") is sandboxed
+    if sandboxed:               # and it is the launcher AppKata would write: the next start has nothing to rewrite
+        assert rec["exec"] == rec["launcher"] and install.launcher_is_current(rec, app, now)
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    # a new install goes to the folder Settings names now
+    b = _appimage(server, "Other-1.0-x86_64.AppImage", b"other")
+    other = install.install(env, {**APP, "url": APP["url"] + "-other", "name": "Other"}, b, "appimage", [b], portable=now)
+    assert (other["root"], other["target"]) == (str(new), str(new / "other")) and _inside(other["exec"], new / "other")
+    # and each is uninstalled from where it is, every version, with nothing to report
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == [] and install.uninstall(env, APP["url"] + "-other") == []
+    assert not os.path.lexists(home) and not os.path.lexists(new / "other")
+    left = _changed(nothing, _left(tmp_path, env))
+    assert all(k.startswith(os.path.join("data", "sandboxes", ".owners")) for k in left), left      # whose a kept home is (R17.14)
+
+
+@linux_only
+@pytest.mark.parametrize("left", ["the app's folder", "what the user put where the command link was"])
+def test_uninstalling_says_what_it_did_not_remove(env, server, tmp_path, monkeypatch, left):
+    # CR1.3-12's other half: uninstalling skipped a folder that wasn't inside the record's root and
+    # deleted the app's row with no word of it, so nothing AppKata showed knew of the files again.
+    # It still removes only what is AppKata's (a folder inside the install folder the app was
+    # installed into, a link that leads there), and now returns what the record names and is still
+    # there, which the notice names: a folder that couldn't be deleted, and the user's own file
+    # where the command link was (R4.3.1.3: "uninstalling leaves it").
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"1.0")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "appimage", [a], portable=p)
+    home, link = tmp_path / "apps" / "demo-tool", tmp_path / "cmd" / "demo-tool"
+    if left == "the app's folder":
+        monkeypatch.setattr(install.shutil, "rmtree", lambda *a, **k: None)          # as a folder that can't be deleted
+    else:
+        link.unlink()
+        link.write_text("mine")
+    want = home if left == "the app's folder" else link
+    assert install.uninstall(env, APP["url"]) == [str(want)]
+    assert env.one("SELECT * FROM installs") is None and os.path.lexists(want)
+    assert os.path.lexists(home) is (want == home) and os.path.lexists(link) is (want == link)
+    assert not os.path.lexists(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop")
+    pytest.importorskip("PySide6")                              # the notice is the backend's; the Windows run has none
+    from appkata.backend import Backend
+    assert Backend._left_note([str(want)]) == f" Not removed: {want}." and Backend._left_note([]) == ""
+    assert Backend._left_note(["/a", "/b"]) == " Not removed: /a, /b."

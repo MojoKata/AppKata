@@ -774,7 +774,7 @@ class Backend(QObject):
         out["updates"] = saved.get("updates", "")
         out["distro"] = self.ch.distro if self.ch.enabled else ""
         eff, rec = self._app_options(url), self._recommended(url)
-        out["portable"] = {"folder": p.root, "appMenu": eff.app_menu, "commandLink": bool(eff.command_dir),
+        out["portable"] = {"folder": eff.root, "appMenu": eff.app_menu, "commandLink": bool(eff.command_dir),
                            "stableName": eff.stable_name, "commandDir": self._prefs.get("commandDir") or "~/bin",
                            "command": self._app_id(url), "commandRefusal": self._command_link_refusal(url), "keep": p.keep,
                            "recommendedBy": rec.get("by", "") if not saved else ""}
@@ -1205,10 +1205,10 @@ class Backend(QObject):
         def work():
             try:
                 ver = a["installed"] if a else ""
-                install.uninstall(self.db, url, confirmed=confirmed, remove_sandbox=remove_home)
+                left = install.uninstall(self.db, url, confirmed=confirmed, remove_sandbox=remove_home)
                 self._pin_sandbox(url, None)        # a reinstall resolves its sandbox afresh (R17.11)
                 self._audit("you", "app", "uninstalled", a["name"] if a else url, url, {"version": ver})
-                self._toast.emit("info", f"{a['name'] if a else 'App'} uninstalled.")
+                self._toast.emit("info", f"{a['name'] if a else 'App'} uninstalled.{self._left_note(left)}")
             except NeedsConfirmation as e:          # it would remove other packages too (R16.4.3)
                 self._planConfirm.emit({"url": url, "name": a["name"] if a else "", "action": "uninstall", "lines": list(e.lines)})
             except Refused as e:
@@ -1409,13 +1409,16 @@ class Backend(QObject):
         if url == APPKATA_REPO:
             self.toast.emit("error", "AppKata's own Source is built in.")
             return
+        left = []
         if and_uninstall:
             try:
-                install.uninstall(self.db, url)
+                left = install.uninstall(self.db, url)
             except install.InstallError as e:
                 self.toast.emit("error", str(e))
                 return
         a = self._app(url)
+        if left:                                    # what the uninstall didn't remove is said here too (R4.7)
+            self.toast.emit("info", f"{a['name'] if a else 'The app'} uninstalled.{self._left_note(left)}")
         self.db.x("DELETE FROM sources WHERE url=?", (url,))
         self._audit("you", "source", "removed", a["name"] if a else url, url, {"uninstalled": True} if and_uninstall else None)
         if and_uninstall:
@@ -1713,6 +1716,10 @@ class Backend(QObject):
         rec = json.loads(row["record"] or "{}") if row else {}
         p.scope = own.get("scope") or rec.get("scope") or p.scope
         p.motw = bool(own.get("motw", rec.get("motw", False)))
+        # an installed app keeps the folder it is in, whatever Settings names now (R4.3.1): the
+        # dialog's "Installs to", the folders a sandbox never shares and the launcher all mean it
+        if rec.get("current") and rec.get("root"):
+            p.folder = p.folder_everyone = rec["root"]
         return p
 
     def _command_refused(self, url: str) -> str:
@@ -1744,6 +1751,14 @@ class Backend(QObject):
         """What an install's notice adds when it made no command link (R4.3.1.3): the reason, said
         when it is news -- a first install, or a reason that changed -- and not at every update."""
         return f" No command was added: {why}." if why and why != before else ""
+
+    @staticmethod
+    def _left_note(left: list[str]) -> str:
+        """What an uninstall's notice adds when something the app's record names is still there
+        (R4.7): a folder that isn't AppKata's to remove or couldn't be deleted, the user's own file
+        where a command link was (R4.3.1.3). The app's row is gone by then, so this is the one
+        place it is said (CR1.3-12)."""
+        return f" Not removed: {', '.join(left)}." if left else ""
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:
         """Copy the options an app was installed with into its own settings (R4.3.1.6)."""

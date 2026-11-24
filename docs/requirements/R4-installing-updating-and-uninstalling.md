@@ -56,8 +56,9 @@ The install folder and the command links folder (R4.3.1.3) are read the same way
 is the user's home folder, and environment variables are filled in (`$HOME/bin`; on Windows
 `%LOCALAPPDATA%\Programs` too).
 
-No elevation is needed. Changing the install folder applies to new installs and updates; apps
-already installed stay where they are until they're updated or reinstalled.
+No elevation is needed. Changing the install folder applies to new installs: an app already
+installed stays in the folder it is in through its updates, and is uninstalled from there. It goes
+to the new folder only when it is uninstalled and installed again.
 
 R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desktop` entry on
 Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a
@@ -158,7 +159,10 @@ after an update, or a switch to a kept version, the version that was current sti
 links, its launcher and its app-menu entry.
 
 R4.7. **Uninstalling** reverses what AppKata recorded at install (R4.1), after a confirmation.
-User data in the home folder is kept.
+User data in the home folder is kept. What AppKata recorded and didn't remove is named in the
+notice ("<App> uninstalled. Not removed: <path>."): a folder that is no longer inside the install
+folder the app was installed into or that couldn't be deleted, and something of the user's where
+a command link was (R4.3.1.3).
 
 R4.8. **Install progress.**
 
