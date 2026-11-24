@@ -1445,13 +1445,29 @@ _WATCHER_PROPERTIES = ("org.freedesktop.DBus.Properties.Get", "org.freedesktop.D
 # locked the screen), and GNOME's and Cinnamon's screensaver proxies declare them and answer
 # NotSupported to all but the pair. An app keeping the screen awake makes those two calls alone.
 _INHIBIT_MEMBERS = ("Inhibit", "UnInhibit")
+
+# Saved passwords opens the Secret Service alone (CR1.5-43): its five interfaces on its object tree
+# (the service at /org/freedesktop/secrets, and below it, as the specification puts them, the
+# collections and their aliases, the items, sessions and prompts), the property calls clients make
+# (libsecret reads every property through Properties and sets an item's label with Set), the listing,
+# and the service's broadcast signals: a changed collection or item, and a prompt's Completed for a
+# service that broadcasts it (gnome-keyring sends it to the caller alone, which always passes). Not
+# `--talk=org.freedesktop.secrets`: gnome-keyring's connection also serves its own daemon interface
+# (the session's SSH agent socket and control folder), its master-password interface on the
+# service's own object, and the Secret portal's backend, which an app reached through that word.
+_SECRETS, _SECRETS_TREE = "org.freedesktop.secrets", "/org/freedesktop/secrets/*"
+_SECRET_INTERFACES = tuple(f"org.freedesktop.Secret.{i}" for i in ("Service", "Collection", "Item", "Session", "Prompt"))
+_SECRET_SERVICE_RULES = [*(f"--call={_SECRETS}={i}.*@{_SECRETS_TREE}" for i in _SECRET_INTERFACES),
+                         *(f"--call={_SECRETS}=org.freedesktop.DBus.{i}.*@{_SECRETS_TREE}" for i in ("Properties", "Introspectable")),
+                         *(f"--broadcast={_SECRETS}={i}.*@{_SECRETS_TREE}" for i in _SECRET_INTERFACES if not i.endswith(("Item", "Session"))),
+                         f"--broadcast={_SECRETS}=org.freedesktop.DBus.Properties.PropertiesChanged@{_SECRETS_TREE}"]
 CAP_PROXY_ARGS = {
     "notifications": [_portal_call("Notification"), *_service_rules("org.freedesktop.Notifications", "/org/freedesktop/Notifications")],
     "inhibit": [_portal_call("Inhibit"), *_service_rules("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "/ScreenSaver",
                                                          members=_INHIBIT_MEMBERS, signals=False)],
     "tray": [*_service_rules("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", also=_WATCHER_PROPERTIES), *_TRAY_OWNS],
     "mpris": ["--own=org.mpris.MediaPlayer2.*"],
-    "secrets": ["--talk=org.freedesktop.secrets"],
+    "secrets": _SECRET_SERVICE_RULES,
     "secrets-provide": ["--own=org.freedesktop.secrets"],
 }
 

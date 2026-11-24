@@ -507,10 +507,6 @@ def test_proxy_args_map_capabilities():
 OPENED_WHOLE = {
     "org.freedesktop.portal.IBus": "IBus 1.5.29's ibus-portal: a process and connection of its own, with the portal object alone",
     "org.freedesktop.portal.Fcitx": "Fcitx 5.1.7: a connection of its own, with the input-method objects alone",
-    # only the user gives it, and it is every unlocked password already (A1.2.3.14); wider than its
-    # name all the same: gnome-keyring 46.1's connection also owns org.gnome.keyring and serves its own
-    # daemon and master-password interfaces and the Secret portal's backend. Not narrowed yet.
-    "org.freedesktop.secrets": "the keyring, which has no per-app walls",
 }
 
 
@@ -548,6 +544,25 @@ def test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_l
     # an app without a capability has none of its rules, on either road
     plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")
     assert not [a for a in plain for name, *_ in services.values() if name in a]
+
+
+def test_saved_passwords_open_the_secret_service_alone():
+    # CR1.5-43: Saved passwords opened org.freedesktop.secrets whole (`--talk`), and gnome-keyring's
+    # connection serves more than the Secret Service on it: its daemon interface (the session's SSH
+    # agent socket and control folder), its master-password interface beside the service on the
+    # service's own object, and the Secret portal's backend. The Secret Service's five interfaces
+    # are opened on its object tree alone (the service, and below it the collections and aliases,
+    # items, sessions and prompts), with the property calls and the listing clients make, and the
+    # service's own signals.
+    name, tree = "org.freedesktop.secrets", "/org/freedesktop/secrets/*"
+    secret = [f"org.freedesktop.Secret.{i}" for i in ("Service", "Collection", "Item", "Session", "Prompt")]
+    want = {f"--call={name}={i}.*@{tree}" for i in [*secret, "org.freedesktop.DBus.Properties", "org.freedesktop.DBus.Introspectable"]}
+    want |= {f"--broadcast={name}={i}.*@{tree}" for i in secret[:2] + secret[4:]}
+    want.add(f"--broadcast={name}=org.freedesktop.DBus.Properties.PropertiesChanged@{tree}")
+    assert set(sb.CAP_PROXY_ARGS["secrets"]) == want
+    args = sb.proxy_args(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets"]}), "keys")
+    assert {a for a in args if name in a} == want and not [a for a in args if "org.gnome.keyring" in a or "impl.portal" in a]
+    assert not [a for a in sb.proxy_args(sb.resolve_template("standard"), "plain") if name in a]       # none without it
 
 
 def test_the_notification_and_inhibit_portals_come_with_their_capabilities():

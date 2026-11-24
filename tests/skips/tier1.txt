@@ -94,6 +94,7 @@ tests/test_sandbox_run.py::test_no_launcher_file_descriptors_leak_into_the_app  
 tests/test_sandbox_run.py::test_no_network_grant_means_no_network  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves  # needs gnome-keyring
 tests/test_sandbox_run.py::test_simultaneous_first_launches_both_start  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_reach_the_filtered_bus_when_there_is_one  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[dbus-run-session]  # needs xdg-dbus-proxy and dbus-daemon

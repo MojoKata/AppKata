@@ -2406,6 +2406,138 @@ def test_a_password_service_app_serves_a_host_client_only_with_the_provide_capab
     assert "NOT-OWNED" in out2 and "ASKED" not in out2 and "session/s1" not in c2.stdout, (out2, c2.stdout)
 
 
+# A keyring client, run inside the sandbox: libsecret by ctypes, as Chromium, Electron and QtKeychain
+# use it (store, lookup, a search that unlocks and loads secrets, a relabel, a clear), then
+# secretstorage (jeepney's, the Python `keyring` package's: store, search, relabel, delete, lock,
+# and an unlock whose prompt must complete), then what else the keyring's connection serves.
+_KEYRING_PROBE = """
+import ctypes, sys
+def say(*a): print(*a, flush=True)
+try:
+    ls = ctypes.CDLL("libsecret-1.so.0"); gl = ctypes.CDLL("libglib-2.0.so.0")
+except OSError:
+    ls = None; say("LIBSECRET absent")
+class Attr(ctypes.Structure): _fields_ = [("name", ctypes.c_char_p), ("type", ctypes.c_int)]
+class Schema(ctypes.Structure):
+    _fields_ = [("name", ctypes.c_char_p), ("flags", ctypes.c_int), ("attributes", Attr * 32), ("reserved", ctypes.c_int)] + [(f"r{i}", ctypes.c_void_p) for i in range(1, 8)]
+class GError(ctypes.Structure): _fields_ = [("domain", ctypes.c_uint32), ("code", ctypes.c_int), ("message", ctypes.c_char_p)]
+schema = Schema(); schema.name = b"org.appkata.Probe"; schema.attributes[0] = Attr(b"app", 0)
+def why(e): return ctypes.cast(e, ctypes.POINTER(GError)).contents.message.decode() if e.value else "no error"
+if ls:
+    e = ctypes.c_void_p()
+    ok = ls.secret_password_store_sync(ctypes.byref(schema), b"default", b"AppKata probe", b"s3cret-1", None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET store", "OK" if ok else "FAIL " + why(e))
+    e = ctypes.c_void_p(); ls.secret_password_lookup_sync.restype = ctypes.c_char_p
+    pw = ls.secret_password_lookup_sync(ctypes.byref(schema), None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET lookup", "OK" if pw == b"s3cret-1" else f"FAIL {pw} {why(e)}")
+    ht = gl.g_hash_table_new(ctypes.cast(gl.g_str_hash, ctypes.c_void_p), ctypes.cast(gl.g_str_equal, ctypes.c_void_p))
+    gl.g_hash_table_insert(ctypes.c_void_p(ht), b"app", b"probe")
+    for f, t in (("secret_service_search_sync", ctypes.c_void_p), ("secret_item_get_secret", ctypes.c_void_p), ("secret_value_get_text", ctypes.c_char_p)):
+        getattr(ls, f).restype = t
+    gl.g_list_nth_data.restype = ctypes.c_void_p
+    e = ctypes.c_void_p()             # SECRET_SEARCH_ALL | UNLOCK | LOAD_SECRETS, as Chromium's OSCrypt searches
+    found = ls.secret_service_search_sync(None, ctypes.byref(schema), ctypes.c_void_p(ht), 2 | 4 | 8, None, ctypes.byref(e))
+    item = gl.g_list_nth_data(ctypes.c_void_p(found), 0) if found else None
+    value = ls.secret_item_get_secret(ctypes.c_void_p(item)) if item else None
+    say("LIBSECRET search", "OK" if value and ls.secret_value_get_text(ctypes.c_void_p(value)) == b"s3cret-1" else "FAIL " + why(e))
+    e = ctypes.c_void_p()
+    ok = item and ls.secret_item_set_label_sync(ctypes.c_void_p(item), b"AppKata probe, renamed", None, ctypes.byref(e))
+    say("LIBSECRET relabel", "OK" if ok else "FAIL " + why(e))
+    e = ctypes.c_void_p()
+    ok = ls.secret_password_clear_sync(ctypes.byref(schema), None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET clear", "OK" if ok else "FAIL " + why(e))
+try:
+    import secretstorage
+except ImportError:
+    secretstorage = None; say("SECRETSTORAGE absent")
+if secretstorage:
+    try:
+        conn = secretstorage.dbus_init()
+        col = secretstorage.get_default_collection(conn)
+        col.create_item("AppKata probe 2", {"app": "probe2"}, b"s3cret-2", replace=True)
+        item = next(col.search_items({"app": "probe2"}))
+        say("SECRETSTORAGE store", "OK" if item.get_secret() == b"s3cret-2" and item.get_attributes()["app"] == "probe2" else "FAIL")
+        item.set_label("AppKata probe 2, renamed")
+        say("SECRETSTORAGE relabel", "OK" if item.get_label().endswith("renamed") else "FAIL")
+        item.delete(); say("SECRETSTORAGE delete OK")
+        col.lock()
+        say("SECRETSTORAGE unlock", "OK, the prompt completed" if col.is_locked() and col.unlock() in (True, False) else "FAIL")
+    except Exception as ex:
+        say("SECRETSTORAGE FAIL", type(ex).__name__, ex)
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+def ask(what, dest, path, iface, method, args=None):
+    try:
+        bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+        say("OTHER", what, "ANSWERED")
+    except GLib.Error as e:
+        say("OTHER", what, "REFUSED", Gio.DBusError.get_remote_error(e))
+try:
+    owner = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", GLib.Variant("(s)", ("org.freedesktop.secrets",)),
+                          None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+except GLib.Error as e:
+    owner = None; say("OWNER HIDDEN", Gio.DBusError.get_remote_error(e))
+guilt = "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface"
+login = "/org/freedesktop/secrets/collection/login"
+for road, dest in (("name", "org.freedesktop.secrets"), ("owner", owner), ("keyring", "org.gnome.keyring")):
+    if not dest:
+        continue
+    ask(f"{road} GetEnvironment", dest, "/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon", "GetEnvironment")
+    ask(f"{road} GetControlDirectory", dest, "/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon", "GetControlDirectory")
+    ask(f"{road} UnlockWithMasterPassword", dest, "/org/freedesktop/secrets", guilt, "UnlockWithMasterPassword",
+        GLib.Variant("(o(oayays))", (login, ("/", b"", b"x", "text/plain"))))
+    ask(f"{road} ChangeWithPrompt", dest, "/org/freedesktop/secrets", guilt, "ChangeWithPrompt", GLib.Variant("(o)", (login,)))
+    ask(f"{road} RetrieveSecret", dest, "/org/freedesktop/portal/desktop", "org.freedesktop.impl.portal.Secret", "RetrieveSecret",
+        GLib.Variant("(osa{sv}h)", ("/r/1", "io.appkata.x", {}, 0)))
+"""
+
+
+@needs_proxy
+@pytest.mark.skipif(not shutil.which("gnome-keyring-daemon"), reason="needs gnome-keyring")
+def test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves(env, tmp_path):
+    # CR1.5-43: Saved passwords passed `--talk=org.freedesktop.secrets`, which xdg-dbus-proxy gives to
+    # the connection owning the name (CR1.5-3): gnome-keyring's, with its daemon interface (the
+    # session's SSH agent socket and control folder), its master-password interface and the Secret
+    # portal's backend beside the secret service. Real clients through the filter, against a real
+    # keyring, unlocked as a login leaves it: they keep working, and the rest is refused by every road.
+    bus = _Bus(env)
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    keyring = subprocess.Popen(["gnome-keyring-daemon", "--unlock", "--components=secrets", "--foreground"], env=on_bus,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    keyring.stdin.write(b"login-password")
+    keyring.stdin.close()
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            subprocess.run(["sleep", "0.1"])
+        for app_id in ("keys", "nokeys"):
+            d = env.home / "apps" / app_id / "1.0" / "bin"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "probe.py").write_text(_KEYRING_PROBE)
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets"]})
+        probe = 'python3 "$(dirname "$0")/probe.py"'
+        r = env.run(env.app("keys", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=90)
+        r2 = env.run(env.app("nokeys", sb.apply_overrides(gs, {"caps": []})), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=90)
+    finally:
+        keyring.terminate()
+        keyring.wait()
+        bus.close()
+    out = r.stdout.splitlines()
+    clients = [l for l in out if l.startswith(("LIBSECRET", "SECRETSTORAGE"))]
+    assert [l for l in clients if not l.endswith("absent")], (r.stdout, r.stderr)                  # one client at least
+    assert not [l for l in clients if "FAIL" in l], (r.stdout, r.stderr)                           # each works through the filter
+    others = [l for l in out if l.startswith("OTHER")]
+    assert len(others) >= 10 and not [l for l in others if "ANSWERED" in l], r.stdout             # name and owner, five calls each
+    assert not [l for l in others if not l.startswith("OTHER keyring") and not l.endswith("org.freedesktop.DBus.Error.AccessDenied")], r.stdout
+    out2 = r2.stdout.splitlines()                                                                     # and without the capability, no keyring
+    assert not [l for l in out2 if "ANSWERED" in l or l.startswith(("LIBSECRET", "SECRETSTORAGE")) and "FAIL" not in l and not l.endswith("absent")], \
+        (r2.stdout, r2.stderr)
+    assert "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, r2.stdout
+
+
 def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):
     # The launcher serializes first launches on flock where present and goes on without it; a PATH
     # with everything the launcher runs except flock shows the "without".
