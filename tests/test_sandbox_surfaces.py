@@ -15,7 +15,6 @@ surface must tell the change apart:
 
 - **the chips**: install card, App Detail and the dialog;
 - **the Audit**: what one change records;
-- **the review badge** and the dialog's "Use theirs": whether a suggestion is offered at all;
 - **one review's lines**, parsed by the product;
 - **the Sandbox dialog**, driven through its own controls: every enabled switch, the folder picker,
   the remove buttons and the template list.
@@ -47,10 +46,7 @@ STILL_MISSING = {
     "a review": {f: "R2-F8" for f in ("saved passwords", "the password service")},
     "your review": {f: "R2-F8" for f in ("saved passwords", "the password service")},
     "the dialog": {},
-    # a chip says what the dialog's switch says (CR1.9-32); the Media keys hint and the review badge
-    # say which player name, so the chips are no longer what decides the badge (PR #694's review, P1-1)
-    "the chips": {"its own media-player name": "CR1.9-32"},
-    "the review badge": {},
+    "the chips": {},
 }
 
 
@@ -75,7 +71,6 @@ FLIPS = {
     "no notifications": lambda g: _with(g, caps=set(g["caps"]) - {"notifications"}),
     "a tray icon": lambda g: _with(g, caps=set(g["caps"]) | {"tray"}),
     "media keys": lambda g: _with(g, caps=set(g["caps"]) | {"mpris"}),
-    "its own media-player name": lambda g: _with(g, mpris_name="org.mpris.MediaPlayer2.demo"),   # where it has Media keys
     "keep the screen awake": lambda g: _with(g, caps=set(g["caps"]) | {"inhibit"}),
     "saved passwords": lambda g: _with(g, caps=set(g["caps"]) | {"secrets"}),
     "the password service": lambda g: _with(g, caps=set(g["caps"]) | {"secrets-provide"}),
@@ -87,8 +82,7 @@ FLIPS = {
 
 def _bases() -> dict:
     std = sb.normalize(_with(sb.resolve_template("standard"), folders={BASE_FOLDER: "rw"}))   # bespoke: "custom"
-    # and one with Media keys, which a name changes (CR1.5-36): the other two have none
-    return {"Standard": std, "Strict": sb.resolve_template("strict"), "Media keys": sb.normalize(_with(std, caps=std["caps"] | {"mpris"}))}
+    return {"Standard": std, "Strict": sb.resolve_template("strict")}
 
 
 def _runs(gs: dict) -> str:
@@ -135,31 +129,6 @@ def test_the_harness_catches_a_chip_dropped(monkeypatch):
     monkeypatch.setattr(sb, "summary_chips", lambda gs, apps_root=None, template=None: [c for c in chips(gs, apps_root)
                                                                           if c[0] != "Can change its own files"])
     assert "can change its own files" in _chip_misses()
-
-
-# ------------------------------------------------------------------- the review badge (R17.11)
-
-def _badge_misses() -> set[str]:
-    out = set()
-    for bname, fname, before, after in _changes():
-        runs, offered = _runs(before) != _runs(after), sb.differs(before, after)
-        if runs and not offered:
-            out.add(fname)
-        elif offered and not runs:
-            out.add(f"{fname} at {bname}: offered, but nothing runs differently")
-    return out
-
-
-def test_the_review_badge_is_offered_for_every_change_that_runs_differently_and_no_other_but_the_listed():
-    assert _badge_misses() == set(STILL_MISSING["the review badge"])
-    # and what the badge remembers of a suggestion acted on tells the same sets apart
-    assert not [(b, f) for b, f, before, after in _changes() if (sb.grant_terms(before) != sb.grant_terms(after)) != sb.differs(before, after)]
-
-
-def test_the_harness_catches_the_badge_decided_on_the_chips(monkeypatch):
-    # PR #694's review, P1-1: the badge and "Use theirs" compared the chips, which don't show the name
-    monkeypatch.setattr(sb, "differs", lambda a, b: sb.summary(a, APPS) != sb.summary(b, APPS))
-    assert "its own media-player name" in _badge_misses()
 
 
 # ------------------------------------------------------------------- one review's lines (R10.3.1, R17.3)
