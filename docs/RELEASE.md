@@ -256,6 +256,14 @@ a pull request for you to merge ([`RELEASE_AGENT.md`](RELEASE_AGENT.md), 3).
   gh run rerun 41383071163 --failed --repo MojoKata/AppKata     # your run number, from the "run …" line
   scripts/publish.sh resume
   ```
+- **The run's `release` job failed** (its last job, after the signing): it can leave a draft that
+  holds only some of the files, since `gh release create --draft` keeps a draft whose upload failed,
+  and a later run of the job doesn't replace it. See whether it did, and delete that draft by hand
+  before the job is run again; the tag stays:
+  ```sh
+  gh release view v0.2.0 --repo MojoKata/AppKata       # "release not found": there is no draft to delete
+  gh release delete v0.2.0 --repo MojoKata/AppKata     # the draft alone: without --cleanup-tag, the tag stays
+  ```
 - **You answered `n`** to a question: nothing after it happened. Run the same command again.
 
 ## 8. What `publish.sh` does

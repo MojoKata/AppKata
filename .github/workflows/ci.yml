@@ -357,7 +357,9 @@ jobs:
           path: out/AppKata-*-x86_64.AppImage.asc
           if-no-files-found: error
 
-  # a v* tag only: a draft release of every file; the owner publishes it (scripts/publish.sh)
+  # a v* tag only: a draft release of the five release files, each by name, from the three artifacts
+  # that hold them; the owner publishes it (scripts/publish.sh, whose verify wants exactly these five:
+  # tests/test_workflows.py holds this job to it)
   release:
     if: github.ref_type == 'tag'
     needs: [sign]
@@ -366,15 +368,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      # each by its name, never the whole run: the run also keeps the coverage report, the site and the
+      # tour, and a download that names nothing takes them all
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
+          name: appimage
           path: out
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: windows
+          path: out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: signature
+          path: out
       - working-directory: out
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l
-          sha256sum -c ./*.sha256
+          v=${GITHUB_REF_NAME#v}
+          sha256sum -c "AppKata-$v-x86_64.AppImage.sha256" "AppKata-$v-setup.exe.sha256"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-            --title "AppKata ${GITHUB_REF_NAME#v}" --generate-notes ./*
+            --title "AppKata $v" --generate-notes \
+            "AppKata-$v-x86_64.AppImage" "AppKata-$v-x86_64.AppImage.sha256" "AppKata-$v-x86_64.AppImage.asc" \
+            "AppKata-$v-setup.exe" "AppKata-$v-setup.exe.sha256"
