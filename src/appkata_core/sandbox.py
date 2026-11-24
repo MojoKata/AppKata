@@ -1231,8 +1231,14 @@ def identity_path(app_id: str) -> str:
     the app can write anything in its home, so a marker there could be swapped for a symlink to a
     host file (bwrap resolves bind sources on the host side, so that file would be bound read-only at
     /.flatpak-info for the app to read, and the next regeneration would overwrite it). The sandbox
-    never sees this folder."""
-    return os.path.join(sandboxes_root(), ".identity", app_id)
+    never sees this folder.
+
+    The markers have a folder of their own, `.identity/apps/`: a marker is named by the app's id,
+    which is whatever the app's name makes it, and `.identity/` also holds AppKata's own files under
+    fixed names (the shims' folder `bin`, the seccomp filter, the file-argument helper). Side by
+    side, an app named "bin" had the shims' folder for its marker: its launcher couldn't be written,
+    or, installed first, no app's could (CR1.5-13)."""
+    return os.path.join(sandboxes_root(), ".identity", "apps", app_id)
 
 
 def write_flatpak_info(app_id: str, network: bool = False) -> str:
@@ -1250,7 +1256,8 @@ def write_flatpak_info(app_id: str, network: bool = False) -> str:
     if os.path.lexists(legacy):
         os.unlink(legacy)
     path = identity_path(app_id)
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    for folder in (os.path.dirname(os.path.dirname(path)), os.path.dirname(path)):       # .identity, then its apps/
+        os.makedirs(folder, mode=0o700, exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     if os.path.lexists(tmp):
         os.unlink(tmp)
@@ -1270,7 +1277,7 @@ def flatpak_info_text(app_id: str, network: bool = False) -> str:
 
 def remove_identity(app_id: str) -> None:
     """Remove the app's identity marker: it belongs with the launcher, not with the private home, so
-    an uninstall that keeps the home (R17.14) leaves nothing behind in `.identity/` (round two, R10)."""
+    an uninstall that keeps the home (R17.14) leaves nothing behind in `.identity/apps/` (round two, R10)."""
     if os.path.lexists(identity_path(app_id)):
         os.unlink(identity_path(app_id))
 

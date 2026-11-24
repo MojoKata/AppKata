@@ -7,7 +7,7 @@ PATH=/usr/local/bin:/usr/bin:/bin; export PATH
 id=io.appkata.app
 rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 home=/home/kata/.local/share/appkata/sandboxes/app
-info=/home/kata/.local/share/appkata/sandboxes/.identity/app
+info=/home/kata/.local/share/appkata/sandboxes/.identity/apps/app
 appdir=/home/kata/bin/apps/app/1.0
 exe=bin/app
 # Without a session runtime folder (no logind session: ssh without one, cron, a bare container)

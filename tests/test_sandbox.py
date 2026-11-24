@@ -609,6 +609,52 @@ def test_uninstall_keeping_the_home_still_removes_the_identity_marker(tmp_path, 
     assert os.path.isdir(home) and not os.path.lexists(sb.identity_path("demo"))     # ... the marker is not
 
 
+# Every name AppKata's own files have beside the per-app ones, and names an app could be given to meet them
+COLLIDING_NAMES = ["bin", "Bin", "BIN!", "apps", "seccomp-tty.bpf", "forward-files.py", "xdg-open", ".identity", ".owners",
+                   "identity", "owners", "run", "tmp", "1"]
+
+
+@pytest.mark.parametrize("name", COLLIDING_NAMES)
+@pytest.mark.parametrize("first", [True, False], ids=["the-first-app", "after-another"])
+def test_no_app_name_takes_the_place_of_a_file_appkata_keeps_for_every_app(name, first, tmp_path, monkeypatch):
+    # CR1.5-13: every app's marker was .identity/<id>, and the shims' folder .identity/bin beside
+    # them. An app named "bin" -- its id is the name's slug -- installed after any other couldn't
+    # have its launcher written (a file renamed over a folder, and a .tmp left behind); installed
+    # first, its marker took the name and no app's launcher could be written again. How it slipped
+    # past: no test gave an app a name that AppKata uses itself. The class is every file an app's id
+    # names, against every file AppKata writes for all apps: here each is written, both orders, for
+    # ids that are AppKata's own file names, and all of them are still there, each what it should be.
+    from appkata_core.install import slug
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    app_id = slug(name)
+    gs, apps = sb.resolve_template("online-app"), str(tmp_path / "apps")
+    order = [app_id, "other"] if first else ["other", app_id]
+    launchers = {i: sb.write_launcher(i, i.title(), apps, f"{apps}/{i}/1", f"bin/{i}", gs) for i in order}
+    for i in order:
+        sb.record_home_owner(i, f"https://example.org/{i}")
+        os.makedirs(sb.sandbox_home(i), exist_ok=True)
+        assert open(launchers[i]).read() == sb.launcher_text(i, i.title(), apps, f"{apps}/{i}/1", f"bin/{i}", gs)
+        assert open(sb.identity_path(i)).read() == sb.flatpak_info_text(i, True)
+        assert sb.helpers_current(i, gs)                           # the marker, the shim, the helper, the filter
+        assert not sb.home_belongs_to_another(i, f"https://example.org/{i}")
+    assert os.path.isdir(sb.shims_dir()) and os.access(os.path.join(sb.shims_dir(), "xdg-open"), os.X_OK)
+    left = [os.path.join(d, f) for d, _, fs in os.walk(tmp_path) for f in fs if f.endswith(".tmp")]
+    assert left == []                                              # nothing half-written is left behind
+    # ... and the layout that makes it so: a folder for the markers alone, a folder for the owner
+    # records alone, and no id that could be one of the names beside the private homes
+    shared = [sb.shims_dir(), sb.seccomp_path(), sb.forward_path()]
+    assert all(os.path.dirname(sb.identity_path(app_id)) not in (f, os.path.dirname(f)) for f in shared)
+    assert os.path.dirname(sb.identity_path(app_id)) == os.path.dirname(sb.identity_path("other"))
+    assert os.path.dirname(sb.home_owner_path(app_id)) not in [os.path.dirname(f) for f in shared]
+    assert re.fullmatch(r"[a-z0-9-]+", app_id) and os.path.dirname(sb.sandbox_home(app_id)) == sb.sandboxes_root()
+    # the marker's folders are the user's alone, as .identity was when the markers were directly in it
+    for folder in (os.path.dirname(sb.identity_path(app_id)), os.path.dirname(os.path.dirname(sb.identity_path(app_id)))):
+        assert os.stat(folder).st_mode & 0o777 == 0o700, folder
+    sb.remove_sandbox_home(app_id)                                 # an uninstall takes the app's files and no other's
+    assert not os.path.lexists(sb.identity_path(app_id)) and os.path.exists(sb.identity_path("other"))
+    assert sb.helpers_current("other", gs)
+
+
 def test_removing_a_kept_appimage_version_drops_its_whole_cache(tmp_path):
     from appkata_core import install
     img = tmp_path / "App-1.0.AppImage"

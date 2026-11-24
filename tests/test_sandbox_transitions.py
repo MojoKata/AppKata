@@ -68,11 +68,11 @@ def sandboxed(be, tmp_path, monkeypatch):
 
 def test_off_and_back_on_leaves_the_tree_and_the_rows_as_they_were(be, sandboxed):
     before = snapshot(be, sandboxed)
-    assert any(k.endswith("/run") for k in before) and any(".identity/demo" in k for k in before)
+    assert any(k.endswith("/run") for k in before) and any(".identity/apps/demo" in k for k in before)
     be.setSandbox(URL, {"template": "off"})
     off = snapshot(be, sandboxed)
     gone = {k for k in before if k not in off}
-    assert gone == {k for k in before if k.endswith("/run") or ".identity/demo" in k}, gone     # R4-7: the marker goes with the launcher
+    assert gone == {k for k in before if k.endswith("/run") or ".identity/apps/demo" in k}, gone     # R4-7: the marker goes with the launcher
     be.setSandbox(URL, None)                                                                   # back to the reviewers' suggestion
     after = snapshot(be, sandboxed)
     changed = diff(before, after)
@@ -109,7 +109,7 @@ def test_uninstall_leaves_only_what_it_promises_to_keep(be, sandboxed, remove_ho
     # helpers under sandboxes/.identity/ (the xdg-open shim, the forwarding helper, the seccomp
     # filter) are AppKata's own, shared by every launcher, and stay.
     pristine = {k: v for k, v in snapshot(be, sandboxed).items() if "/apps/demo/" not in k and "/appkata-demo" not in k
-                and "/sandboxes/demo" not in k and ".identity/demo" not in k and not k.startswith("<")}
+                and "/sandboxes/demo" not in k and ".identity/apps/demo" not in k and not k.startswith("<")}
     home = os.path.relpath(sb.sandbox_home("demo"), sandboxed)
     os.makedirs(sb.sandbox_home("demo"), exist_ok=True)
     with open(os.path.join(sb.sandbox_home("demo"), "settings.ini"), "w") as f:      # the app's data, from a run
