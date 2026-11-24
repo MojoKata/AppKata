@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -12,8 +13,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from appkata_core import forges, sync, urls
+from appkata_core import http as http_
 from appkata_core.db import DB
 from appkata_core.http import Http, RateLimited, SourceError, Unreachable
+import reqdocs
 
 
 class FakeResponse(io.BytesIO):
@@ -298,6 +301,17 @@ def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path)
     allowed = ("https://api.github.com/", "https://raw.githubusercontent.com/", "https://github.com/")
     assert [u for u in tokened(seen) if not u.startswith(allowed)] == []
     assert sorted(set(tokened(seen))) == sorted({u for u in asked if u.startswith(allowed)})
+
+
+def test_r9_2_2_names_the_hosts_the_code_sends_a_token_to():
+    """CR1's #276: R9.2.2 said a token never goes to another host, while github.com's goes to its API
+    and raw-file hosts by design, and it gave no list to hold the code to. It names them now, and the
+    code keeps them in one place: the two say the same."""
+    text = reqdocs.item("R9.2.2")
+    named = set(re.findall(r"`([a-z0-9-]+(?:\.[a-z0-9-]+)+)`", text))
+    assert named == {h for host in http_.TOKEN_HOSTS for h in http_.token_hosts(host)}, text
+    assert named == {"github.com", "api.github.com", "raw.githubusercontent.com"}
+    assert "every other host" in text and http_.token_hosts("git.example.net") == ("git.example.net",)
 
 
 # ---------------------------------------------------------------- a redirect (R9.2.2)

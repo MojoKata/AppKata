@@ -14,7 +14,10 @@ the current item and a **Cancel** button.
 R9.2.1. At most four hosts are fetched at the same time. Rate limits are respected:
 `x-ratelimit-reset`, `Retry-After`, and backoff for other failures.
 
-R9.2.2. API tokens are kept per host (R11.1) and are never sent to any other host.
+R9.2.2. API tokens are kept per host (R11.1). A host's token is sent only to that host and to the
+forge's own API and raw-file hosts, which are named here: for `github.com`, `api.github.com` and
+`raw.githubusercontent.com`; for every other host, the host alone. It is never sent to any other
+host.
 
 R9.2.3. Sync fetches release information for every app in the Catalog, whether it comes from a
 Source or a Trust, so tiles show current versions.
