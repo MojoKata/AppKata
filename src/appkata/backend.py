@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -809,9 +810,11 @@ class Backend(QObject):
         else:
             out["sandbox"] = {"applicable": False}
         if OS == "windows":
-            out["windows"] = {"scope": eff.scope, "motw": eff.motw, "folderEveryone": install.Portable(
-                scope="everyone", folder_everyone=self._prefs.get("installDirEveryone") or "").root,
-                "folderMe": install.Portable(folder=self._prefs.get("installDir") or "").root}
+            # "Installs to" for each scope the dialog offers: an installed app's own folder for its
+            # scope, Settings' for a new install or a move to the other (R4.3.1, R15.4.1; CR1.8-36)
+            out["windows"] = {"scope": eff.scope, "motw": eff.motw,
+                              "folderEveryone": dataclasses.replace(eff, scope="everyone").root,
+                              "folderMe": dataclasses.replace(eff, scope="me").root}
         return out
 
     # the install dialog's own keys in app_settings.install: how to install (R4.9.3) and the package
@@ -1717,9 +1720,14 @@ class Backend(QObject):
         p.scope = own.get("scope") or rec.get("scope") or p.scope
         p.motw = bool(own.get("motw", rec.get("motw", False)))
         # an installed app keeps the folder it is in, whatever Settings names now (R4.3.1): the
-        # dialog's "Installs to", the folders a sandbox never shares and the launcher all mean it
+        # dialog's "Installs to", the folders a sandbox never shares and the launcher all mean it.
+        # It is the folder of the scope it is installed for: one for the other scope (Windows,
+        # R15.4.1) is a new install, which goes where Settings says (CR1.8-36).
         if rec.get("current") and rec.get("root"):
-            p.folder = p.folder_everyone = rec["root"]
+            if (rec.get("scope") or "me") == "everyone":
+                p.folder_everyone = rec["root"]
+            else:
+                p.folder = rec["root"]
         return p
 
     def _command_refused(self, url: str) -> str:

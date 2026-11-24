@@ -68,7 +68,9 @@ is the user's home folder, and environment variables are filled in (`$HOME/bin`;
 
 No elevation is needed. Changing the install folder applies to new installs: an app already
 installed stays in the folder it is in through its updates, and is uninstalled from there. It goes
-to the new folder only when it is uninstalled and installed again.
+to the new folder only when it is uninstalled and installed again. Install options (R4.9.5) shows
+that folder as the one it installs to; on Windows, a move to the other of Just me and Everyone
+(R15.4.1) is a new install, which goes to that one's install folder in Settings.
 
 R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desktop` entry on
 Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a

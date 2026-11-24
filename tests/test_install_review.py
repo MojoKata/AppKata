@@ -1467,3 +1467,45 @@ def test_what_an_archive_installs_starts_its_program_not_a_helper(env, server, t
     assert _runs(str(tmp_path / "cmd" / "vscodium")) == "codium"
     entry = _entry(tmp_path / "xdg" / "applications" / "appkata-vscodium.desktop")
     assert _runs(_exec_words(entry["Desktop Entry"]["Exec"])[0]) == "codium"
+
+
+# ---------------------------------------------------------------- Windows' "Installs to" for an installed app (CR1.8-36)
+
+@pytest.mark.parametrize("scope", ["me", "everyone"])
+def test_install_options_on_windows_show_the_folder_an_installed_app_is_in(tmp_path, monkeypatch, scope):
+    # CR1.8-36: since CR1.3-12 an installed app stays in the folder it is in when the install folder
+    # setting changes (R4.3.1), and Linux's "Installs to" said so; Windows' read Settings' two folders,
+    # so it named a folder the app isn't in and won't go to. It reads the app's own now, for the
+    # scope it is installed for. The other scope is a move, a new install (R15.4.1), and goes where
+    # Settings says: the backend's options had given it the app's folder too, so an app moved to
+    # Everyone would have been installed in the user's own folder.
+    pytest.importorskip("PySide6")                              # the backend is Qt's; the Windows run has none
+    from appkata_core import channels, platform, sync
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from appkata.backend import Backend
+    be = Backend(db_path=str(tmp_path / "appkata.db"))
+    for module in (platform, install):
+        monkeypatch.setattr(module, "OS", "windows")
+    assets = [{"name": "Demo-1.0-win-x64.zip", "url": "https://example.org/Demo-1.0-win-x64.zip", "size": 1000}]
+    monkeypatch.setattr(sync, "ensure_assets", lambda db, http, url, version: {"assets": assets})
+    monkeypatch.setattr(channels, "enabled", lambda: False)
+    monkeypatch.setattr(be, "_app", lambda url: {"url": APP["url"], "name": "Demo", "installed": "1.0", "version": "1.0", "updateTo": ""})
+    settings = {"me": str(tmp_path / "now" / "me"), "everyone": str(tmp_path / "now" / "everyone")}
+    be._prefs["installDir"], be._prefs["installDirEveryone"] = settings["me"], settings["everyone"]
+
+    assert be.planFor(APP["url"])["windows"] == {"scope": "me", "motw": False, "folderMe": settings["me"],
+                                                 "folderEveryone": settings["everyone"]}        # not installed: Settings'
+    was = str(tmp_path / "then" / scope)                                                        # Settings' when it was installed
+    rec = {"current": {"version": "1.0", "path": os.path.join(was, "demo", "1.0"), "exec": "1.0\\Demo.exe"},
+           "target": os.path.join(was, "demo"), "root": was, "scope": scope, "links": [], "files": []}
+    env = DB(str(tmp_path / "appkata.db"))
+    env.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
+          (APP["url"], "Demo", "1.0", "zip", json.dumps(rec), "2026-11-24T00:00:00Z"))
+    other = "everyone" if scope == "me" else "me"
+    plan = be.planFor(APP["url"])["windows"]
+    assert plan["scope"] == scope
+    assert plan["folderMe" if scope == "me" else "folderEveryone"] == was                      # where it is
+    assert plan["folderMe" if other == "me" else "folderEveryone"] == settings[other]          # where a move goes
+    assert be._app_options(APP["url"]).root == was
+    assert be._app_options(APP["url"], {"scope": other}).root == settings[other]               # what the move installs into

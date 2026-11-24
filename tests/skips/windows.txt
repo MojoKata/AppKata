@@ -27,6 +27,7 @@ tests/test_install_review.py::test_an_update_that_shows_the_app_to_be_a_command_
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
 tests/test_install_review.py::test_command_link_never_replaces_a_real_file  # the Linux install layout
 tests/test_install_review.py::test_each_version_of_an_appimage_released_under_one_name_is_kept_as_its_own_file  # the Linux install layout
+tests/test_install_review.py::test_install_options_on_windows_show_the_folder_an_installed_app_is_in  # could not import 'PySide6': No module named 'PySide6'
 tests/test_install_review.py::test_portable_options  # the Linux install layout
 tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux install layout
 tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
