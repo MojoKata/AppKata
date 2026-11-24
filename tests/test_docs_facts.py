@@ -153,6 +153,13 @@ def _facts() -> dict:
     pids = ({int(old.group(1)), int(old.group(2))} if old else set(range(int(new.group(1)), int(new.group(2)) + 1)) if new else set())
     f["R17.17: the tray item's process ids"] = (pids,
                                                {int(re.search(r"-(\d+)-\d+$", o).group(1)) for o in sb._TRAY_OWNS})
+    # CR1.5-29: "No network" is no promise that nothing leaves. The OpenURI and Email portals are open
+    # to every app on the bus, the network grant or not, and the limits say so, for as long as the
+    # filter has it so: with a switch of its own for either portal the sentence would be that switch's
+    roads = {i for i in ("OpenURI", "Email") if sb._portal_call(i) in sb.proxy_args(sb.resolve_template("offline-editor"), "demo")}
+    said = re.search(r"without the network grant can still ask the desktop to open a link or to start an email \(the (\w+) and (\w+) portals", text)
+    f["R17.17: what an app without the network grant can still ask the desktop for"] = (set(said.groups()) if said else set(), roads)
+    f["A1.9: the same limit"] = ("**No network is not no way out.**" in plan, bool(roads))
     order = [tuple(int(x) for x in n.split(".")) for n in re.findall(r"^R(17\.[\d.]*\d)\. ", _read(REQ), re.M)]
     f["17: its sub-sections in order"] = (order, sorted(order))
     uninst = re.search(r"^(R\d+\.\d+)\. \*\*Uninstalling\*\*", _read(REQ), re.M).group(1)

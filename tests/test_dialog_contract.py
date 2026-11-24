@@ -172,6 +172,33 @@ def test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog(ui, be, 
     assert f"removing media-player names other than {name}" in json.dumps(info), info
 
 
+def test_the_network_hint_says_what_an_app_without_the_network_can_still_send_out(ui, be, monkeypatch):
+    # CR1.5-29: "No network" is an app with no network of its own, not an app that can send nothing
+    # out. At Standard the OpenURI portal is open to every app on the bus (R17.5), so an app without
+    # the grant can have the desktop open https://elsewhere.example/?d=<what it knows>, and the
+    # user's browser fetches it. The design keeps that road (R17.6.3); what was missing is the
+    # sentence, which the Network switch now carries, as R17.17 does. A Strict app has no bus and so
+    # no such road, and its hint stops where it did. How it slipped past: the hints' evidence table
+    # holds each hint to the facts it states, and nothing asks what a switch leaves unsaid.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    _review(be, "offline-editor")
+    dlg = _dialog(ui, "sandbox")
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "gs")["level"] == "standard" and not _prop(dlg, "gs")["network"]
+    reach = "Let it reach the internet and the local network."
+    still = reach + " Without it the app can still ask the desktop to open a link, which may carry what the app knows."
+    assert _hint(dlg, "Network") == still
+    # the road the hint tells of is the one the filter leaves this app: were OpenURI ever to get a
+    # switch of its own, the sentence would be that switch's to say
+    grants = be._resolved_sandbox(URL)["grants"]
+    assert not grants["network"] and sb._portal_call("OpenURI") in sb.proxy_args(grants, "demo")
+    _call(dlg, "setField", "network", True)                      # on, it says what off would still leave
+    assert _hint(dlg, "Network") == still
+    _pick(dlg, "templateSelect", "strict")                       # no bus: nothing to ask, nothing to say
+    assert _prop(dlg, "gs")["level"] == "strict" and _hint(dlg, "Network") == reach
+    assert "xdg-dbus-proxy" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("strict"))
+
+
 def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be, monkeypatch):
     monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
     _review(be, "online-app")

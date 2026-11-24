@@ -231,7 +231,9 @@ Dialog {
                 }
 
                 SbxHeader { text: "CONNECTIONS" }
-                SbxToggle { label: "Network"; ic: "globe"; hint: "Let it reach the internet and the local network."
+                SbxToggle { label: "Network"; ic: "globe"       // a Strict app has no bus, and so no link to have opened
+                            hint: root.gs.level === "strict" ? "Let it reach the internet and the local network."
+                                                            : "Let it reach the internet and the local network. Without it the app can still ask the desktop to open a link, which may carry what the app knows."
                             on: !!root.gs.network; onToggled: on => root.setField("network", on) }
                 SbxToggle { label: "Limit to ports"; ic: "globe"; badge: "Later"; disabled: true
                             hint: "Allow only certain ports (Landlock, kernel ≥ 6.7). Coming in a later release." }
