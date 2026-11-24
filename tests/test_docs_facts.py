@@ -128,6 +128,13 @@ def _facts() -> dict:
         sentences = re.split(r"(?<=[.;:])\s+", re.sub(r"\s+", " ", text))
         return {s[:60] for s in sentences if sum(bool(re.search(rf"\b{i}\b", s.lower().replace("-", ""))) for i in listed) >= 3}
     f["R17.5: the one list of the portal interfaces"] = ((lists(_read(REQ)) | lists(_read(A1))) - lists(_req("R17.5")), set())
+    # CR1.11-85: what GTK4 does when it is refused the file chooser depends on which GTK4 it is: 4.14
+    # fell back to its own dialog, 4.18 shows none at all (R17.6.3; round six, R6-4), which is why
+    # the launcher tells GTK4 not to ask. A1.2.3.6 still said it "falls back cleanly", of every
+    # GTK4. So wherever the requirements or the design say GTK4 falls back, they say which one.
+    unversioned = {s[:60] for s in re.split(r"(?<=[.;])\s+", re.sub(r"\s+", " ", _read(REQ) + " " + _read(A1)))
+                   if re.search(r"\bGTK ?4", s) and re.search(r"\bf(?:alls?|ell) back\b", s) and "4.14" not in s}
+    f["R17.6.3: which GTK4 falls back to its own dialog"] = (unversioned, set())
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
     bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("R17.5.1"))}
     f["R17.5.1: the capabilities"] = ({caps17[b] for b in bold if b in caps17}, set(sb.CAP_PROXY_ARGS) - {"secrets-provide"})
