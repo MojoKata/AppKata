@@ -10,6 +10,7 @@
     464
    ],
    "files": [
+    "docs/requirements/R7-sources-perspective.md",
     "scripts/areas.py",
     "src/appkata/backend.py",
     "tests/skips/windows.txt",
@@ -25,6 +26,8 @@
    "files": [
     ".github/workflows/ci.yml",
     "docs/RELEASE.md",
+    "docs/github-workflows.md",
+    "scripts/areas.py",
     "tests/test_workflows.py"
    ]
   },
@@ -1655,11 +1658,13 @@
     610,
     621,
     635,
-    659
+    659,
+    680
    ],
    "files": [
     "docs/GENESIS.md",
     "docs/RELEASE.md",
+    "docs/RELEASE_AGENT.md",
     "docs/github-workflows.md",
     "docs/gpg.md",
     "scripts/build-windows.sh",
@@ -10693,6 +10698,22 @@
    "size": "medium",
    "proof": "The finding's own run again, on the shared Windows VM with a second account signed in (RDP from a container) and AppKata open in both: Setup with the button's switches ends before it deletes anything, the install folder still holds its 1862 files, and the account that pressed the button is told why. A test of what AppKata then shows.",
    "note": "Decided 2026-11-24: Setup stops before it changes anything: Setup checks, after Restart Manager's pass, that no appkata.exe from the install folder still runs, and ends before [InstallDelete]; the old version stays whole; the account that pressed the button is told \"AppKata is open in another account\", and AppKata is started again for it. The sort's note, written before the decision, for what it says of the parts and the files: The owner set the severity and said the fix goes into the setup (the Decision, 2026-11-23); which fix is still open, since the remedy turns on whether a restart is acceptable. The record is the recommended option's. \"At the next restart\" changes appkata.iss alone (its [Files] flags and [InstallDelete]) and the documents' word on a restart. \"AppKata refuses first\" changes backend.py and src/appkata_core/windows.py, not the setup, and leans on seeing another account's processes, which #352 says the running-check can't always. In the recommended option the AppKata that pressed the button has quit by the time Setup stops, so something must start it again or tell the user: that leans on how Setup is started, which #593 changes, and on #638 (a declined prompt also ends with no AppKata)."
+  },
+  {
+   "finding": 680,
+   "readiness": "ready",
+   "files": [
+    "docs/RELEASE_AGENT.md",
+    "docs/RELEASE.md"
+   ],
+   "related": [
+    592,
+    635,
+    540
+   ],
+   "size": "small",
+   "proof": "The project's document checks: tests/test_doccheck.py, tests/test_doc_links.py, tests/test_docs_facts.py and tests/test_public_text.py.",
+   "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
   }
  ],
  "shared_files": [
@@ -10700,6 +10721,7 @@
   "DEVELOP.md",
   "docs/GENESIS.md",
   "docs/RELEASE.md",
+  "docs/RELEASE_AGENT.md",
   "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
   "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
   "docs/architecture/A1-app-sandboxing/A1.2-approach.md",

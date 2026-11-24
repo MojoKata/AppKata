@@ -31,7 +31,7 @@ the script it would run on a development machine, so a CI failure reproduces loc
 | `pages` | pushes to `master` only, after `ci` and `site`: publishes the site | |
 | `version` | tags only: the tag must be `v` and `__version__` (`src/appkata_core/__init__.py`) | |
 | `sign` | tags only, in the `release` environment: signs the AppImage | |
-| `release` | tags only: `gh release create --draft` with every file | |
+| `release` | tags only: takes the `appimage`, `windows` and `signature` artifacts, each by name, and gives `gh release create --draft` their five files, each by name | |
 
 `ci` is the one check the `master` ruleset requires (GENESIS.md, step 4): a pull request can't
 merge while tier 1 fails, an area's coverage falls below its floor or either build breaks, and jobs
@@ -258,6 +258,16 @@ is done. What each command does and refuses is in [`RELEASE.md`](RELEASE.md#8-wh
 `resume`, after a failed run is run again (`gh run rerun RUN`, with or without `--failed`), reads
 each `sha256` notice from the attempt that built the file, since a job carried into a new attempt
 keeps none.
+
+The run of a tag keeps more than the release's files: the coverage report, the tests' times, the site
+and the tour are its artifacts too. So the `release` job takes the three artifacts that hold the
+release's files (`appimage`, `windows`, `signature`), each by its name, and names the five files to
+`gh release create`; a download that names nothing takes every artifact the run holds, and `./*`
+would attach them all. `tests/test_workflows.py`, in tier 1, reads the workflows for it: the
+`release` job's downloads and its five files against the five `publish.sh verify` expects; of
+every job, that a download names what it takes and that a job it waits for keeps it; and that no
+other job makes or changes a release, by its steps' words or by its permissions (`contents: write`
+is the `release` job's alone). The job itself runs only on a tag.
 
 With **immutable releases** on (GENESIS.md, step 8), a published release's files and tag can't be
 changed, and GitHub adds a release attestation (`gh release verify v<version>`). A bad release is
