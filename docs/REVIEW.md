@@ -118,6 +118,7 @@ What follows a review is the shared `review-triage` skill's,
 [`agents/skills/review-triage/SKILL.md`](../agents/skills/review-triage/SKILL.md): the findings
 sorted, batched into work units and scheduled, and the schedule run. `review.json` sets none of its
 fields, so its defaults hold: a sweep's schedule is `docs/remediation/<sweep>-schedule.json`, a unit
-holds at most 20 findings, and at most 3 units are open at once. The hardening page shows a finding
-that waits on the owner (`refine`, `dismiss`, or a question issue below a step) apart from the open
-ones.
+holds at most 20 findings, at most 3 units are open at once, and a file that 3 or more units change
+is listed in the schedule as shared, so those units need not run one after another. The hardening
+page shows a finding that waits on the owner (`refine`, `dismiss`, or a question issue below a step)
+apart from the open ones.
