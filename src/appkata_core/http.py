@@ -17,7 +17,7 @@ import urllib.request
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, IncompleteRead, InvalidURL
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from . import APPKATA_REPO, __version__
 
@@ -173,6 +173,13 @@ def _local(address: str) -> bool:
     return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or not ip.is_global
 
 
+def _localhost(name: str) -> bool:
+    """localhost and the names under it, which are the computer of whoever looks them up (RFC 6761):
+    a proxy's, which may well be this one."""
+    name = name.rstrip(".")
+    return name == "localhost" or name.endswith(".localhost")
+
+
 def _refuse_local(host: str, addresses) -> None:
     local = [a for a in addresses if _local(a)]
     if local:
@@ -298,10 +305,14 @@ class _Connections(urllib.request.AbstractHTTPHandler):
     http_request = https_request = urllib.request.AbstractHTTPHandler.do_request_
 
 
-def _opener(redirects, connect) -> urllib.request.OpenerDirector:
+def _proxies() -> dict[str, str]:
+    """The system's proxies for http and https: the ones Http's own opener sends through."""
+    return {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
+
+
+def _opener(proxies, redirects, connect) -> urllib.request.OpenerDirector:
     """Http's own opener: urllib's default one without its file:, ftp: and data: handlers (CR1 #266),
     with Http's rules for a redirect, and Http's own connections (CR1 #682)."""
-    proxies = {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
     opener = urllib.request.OpenerDirector()
     for handler in (urllib.request.ProxyHandler(proxies), urllib.request.UnknownHandler(), _Connections(connect),
                     urllib.request.HTTPDefaultErrorHandler(), redirects, urllib.request.HTTPErrorProcessor()):
@@ -367,7 +378,10 @@ class Http:
         self.tokens = {token_key(k): v for k, v in (tokens or {}).items() if v}     # by host: one address each
         self.timeout, self.deadline = timeout, deadline
         self._here = threading.local()           # this thread's `cancelled`, inside a `stopping` block
-        self._open = opener or _opener(_Redirects(self._allowed, self._unlimited), self._connect).open
+        # the proxies Http's own opener sends through, the system's; a stand-in opener's requests go
+        # through none, whatever the system's settings say
+        self.proxies = {} if opener else _proxies()
+        self._open = opener or _opener(self.proxies, _Redirects(self._allowed, self._unlimited), self._connect).open
         self._lookup = _addresses                # host -> its addresses: the check's and the connection's (_connect)
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
         self.limited: dict[str, float] = {}      # host (_host: one address) -> reset time
@@ -412,7 +426,12 @@ class Http:
         `whose`, the host the request is made for (a forge on the user's own network), with its
         named hosts; without one, that is the address's own host. A host is one address (_host):
         another port of a Source's host is whatever else listens there, and isn't the Source's. A
-        first address and every redirect of it are held to this."""
+        first address and every redirect of it are held to this.
+
+        Behind a proxy (_proxied) the name is the proxy's to look up, and the proxy may know names
+        this computer doesn't: one this computer can't look up is left to it (the review's pass 1,
+        P1-1). What this computer can tell is local is refused all the same: an address, localhost,
+        a name it looks up as a local address."""
         parts = _http_address(url)
         host = parts.hostname.lower()
         if whose is None or _is_for(parts, token_key(whose)):
@@ -420,9 +439,17 @@ class Http:
         try:
             addresses = self._lookup(host)
         except (OSError, ValueError) as e:        # no such name: what the connection would have found
+            if self._proxied(parts) and not _localhost(host):
+                return parts                      # unless it is the proxy's, which looks the name up itself
             raise Unreachable(f"couldn't reach {host}: {e}") from None
         _refuse_local(host, addresses)
         return parts
+
+    def _proxied(self, parts) -> bool:
+        """Whether a request to this address goes through a proxy, as urllib's ProxyHandler decides
+        it: one of Http's proxies is for its scheme, and the system doesn't say to reach its host
+        directly (no_proxy, or the bypass list of the system's own settings)."""
+        return parts.scheme in self.proxies and not urllib.request.proxy_bypass(unquote(parts.netloc))
 
     def _unlimited(self, parts) -> None:
         """RateLimited when the host of this address said when to come back and that time hasn't

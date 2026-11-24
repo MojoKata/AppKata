@@ -514,9 +514,12 @@ def test_an_image_at_a_local_address_is_refused_by_the_real_lookup(tmp_path, url
     assert seen == [] and list(tmp_path.iterdir()) == []
 
 
-def test_a_host_whose_name_cant_be_looked_up_is_refused_too(tmp_path):
+def test_a_host_whose_name_cant_be_looked_up_is_refused_too(tmp_path, monkeypatch):
+    # with no proxy (behind one the name is the proxy's to look up: further down). A stand-in
+    # opener goes through none, whatever the system's settings, the runner's own included
     def fails(host):
         raise OSError("Name or service not known")
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
     seen = []
     http = Http(opener=recording({"https://img.example/shot.png": PNG}, seen))
     http._lookup = fails
@@ -642,14 +645,75 @@ def test_the_sources_own_host_on_the_local_network_is_still_reached_by_its_name(
     assert sync._save_image(http, f"https://{host}/o/r/raw/branch/main/shot.png", str(tmp_path / "hero"), token_host=host).endswith("hero.png")
 
 
+PROXIES = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
+
+
+def behind_a_proxy(monkeypatch, proxy, **more):
+    """The system's proxy for http is server `proxy`, which answers whatever it is asked for: as
+    the environment says it, which every platform reads first. `more` sets others, such as no_proxy.
+    Http reads the proxies when it is made."""
+    for name in PROXIES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("http_proxy", f"http://{proxy.at}")
+    for name, value in more.items():
+        monkeypatch.setenv(name, value)
+
+
 def test_a_proxy_on_this_computer_is_still_used_for_a_host_elsewhere(pair, monkeypatch):
     # the connection is the proxy's, which may be on this computer: the host asked is the proxy's to look up
     a, b = pair
-    for name in ("no_proxy", "NO_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("http_proxy", f"http://{a.at}")
+    behind_a_proxy(monkeypatch, a)
     assert names(Http(timeout=5)).json("http://img.example/x.json", token_host="github.com") == {"ok": True}
     assert [p for p, _ in a.seen] == ["http://img.example/x.json"]
+
+
+# The review's pass 1, P1-1: the check above looks the name of an address a project or a forge
+# names up on this computer, and refused a name it didn't find as "couldn't reach". Behind a proxy
+# that isn't what the connection would find: the proxy looks the name up. On a network where only
+# the proxy knows the names outside, every image elsewhere and every redirect of a Source's request
+# to another host was refused, and the proxy was never asked. How it slipped past: the one test of
+# a proxy stood in for a lookup that knows every name. The class is "this computer's lookup taken
+# for the proxy's", so the name server here knows no name outside this computer.
+def knows_only(http, table):
+    """Stands in for a name server that knows the names in `table` and no other (an address is
+    itself): this computer's, on a network where only the proxy looks up the names outside."""
+    def lookup(host):
+        if host in table:
+            return table[host]
+        try:
+            return [str(ipaddress.ip_address(host))]
+        except ValueError:
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known") from None
+    http._lookup = lookup
+    return http
+
+
+def test_behind_a_proxy_a_name_this_computer_cant_look_up_is_asked_for_through_it(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/icon.png": PNG, "/avatar.png": PNG}
+    behind_a_proxy(monkeypatch, a)
+    http = knows_only(Http(timeout=5), {"localhost": ["127.0.0.1"]})        # B's name: a Source's host, asked directly
+    icon = sync._save_image(http, "http://images.example.com/icon.png", str(tmp_path / "icon"), token_host="git.example.org")
+    assert icon.endswith("icon.png")
+    b.redirects["/o/r/avatar"] = "http://avatars.example.com/avatar.png"   # a Source's request, redirected elsewhere
+    assert http.bytes(f"https://{b.at}/o/r/avatar") == PNG
+    assert [p for p, _ in a.seen] == ["http://images.example.com/icon.png", "http://avatars.example.com/avatar.png"]
+    assert "Behind a proxy, the proxy looks a host's name up" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.mark.parametrize("url, table, env", [
+    ("http://nas.lan.example/shot.png", {"nas.lan.example": ["192.168.1.9"]}, {}),    # a name this computer finds local
+    ("http://192.168.1.9/shot.png", {}, {}),                                          # an address needs no name server
+    ("http://localhost:631/shot.png", {}, {}),                                        # this computer, whoever looks it up
+    ("http://printer.localhost/shot.png", {}, {}),
+    ("http://images.example.com/shot.png", {}, {"no_proxy": "images.example.com"}),  # asked directly: this computer's lookup
+])
+def test_behind_a_proxy_what_this_computer_can_tell_is_local_is_still_refused(pair, monkeypatch, tmp_path, url, table, env):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, **env)
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), table), url, str(tmp_path / "shot"), token_host="git.example.org")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
