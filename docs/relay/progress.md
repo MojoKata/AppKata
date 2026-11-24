@@ -298,3 +298,182 @@ pushed.
 - **Needs a run** (the Windows VM tests; the screenshot tour, which CI makes): the coordinator's,
     when the last batch is in.
 
+## Batch 3
+
+Files touched: `src/appkata_core/http.py`, `src/appkata_core/sync.py`, `src/appkata_core/forges.py`,
+`src/appkata_core/metadata.py`, `src/appkata/backend.py`, `docs/requirements/R9-sync-and-updates.md`,
+`tests/test_forges.py`, `tests/test_backend.py`.
+
+Counts: 4 fixed, 0 no defect, 0 remedy changed, 0 set aside, 0 still left, 3 new.
+
+Each new test was shown failing by exporting the commit before it with `git archive` to a scratch
+folder, putting the new test files over it and running them there.
+
+| Finding | Outcome | Commit | Tests (`tests/test_forges.py` unless said) | Before the fix |
+|---|---|---|---|---|
+| #269 | fixed | `ed83dbf` | `test_whatever_opening_or_reading_an_address_ends_in_http_gives_a_source_error`, `test_an_answer_cut_short_is_asked_for_again`, `test_through_real_sockets_an_address_that_cant_be_sent_and_an_answer_cut_short_are_unreachable`, `test_a_readme_images_own_path_is_written_as_an_address_can_be_sent`, `test_git_missing_or_too_slow_is_no_answer_from_it`, `test_with_no_git_on_the_path_there_is_no_answer_from_it`, `test_whatever_one_apps_sync_ends_in_wherever_the_sync_goes_on_and_its_row_says_so`, `test_a_forges_answer_of_another_shape_is_an_error_on_that_apps_row`, `test_an_error_on_an_apps_row_keeps_what_the_last_sync_stored`, `test_what_sync_app_itself_lets_out_is_passed_over_and_the_rest_are_synced`, `test_through_real_sockets_a_readme_image_that_cant_be_sent_as_written_doesnt_end_the_sync`, `test_through_real_sockets_a_source_whose_own_address_cant_be_sent_has_that_on_its_row`; `tests/test_backend.py`: `test_the_add_source_preview_answers_whatever_asking_the_forge_ends_in` | On `44f84d9`, both files: 163 failed, 277 passed, 5 errors (`InvalidURL`, `IncompleteRead`, `KeyError` and the rest left `sync_all`; the preview's thread ended with no answer, which is the 5 errors too) |
+| #296 | fixed | `8dcc9ad` | `test_an_answer_that_comes_a_byte_at_a_time_ends_at_the_requests_deadline`, `test_the_deadline_counts_the_wait_for_an_answer_to_start`, `test_an_answer_that_comes_in_pieces_in_time_is_whole_and_the_size_limit_holds`, `test_r9_2_1_says_how_long_a_request_is_given_and_that_cancel_stops_one`, `test_a_cancel_is_its_own_threads_and_its_own_blocks`, `test_a_cancel_stops_a_request_before_it_is_asked_for_again`, `test_cancel_stops_a_sync_while_an_answer_is_still_being_read`, `test_through_real_sockets_a_byte_at_a_time_ends_at_the_deadline_and_at_cancel` | On `ed83dbf`: 15 failed, 421 passed (through real sockets the request ran the server's whole three seconds and came back with 60 bytes of a declared million: "DID NOT RAISE") |
+| #277 | fixed | `c981377` | `test_a_retry_after_on_a_failing_answer_is_the_hosts_limit`, `test_a_retry_after_no_longer_than_the_retries_wait_is_waited_out`, `test_a_retry_after_on_another_answer_is_remembered_and_the_answer_means_what_it_did`, `test_a_sync_asks_a_host_that_said_when_to_come_back_once`, `test_a_host_that_gives_no_answer_is_unreachable_at_its_first_probe`, `test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_listening`; holding what must stay: `test_a_failing_answer_that_says_nothing_is_asked_for_again_as_before`, `test_a_host_that_answers_but_not_as_a_forges_api_is_probed_to_the_end` | On `8dcc9ad`: 20 failed, 449 passed (a 503 with `Retry-After: 120` was asked three times and not remembered; a host with nothing listening was "couldn't tell which forge … runs") |
+| #626 | fixed | `c131a22` | `test_an_answer_shorter_than_the_length_it_declared_is_cut_short_and_asked_for_again`, `test_an_answer_cut_short_once_is_whole_the_second_time`, `test_through_real_sockets_a_cut_off_image_isnt_saved_and_a_cut_off_readme_isnt_stored`; holding what must stay: `test_an_answer_that_is_whole_or_rightly_declares_what_it_doesnt_send_is_taken` | On `c981377`: 7 failed, 478 passed (100 bytes of a declared 1000 were saved as `icon.png`) |
+
+Runs at the batch's head (`c131a22`), from the worktree's root:
+
+- `tests/test_forges.py` whole: 485 passed. The seven files that use `Http` and the four document
+    checks of the brief: 631 passed. Both before each commit.
+- The whole suite with the project's `.venv` (`pytest -q tests/`, no skip list): 3261 passed, 39
+    skipped, in 2 min 52 s.
+- The whole suite in the tier 1 image with no network and 3 GB (`docker run --network none
+    --memory=3g`, `APPKATA_SKIPS=tier1`, the main checkout's `build/python-3.14` and
+    `build/pyside-6.12.0-py3.14` mounted read-only, and its `.git` read-only at its own path, so the
+    five tests batch 2 saw fail on a worktree's `.git` pass): 3179 passed, 121 skipped, in 1 min 58 s.
+    `scripts/test-tier1.sh` itself was not run, as in batches 1 and 2.
+- The guard passed before each commit, naming only `docs/relay/`.
+
+How the design fits together, for batch 4:
+
+- **Every error of a request is a SourceError**, and its `extra` says what kind, so no caller reads
+    an error's words: `status` (an HTTP status), `timeout`, `deadline` (not asked for again), `cut`
+    (an answer cut short, chunked or by its Content-Length: asked for again), `no_answer` (nothing
+    came back at all: what `forges.detect` stops on), `retry_after` (a short Retry-After, which the
+    retry waits out). `Http.request` retries after `http.WAITS`. #298's table has these branches to
+    pin, and #683's 401 is beside them in `_request`.
+- **`Http.stopping(cancelled)`** is a block, and its Cancel is the thread's own. `http.Cancelled` is
+    a BaseException: `except Exception` and `except SourceError` don't catch it, and `sync_all`'s
+    `one()` does.
+- **The read** is `Http._read`: read1, a piece at a time, the clock and Cancel before each piece.
+    What comes before the body (connecting, the headers, a redirect) is still urllib's own: the
+    first item under New. #682's connection classes are where that can be closed.
+- **The tests' harness** (`tests/test_forges.py`): `clock` (Http's clock and waits, stepped, nothing
+    waits), `ending_in` (an opener whose every request ends in an error, opened or read),
+    `answering` (an error status with chosen headers), `declaring` (an answer with chosen headers),
+    `Dripping` (a byte a read), `catalog`, `rows`, `at` and `synced_but` (a whole `sync_all` of
+    `three_forges()` with one place of one app's sync changed), and, through real sockets,
+    `forgejo_project` on the `pair` servers, whose `files` now make one a stand-in forge (a path's
+    bytes, its JSON, or a function that writes the answer itself). #293's whole-Sync tests can
+    start from `synced_but`: about a hundred cases call `sync_all` now, where none did.
+
+### New
+
+- `src/appkata_core/http.py:361`, `_request`, `with self._open(req, timeout=self.timeout)`: the
+    deadline and Cancel cover an answer's body, and not what comes before it. A host that sends
+    its status line and headers a byte at a time (each within the 20 second timeout) holds the
+    request until its headers end, and Cancel can't stop it: #296's own effect, by another way.
+    Run, in a scratch script with real sockets: headers sent a byte every 20 ms for 4.5 seconds,
+    `Http(timeout=2.0, deadline=0.4)`: the request ended after 4.5 seconds, when the server
+    closed. http.client allows 100 header lines of 64 KiB each, so the hold has no practical end.
+    Not fixed: the wait is inside urllib's opener, and ending it needs Http's own connection
+    classes (a socket whose every read is held to what is left of the deadline, or one that a
+    Cancel can close), which is what #682 builds in batch 4. More than small.
+- `src/appkata_core/sync.py:56-61`, `_save_image`: the old image file is removed and the new one
+    written before the app's row is. An app whose sync then ends without writing its row, and
+    whose new image has another extension (`icon.png`, now `icon.svg`), keeps a row that names a
+    file that is gone: no icon until its next whole Sync. Two ends of that kind are this batch's
+    (a Cancel, #296; an unexpected error after the icon is saved, #269, where the whole Sync ended
+    at that spot before). Low. Not fixed: #284 (U15) changes those lines.
+- `src/appkata_core/http.py:347`, `_request`, `host = parts.hostname.lower()`: `Http.limited` is
+    keyed by a host's name without its port, where a token, a forge type and the local-address
+    rule take a host as one address (#297). A limit of `git.example.org:3000` refuses requests to
+    `git.example.org`, and the other way round; `forges.GitHub._api_limited` reads the same key.
+    Low, and more reachable now that any failing answer's Retry-After sets a limit (#277). Not
+    fixed: no finding of this batch is about the key.
+
+### Needs your eye
+
+- `ed83dbf` (#269), what the user sees: four new texts on a Source's row, all of the kind
+    `Unreachable`. "unexpected error (KeyError: 'name'); the app log has the details", which the Add
+    source dialog shows too; "couldn't ask <host>: the address '<address>' can't be sent
+    (InvalidURL)"; "couldn't read <host>'s answer (BadStatusLine: …)"; "<host> cut its answer
+    short". A README image written with a space or with letters outside ASCII is fetched now, and
+    can be the hero. No requirement's text changes: an unexpected error is R2.10's `Unreachable`,
+    as the record says, and a new kind would have been a refine.
+- `8dcc9ad` (#296), the text: R9.2.1 gains "A request is given two minutes for the whole of its
+    answer, however steadily the answer keeps coming: one that takes longer is given up, as an
+    `Unreachable` error (R2.10) or, for an image, passed over for the next one. **Cancel** stops
+    the requests under way as well, an answer that is still being read included: an app whose sync
+    it stops keeps what the last Sync stored." The two minutes are mine: the remedy names no
+    number (doubt 2). `docs/requirements/R9-sync-and-updates.md` is in U07's files and not in
+    #296's record: the brief asks for the rule where the user can read it.
+- `8dcc9ad` (#296), what the user sees: "<host> hadn't finished its answer after 120 seconds" on a
+    row; and Cancel ends a Sync within one read of each worker's answer, where it waited for
+    every app under way.
+- `c981377` (#277), what the user sees: a Source on a host that gives no answer reads "couldn't
+    reach <host>: …" (`Unreachable`), where it read "couldn't tell which forge <host> runs; set the
+    forge type in Source settings" (`Unsupported`). A forge that answers a 5xx with Retry-After
+    reads "Rate limited until 14:32 · add a token in Settings", the text every `RateLimited` has:
+    its second half doesn't fit a forge that is being maintained (doubt 8). No requirement's text
+    changes: R9.2.1 already says Retry-After is respected.
+- `c131a22` (#626), what the user sees: "<host> cut its answer short (100 of 1000 bytes)", where a
+    cut-off JSON answer read "<host> didn't return JSON". No requirement's text changes.
+
+### Needs a run
+
+- The Windows suite, once, with batches 1 and 2's: `scripts/test-windows-vm.sh --tests`. New for
+    it here: the tests through real sockets (a stand-in forge, a server that sends a byte every
+    50 ms with a 0.4 second deadline and a two second bound on the test, a port where nothing
+    listens), and `test_with_no_git_on_the_path_there_is_no_answer_from_it`, which empties `PATH`
+    for one real `subprocess` call. No test of this batch is skipped anywhere, and no skip list
+    changed.
+
+### Guard
+
+Nothing: every file changed is in U07's files.
+
+### Doubts
+
+1. **#296 is fixed as its remedy says, and the same hold is open through the headers** (the first
+    item under New). The finding's own run, a body sent a byte at a time, ends at the deadline
+    and at Cancel. I would not call the class closed until what comes before the body is under
+    the same clock; I left it because it is #682's kind of change, not a line in `_read`.
+2. **The deadline is 120 seconds, by my choice**, and is `Http(deadline=…)`. An image may be 8 MiB:
+    on a link slower than about 560 kbit/s a full-size one is given up. Shorter is safer against a
+    hostile host and harder on a slow link. A project can name up to twelve images (six icon
+    candidates, six hero ones), so a host that drips each one to just under the deadline still
+    holds a worker for twenty-four minutes an app; Cancel stops it now.
+3. **Cancel stops the apps' requests, and nothing else of a Sync.** The Trusts' part (a key
+    lookup; the fetch is git's, not Http's) and the package channels' part run outside a
+    `stopping` block, and `_git_out`'s two minutes can't be interrupted. I kept to `one()`: the
+    Trust loop is #229's (U08) and the channels are other units'. Each of their requests has the
+    deadline. A Sync cancelled among its apps still writes the time of the last Sync
+    (`sync.py:471`), as before; among its Trusts it doesn't.
+4. **`Cancelled` is a BaseException, and the Cancel is a thread-local of the one Http.** Both are
+    choices between two ways to the same behaviour. As an Exception it would be caught by
+    `forges.detect`'s probes, the three "keep it" handlers of the GitHub pages and `sync_app`'s
+    own catch-all, each of which would have to pass it on. A client of the Sync's own (a copy with
+    its Cancel) would have split `calls` and the tokens a `setToken` replaces mid-Sync.
+5. **#269's record says the app whose README has `<img src="a b.png">` gets an `Unreachable` on
+    its row.** With the remedy as written it doesn't: Http gives an error the hero loop passes
+    over, and `resolve` quotes the path, so the image is fetched and the app is stored whole. The
+    row's error is shown with the other causes: a Source whose own path has a space, a forge's
+    answer of another shape, and any error at any place of an app's sync.
+6. **`metadata.resolve` quotes a relative path only.** An absolute address with a space or a letter
+    outside ASCII (a README's `<img src="https://…/a b.png">`, a metainfo's icon) is refused by
+    Http as one that can't be sent and passed over, where a browser would quote and fetch it.
+    #681 (batch 4) changes that branch.
+7. **#277, the probes: the remedy's second way.** `detect` stops at the first probe with no
+    answer, as the record's proof says; that probe is still asked three times when it times out,
+    about a minute for each app on a dead host at every Sync, four at a time (it was over four
+    minutes). The remedy's first way, no retry inside `detect`, would make it 20 seconds and
+    needs `request` to take a "don't retry". "No answer" is also a TLS failure and a timeout of
+    the first probe alone: `detect` stops there though the other three might have answered.
+    `detect` is now one `ask` and four tests of its answer, which #278 (U20) will meet when it
+    changes the probes; its third proof ("a host no probe can connect to raises Unreachable") is
+    already true.
+8. **#277, "and any answer".** A 5xx with a Retry-After over three seconds is `RateLimited` and
+    isn't retried. A 404, a 401 and another 4xx with one keep their own meaning and the limit is
+    remembered, so the next request is the one refused: Retry-After means nothing certain on
+    those. A Retry-After that can't be read counts as a minute, and none has an upper bound, both
+    as `_reset_time` already did for a 429: a host can lock itself out until AppKata restarts.
+    The row's text for a forge being maintained ends "add a token in Settings"
+    (`backend._error_text`), which isn't in #277's files.
+9. **#626 leaves an encoded body alone, as the record's note says.** urllib doesn't decode, so a
+    gzip body's count would be right too, and a cut-off one is still taken for whole. Http never
+    asks for an encoding, so one arrives only from a host that sends it unasked.
+10. **`backend.py` has other worker threads.** Only the Add source preview got the catch-all (the
+    record names it). I didn't go through the others for the same end.
+11. **The four new row texts carry Python's own words** (`KeyError: 'name'`, `InvalidURL`,
+    `BadStatusLine`). They are for the app log as much as for the row; plainer words would be a
+    choice of wording.
+12. Nothing outside the brief was run. Scratch files were under `/tmp` and nothing is left
+    running. `.pytest_cache/` and the `__pycache__` folders in the worktree are git's ignored
+    ones, from the brief's own `pytest` commands.
+
