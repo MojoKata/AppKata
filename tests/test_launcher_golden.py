@@ -49,7 +49,8 @@ def fixed_host(monkeypatch):
     monkeypatch.setattr(sb, "have_bus_filter", lambda: True)          # xdg-dbus-proxy is here (R17.10)
     monkeypatch.setenv("HOME", HOME)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
+    # and AppKata's own session bus, which a folder grant holding its socket is judged by (R17.3.1)
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: f"{HOME}/.local/share/appkata/sandboxes")
     monkeypatch.setattr(sb, "seccomp_filter", lambda machine=None: b"\0")

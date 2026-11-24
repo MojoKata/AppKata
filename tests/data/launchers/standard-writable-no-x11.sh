@@ -33,6 +33,18 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\n" App >&2; exit 1; }
+# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
+busfile=
+case "$upstream" in
+  *";"*|unix:path=*%*) ;;
+  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
+esac
+# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
+# folder of the app's may show it, wherever it lies (R17.3.1).
+busreal=$busfile
+if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
@@ -61,9 +73,6 @@ guard() {
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
 rm -f "$sock"
-# The session bus to filter. With no address set it is where a login session's bus is, which is
-# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
-upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 # The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so
 # it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,
 # its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what
@@ -99,7 +108,7 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
 proxy=
 case "$upstream" in
   *";"*|unix:path=*%*) ;;
-  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
+  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
   unix:abstract=*) start_proxy ;;
 esac
 if [ -z "$proxy" ]; then

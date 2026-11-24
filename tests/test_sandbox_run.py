@@ -543,15 +543,16 @@ def _bus_conf(env) -> str:
 
 class _Bus:
     """A real session bus for the test user (dbus-daemon), torn down afterwards: in the runtime
-    folder, where a login session's is, or on an abstract socket, where dbus 1.12 put a
-    dbus-run-session bus (R17.9)."""
+    folder, where a login session's is, at the socket file `at`, or on an abstract socket, where
+    dbus 1.12 put a dbus-run-session bus (R17.9)."""
 
-    def __init__(self, env, abstract=False):
-        self.addr = f"unix:abstract=/tmp/appkata-test-bus-{os.getpid()}-{id(self)}" if abstract else f"unix:path={env.rt}/bus"
+    def __init__(self, env, abstract=False, at=None):
+        at = str(at or env.rt / "bus")
+        self.addr = f"unix:abstract=/tmp/appkata-test-bus-{os.getpid()}-{id(self)}" if abstract else f"unix:path={at}"
         self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
                                   env=env.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
-            if (env.rt / "bus").exists() if not abstract else subprocess.run(
+            if os.path.exists(at) if not abstract else subprocess.run(
                     ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
                      "org.freedesktop.DBus.GetId"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": self.addr}, capture_output=True).returncode == 0:
                 break
@@ -1127,6 +1128,33 @@ def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
     assert lines[1] == "(true,)", lines                     # the portal answers through the proxy
     assert lines[2].endswith("AccessDenied"), lines         # and it is the filtered bus the app is on
     assert "Failed to connect to bus" not in r.stderr and "not one the bus filter can reach" not in r.stderr, r.stderr
+
+
+@needs_proxy
+def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder(env, monkeypatch):
+    # The review of PR #694, P1-2: the never-shared rules kept the real bus from the app by refusing
+    # the runtime folder, and a dbus-run-session or dbus-launch bus is a socket file under /tmp: a
+    # command-line tool run in its folder shared it, and so did a grant of that folder, and the app
+    # connected to it past the filter. Now the tool runs in its private home and says why, and the
+    # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
+    # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
+    folder = env.home.parent / "shared"
+    folder.mkdir()
+    bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
+    sock = str(folder / "dbus-MZ8lHbtZ8K")
+    probe = (f'[ -S {sock} ] && echo SEEN; gdbus call --address unix:path={sock} --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus '
+             '--method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED; echo DONE')
+    try:
+        r = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe, cwd=str(folder), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env.rt}/bus")
+        viewer = env.app("viewer", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "ro"}}))
+        assert "Refused folder grant" not in open(viewer).read()
+        r2 = env.run(viewer, probe + f"; ls {folder} >/dev/null && echo LISTED", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stdout.split() == ["DONE"], (r.stdout, r.stderr)
+    assert f"can't see {folder}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
+    assert r2.returncode == 0 and r2.stdout.split() == ["DONE", "LISTED"], (r2.stdout, r2.stderr)      # the folder is the app's, but not the bus
 
 
 @needs_proxy

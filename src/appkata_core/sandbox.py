@@ -26,6 +26,7 @@ import shlex
 import shutil
 import subprocess
 import time
+import urllib.parse
 
 from .platform import OS, data_dir
 
@@ -475,7 +476,8 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a grant may never share, nor anything inside or above
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
-    runtime folder (the real, unfiltered session bus lives there)."""
+    runtime folder (the real, unfiltered session bus lives there, in a login session; where else
+    it can be is :func:`bus_sockets`'s)."""
     from .platform import apps_dir
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
@@ -529,11 +531,29 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     return roots
 
 
+def bus_sockets(address: str | None = None) -> list[str]:
+    """The socket files of the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS
+    when None): each `unix:path=` in it, a list's too, unescaped. The bus is where its socket is, and
+    that need not be the runtime folder: dbus-run-session and dbus-launch put it under /tmp (R17.5),
+    where a grant of /tmp, or a tool run there, showed the app the unfiltered bus (the review of
+    PR #694, P1-2). An abstract socket has no file, and with no address the bus is the runtime
+    folder's, which is protected already."""
+    addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "") if address is None else address
+    out = []
+    for entry in addr.split(";"):
+        transport, _, keys = entry.partition(":")
+        if transport == "unix":
+            out += [urllib.parse.unquote(v) for k, _, v in (kv.partition("=") for kv in keys.split(",")) if k == "path" and v.startswith("/")]
+    return out
+
+
 def protected_folder(path: str, apps_root: str | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
-    since sharing a parent shares everything beneath it. Reviews and the Customize picker both go
-    through this; the CLI tool's `$cwd` has its own run-time rule (R17.3.3)."""
+    since sharing a parent shares everything beneath it — and the session bus's own socket file and
+    anything above it, wherever it is (:func:`bus_sockets`; a folder beside it may be shared). Reviews
+    and the Customize picker both go through this; the CLI tool's `$cwd` has its own run-time rule
+    (R17.3.3)."""
     if path == "$cwd":
         return ""
     # bwrap resolves a bind source from the host's root, realpath() below from AppKata's own working
@@ -548,7 +568,7 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
         return "your whole home folder"
     if p == "/" or home.startswith(p + os.sep):
         return "everything, your home folder included"
-    for root, what in _protected_roots(apps_root):
+    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in bus_sockets()]:
         r = os.path.realpath(root)
         if p == r or p.startswith(r + os.sep):
             return what
@@ -1911,9 +1931,29 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || {{ printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\\n" {qname} >&2; exit 1; }}
-{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
+{bus}{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
 set -- -- "$appdir/$exe" "$@"
+"""
+
+# The session bus (R17.5), read first, Standard apps only: the proxy filters it, and the working
+# directory and the folder grants must never show the app its socket file, wherever that lies
+# (R17.3.1): dbus-run-session and dbus-launch put it under /tmp, and a tool run in /tmp, or a grant
+# of /tmp, showed the app the unfiltered bus (the review of PR #694, P1-2). $busreal is that file as
+# `pwd -P` names folders, the way the working directory is compared; empty where the address names
+# none the launcher can read (an abstract socket has no file).
+_BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
+busfile=
+case "$upstream" in
+  *";"*|unix:path=*%*) ;;
+  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
+esac
+# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
+# folder of the app's may show it, wherever it lies (R17.3.1).
+busreal=$busfile
+if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
 """
 
 # File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
@@ -2042,8 +2082,9 @@ _GUARD_FN = """guard() {
 
 # The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
-# home, or the whole filesystem at /), or AppKata's own areas (installed apps, other apps' private
-# homes). There the tool runs in its private home instead and says why. Paths are compared physically
+# home, or the whole filesystem at /), AppKata's own areas (installed apps, other apps' private
+# homes), or a folder that holds the session bus's socket file ($busreal, wherever the session's
+# address puts it). There the tool runs in its private home instead and says why. Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
 # be shared (round three, R3-3: it always counted "$PWD", so a file named from a refused folder was
@@ -2053,7 +2094,7 @@ _CWD_DECIDE = """here=$(pwd -P 2>/dev/null || echo /)
 hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
-for d in "$hm" {protected}; do
+for d in "$hm" {protected} ${{busreal:+"$busreal"}}; do
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in {protected}; do
@@ -2067,7 +2108,7 @@ _CWD_WORDS = """if [ "$share" = 1 ]; then
   set -- {bind} "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, or a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder).\\n" {name} "$here" >&2
+  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
   echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
 fi
 """
@@ -2127,7 +2168,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     note = _STRICT_NOTE.format(qname=q(name)) if strict else ""
     out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), id=app_identity(app_id), home=q(home),
                                    info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
-                                   log=q(log_path or applog.app_log_path(app_id)), cwd=cwd, forward=fwd, note=note), _GUARD_FN]
+                                   log=q(log_path or applog.app_log_path(app_id)), bus=_BUS_BLOCK if standard else "",
+                                   cwd=cwd, forward=fwd, note=note), _GUARD_FN]
     for path, why in refused:            # said in the launcher itself, which App Detail can show
         out.append(f"# Refused folder grant {c(path)}: {c(why)} (R17.3.1).")
     if appimage_path is not None:
@@ -2137,6 +2179,19 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     if cli:
         bind = "--bind" if gs["folders"]["$cwd"] == "rw" else "--ro-bind"
         out.append(_CWD_WORDS.format(name=q(name), bind=bind))
+    # A folder grant is judged when the launcher is written, by AppKata's own session bus (a grant
+    # that holds its socket is refused above), and this session's bus can be elsewhere: one started
+    # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket
+    # is inside a granted folder all the same, the file is covered, after that folder's bind, so the
+    # app never sees the unfiltered bus (R17.3.1). Each folder as the app sees it, and as it really is.
+    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
+    if standard and granted:
+        cover = ["# A granted folder that holds this session's bus socket all the same: the file covered (R17.3.1).",
+                 'if [ -S "$busreal" ]; then']
+        for p in granted:
+            dest = os.path.expanduser(p)
+            cover.append(f'  r={q(os.path.realpath(dest))}; case "$busreal" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{busreal#"$r"}}" "$@" ;; esac')
+        out.append("\n".join(cover + ["fi"]) + "\n")
 
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:
@@ -2153,9 +2208,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append(
             f'sock="$rt/appkata/bus-{tag}.$$"\n'
             'rm -f "$sock"\n'
-            '# The session bus to filter. With no address set it is where a login session\'s bus is, which is\n'
-            '# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).\n'
-            'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"\n'
             '# The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so\n'
             '# it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,\n'
             '# its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what\n'
@@ -2191,7 +2243,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             'proxy=\n'
             'case "$upstream" in\n'
             '  *";"*|unix:path=*%*) ;;\n'
-            '  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
+            '  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
             '  unix:abstract=*) start_proxy ;;\n'
             'esac\n'
             'if [ -z "$proxy" ]; then\n'
@@ -2401,7 +2453,8 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and three facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
-    run inside, R17.10.2, and whether xdg-dbus-proxy is here, R17.10), and the startup pass can tell a
+    run inside, R17.10.2, and whether xdg-dbus-proxy is here, R17.10) -- and, for a folder grant that
+    holds it, where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""

@@ -371,10 +371,11 @@ if "xdg-dbus-proxy" in argv:
 """
 
 
-def _launched(tmp_path, monkeypatch, address, template="standard"):
+def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
-    None: no address set): the words of the proxy's own bwrap (None where no proxy was started),
-    the app's bwrap's, the run, and the runtime folder."""
+    None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
+    None): the words of the proxy's own bwrap (None where no proxy was started), the app's bwrap's,
+    the run, and the runtime folder."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -384,14 +385,16 @@ def _launched(tmp_path, monkeypatch, address, template="standard"):
     (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
     (fake / "bwrap").chmod(0o755)
     lp = tmp_path / "launcher"
-    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", sb.resolve_template(template),
+    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
                                     seccomp=str(fake / "record.py")))            # any file there is: nothing here reads it as a filter
     env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{os.environ['PATH']}"}
     if address is not None:
         env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
-    r = subprocess.run(["sh", str(lp)], env=env, cwd=str(home), capture_output=True, text=True, timeout=60)
-    calls = [json.loads(line) for line in log.read_text().splitlines()]
-    return next((c for c in calls if "xdg-dbus-proxy" in c), None), next(c for c in calls if "/.flatpak-info" in c), r, rt
+    r = subprocess.run(["sh", str(lp)], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    app = next((c for c in calls if "/.flatpak-info" in c), None)
+    assert app is not None, (r.returncode, r.stdout, r.stderr)
+    return next((c for c in calls if "xdg-dbus-proxy" in c), None), app, r, rt
 
 
 def _binds(words: list) -> dict:
@@ -494,6 +497,70 @@ def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no
     assert f"{rt}/bus" not in _binds(app) and not [w for w in app if "/appkata/bus-" in w], app
     assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"      # set all the same, and leads nowhere (R3-33)
     assert os.listdir(rt / "appkata") == []
+
+
+# The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
+# refusing the runtime folder alone, and dbus-run-session and dbus-launch put the bus under /tmp
+# (BUS_ADDRESSES): a tool run in /tmp, or a grant of /tmp, showed the app the bus's socket file, and
+# the app could connect to it past the filter. How it slipped past: every test of the rules had the
+# bus where they assumed it, in the runtime folder; the tests that moved it (CR1.5-18) looked at the
+# proxy, which was the change, and not at the rules that had assumed the old place.
+
+def _a_bus_socket(folder):
+    import socket
+    folder.mkdir(parents=True, exist_ok=True)
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(str(folder / "dbus-MZ8lHbtZ8K"))
+    return s, folder / "dbus-MZ8lHbtZ8K"
+
+
+def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies(tmp_path, monkeypatch):
+    folder = tmp_path / "tmp"
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={folder}/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf")
+    assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket"
+    assert sb.protected_folder(str(folder / "dbus-MZ8lHbtZ8K")) == "the session bus's socket"
+    assert sb.protected_folder(str(folder / "project")) == ""                      # the file is protected, not its neighbours
+    assert sb.strip_protected(sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}}))[1] == \
+        [(str(folder), "a folder above the session bus's socket")]
+    # each socket file a list names, unescaped, as libdbus reads it; an abstract socket has none
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:abstract=/tmp/dbus-one;unix:path={tmp_path}/a%20b/bus")
+    assert sb.bus_sockets() == [f"{tmp_path}/a b/bus"]
+    assert sb.protected_folder(str(tmp_path / "a b")) == "a folder above the session bus's socket"
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=0123")
+    assert sb.bus_sockets() == [] and sb.protected_folder(str(folder)) == ""
+
+
+@pytest.mark.parametrize("where", ["the socket's folder", "a folder beside it"])
+def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, monkeypatch, where):
+    sock, path = _a_bus_socket(tmp_path / "tmp")
+    run_in = os.path.realpath(path.parent if where == "the socket's folder" else path.parent / "project")
+    os.makedirs(run_in, exist_ok=True)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, f"unix:path={path},guid=0123", template="cli-tool", cwd=run_in)
+    sock.close()
+    assert proxy is not None and r.returncode == 0, (r.stdout, r.stderr)
+    if where == "the socket's folder":
+        assert run_in not in _binds(app) and app[app.index("--chdir") + 1] == str(tmp_path / "home"), app
+        assert f"Demo runs sandboxed and can't see {run_in}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
+    else:
+        assert _binds(app)[run_in] == ("--bind", run_in) and r.stderr == "", (app, r.stderr)
+
+
+def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch):
+    # A grant is judged when the launcher is written, by AppKata's own session's bus; a session
+    # started another way can put its bus inside that folder later. The run covers the file.
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    sock, path = _a_bus_socket(tmp_path / "shared")
+    folder = str(path.parent)
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, f"unix:path={path},guid=0123", gs=gs)
+    sock.close()
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    binds = _binds(app)
+    assert binds[folder] == ("--bind-try", folder) and binds[str(path)] == ("--ro-bind", "/dev/null"), binds
+    assert app.index(str(path)) > app.index(folder)                     # after the folder's own bind
+    # where this session's bus is elsewhere, nothing is covered
+    _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs)
+    assert "/dev/null" not in app and r.returncode == 0, (app, r.stderr)
 
 
 def test_proxy_args_map_capabilities():

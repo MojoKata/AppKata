@@ -33,11 +33,23 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\n" App >&2; exit 1; }
+# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
+busfile=
+case "$upstream" in
+  *";"*|unix:path=*%*) ;;
+  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
+esac
+# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
+# folder of the app's may show it, wherever it lies (R17.3.1).
+busreal=$busfile
+if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
 here=$(pwd -P 2>/dev/null || echo /)
 hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
-for d in "$hm" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
+for d in "$hm" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt" ${busreal:+"$busreal"}; do
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
@@ -76,15 +88,12 @@ if [ "$share" = 1 ]; then
   set -- --bind "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, or a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder).\n" App "$here" >&2
+  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\n" App "$here" >&2
   echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
 fi
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
 rm -f "$sock"
-# The session bus to filter. With no address set it is where a login session's bus is, which is
-# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
-upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 # The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so
 # it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,
 # its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what
@@ -120,7 +129,7 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
 proxy=
 case "$upstream" in
   *";"*|unix:path=*%*) ;;
-  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
+  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
   unix:abstract=*) start_proxy ;;
 esac
 if [ -z "$proxy" ]; then
