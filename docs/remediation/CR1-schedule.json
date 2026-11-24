@@ -51,7 +51,8 @@
     331,
     388,
     661,
-    688
+    688,
+    698
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
@@ -74,6 +75,7 @@
     "tests/data/launchers/online-app-appimage-with-folders.sh",
     "tests/data/launchers/standard-writable-no-x11.sh",
     "tests/data/launchers/strict-tarball.sh",
+    "tests/skips/windows.txt",
     "tests/test_appkind.py",
     "tests/test_dialog_contract.py",
     "tests/test_install_review.py",
@@ -105,7 +107,8 @@
     314,
     328,
     497,
-    628
+    628,
+    699
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -723,7 +726,8 @@
     363,
     371,
     372,
-    629
+    629,
+    700
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -10776,6 +10780,53 @@
    "size": "small",
    "proof": "A test that Backend.planFor carries install.command_link_refusal's answer for an app named after a command, and tests/test_dialog_contract.py that the install dialog's command checkbox is disabled with that reason as its hint when the plan carries one.",
    "note": "Found by U03's first batch (2026-11-24) after #407's fix, and filed by the coordinator. A disabled state and a tooltip in a pattern the dialog has: list it under Needs your eye."
+  },
+  {
+   "finding": 698,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    313
+   ],
+   "related": [
+    309
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: an installed app's options are changed with a file of the user's at the command link's place: the launcher, the record and what runs still agree afterwards.",
+   "note": "Found by U03's second batch (2026-11-24) after #313's fix, and filed by the coordinator: rewrite_launcher keeps the old order of steps."
+  },
+  {
+   "finding": 699,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "related": [
+    307,
+    628
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: a release whose version is `current`, and one whose version is `run`, is refused with a message or installed under an escaped folder name, as #307's rule for a version decides.",
+   "note": "Found by U03's second batch (2026-11-24), and filed by the coordinator. One rule with #307 (a version of `..`) and #628: what a release's version may be as a path part."
+  },
+  {
+   "finding": 700,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_windows.py"
+   ],
+   "related": [
+    358,
+    313
+   ],
+   "size": "medium",
+   "proof": "tests/test_windows.py in the Windows VM (scripts/test-windows-vm.sh --tests): with something already at the junction's path the install ends in an install error that names it, and is taken back.",
+   "note": "Found by U03's second batch (2026-11-24), and filed by the coordinator. #358 changes the same step (the junction's move to a new version)."
   }
  ],
  "shared_files": [
