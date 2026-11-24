@@ -44,8 +44,10 @@ R4.3. **Install types.**
 
 R4.3.1. **Portable** (AppImage, tarball, portable `.zip`). Each app gets its own
 folder, `<install folder>/<app>/`, holding its versions side by side: an AppImage as its
-versioned file (`LocalSend-1.18.2-x86_64.AppImage`), an archive unpacked into a folder named
-after its version (`2.1/`). The install folder is a setting (R11.1.4); by default it is:
+versioned file (`LocalSend-1.18.2-x86_64.AppImage`: the release's own file name, with the version
+added when the name holds none or is another version's, so `Tool-x86_64.AppImage` is kept as
+`Tool-x86_64-2.0.AppImage`), an archive unpacked into a folder named after its version (`2.1/`).
+The install folder is a setting (R11.1.4); by default it is:
 
 - `~/bin/apps` on Linux, with command links (R4.3.1.3) directly in `~/bin`. Ubuntu, Debian and
   Mint put `~/bin` on the PATH at login when it exists.

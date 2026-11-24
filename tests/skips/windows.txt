@@ -22,11 +22,13 @@ tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the
 tests/test_install_review.py::test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_entry_away  # the Linux install layout
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
 tests/test_install_review.py::test_command_link_never_replaces_a_real_file  # the Linux install layout
+tests/test_install_review.py::test_each_version_of_an_appimage_released_under_one_name_is_kept_as_its_own_file  # the Linux install layout
 tests/test_install_review.py::test_portable_options  # the Linux install layout
 tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux install layout
 tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
 tests/test_install_review.py::test_the_install_notice_says_why_no_command_was_added_and_says_it_once  # could not import 'PySide6': No module named 'PySide6'
 tests/test_install_review.py::test_the_menu_entry_escapes_the_path_it_starts_and_refuses_one_it_cannot_write  # the Linux install layout
+tests/test_install_review.py::test_the_versions_an_app_has_are_there_until_the_new_one_is_installed  # the Linux install layout
 tests/test_install_review.py::test_uninstalling_says_what_it_did_not_remove  # the Linux install layout
 tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux install layout
 tests/test_install_review.py::test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uninstall  # the Linux install layout

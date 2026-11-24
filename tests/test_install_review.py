@@ -222,7 +222,7 @@ def test_retention_never_deletes_an_adopted_file(tmp_path):
     for p in paths:
         p.write_text("x")
     rec = {"current": {"path": str(paths[0])}, "kept": [{"path": str(paths[1])}, {"path": str(paths[2]), "external": True}]}
-    install._retain(rec, 0)
+    install._forget(install._retain(rec, 0))
     assert rec["kept"] == [] and not paths[1].exists() and paths[2].exists()
 
 
@@ -679,6 +679,20 @@ def _changed(before, after):
     return {k: (before.get(k), after.get(k)) for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)}
 
 
+def _failing_once(real, when=lambda *a, **k: True):
+    """`real`, failing the first time it is asked for what `when` names, as on a full disk: the
+    step fails for the new version, and making it again for the previous one is what takes the
+    install back."""
+    failed = []
+
+    def call(*args, **kw):
+        if when(*args, **kw) and not failed:
+            failed.append(1)
+            raise OSError(28, "No space left on device")
+        return real(*args, **kw)
+    return call
+
+
 def _tarball(server, name, files):
     """An archive of `files`, {path: mode}, on the test's web server."""
     root, base = server
@@ -909,7 +923,7 @@ def test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_c
     rec = install.install(env, APP, a, "appimage", [a], portable=p)
     assert rec["links"] == [str(base / "apps" / "demo-tool" / "DemoTool.AppImage"), str(base / "bin" / "demo-tool")]
     assert (p.root, p.command_folder) == (str(base / "apps"), str(base / "bin"))
-    assert os.path.realpath(base / "bin" / "demo-tool") == str(base / "apps" / "demo-tool" / "t.AppImage")
+    assert os.path.realpath(base / "bin" / "demo-tool") == str(base / "apps" / "demo-tool" / "t-1.2.0.AppImage")
     assert rec["root"] == str(base / "apps") and os.listdir(cwd) == []
     install.uninstall(env, APP["url"])
     assert not os.path.lexists(base / "bin" / "demo-tool") and not os.path.lexists(base / "apps" / "demo-tool") and os.listdir(cwd) == []
@@ -1077,3 +1091,120 @@ def test_uninstalling_says_what_it_did_not_remove(env, server, tmp_path, monkeyp
     from appkata.backend import Backend
     assert Backend._left_note([str(want)]) == f" Not removed: {want}." and Backend._left_note([]) == ""
     assert Backend._left_note(["/a", "/b"]) == " Not removed: /a, /b."
+
+
+# ---------------------------------------------------------------- the installed version, until the new one is in (CR1.3-13)
+
+# a release's file name for every version, and the versions: what each is kept as
+_ONE_NAME = [("Tool-x86_64.AppImage", ("1.0", "2.0", "3.0"), "Tool-x86_64-{}.AppImage"),
+             ("nvim-linux-x86_64.appimage", ("0.9.5", "0.10.0", "0.10.1"), "nvim-linux-x86_64-{}.appimage"),
+             ("DemoTool.AppImage", ("1.0", "2.0", "3.0"), "DemoTool-{}.AppImage"),            # the stable link's own name
+             ("Tool-x86_64.AppImage", ("64", "86", "100"), None),                             # versions the name seems to hold
+             ("Tool-ubuntu-22.04-x86_64.AppImage", ("1.0", "2.0", "3.0"), None)]              # a number that is no version
+
+
+@linux_only
+@pytest.mark.parametrize("name,versions,stored", _ONE_NAME, ids=[f"{n} {'-'.join(v)}" for n, v, _ in _ONE_NAME])
+def test_each_version_of_an_appimage_released_under_one_name_is_kept_as_its_own_file(env, server, tmp_path, name, versions, stored):
+    # CR1.3-13 (a): an AppImage was kept under the release's file name, and many projects use one
+    # name for every version (Tool-x86_64.AppImage). The update then deleted the installed version's
+    # file and put its own there, before anything else had succeeded, and the record's kept entry
+    # for it was dropped as "the current file": no version was ever kept, so the Versions list
+    # couldn't go back without a download (R4.3.1.5), and the tests' names all held their version.
+    # A version is now kept under the release's name when that holds a version, and with the
+    # version added when it doesn't; and no version is ever placed where another one of the app's
+    # is, whatever its name seems to hold (the last cases: "64" and "86" are both in x86_64, and
+    # 22.04 is no version of the app).
+    nothing = _left(tmp_path, env)
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=2)
+    folder, cmd = tmp_path / "apps" / "demo-tool", tmp_path / "cmd" / "demo-tool"
+    for v in versions:
+        a = _appimage(server, name, v.encode())                 # the same name, the next version's bytes
+        rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=p)
+        assert cmd.read_bytes() == v.encode() and (folder / "DemoTool.AppImage").read_bytes() == v.encode()
+    files = {f.name: f.read_bytes() for f in folder.iterdir() if not f.is_symlink()}
+    assert sorted(files.values()) == sorted(v.encode() for v in versions) and len(files) == 3, files
+    if stored:
+        assert files == {stored.format(v): v.encode() for v in versions}
+    assert [k["version"] for k in rec["kept"]] == [versions[1], versions[0]] == install.kept_versions(env, APP["url"])
+    assert all(open(k["path"], "rb").read() == k["version"].encode() for k in rec["kept"] + [rec["current"]])
+    rec = install.switch_to(env, dict(APP), versions[0], p)                # back, without a download
+    assert cmd.read_bytes() == versions[0].encode() and install.kept_versions(env, APP["url"]) == [versions[2], versions[1]]
+    a = _appimage(server, name, b"4.0")
+    rec = install.install(env, {**APP, "installVersion": "4.0"}, a, "appimage", [a], portable=p)
+    files = {f.name: f.read_bytes() for f in folder.iterdir() if not f.is_symlink()}
+    assert sorted(files.values()) == sorted([b"4.0", versions[0].encode(), versions[2].encode()]), files       # two kept, the oldest gone
+    assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
+
+
+@pytest.mark.parametrize("asset,version,kept_as", [
+    ("LocalSend-1.18.2-x86_64.AppImage", "1.18.2", "LocalSend-1.18.2-x86_64.AppImage"),
+    ("Tool-v2-x86_64.AppImage", "2", "Tool-v2-x86_64.AppImage"),
+    ("Tool-26.11.AppImage", "2026.11", "Tool-26.11.AppImage"),          # a version, in the project's own spelling
+    ("Tool-x86_64.AppImage", "2.0", "Tool-x86_64-2.0.AppImage"),
+    ("Tool.AppImage", "1.2", "Tool-1.2.AppImage"),
+    ("Tool-2-x86_64.AppImage", "2.1", "Tool-2-x86_64-2.1.AppImage"),
+    ("Tool-12-x86_64.AppImage", "2", "Tool-12-x86_64-2.AppImage"),      # another number's digits aren't this version
+    ("tool.appimage", "nightly/2026 11", "tool-nightly_2026_11.appimage"),
+    ("Tool.AppImage", "", "Tool-unknown.AppImage")])
+def test_the_name_a_version_of_an_appimage_is_kept_under(asset, version, kept_as):
+    assert install._appimage_name(asset, version) == kept_as
+    stem, ext = os.path.splitext(asset)                 # and with the version whatever the name holds, when it is another's
+    assert install._appimage_name(asset, version, versioned=True) == f"{stem}-{install._safe(version)}{ext}"
+
+
+_ROADS = ["an app that updates itself", "the same version again", "an app that updates itself from now on",
+          "an update that retires a kept version"]
+_FAILS = ["an archive with no program", "putting it in place", "the menu entry", "the command link", "the record"]
+
+
+@linux_only
+@pytest.mark.parametrize("road", _ROADS)
+@pytest.mark.parametrize("fails,kind", [(f, k) for f in _FAILS for k in ("appimage", "tarball")
+                                        if (f, k) != ("an archive with no program", "appimage")])     # an AppImage is one file
+def test_the_versions_an_app_has_are_there_until_the_new_one_is_installed(env, server, tmp_path, monkeypatch, fails, road, kind):
+    # CR1.3-13 (b), and its class. R4.6: an update "keeps the previous version's files until the
+    # update succeeds". For an app that updates itself, install() deleted the installed version, and
+    # every kept one, before the new file was placed or unpacked: an archive with no program, or a
+    # full disk, and the app was gone, under a record that still named it. The class is every
+    # deletion an update makes before its record is stored. There were three more: the installed
+    # version's own file or folder when the new one has its name (a fixed name, R4.10.2, and the
+    # same version installed again), deleted by _place before the new one was in; the versions of
+    # an app that updates itself from now on; and the kept version an update retires (Keep older
+    # versions, R4.3.1.5), deleted before the record that drops it was stored. So each road here
+    # is made to fail at each step after the download, and afterwards every file, link and folder
+    # and the installs table are what they were; then the same update succeeds and leaves nothing
+    # set aside, and uninstalling leaves nothing at all.
+    nothing = _left(tmp_path, env)
+    cmd, home = tmp_path / "cmd", tmp_path / "apps" / "demo-tool"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd), keep=1 if road == "an update that retires a kept version" else 2)
+    itself = road == "an app that updates itself"
+    for v in ("1.0",) if itself else ("1.0", "1.1"):
+        a = _version(server, kind, v)
+        install.install(env, {**APP, "installVersion": v, "autoUpdate": itself}, a, kind, [a], portable=p)
+    new = "1.1" if road == "the same version again" else "2.0"
+    app = {**APP, "installVersion": new, "autoUpdate": road.startswith("an app that updates itself")}
+    # the new download: other bytes than any installed version's, under the same version's name too
+    good = (_appimage(server, f"Tool-{new}-x86_64.AppImage", b"downloaded again") if kind == "appimage"
+            else _tarball(server, f"tool-{new}.tar.gz", {f"tool-{new}/tool": 0o755, f"tool-{new}/NEWS": 0o644}))
+    bad = _tarball(server, f"tool-{new}-bad.tar.gz", {f"tool-{new}/README": 0o644}) if fails == "an archive with no program" else good
+    before = _left(tmp_path, env)
+    with monkeypatch.context() as m:
+        if fails == "putting it in place":
+            m.setattr(install.os, "replace", _failing_once(os.replace, lambda src, dst: src.endswith(".new")))
+        elif fails == "the menu entry":
+            m.setattr(install, "_desktop_entry", _failing_once(install._desktop_entry))
+        elif fails == "the command link":
+            m.setattr(install, "_link", _failing_once(install._link, lambda target, link, own=None: os.path.dirname(link) == str(cmd)))
+        elif fails == "the record":
+            m.setattr(env, "x", _failing_once(env.x, lambda sql, *a: sql.startswith(("INSERT OR REPLACE INTO installs", "UPDATE installs"))))
+        with pytest.raises((install.InstallError, OSError), match="couldn't find the program" if bad is not good else "No space left"):
+            install.install(env, app, bad, kind, [bad], portable=p)
+    assert _changed(before, _left(tmp_path, env)) == {}
+    rec = install.install(env, app, good, kind, [good], portable=p)            # and the update itself goes through
+    assert rec["current"]["version"] == new and os.access(rec["exec"], os.X_OK)
+    assert [k["version"] for k in rec["kept"]] == {"an app that updates itself": [], "the same version again": ["1.0"],
+                                                   "an app that updates itself from now on": [], "an update that retires a kept version": ["1.1"]}[road]
+    assert sorted(n for n in os.listdir(home) if not os.path.islink(home / n) and not n.endswith(".extracted")) == \
+        sorted(os.path.relpath(k["path"], home) for k in [rec["current"]] + rec["kept"]), os.listdir(home)
+    assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}

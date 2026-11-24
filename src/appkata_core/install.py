@@ -455,18 +455,71 @@ def _extract(kind: str, file: str, dest: str) -> None:
                 os.chmod(path, mode)
 
 
-def _place(kind: str, file: str, app: dict, target: str, version: str, asset_name: str, fixed: bool = False) -> dict:
+def _appimage_name(asset_name: str, version: str, versioned: bool = False) -> str:
+    """The file name one version of an AppImage is kept under (R4.3.1): the release's own when it
+    holds the version (`LocalSend-1.18.2-x86_64.AppImage`) or a version in a spelling of its own
+    (a number with a dot in it: `Tool-26.11.AppImage` of the release 2026.11), else that name
+    with the version added (`Tool-x86_64.AppImage` -> `Tool-x86_64-2.0.AppImage`). `versioned`
+    adds it whatever the name holds: :func:`_place` asks for that when the name is another
+    version's. Many projects release every version under one name, and each update then replaced
+    the installed version's file with its own: nothing was kept to go back to (CR1.3-13)."""
+    holds = version and re.search(rf"(?<![0-9])(?<![0-9]\.){re.escape(version)}(?!\.?[0-9])", asset_name)
+    if not versioned and (holds or re.search(r"[0-9]\.[0-9]", asset_name)):
+        return asset_name
+    stem, ext = os.path.splitext(asset_name)
+    return f"{stem}-{_safe(version)}{ext}"
+
+
+def _aside(path: str) -> str:
+    """Where :func:`_swap_in` keeps what was at `path` until the install has succeeded."""
+    return path + ".old"
+
+
+def _swap_in(staging: str, dest: str) -> None:
+    """Put what was made at `staging` at `dest`. What is at `dest` already is the installed version
+    -- an app that updates itself has one fixed name (R4.10.2), and a version installed again has
+    its own -- and it is set aside (:func:`_aside`), not deleted: R4.6 keeps the previous version's
+    files until the update succeeds. :func:`install` removes it once the record is stored, and
+    :func:`_undo_portable` puts it back when a later step fails. A failure here puts it back at
+    once (CR1.3-13: the installed version was deleted first, and the new one placed after)."""
+    aside = _aside(dest)
+    _remove_path(aside)                         # one that a crash left
+    had = os.path.lexists(dest)
+    if had:
+        os.replace(dest, aside)
+    try:
+        os.replace(staging, dest)
+    except BaseException:
+        if had:
+            os.replace(aside, dest)
+        raise
+
+
+def _place(kind: str, file: str, app: dict, target: str, version: str, asset_name: str, fixed: bool = False,
+           others: tuple[str, ...] = ()) -> dict:
     """Put one version in the app's folder (R4.3.1): {version, path, exec} where path is
     the versioned file or folder and exec is relative to the app folder. `fixed`: an app that
-    updates itself gets <App>.AppImage or an "app" folder instead (R4.10.2)."""
+    updates itself gets <App>.AppImage or an "app" folder instead (R4.10.2). `others`: where the
+    app's other versions are, none of which this one may take the place of.
+
+    All or nothing: the version is made beside its place and renamed into it (:func:`_swap_in`),
+    so a download that can't be moved or unpacked leaves what is installed as it was."""
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
-        dest = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed else asset_name)
-        if os.path.lexists(dest):
-            os.remove(dest)
-        shutil.move(file, dest)
-        os.chmod(dest, 0o755)
+        dest = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
+                            else _appimage_name(asset_name, version))
+        if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
+            dest = os.path.join(target, _appimage_name(asset_name, version, versioned=True))
+        staging = dest + ".new"
+        _remove_path(staging)
+        try:
+            shutil.move(file, staging)
+            os.chmod(staging, 0o755)
+            _swap_in(staging, dest)
+        except BaseException:
+            _remove_path(staging)
+            raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
     vdir = os.path.join(target, "app" if fixed else _safe(version))
     staging = vdir + ".new"
@@ -479,8 +532,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
         else:
             _extract(kind, file, staging)
             exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
-        shutil.rmtree(vdir, ignore_errors=True)
-        os.replace(staging, vdir)
+        _swap_in(staging, vdir)
     except BaseException:                  # an archive that can't be unpacked, has no program or can't be put in
         _remove_tree(staging)              # place: nothing of it stays (CR1.3-15)
         raise
@@ -740,20 +792,40 @@ def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Po
         log.warning("%s: no Uninstall entry appeared; AppKata can't uninstall it", app["name"])
     return rec
 
-def _retain(rec: dict, keep: int) -> None:
-    """Keep up to `keep` older versions (R4.3.1.5); remove the rest."""
-    kept, out = rec.get("kept", []), []
+def _retain(rec: dict, keep: int) -> list[dict]:
+    """Keep up to `keep` older versions in the record (R4.3.1.5), and return the rest: the caller
+    removes them (:func:`_forget`) once the record that no longer names them is stored. They were
+    deleted here, before that: an update whose record then couldn't be stored kept its previous
+    record, which named versions that were gone (CR1.3-13)."""
+    kept, out, rest = rec.get("kept", []), [], []
     seen = {rec["current"]["path"]}
     for k in kept:
         if k["path"] in seen or not os.path.lexists(k["path"]):
             continue
         seen.add(k["path"])
-        if len(out) < max(0, keep):
-            out.append(k)
-        elif not k.get("external"):         # never delete a file AppKata adopted rather than placed
-            _remove_path(k["path"])
-            _remove_extracted(k)            # its sandboxed-AppImage cache, if any (R17.7)
+        (out if len(out) < max(0, keep) else rest).append(k)
     rec["kept"] = out
+    return rest
+
+
+def _forget(versions: list[dict]) -> None:
+    """Remove versions no record names any more: each one's file or folder, and a sandboxed
+    AppImage's unpacked copy (R17.7). Never a file AppKata adopted rather than placed. The record
+    is stored by now, so one that can't be removed is logged, and fails nothing: it is in the app's
+    folder, and goes with it."""
+    for k in versions:
+        if not k.get("external"):
+            try:
+                _remove_path(k["path"])
+                _remove_extracted(k)
+            except OSError as e:
+                log.warning("couldn't remove %s: %s", k["path"], e)
+
+
+def _set_aside(cur: dict) -> str:
+    """Where the installed version that `cur`, just placed, took the place of is kept for now
+    (:func:`_swap_in`), or "" when it took no version's place."""
+    return _aside(cur["path"]) if os.path.lexists(_aside(cur["path"])) else ""
 
 
 def _remove_extracted(k: dict) -> None:
@@ -766,7 +838,7 @@ def _remove_extracted(k: dict) -> None:
 
 def _remove_path(path: str) -> None:
     if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path, ignore_errors=True)
+        _remove_tree(path)
     elif os.path.lexists(path):
         os.remove(path)
 
@@ -830,7 +902,8 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
     version's record).
 
     `rec` is the record as far as the failed attempt wrote it, `prev` the stored one ({} for a first
-    install), `was` what was there before (:func:`_was_there`). A first install: its links, its menu
+    install), `was` what was there before (:func:`_was_there`), with what the attempt set aside or
+    renamed since. A first install: its links, its menu
     entry, its launcher and marker and its folder go (a folder or a private home that was there
     before stays). An update: the new version's files go, and the previous version's stable link,
     launcher, menu entry and command link are made again as its record has them (`_activate`, with
@@ -855,7 +928,10 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
                     _remove_path(_menu_entry_path(app_id))
                 if rec.get("launcher") and rec["launcher"] != prev.get("launcher"):
                     _remove_path(rec["launcher"])
-            if new.get("path") and new["path"] not in old:
+            if was.get("aside") and os.path.lexists(was["aside"]):
+                _remove_path(new["path"])       # the new version took the installed one's place (a fixed name,
+                os.replace(was["aside"], new["path"])       # the same version again): that one goes back
+            elif new.get("path") and new["path"] not in old:
                 _remove_path(new["path"])
                 _remove_extracted(new)
             if not prev.get("current"):
@@ -906,6 +982,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     ok = keep = False
     signer = ""
     undo = None             # takes a portable install back, from its first change until its record is stored
+    retired: list[dict] = []        # the versions the new record no longer names: removed once it is stored (R4.6)
     try:
         file = os.path.join(tmpdir, asset.name)
         log.info("downloading %s", asset.url)
@@ -961,13 +1038,15 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)
             check_not_running(target, app["name"])
             _check_before_placing(prev, app, portable, app_id, target, kind)
-            undo = partial(_undo_portable, db, app, rec, prev, portable, target, _was_there(app_id, target))
+            was = _was_there(app_id, target)
+            undo = partial(_undo_portable, db, app, rec, prev, portable, target, was)
             _secure_target(portable, target)
-            for old in [prev.get("current")] + prev.get("kept", []) if prev.get("current") else []:
-                if old and not old.get("external"):
-                    _remove_path(old["path"])
             rec.update(target=target, files=prev.get("files", []), links=prev.get("links", []), kept=[], selfUpdating=True)
             rec["current"] = _place(kind, file, app, target, rel_version, asset.name, fixed=True)
+            was["aside"] = _set_aside(rec["current"])
+            # the versions it had go once this one is installed, not before it is placed (R4.6)
+            retired = [old for old in ([prev["current"]] + prev.get("kept", []) if prev.get("current") else [])
+                       if old["path"] != rec["current"]["path"]]
             if OS == "windows" and portable.motw:
                 windows.mark_tree(rec["current"]["path"], asset.url)
             if OS == "windows":
@@ -989,14 +1068,16 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec.update(target=target, links=prev.get("links", []), files=prev.get("files", []),
                        shortcuts=prev.get("shortcuts", []), shims=prev.get("shims", []),
                        kept=([prev["current"]] if prev.get("current") else []) + prev.get("kept", []))
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name)
+            rec["current"] = _place(kind, file, app, target, rel_version, asset.name,
+                                    others=tuple(k["path"] for k in rec["kept"] if k.get("version") != rel_version))
+            was["aside"] = _set_aside(rec["current"])
             if OS == "windows" and portable.motw:
                 windows.mark_tree(rec["current"]["path"], asset.url)
             if OS == "windows":           # R15.18
                 rec["msvcrt"] = windows.needs_msvcrt(rec["current"]["path"])
             portable = _apply_kind(rec, app, portable, kind, target, prev)
             _activate(rec, app, portable, target)
-            _retain(rec, portable.keep)
+            retired = _retain(rec, portable.keep)
         elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
             rec.update(_run_installer(app, file, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
         elif kind == "msix" and OS == "windows":            # R15.7.4
@@ -1033,6 +1114,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
              (app["url"], app["name"], rel_version, app.get("date", ""), asset.name, kind, json.dumps(rec), now()))
         undo = None
         ok = True
+        _forget(retired + ([{"path": _aside(rec["current"]["path"])}] if rec.get("current") else []))
         return rec
     except Cancelled:
         ok = True                               # download() already removed the partial file
@@ -1072,12 +1154,13 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
     rec["current"] = k
     try:
         _activate(rec, app, portable, rec["target"])
-        _retain(rec, max(portable.keep, len(rec["kept"])))
+        retired = _retain(rec, max(portable.keep, len(rec["kept"])))
         db.x("UPDATE installs SET version=?, date=?, record=?, installed_at=? WHERE url=?",
              (version, date or row["date"], json.dumps(rec), now(), app["url"]))
     except BaseException:           # the version that was current is current again, as its record says (CR1.3-15)
         _undo_portable(db, app, rec, stored, portable, rec["target"], {})
         raise
+    _forget(retired)
     return rec
 
 
