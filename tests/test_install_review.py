@@ -586,12 +586,43 @@ def test_no_command_link_is_ever_named_after_a_command_a_launcher_or_appkata_run
         assert why == f"{name} is a name kept for the system's own command", name
 
 
+def _appkata_start(env, tmp_path, monkeypatch, app, portable, sandbox_here=False, grants=None):
+    """AppKata's start as the backend makes it -- the pass its constructor starts on a thread
+    (`Backend._heal_launchers_at_startup`) -- on the test's database, for the installed `app` with
+    the options `portable` and the grant set `grants` (None: it can't be sandboxed). This machine's
+    sandbox is never asked: here it works when `sandbox_here`, and bwrap is missing otherwise.
+    Returns a function that runs the pass and gives the app's stored record; its `backend` is the
+    Backend."""
+    pytest.importorskip("PySide6")                              # the backend is Qt's
+    from appkata_core import sandbox
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(sandbox, "have_tools", lambda: sandbox_here)
+    monkeypatch.setattr(sandbox, "userns_works", lambda refresh=False: sandbox_here)
+    monkeypatch.setattr(sandbox, "nested_userns_works", lambda refresh=False: True)
+    monkeypatch.setattr(sandbox, "support_status", lambda: {"status": "ok" if sandbox_here else "unsupported"})
+    from appkata.backend import Backend
+    be = Backend(db_path=env.path, heal=False)
+    be._timer.stop()
+    be._app = lambda url: {**app, "installed": app.get("installVersion") or app["version"]} if url == app["url"] else None
+    be._app_options = lambda url, choice=None: portable
+    be._resolved_sandbox = lambda url, kind=None, is_cli=None: (
+        {"source": "user", "grants": grants, "template": "test"} if grants is not None and url == app["url"] else None)
+
+    def start():
+        be._heal_launchers_at_startup()
+        return json.loads(env.one("SELECT record FROM installs WHERE url=?", (app["url"],))["record"])
+    start.backend = be
+    return start
+
+
 @linux_only
-def test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes(env, server, tmp_path, debian_path, monkeypatch):
+def test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes_at_the_next_update(env, server, tmp_path, debian_path, monkeypatch):
     # The other side of the name check: the link AppKata made for this app is on the PATH too, and
     # an update must not take it for someone else's command. And a name that becomes a command
-    # later (the system installs a `demo-tool`) loses its link at the next update or start, since
-    # the link would be ahead of it.
+    # later (the system installs a `demo-tool`) loses its link at the next update, since the link
+    # would be ahead of it, and gets it back at the one after once the name is free (AppKata's
+    # start does both too: the test below).
     p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(debian_path))
     for v in ("1.0", "1.1"):
         a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
@@ -606,12 +637,66 @@ def test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goe
     (system / "demo-tool").write_text("#!/bin/sh\n")
     (system / "demo-tool").chmod(0o755)
     monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{system}")
-    rec = install.rewrite_launcher(env, dict(APP), p)                     # what AppKata's start does
+    a = _appimage(server, "Tool-1.2-x86_64.AppImage", b"1.2")
+    rec = install.install(env, {**APP, "installVersion": "1.2"}, a, "appimage", [a], portable=p)
     assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({system / 'demo-tool'})"
     assert not os.path.lexists(debian_path / "demo-tool")
     (system / "demo-tool").unlink()
-    rec = install.rewrite_launcher(env, dict(APP), p)                     # the name is free again: the option stood
-    assert "commandRefused" not in rec and os.path.islink(debian_path / "demo-tool")
+    a = _appimage(server, "Tool-1.3-x86_64.AppImage", b"1.3")
+    rec = install.install(env, {**APP, "installVersion": "1.3"}, a, "appimage", [a], portable=p)    # the option stood
+    assert "commandRefused" not in rec and open(debian_path / "demo-tool", "rb").read() == b"1.3"
+
+
+_STARTS = {"the sandbox unsupported here": (False, None), "the app's sandbox Off": (True, "off"),
+           "the app sandboxed, its launcher today's": (True, "standard")}
+
+
+@linux_only
+@pytest.mark.parametrize("start", list(_STARTS))
+def test_appkatas_start_makes_a_command_link_once_its_name_is_free_and_removes_one_whose_name_became_a_command(env, server, tmp_path, debian_path, monkeypatch, start):
+    # #689's review, P1-1: R4.3.1.3 says a command link refused while its name was a command "is
+    # made at a later update or start of AppKata once the name is free, and a link whose name has
+    # since become a command is removed then". The start's only pass that reached the command link
+    # was the heal of a sandboxed app's launcher that isn't today's text: an app that runs Off, any
+    # app where the sandbox isn't supported, and a sandboxed one whose launcher is current got their
+    # link back, or lost one ahead of a newly installed command, only at their next update. The test
+    # that held the sentence called rewrite_launcher by hand and called it the start. This one runs
+    # the backend's own start pass, for each kind of app the heal passes over.
+    from appkata_core import sandbox
+    sandbox_here, template = _STARTS[start]
+    grants = sandbox.resolve_template(template) if template else None
+    system = tmp_path / "usr-bin"
+    system.mkdir()
+    (system / "demo-tool").write_text("#!/bin/sh\n")
+    (system / "demo-tool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{system}")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(debian_path))
+    start_appkata = _appkata_start(env, tmp_path, monkeypatch, APP, p, sandbox_here, grants)
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"1.0")
+    rec = install.install(env, {**APP, "sandbox": grants}, a, "appimage", [a], portable=p)
+    assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({system / 'demo-tool'})"
+    sandboxed = template not in (None, "off")
+    assert bool(rec.get("launcher")) is sandboxed
+    if sandboxed:                           # its launcher is the one AppKata writes today: nothing for the heal to do
+        assert start_appkata.backend._heal_launchers() == []
+    assert start_appkata() == rec and not os.path.lexists(debian_path / "demo-tool")       # still a command: nothing changes
+    (system / "demo-tool").unlink()                                     # the system's demo-tool is uninstalled
+    rec = start_appkata()
+    assert "commandRefused" not in rec and str(debian_path / "demo-tool") in rec["links"]
+    assert os.readlink(debian_path / "demo-tool") == rec["exec"]        # the launcher, when it is sandboxed
+    made = os.lstat(debian_path / "demo-tool")
+    assert start_appkata() == rec and os.lstat(debian_path / "demo-tool").st_ino == made.st_ino      # in place: left alone
+    (system / "demo-tool").write_text("#!/bin/sh\n")                    # and installed again: the link is ahead of it
+    (system / "demo-tool").chmod(0o755)
+    rec = start_appkata()
+    assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({system / 'demo-tool'})"
+    assert not os.path.lexists(debian_path / "demo-tool") and str(debian_path / "demo-tool") not in rec["links"]
+    assert shutil.which("demo-tool") == str(system / "demo-tool")
+    if sandboxed:
+        assert start_appkata.backend._heal_launchers() == []
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    install.uninstall(env, APP["url"])
+    assert not (tmp_path / "apps" / "demo-tool").exists()
 
 
 @linux_only
@@ -853,7 +938,7 @@ _THEIRS = ["a link to their own program", "a link that leads nowhere", "a file"]
 
 @linux_only
 @pytest.mark.parametrize("on_path", [False, True], ids=["off the PATH", "on the PATH"])
-@pytest.mark.parametrize("then", ["an update", "a kept version", "the next start", "uninstall"])
+@pytest.mark.parametrize("then", ["an update", "a kept version", "a launcher rewrite", "the next start", "uninstall"])
 @pytest.mark.parametrize("theirs", _THEIRS)
 def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced(env, server, tmp_path, monkeypatch, theirs, then, on_path):
     # CR1.3-11, R4.3.1.3: "AppKata never replaces a file there that isn't a link it made". A first
@@ -865,7 +950,9 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
     # command link was (a link to their program, a link to nothing, a file), and nothing AppKata
     # then does to the app touches it. On the PATH, a link to a program is a command already, so
     # the app goes on without one (R4.3.1.3); otherwise the update stops with the error, and
-    # changes nothing, and the launcher's rewrite at the next start is made without the command.
+    # changes nothing, and a launcher's rewrite (a sandbox change, or the start's for a launcher
+    # that isn't today's) is made without the command, as AppKata's start is (#689's review, P1-1:
+    # "the next start" here was rewrite_launcher by hand; it is the backend's start pass now).
     cmd, their_program = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
     their_program.parent.mkdir()
     their_program.write_text("#!/bin/sh\necho theirs\n")
@@ -884,11 +971,13 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
     else:
         link.symlink_to(their_program if theirs == "a link to their own program" else tmp_path / "gone" / "tool")
     was = os.readlink(link) if link.is_symlink() else link.read_text()
+    start = _appkata_start(env, tmp_path, monkeypatch, APP, p) if then == "the next start" else None
     before = _left(tmp_path, env)
     a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
     act = {"an update": lambda: install.install(env, {**APP, "installVersion": "2.0"}, a, "appimage", [a], portable=p),
            "a kept version": lambda: install.switch_to(env, dict(APP), "1.0", p),
-           "the next start": lambda: install.rewrite_launcher(env, dict(APP), p),
+           "a launcher rewrite": lambda: install.rewrite_launcher(env, dict(APP), p),
+           "the next start": start,
            "uninstall": lambda: install.uninstall(env, APP["url"])}[then]
     if then == "uninstall":
         act()
@@ -897,7 +986,7 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
         rec = act()
         assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({link})"
         assert str(link) not in rec["links"]
-    elif then == "the next start":          # the launcher's rewrite is no install: it is made, without the command (CR1.3-46)
+    elif then in ("a launcher rewrite", "the next start"):      # no install: made in full, without the command (CR1.3-46)
         rec = act()
         assert rec["commandRefused"] == f"{link} exists and isn't a link AppKata made; not replacing it"
         assert str(link) not in rec["links"] and set(_changed(before, _left(tmp_path, env))) == {"<installs>"}
@@ -948,14 +1037,15 @@ _OPTIONS = {"the app menu": {"app_menu": False}, "the stable name": {"stable_nam
 
 
 @linux_only
-@pytest.mark.parametrize("road", ["an update", "the next start", "a kept version"])
+@pytest.mark.parametrize("road", ["an update", "a launcher rewrite", "a kept version"])
 @pytest.mark.parametrize("off", list(_OPTIONS))
 def test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uninstall(env, server, tmp_path, off, road):
     # CR1.3-14: each time an app is activated its record forgot its menu entry, and the entry was
     # written again only while the app-menu option was on; nothing deleted the file. Turned off in
     # Install options, the entry stayed in the desktop's menu, in no record, and outlasted the
     # uninstall, starting a program that was gone. The class is what any of an app's three options
-    # made (R4.3.1.6) once the option is off, by each road an app is activated again, and R4.7's
+    # made (R4.3.1.6) once the option is off, by each road an app is activated again (a launcher's
+    # rewrite: a sandbox change, which takes the app's options as they are now), and R4.7's
     # "uninstalling reverses what AppKata recorded": after it, nothing of the app is left anywhere.
     # The stable name and the command link held this already.
     from dataclasses import replace
@@ -971,7 +1061,7 @@ def test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uni
     p = replace(on, **_OPTIONS[off])
     a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
     rec = {"an update": lambda: install.install(env, {**APP, "installVersion": "2.0"}, a, "appimage", [a], portable=p),
-           "the next start": lambda: install.rewrite_launcher(env, dict(APP), p),
+           "a launcher rewrite": lambda: install.rewrite_launcher(env, dict(APP), p),
            "a kept version": lambda: install.switch_to(env, dict(APP), "1.0", p)}[road]()
     for what, path in made.items():
         assert os.path.lexists(path) is (what != off), what
@@ -1025,7 +1115,7 @@ def _version(server, kind, v):
 @linux_only
 @pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
 @pytest.mark.parametrize("kind", ["appimage", "tarball"])
-@pytest.mark.parametrize("then", ["an update", "the same version again", "a kept version", "the next start"])
+@pytest.mark.parametrize("then", ["an update", "the same version again", "a kept version", "a launcher rewrite"])
 def test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes(env, server, tmp_path, then, kind, sandboxed):
     # CR1.3-12, the owner's decision: an installed app keeps its folder through its updates, and only
     # a new install goes to the folder Settings names now. An update did keep the files where they
@@ -1049,7 +1139,7 @@ def test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_ch
     rec = {"an update": lambda: install.install(env, {**app, "installVersion": "2.0"}, a, kind, [a], portable=now),
            "the same version again": lambda: install.install(env, {**app, "installVersion": "1.1"}, a, kind, [a], portable=now),
            "a kept version": lambda: install.switch_to(env, dict(app), "1.0", now),
-           "the next start": lambda: install.rewrite_launcher(env, dict(app), now)}[then]()
+           "a launcher rewrite": lambda: install.rewrite_launcher(env, dict(app), now)}[then]()
     home = old / "demo-tool"
     assert not os.path.lexists(new)
     assert (rec["root"], rec["target"]) == (str(old), str(home))

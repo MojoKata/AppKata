@@ -466,14 +466,18 @@ def command_link_refusal(name: str, link: str, own: tuple[str, ...]) -> str:
     app is then installed with its app-menu entry and no command, and the install says why (the
     owner's decision on CR1.5-31: the link put an app named python3, readlink or sudo first on the
     PATH, ahead of the real one). A link of AppKata's own at `link` (one leading into `own`, the
-    install folders) doesn't count: that is this app's command from an earlier install."""
+    install folders) doesn't count: that is this app's command from an earlier install. The folders
+    after it are still looked in, so a command of that name further on the PATH is found while the
+    app's own link is in place, first on it (AppKata's start asks this of a link it made,
+    :func:`refresh_command_link`)."""
     if name in RESERVED_COMMANDS:
         return f"{name} is a name kept for the system's own command"
     folders = [d for d in os.environ.get("PATH", "").split(os.pathsep) + (sandbox.HOST_PATH + ":/usr/sbin:/sbin").split(":") if d]
-    found = shutil.which(name, path=os.pathsep.join(folders))
-    if found and not (os.path.realpath(os.path.dirname(found)) == os.path.realpath(os.path.dirname(link))
-                      and os.path.basename(found) == os.path.basename(link) and _points_into(link, own)):
-        return f"{name} is already a command on this computer ({found})"
+    for folder in folders:
+        found = shutil.which(name, path=folder)
+        if found and not (os.path.realpath(os.path.dirname(found)) == os.path.realpath(os.path.dirname(link))
+                          and os.path.basename(found) == os.path.basename(link) and _points_into(link, own)):
+            return f"{name} is already a command on this computer ({found})"
     return ""
 
 
@@ -1298,6 +1302,50 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
             _remove_extracted(k)
     _forget(retired)
     return rec
+
+
+def refresh_command_link(db: DB, app: dict, portable: "Portable") -> bool:
+    """The command link's step of an activation (:func:`_activate_linux`), alone, as AppKata starts
+    (R4.3.1.3): a link that wasn't made, its name being a command or its place the user's, is made
+    once the name and the place are free; a link whose name has since become a command is removed
+    (only while it is AppKata's), and the record says why. Whether the app runs sandboxed, and
+    whether this system can sandbox, change nothing here, and nothing else of the app is touched: a
+    link already in place stays as it is. The start rewrote only a sandboxed app's launcher, and only
+    one not up to date, so a link came back, or went from ahead of a newly installed command, only
+    at the app's next update (#689's review, P1-1). `portable` is the app's options (the link's folder is
+    the one its record names, else theirs); its record's own options say whether it has a command.
+    Returns whether the record changed; it is stored then."""
+    if OS != "linux":
+        return False
+    with _ACTIVATE_LOCK:
+        row = db.one("SELECT record FROM installs WHERE url=?", (app["url"],))
+        rec = json.loads(row["record"] or "{}") if row else {}
+        if not rec.get("current") or not rec.get("target") or not rec.get("exec") or rec.get("selfInstalled"):
+            return False
+        p = _options_of(rec, portable)
+        if not p.command_dir:
+            return False
+        before = json.dumps(rec, sort_keys=True)
+        app_id, own = app_id_of(rec, app), (p.root, os.path.dirname(rec["target"]))
+        link = os.path.join(p.command_folder, app_id)
+        links = list(rec.get("links", []))
+        if why := command_link_refusal(app_id, link, own) or _link_refusal(link, own):
+            if link in links:
+                _remove_links([link], own)
+                links.remove(link)
+            rec["commandRefused"] = why
+        else:
+            if not os.path.lexists(link):
+                _link(rec["exec"], link, own)
+            if link not in links:
+                links.append(link)
+            rec.pop("commandRefused", None)
+        rec["links"] = links
+        if json.dumps(rec, sort_keys=True) == before:
+            return False
+        db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
+        log.info("command link %s: %s", link, rec.get("commandRefused") or "made")
+        return True
 
 
 def remove_version(db: DB, url: str, version: str) -> None:

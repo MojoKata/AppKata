@@ -2289,19 +2289,47 @@ class Backend(QObject):
     def _heal_launchers_at_startup(self) -> None:
         """The startup pass, on its own thread: warm the bwrap probe (a 15 s timeout at worst) so the
         first App Detail or Settings → Sandbox on the UI thread finds the answer cached, then give any
-        app installed while the system couldn't sandbox its launcher. Regression (round two, R5): the
-        heal pass only probed when something needed healing, so on an ordinary start — every launcher
-        in place — the probe still ran on the UI thread, the very thing moving it here was for."""
+        app installed while the system couldn't sandbox its launcher, then make or remove the command
+        links whose names have been freed or taken since (:meth:`_refresh_command_links`). Regression
+        (round two, R5): the heal pass only probed when something needed healing, so on an ordinary
+        start — every launcher in place — the probe still ran on the UI thread, the very thing moving
+        it here was for."""
+        changed = False
         try:
             sandbox.userns_works()
             # logs an older AppKata kept by name move to their install's id, before the heal pass
             # rewrites the launchers that name them (R14.2.1; review 2, F14)
             applog.adopt_name_logs([(install.app_id_of(json.loads(r["record"] or "{}"), {"name": r["name"]}), r["name"])
                                     for r in self.db.all("SELECT name, record FROM installs")])
-            if self._heal_launchers():
-                self._refresh.emit()
+            changed = bool(self._heal_launchers())
         except Exception:           # never let this block startup
             log.exception("couldn't regenerate sandbox launchers")
+        try:
+            changed = self._refresh_command_links() or changed
+        except Exception:           # nor this
+            log.exception("couldn't refresh the command links")
+        if changed:
+            self._refresh.emit()
+
+    def _refresh_command_links(self) -> bool:
+        """AppKata's start, for every portable app it installed (R4.3.1.3): a command link that wasn't
+        made, its name being a command here or its place the user's, is made once both are free, and
+        one whose name has since become a command is removed, the record saying why. Every app, run
+        sandboxed or not, and whether or not this system can sandbox: the heal pass above reaches only
+        a sandboxed app whose launcher isn't today's, which was the only road here (#689's review,
+        P1-1). Returns whether any record changed."""
+        changed = False
+        for row in self.db.all("SELECT url FROM installs"):
+            if row["url"] == APPKATA_REPO:         # AppKata itself: its own install makes no command link
+                continue
+            a = self._app(row["url"])
+            if not a or a.get("foreign"):          # not AppKata's to touch
+                continue
+            try:
+                changed = install.refresh_command_link(self.db, a, self._app_options(row["url"])) or changed
+            except (install.InstallError, OSError) as e:
+                log.warning("couldn't refresh the command link of %s: %s", row["url"], e)
+        return changed
 
     def _heal_launchers(self, actor: str = "system") -> list[str]:
         """Give every installed app that should be sandboxed, but was installed while this system
