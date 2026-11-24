@@ -1493,6 +1493,77 @@ def test_through_real_sockets_a_byte_at_a_time_ends_at_the_deadline_and_at_cance
     assert time.monotonic() - started < 2.0 and len(a.seen) == 2
 
 
+# CR1's #695: #296's deadline and Cancel held an answer's body, and what comes before it was still
+# read inside urllib's call, under the timeout of each read alone: a host that sent its status line
+# and its headers a byte at a time held the request as long as it liked. How it slipped past: the
+# tests of #296 dripped the body, after headers that came whole. The class is "a step of a request
+# that no clock looks at", so each step before the body is dripped here: the status line and the
+# headers, a redirect's (REDIRECTED_TO), and a TLS handshake.
+def headers_a_byte_at_a_time(handler):
+    head = b"HTTP/1.1 200 OK\r\nX-Slow: " + b"x" * 30 + b"\r\nContent-Length: 2\r\n\r\nok"
+    try:
+        for byte in head:                                     # three seconds of it, and a whole answer at the end
+            handler.wfile.write(bytes([byte]))
+            time.sleep(0.05)
+    except OSError:                                           # its reader has gone
+        pass
+
+
+def test_through_real_sockets_headers_a_byte_at_a_time_end_at_the_deadline_and_at_cancel(pair):
+    a, b = pair
+    a.files = {"/slow-headers": headers_a_byte_at_a_time}
+    http = Http(timeout=2.0, deadline=0.4)
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^127.0.0.1 hadn't finished its answer after 0.4 seconds$") as e:
+        http.bytes(f"https://{a.at}/slow-headers")
+    assert e.value.extra == {"timeout": True, "deadline": True, "no_answer": True}
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 1       # and it isn't asked for again
+    http.deadline = 120
+    started = time.monotonic()
+    with http.stopping(lambda: time.monotonic() - started > 0.3):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(f"https://{a.at}/slow-headers")
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 2
+
+
+def test_through_real_sockets_a_tls_handshake_a_byte_at_a_time_ends_at_the_deadline():
+    """Http's own https, with no stand-in: a host that answers the TLS hello a byte at a time. The
+    handshake is one step of the socket's, which its timeout bounds as a whole; the deadline is less."""
+    accepted, stop = [], threading.Event()
+    server = socket.create_server(("127.0.0.1", 0))
+    server.settimeout(0.05)
+
+    def drip(conn):
+        with conn:
+            try:
+                conn.sendall(b"\x16\x03\x03\x40\x00")            # a handshake record of 16 KiB, which never comes whole
+                for _ in range(60):
+                    conn.sendall(b"\0")
+                    time.sleep(0.05)
+            except OSError:
+                pass
+
+    def serve():
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            accepted.append(conn)
+            threading.Thread(target=drip, args=(conn,), daemon=True).start()
+    serving = threading.Thread(target=serve, daemon=True)
+    serving.start()
+    try:
+        started = time.monotonic()
+        with pytest.raises(Unreachable, match="^127.0.0.1 hadn't finished its answer after 0.4 seconds$"):
+            Http(timeout=2.0, deadline=0.4).bytes(f"https://127.0.0.1:{server.getsockname()[1]}/")
+        assert time.monotonic() - started < 2.0 and len(accepted) == 1
+    finally:
+        stop.set()
+        serving.join()
+        server.close()
+
+
 # ---------------------------------------------------------------- a host that says when to come back, and one that says nothing (R9.2.1, R2.10)
 # CR1's #277: Retry-After was read on a 403 and a 429 alone. A forge that is overloaded or being
 # maintained answers 503 with it, and was asked again after 1.5 and 3 seconds, whatever it had asked
@@ -2883,6 +2954,7 @@ REDIRECTED_TO = {       # what the host a redirect led to does: the error's kind
     "/not-json": (cut_off(b"<html>Sign in</html>", 20), Unreachable, "localhost didn't return JSON"),
     "/too-large": (cut_off(b"x" * 2000, 2000), Unreachable, "response from localhost too large"),
     "/a-byte-at-a-time": (a_byte_at_a_time, Unreachable, "localhost hadn't finished its answer after 0.3 seconds"),
+    "/headers-a-byte-at-a-time": (headers_a_byte_at_a_time, Unreachable, "localhost hadn't finished its answer after 0.3 seconds"),
 }
 
 
@@ -2895,10 +2967,12 @@ def test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_sai
     a.redirects["/api/x"] = f"https://{b.at}{path}"
     a.files, b.files = {path: answer}, {path: answer}
     monkeypatch.setattr(http_.time, "monotonic", time.monotonic)        # the real clock for the deadline, and no waiting between retries
-    http = elsewhere(monkeypatch, Http(timeout=10, deadline=0.3 if path == "/a-byte-at-a-time" else 120))
+    http = elsewhere(monkeypatch, Http(timeout=10, deadline=0.3 if "a-byte-at-a-time" in path else 120))
+    started = time.monotonic()
     with pytest.raises(kind) as e:
         http.json(f"https://{a.at}/api/x", max_bytes=1000)
     assert type(e.value) is kind and str(e.value).startswith(says.format(b=b.at)), str(e.value)
+    assert time.monotonic() - started < 2.0                    # a slow one too: it ends at its deadline, not when the host is done
     assert [p for p, _ in a.seen] == ["/api/x"] * len(b.seen) and b.seen
     with pytest.raises(kind) as e:                             # and the same answer from the host itself is said of it
         http.json(f"https://{a.at}{path}", max_bytes=1000)

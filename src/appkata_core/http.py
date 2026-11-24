@@ -178,18 +178,85 @@ def _refuse_local(host: str, addresses) -> None:
                           "since it isn't the Source's own host")
 
 
+_reading = threading.local()     # .clock: the _Clock of the request this thread is making, while it makes it
+
+
+class _Clock:
+    """A request's deadline (R9.2.1) and its thread's Cancel (Http.stopping), which every read of
+    its answer is held to: its body's, in Http._read, and through the socket of Http's own
+    connection (_Held), connecting, a TLS handshake, the status line and the headers, a redirect's
+    included (CR1 #695). A host that sent those a byte at a time held its request past the deadline,
+    and Cancel waited for it."""
+
+    def __init__(self, http: "Http", asked: dict):
+        self.http, self.asked, self.started = http, asked, time.monotonic()
+
+    def left(self) -> float:
+        """How long the next step may wait: the timeout of a step, or what is left of the deadline
+        where that is less. Cancelled at a Cancel, and the deadline's Unreachable once it has gone by."""
+        self.http._stop()
+        spent = time.monotonic() - self.started
+        if spent > self.http.deadline:
+            raise self.ended()
+        return min(self.http.timeout, self.http.deadline - spent)
+
+    def ended(self) -> Unreachable:
+        return Unreachable(f"{self.asked['host']} hadn't finished its answer after {self.http.deadline:g} seconds",
+                           timeout=True, deadline=True, no_answer=True)
+
+
+class _Held:
+    """A socket each of whose steps (connecting, a TLS handshake, each read) is held to the clock of
+    the request its thread is making (_Clock): a look at Cancel and the deadline first, then no
+    longer a wait than what is left of it. A step that ran out of the deadline's time is the
+    deadline's error, and isn't asked for again as a timeout would be."""
+
+    def _hold(self, step, *a, **k):
+        clock = getattr(_reading, "clock", None)
+        if clock is None:
+            return step(*a, **k)
+        wait = clock.left()
+        self.settimeout(wait)
+        try:
+            return step(*a, **k)
+        except TimeoutError:
+            if wait < clock.http.timeout:
+                raise clock.ended() from None
+            raise
+
+    def connect(self, *a, **k):
+        return self._hold(super().connect, *a, **k)
+
+    def recv_into(self, *a, **k):
+        return self._hold(super().recv_into, *a, **k)
+
+    def recv(self, *a, **k):
+        return self._hold(super().recv, *a, **k)
+
+
+class _HeldSocket(_Held, socket.socket):
+    pass
+
+
+class _HeldTLSSocket(_Held, ssl.SSLSocket):
+    def do_handshake(self, *a, **k):
+        return self._hold(super().do_handshake, *a, **k)
+
+
 class _Connections(urllib.request.AbstractHTTPHandler):
     """urllib's handlers of http and https, with connections whose socket is Http's own (`connect`,
     Http._connect): the name is looked up once, held to the rule for a local address, and the socket
     connects to the addresses that were checked. urllib's own connections look the name up again
     when they connect, so a name that answered with a public address for the check and a local one
-    for the connection got its request sent into this computer or its network (CR1 #682)."""
+    for the connection got its request sent into this computer or its network (CR1 #682). The
+    socket, and the TLS socket made of it, hold each step to the request's clock (_Held, CR1 #695)."""
 
     def __init__(self, connect):
         super().__init__()
         self.connect = connect
         self.tls = ssl.create_default_context()           # as urllib's own: the system's certificates, the name checked
         self.tls.set_alpn_protocols(["http/1.1"])
+        self.tls.sslsocket_class = _HeldTLSSocket
 
     def _with(self, kind, req, **args):
         def made(host, **kw):
@@ -349,17 +416,20 @@ class Http:
         failed = OSError(f"{name} has no address")
         for each in addresses:
             family, kind, proto, _, at = socket.getaddrinfo(each, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)[0]
-            sock = socket.socket(family, kind, proto)
+            sock = _HeldSocket(family, kind, proto)
             try:
                 if isinstance(timeout, (int, float)):        # else urllib's "no timeout given"
                     sock.settimeout(timeout)
                 if source:
                     sock.bind(source)
-                sock.connect(at)
+                sock.connect(at)                             # held to the request's clock, as each read is
                 return sock
             except OSError as e:
                 sock.close()
                 failed = e
+            except BaseException:                            # the deadline, or a Cancel
+                sock.close()
+                raise
         raise failed
 
     @contextlib.contextmanager
@@ -398,26 +468,24 @@ class Http:
                     raise
                 time.sleep(max(WAITS[attempt], e.extra.get("retry_after") or 0))
 
-    def _read(self, r, host: str, max_bytes: int, started: float) -> bytes:
+    def _read(self, r, clock: _Clock, max_bytes: int) -> bytes:
         """An answer's body, a piece at a time, with a look at the clock and at Cancel before each
         piece (CR1 #296). `timeout` alone is for each read: a host that sent one byte every few
         seconds never met it, and held its reader for as long as it liked, with the Sync's Cancel
         unable to stop it. read1 comes back with what one read of the socket gave, so no piece
-        waits for more than `timeout`."""
+        waits for more than `timeout`; the socket of Http's own connection holds each read to the
+        clock as well (_Held), as it held what came before the body."""
         read = getattr(r, "read1", None) or r.read
         pieces, size = [], 0
         while True:
-            self._stop()
-            if time.monotonic() - started > self.deadline:
-                raise Unreachable(f"{host} hadn't finished its answer after {self.deadline:g} seconds", timeout=True, deadline=True,
-                                  no_answer=True)
+            clock.left()
             piece = read(min(PIECE, max_bytes + 1 - size))
             if not piece:
                 return b"".join(pieces)
             pieces.append(piece)
             size += len(piece)
             if size > max_bytes:
-                raise Unreachable(f"response from {host} too large")
+                raise Unreachable(f"response from {clock.asked['host']} too large")
 
     def _request(self, url: str, *, token_host: str | None = None, accept: str = "application/json",
                  headers: dict | None = None, method: str = "GET", max_bytes: int = 64 << 20,
@@ -446,10 +514,10 @@ class Http:
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1
-        started = time.monotonic()
+        _reading.clock = clock = _Clock(self, asked)    # from here to the last byte, each step is held to it
         try:
             with self._open(req, timeout=self.timeout) as r:
-                data = self._read(r, asked["host"], max_bytes, started)
+                data = self._read(r, clock, max_bytes)
                 hdr = {k.lower(): v for k, v in r.headers.items()}
                 declared = _declared_length(hdr, method)
                 if declared is not None and len(data) < declared:
@@ -501,6 +569,8 @@ class Http:
             if isinstance(e, (InvalidURL, ValueError)):
                 raise Unreachable(f"couldn't ask {asked['host']}: the address {asked['url'][:200]!r} can't be sent ({type(e).__name__})") from None
             raise Unreachable(f"couldn't read {asked['host']}'s answer ({type(e).__name__}: {str(e)[:200]})") from None
+        finally:
+            _reading.clock = None
 
     def json(self, url: str, **kw):
         data, hdr, final = self.request(url, **kw)
