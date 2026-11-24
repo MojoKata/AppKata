@@ -65,6 +65,7 @@ the sandbox), or `open:` and the finding that keeps it unstated.
 | `env http_proxy`, `env https_proxy`, `env ftp_proxy`, `env all_proxy`, `env no_proxy`, `env HTTP_PROXY`, `env HTTPS_PROXY`, `env FTP_PROXY`, `env ALL_PROXY`, `env NO_PROXY` | network | 17.4 "passing the proxy settings only to an app with the network grant" |
 | `env GDK_DEBUG` | always | 17.4 "sets GDK_DEBUG=no-portals" |
 | `env GIO_USE_PROXY_RESOLVER` | bus and not network | 17.5 "sets GIO_USE_PROXY_RESOLVER=dummy" |
+| `env APPKATA_NO_BUS` | not bus | 17.6.3 "as the launcher tells it in APPKATA_NO_BUS" |
 | `dev /dev/tty` | always | 17.4 "the terminal-injection seccomp filter" |
 | `dev /dev/dri/*` | always | 17.2 "Display, sound, GPU" |
 | `mount /var/cache/fontconfig ro` | always | 17.4 "binds the font cache (/var/cache/fontconfig) read-only" |

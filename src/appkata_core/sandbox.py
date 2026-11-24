@@ -1810,7 +1810,12 @@ XDG_OPEN_SHIM = """#!/bin/sh
 set -u
 case "${1:-}" in ""|-*) exec /usr/bin/xdg-open "$@" ;; esac
 if [ ! -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then      # no bus: its address leads nowhere (R3-33)
-  echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2
+  case "${APPKATA_NO_BUS:-}" in                                 # and the launcher says why
+    strict) echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2 ;;
+    no-filter) echo "AppKata: the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services and can't open $1 on this computer (install xdg-dbus-proxy to give it them)." >&2 ;;
+    address) echo "AppKata: this session's bus is at an address AppKata's bus filter can't reach (the launcher named it when the app started), so this app has no desktop services and can't open $1 on this computer." >&2 ;;
+    *) echo "AppKata: this app has no desktop services here, so it can't open $1 on this computer." >&2 ;;
+  esac
   exit 3
 fi
 case "$1" in
@@ -2266,7 +2271,9 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '  unix:abstract=*) start_proxy ;;\n'
             'esac\n'
             'if [ -z "$proxy" ]; then\n'
-            '  # Said plainly, and the app runs with no session bus, as it does where there is none.\n'
+            '  # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata\'s\n'
+            '  # xdg-open is told why, and says it (PR #694\'s review, P1-B3: it said "runs Strict").\n'
+            '  set -- --setenv APPKATA_NO_BUS address "$@"\n'
             f"  printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\\n' \"$upstream\" {q(name)} >&2\n"
             'else\n'
             '  # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n'
@@ -2422,6 +2429,13 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     path_in = (SHIMS_MOUNT + ":" if shims else "") + "/usr/bin:/bin:/usr/sbin:/sbin"
     parts.append(f'  --clearenv --setenv HOME "$HOME" --setenv PATH {path_in} \\')
     parts.append('  --setenv XDG_RUNTIME_DIR "$rt" \\')
+    # Why the app has no session bus, where it has none, for AppKata's xdg-open to say (R17.6.3): it
+    # took "no bus" for Strict, and a Standard app has none without xdg-dbus-proxy, or in a session
+    # whose bus the filter can't reach (the proxy's block says so at run time; PR #694's review, P1-B3)
+    if not standard:
+        parts.append('  --setenv APPKATA_NO_BUS strict \\')
+    elif not bus:
+        parts.append('  --setenv APPKATA_NO_BUS no-filter \\')
     # GTK4 reads /.flatpak-info and takes the portal road for its file dialog; the proxy denies the
     # FileChooser portal (for a host caller it returns paths the sandbox can't open, R17.6.3). GTK 4.14
     # fell back to its own dialog when refused; GTK 4.18 shows *no dialog at all* (round six, R6-4,

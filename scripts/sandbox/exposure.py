@@ -267,7 +267,7 @@ ARGV_KINDS = ("mount", "env", "net")
 ARGV_DEVS = {"dev /dev/dri/*", "dev /dev/video*", "dev /dev/media*"}
 BWRAP_OWN = {"mount / tmpfs"}         # bwrap's own root, never a word
 # Variables the launcher sets itself (the rest it passes through only when set at launch)
-LAUNCHER_SET = {"HOME", "PATH", "XDG_RUNTIME_DIR", "GDK_DEBUG", "GIO_USE_PROXY_RESOLVER", "DBUS_SESSION_BUS_ADDRESS", "APPDIR",
+LAUNCHER_SET = {"HOME", "PATH", "XDG_RUNTIME_DIR", "GDK_DEBUG", "GIO_USE_PROXY_RESOLVER", "APPKATA_NO_BUS", "DBUS_SESSION_BUS_ADDRESS", "APPDIR",
                 "APPIMAGE", "ARGV0", "DISPLAY"}
 
 

@@ -434,7 +434,7 @@ def test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is(tmp_path, mon
     assert shown == ({file.format(rt=rt): ("--ro-bind-try", file.format(rt=rt))} if file else {}), shown
     # ...and the app's bus is that proxy's socket, whatever the session's own address was
     assert _binds(app)[f"{rt}/bus"] == ("--bind", proxy[at + 2])
-    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"
+    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus" and "APPKATA_NO_BUS" not in app
 
 
 @pytest.mark.parametrize("address", [None, *BUS_ADDRESSES])
@@ -502,6 +502,32 @@ def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no
     assert f"{rt}/bus" not in _binds(app) and not [w for w in app if "/appkata/bus-" in w], app
     assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"      # set all the same, and leads nowhere (R3-33)
     assert os.listdir(rt / "appkata") == []
+    assert app[app.index("APPKATA_NO_BUS") + 1] == "address"            # and AppKata's xdg-open is told why (P1-B3, below)
+
+
+# PR #694's review, P1-B3: AppKata's xdg-open took "no bus" for Strict, and told a Standard app with
+# none -- no xdg-dbus-proxy here, or a session bus the filter can't reach -- that it runs Strict,
+# and to change that in App Detail, where nothing would. How it slipped past: the shim was written
+# when Strict was the one way to have no bus, and the ways added since were tested on the launcher's
+# own line, never on what the app's xdg-open then said. The launcher now tells it, and it says that.
+@pytest.mark.parametrize("why,says", [("strict", "this app runs Strict, with no desktop services"),
+                                      ("no-filter", "the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services"),
+                                      ("address", "this session's bus is at an address AppKata's bus filter can't reach")])
+def test_xdg_open_says_why_the_app_has_no_bus(tmp_path, why, says):
+    shim = tmp_path / "xdg-open"
+    shim.write_text(sb.XDG_OPEN_SHIM)
+    r = subprocess.run(["sh", str(shim), "https://example.com/x"], env={"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": str(tmp_path),
+                                                                        "APPKATA_NO_BUS": why}, capture_output=True, text=True)
+    assert r.returncode == 3 and r.stderr.startswith("AppKata: " + says) and r.stderr.count("\n") == 1, r.stderr
+
+
+def test_each_launcher_tells_its_xdg_open_why_the_app_has_no_bus(tmp_path, monkeypatch):
+    told = lambda gs, **kw: re.findall(r"--setenv APPKATA_NO_BUS (\S+)", sb.build_launcher("v", "V", "/apps/v/1", "bin/v", gs, **kw))  # noqa: E731
+    assert told(sb.resolve_template("strict")) == ["strict"]
+    assert told(sb.resolve_template("standard"), bus_filter=False) == ["no-filter"]
+    assert told(sb.resolve_template("standard")) == ["address"]          # decided at run time, where no proxy starts
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None)            # and where one does, nothing
+    assert proxy is not None and "APPKATA_NO_BUS" not in app, app
 
 
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
@@ -1158,7 +1184,8 @@ def test_a_sandboxed_app_gets_an_xdg_open_that_asks_the_host(tmp_path, monkeypat
     # Review 3, R3-33: no bus, but an address all the same, with nothing behind it -- unset, GLib and
     # libdbus would autolaunch a bus inside the sandbox through dbus-launch
     assert '--setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus"' in strict and '--bind "$sock" "$rt/bus"' not in strict
-    r = subprocess.run(["sh", shim, "https://example.com/x"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
+    assert "--setenv APPKATA_NO_BUS strict" in strict                   # the shim is told why (PR #694's review, P1-B3)
+    r = subprocess.run(["sh", shim, "https://example.com/x"], env={"PATH": os.environ["PATH"], "APPKATA_NO_BUS": "strict"}, capture_output=True, text=True)
     assert r.returncode == 3 and "runs Strict" in r.stderr and "https://example.com/x" in r.stderr
 
 

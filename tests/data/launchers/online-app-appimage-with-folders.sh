@@ -148,7 +148,9 @@ case "$upstream" in
   unix:abstract=*) start_proxy ;;
 esac
 if [ -z "$proxy" ]; then
-  # Said plainly, and the app runs with no session bus, as it does where there is none.
+  # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata's
+  # xdg-open is told why, and says it (PR #694's review, P1-B3: it said "runs Strict").
+  set -- --setenv APPKATA_NO_BUS address "$@"
   printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\n' "$upstream" App >&2
 else
   # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of

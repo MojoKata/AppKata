@@ -1167,10 +1167,14 @@ def test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_witho
     # it does where there is no bus: no proxy is started and nothing is left behind.
     address = address.format(rt=env.rt)
     lp = env.app("web", sb.resolve_template("online-app"))
-    r = env.run(lp, '[ -e "$XDG_RUNTIME_DIR/bus" ] && echo BUS; echo "A=$DBUS_SESSION_BUS_ADDRESS"; echo RAN', env={"DBUS_SESSION_BUS_ADDRESS": address})
-    assert r.returncode == 0 and r.stdout.split() == [f"A=unix:path={env.rt}/bus", "RAN"], (r.stdout, r.stderr)
+    r = env.run(lp, '[ -e "$XDG_RUNTIME_DIR/bus" ] && echo BUS; echo "A=$DBUS_SESSION_BUS_ADDRESS"; echo RAN; xdg-open https://example.com/x; echo "exit $?"',
+                env={"DBUS_SESSION_BUS_ADDRESS": address})
+    assert r.returncode == 0 and r.stdout.split() == [f"A=unix:path={env.rt}/bus", "RAN", "exit", "3"], (r.stdout, r.stderr)
+    # and the app's xdg-open says why it can't open a link, not that the app runs Strict (PR #694's review, P1-B3)
     assert r.stderr == (f"AppKata: the session bus here ({address}) is not one the bus filter can reach, "
-                        "so Web runs without a session bus and gets no desktop services.\n")
+                        "so Web runs without a session bus and gets no desktop services.\n"
+                        "AppKata: this session's bus is at an address AppKata's bus filter can't reach (the launcher named it when "
+                        "the app started), so this app has no desktop services and can't open https://example.com/x on this computer.\n")
     assert os.listdir(env.rt / "appkata") == []
 
 
