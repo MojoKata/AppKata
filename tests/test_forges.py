@@ -1566,3 +1566,84 @@ def test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_liste
     with pytest.raises(Unreachable, match="couldn't reach 127.0.0.1"):
         forges.detect(Http(timeout=5), f"127.0.0.1:{closed}")
     assert clock.waits == []
+
+
+# ---------------------------------------------------------------- an answer cut off before its declared length (R3.2, R3.3, R9.1)
+# CR1's #626: http.client hands back a short body without an error when a connection ends before
+# the Content-Length it declared, and Http didn't compare the two: a cut-off image that starts as a
+# PNG was saved as the icon, and a cut-off README or file list was stored as the whole one. How it
+# slipped past: no stand-in answer declared a length. The class is "what arrived is taken for what
+# was sent", so the answers here declare one, and each kind of answer that declares a length it
+# rightly doesn't send is held as well.
+def declaring(headers, body, seen=None, method="GET"):
+    def open_(req, timeout=0):
+        seen is not None and seen.append(req.full_url)
+        assert req.get_method() == method
+        return FakeResponse(req.full_url, body, dict(headers))
+    return open_
+
+
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_an_answer_shorter_than_the_length_it_declared_is_cut_short_and_asked_for_again(clock, call):
+    seen = []
+    http = names(Http(opener=declaring({"Content-Length": "1000"}, b"[" + b"1," * 49 + b"1", seen)))       # 100 bytes of them
+    with pytest.raises(Unreachable, match="git.example.org cut its answer short \\(100 of 1000 bytes\\)") as e:
+        getattr(http, call)("https://git.example.org/api/x")
+    assert e.value.extra["cut"] is True and len(seen) == 3 and clock.waits == [1.5, 3.0]
+    with pytest.raises(Unreachable, match="cut its answer short"):
+        http._request("https://git.example.org/api/x")
+
+
+def test_an_answer_cut_short_once_is_whole_the_second_time(clock):
+    whole, answers = PNG * 10, []
+
+    def open_(req, timeout=0):
+        answers.append(FakeResponse(req.full_url, whole[:100] if not answers else whole, {"content-length": str(len(whole))}))
+        return answers[-1]
+    assert names(Http(opener=open_)).bytes("https://git.example.org/icon.png") == whole
+    assert len(answers) == 2 and clock.waits == [1.5]
+
+
+@pytest.mark.parametrize("headers, body, method", [
+    ({"Content-Length": "100"}, b"x" * 100, "GET"),                              # whole
+    ({}, b"x" * 100, "GET"), ({"Content-Length": "0"}, b"", "GET"),              # none declared; nothing declared, nothing sent
+    ({"Content-Length": "1000"}, b"", "HEAD"),                                   # an answer to HEAD says what a GET would send
+    ({"Content-Length": "1000", "Transfer-Encoding": "chunked"}, b"x" * 100, "GET"),      # the chunks say where it ends, not the length
+    ({"Content-Length": "1000", "Content-Encoding": "gzip"}, b"x" * 100, "GET"),          # not a plain body
+    ({"Content-Length": "a thousand"}, b"x" * 100, "GET"), ({"Content-Length": ""}, b"x" * 100, "GET"),
+    ({"Content-Length": "-5"}, b"x" * 100, "GET"),
+], ids=["whole", "none", "nothing", "head", "chunked", "encoded", "not-a-number", "empty", "negative"])
+def test_an_answer_that_is_whole_or_rightly_declares_what_it_doesnt_send_is_taken(clock, headers, body, method):
+    http = names(Http(opener=declaring(headers, body, method=method)))
+    data, hdr, _ = http.request("https://git.example.org/api/x", method=method)
+    assert data == body and clock.waits == []
+
+
+def cut_off(body, declared=1000):
+    def answer(handler):
+        handler.wfile.write(f"HTTP/1.1 200 OK\r\nContent-Length: {declared}\r\n\r\n".encode() + body)
+    return answer
+
+
+def test_through_real_sockets_a_cut_off_image_isnt_saved_and_a_cut_off_readme_isnt_stored(pair, tmp_path, monkeypatch, clock):
+    """The finding's own run, with Http's own opener: a server on this machine declares 1000 bytes,
+    sends a PNG's first 100 and closes. Then a whole Sync whose README is cut off the same way."""
+    a, b = pair
+    a.files = {"/icon.png": cut_off(PNG + b"\0" * (100 - len(PNG)))}
+    http = Http(timeout=10)
+    with pytest.raises(Unreachable, match="127.0.0.1 cut its answer short \\(100 of 1000 bytes\\)"):
+        sync._save_image(http, f"https://{a.at}/icon.png", str(tmp_path / "icon"), token_host=a.at)
+    assert [p for p, _ in a.seen] == ["/icon.png"] * 3 and list(tmp_path.iterdir()) == []
+    with pytest.raises(Unreachable, match="cut its answer short"):          # where it was "didn't return JSON"
+        http.json(f"https://{a.at}/icon.png")
+
+    readme = b"# Whole\n\nThe whole README, which says what the app is and how it is installed.\n" * 5
+    source = forgejo_project(a, "o/r", {"README.md": readme})
+    db = catalog(tmp_path, monkeypatch, [source])
+    sync.sync_all(db, http, root=str(tmp_path))
+    assert rows(db)[source]["error_code"] is None and rows(db)[source]["readme"] == readme.decode()
+    a.files["/o/r/raw/branch/main/README.md"] = cut_off(readme[:100], len(readme))
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[source]
+    assert app["error_code"] == "Unreachable" and "cut its answer short" in app["error"]
+    assert app["readme"] == readme.decode()                   # the whole one, from the Sync before

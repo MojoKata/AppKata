@@ -360,7 +360,14 @@ class Http:
         try:
             with self._open(req, timeout=self.timeout) as r:
                 data = self._read(r, host, max_bytes, started)
-                return data, {k.lower(): v for k, v in r.headers.items()}, r.geturl()
+                hdr = {k.lower(): v for k, v in r.headers.items()}
+                declared = _declared_length(hdr, method)
+                if declared is not None and len(data) < declared:
+                    # http.client hands back a short body without an error when the connection ends
+                    # before the Content-Length (CR1 #626): a cut-off image, README or file list was
+                    # taken for the whole one. Worth asking again, like a chunked answer cut short.
+                    raise Unreachable(f"{host} cut its answer short ({len(data)} of {declared} bytes)", cut=True)
+                return data, hdr, r.geturl()
         except urllib.error.HTTPError as e:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
             if e.code in (403, 429) and (hdr.get("x-ratelimit-remaining") == "0" or "retry-after" in hdr or e.code == 429):
@@ -422,6 +429,17 @@ class Http:
     def bytes(self, url: str, **kw) -> bytes:
         data, _, _ = self.request(url, accept="*/*", **kw)
         return data
+
+
+def _declared_length(hdr: dict, method: str) -> int | None:
+    """How many bytes an answer said its body has, where it is to send that many: a plain body's
+    Content-Length. An answer to HEAD declares what a GET would send, a chunked one ends where its
+    chunks say, and an encoded one isn't a plain body; none of them is held to the number."""
+    length = hdr.get("content-length", "")
+    plain = hdr.get("content-encoding", "identity").strip().lower() in ("", "identity")
+    if method.upper() == "HEAD" or "transfer-encoding" in hdr or not plain or not (length.isascii() and length.isdigit()):
+        return None
+    return int(length)
 
 
 def _reset_time(hdr: dict) -> float:
