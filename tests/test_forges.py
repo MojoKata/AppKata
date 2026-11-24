@@ -955,6 +955,7 @@ def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_p
     ("git.example.org:443", "git.example.org"),                       # the default port, typed out
     ("https://git.example.org:3000/o/r", "git.example.org:3000"),     # a whole address, pasted
     ("https://git.example.org/", "git.example.org"), ("git.example.org/o/r", "git.example.org"),
+    ("http://git.example.org/", "git.example.org:80"),                # plain http's own port: another address (P1-2)
     ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
     ("git.example.org:port", "git.example.org:port"),                 # no address: kept as typed
 ])
@@ -974,12 +975,17 @@ def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(ty
     (LAN + ":3000", f"https://{LAN}:9999/admin/shot.png", False),                  # whatever else listens on that machine
     (LAN + ":3000", f"https://{LAN}/shot.png", False),
     (LAN, f"https://{LAN}/o/r/raw/branch/main/shot.png", True),
-    (LAN, f"http://{LAN}/o/r/raw/branch/main/shot.png", True),                     # http's own port, as the Source's host is written
+    (LAN, f"http://{LAN}:443/o/r/raw/branch/main/shot.png", True),                 # the Source's own port, in plain http
+    (LAN, f"http://{LAN}/o/r/raw/branch/main/shot.png", False),                    # http's own port, 80: not the Source's 443
+    (LAN, f"https://{LAN}:80/o/r/raw/branch/main/shot.png", False),
     (LAN, f"http://{LAN}:631/admin/shot.png", False),
     (LAN, f"https://{LAN}:9999/admin/shot.png", False),
 ])
 def test_on_a_local_forge_only_the_sources_own_address_may_be_local(tmp_path, source_host, url, fetched):
-    # CR1 #266's exception is for the Source's own host, and a host is one address (#297)
+    # CR1 #266's exception is for the Source's own host, and a host is one address (#297): its exact
+    # port, the review's pass 1, P1-2, as the owner decided it. A Source with no port is on https's
+    # 443, so an address with none in plain http, which is on port 80, is another host: it was taken
+    # for the Source's own, since a host left out its scheme's own port, whichever the scheme
     seen = []
     http = names(Http({source_host: "SECRET"}, opener=recording({url: PNG}, seen)), {LAN: ["192.168.1.5"]})
     if fetched:
@@ -997,6 +1003,8 @@ def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
     assert "A token belongs to one address" in r11 and "a name alone means the default port" in r11
     assert "A host is one address" in r9 and "a name alone means the default port" in r9
     assert "nor to another port of its own" in r9
+    assert "`http://git.example.org/` is on port 80, another host than `https://git.example.org/`" in r9         # P1-2
+    assert "The Source's own port is the one its host names, or https's 443" in " ".join(reqdocs.item("R3.1.1").split())
     with open(os.path.join(reqdocs.ROOT, "src", "appkata", "qml", "SettingsDialog.qml"), encoding="utf-8") as f:
         qml = f.read()
     assert 'placeholder: "host or host:port"' in qml and '"host or host:port"' in r11
@@ -2336,7 +2344,7 @@ def test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come(c
     with pytest.raises(RateLimited):
         http.json(ASKED)
     for call, url in (("json", ASKED), ("bytes", "https://git.example.org/o/r/raw/branch/main/icon.png"),
-                      ("text", "http://git.example.org/"), ("json", "https://git.example.org:443/api/x")):
+                      ("text", "http://git.example.org:443/"), ("json", "https://git.example.org:443/api/x")):
         with pytest.raises(RateLimited, match="git.example.org rate limit reached") as e:
             getattr(http, call)(url)
         assert e.value.reset == clock.now + 120 and e.value.extra["status"] == 429
@@ -2344,11 +2352,12 @@ def test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come(c
     assert http.json("https://codeberg.org/api/x") == {"ok": True}       # the limit is that host's
     assert http.json("https://api.git.example.org/x") == {"ok": True}    # and not a host's whose name ends in its name
     assert http.json("https://git.example.org:3000/x") == {"ok": True}   # nor another port of its name: another host (CR1 #697)
+    assert http.text("http://git.example.org/") == '{"ok": true}'        # port 80 is one too (the owner's decision on P1-2)
     clock.now += 119.5                                                   # until the time it gave, to the second
     with pytest.raises(RateLimited):
         http.json(ASKED)
     clock.now += 1
-    assert http.json(ASKED) == {"ok": True} and len(seen) == 5
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 6
 
 
 def test_a_time_to_come_back_that_has_gone_by_limits_nothing(clock):

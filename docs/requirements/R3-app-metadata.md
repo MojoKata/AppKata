@@ -11,8 +11,10 @@ R3.1.1. **Where an image is fetched from.** The icon and the hero image come fro
 project or its forge names: its metainfo's icon and screenshot, its README's images, the owner's
 avatar. Only http and https addresses are asked for. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
-Source's own host (a forge on the user's own network), on the Source's own port. A redirect is held
-to the same rule. Behind a proxy, the proxy looks a host's name up: a name this computer can't look
+Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
+port is the one its host names, or https's 443 where it names none; an address is on the port it is
+asked on, whatever its scheme, so one in plain `http://` with the Source's name and no port is on
+port 80, and isn't the Source's. A redirect is held to the same rule. Behind a proxy, the proxy looks a host's name up: a name this computer can't look
 up is asked for through the proxy, and one this computer finds to be such an address, or
 `localhost`, is still refused. An image that is refused is passed over for the next one in R3.2's
 or R3.3's list.

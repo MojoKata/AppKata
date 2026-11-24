@@ -118,6 +118,7 @@ def _forge_by_name(host: str) -> str:
 
 
 PORTS = {"http": 80, "https": 443}
+SOURCE_PORT = 443       # a Source's port when its host names none: every Source is asked over https (urls.parse)
 
 
 def _origin(parts) -> tuple:
@@ -131,13 +132,18 @@ def _origin(parts) -> tuple:
 
 def _host(parts) -> str:
     """An address's host, as a token is kept for it and as a Source's host is written (urls.parse):
-    its name, and its port unless that is its scheme's own. The one notion of a host that every
-    lookup uses (CR1 #297): the forges named a Source's host with its port and Http looked a token
-    up without it, so a token on a port was sent by some calls and not by others, and a token kept
-    for a name went to every port of it."""
+    its name, and the port it is asked on unless that is 443, a Source's when its host names none.
+    The one notion of a host that every lookup uses (CR1 #297): the forges named a Source's host
+    with its port and Http looked a token up without it, so a token on a port was sent by some calls
+    and not by others, and a token kept for a name went to every port of it.
+
+    The port is the one the address is asked on, whatever its scheme (the review's pass 1, P1-2, as
+    the owner decided it): `http://git.lan/` is on port 80, and is `git.lan:80`, another host than
+    the Source `git.lan`. A host left out its own scheme's port, so it was `git.lan`, and was taken
+    for the Source's own by the rule for a local address and shared the Source's rate limit."""
     scheme, name, port = _origin(parts)
     name = f"[{name}]" if ":" in name else name            # an IPv6 address, as an address writes it
-    return name if port in (None, PORTS.get(scheme)) else f"{name}:{port}"
+    return name if port in (None, SOURCE_PORT) else f"{name}:{port}"
 
 
 def _is_for(parts, whose: str) -> bool:
