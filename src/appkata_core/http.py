@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,6 +50,12 @@ class Renamed(SourceError):
     def __init__(self, new_url: str):
         super().__init__(f"moved to {new_url}", new_url=new_url)
         self.new_url = new_url
+
+
+class Cancelled(BaseException):
+    """A request given up because whoever asked for it said to stop (Http.stopping). It is no
+    Exception, as asyncio's own isn't, and no SourceError: nothing that catches a host's failure to
+    pass it over, to try the next address or to write it on a Source's row takes a Cancel for one."""
 
 
 # R9.2.2's list, in its one place: the other hosts a host's token is sent to, which are the forge's
@@ -199,10 +207,17 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         return new
 
 
+PIECE = 64 << 10        # an answer is read this much at a time at most, with a look at the clock between
+
+
 class Http:
-    def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None):
+    def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None, deadline: float = 120.0):
+        """`timeout` is for each step of a request (connecting, each read of the answer): a host that
+        keeps sending, however little, never meets it. `deadline` is for a request as a whole, from
+        when it is sent to the last byte of its answer (R9.2.1)."""
         self.tokens = {token_key(k): v for k, v in (tokens or {}).items() if v}     # by host: one address each
-        self.timeout = timeout
+        self.timeout, self.deadline = timeout, deadline
+        self._here = threading.local()           # this thread's `cancelled`, inside a `stopping` block
         self._open = opener or _opener(_Redirects(self._allowed)).open
         self._lookup = _addresses                # host -> its addresses
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
@@ -261,17 +276,59 @@ class Http:
                               "since it isn't the Source's own host")
         return parts
 
+    @contextlib.contextmanager
+    def stopping(self, cancelled):
+        """While its block runs, this thread's requests end in Cancelled as soon as `cancelled()`
+        says so: before one is sent, between two reads of an answer, and before one is asked for
+        again. A Sync's worker runs each app's sync in one, with the Sync's own Cancel (R9.2).
+
+        It is the thread's, and the block's: the application has one Http for everything, an
+        install's lookups too, so a Cancel is never a flag left on the client for the next request,
+        whoever makes it, to trip over (CR1 #296)."""
+        before = getattr(self._here, "cancelled", None)
+        self._here.cancelled = cancelled
+        try:
+            yield
+        finally:
+            self._here.cancelled = before
+
+    def _stop(self) -> None:
+        cancelled = getattr(self._here, "cancelled", None)
+        if cancelled is not None and cancelled():
+            raise Cancelled()
+
     def request(self, url: str, **kw) -> tuple[bytes, dict, str]:
         """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts, an
-        answer cut short)."""
+        answer cut short). A request that met its deadline isn't asked for again: its host was
+        given the whole of it once, and three in a row would be three times the wait."""
         for attempt in range(3):
             try:
                 return self._request(url, **kw)
             except Unreachable as e:
                 again = e.extra.get("status") in (502, 503, 504) or e.extra.get("timeout") or e.extra.get("cut")
-                if attempt == 2 or not again:
+                if attempt == 2 or not again or e.extra.get("deadline"):
                     raise
                 time.sleep(1.5 * (attempt + 1))
+
+    def _read(self, r, host: str, max_bytes: int, started: float) -> bytes:
+        """An answer's body, a piece at a time, with a look at the clock and at Cancel before each
+        piece (CR1 #296). `timeout` alone is for each read: a host that sent one byte every few
+        seconds never met it, and held its reader for as long as it liked, with the Sync's Cancel
+        unable to stop it. read1 comes back with what one read of the socket gave, so no piece
+        waits for more than `timeout`."""
+        read = getattr(r, "read1", None) or r.read
+        pieces, size = [], 0
+        while True:
+            self._stop()
+            if time.monotonic() - started > self.deadline:
+                raise Unreachable(f"{host} hadn't finished its answer after {self.deadline:g} seconds", timeout=True, deadline=True)
+            piece = read(min(PIECE, max_bytes + 1 - size))
+            if not piece:
+                return b"".join(pieces)
+            pieces.append(piece)
+            size += len(piece)
+            if size > max_bytes:
+                raise Unreachable(f"response from {host} too large")
 
     def _request(self, url: str, *, token_host: str | None = None, accept: str = "application/json",
                  headers: dict | None = None, method: str = "GET", max_bytes: int = 64 << 20,
@@ -281,6 +338,7 @@ class Http:
         address that a project, or a forge's answer, names is always asked with it. `forge` is the
         forge type whose API the address is, where the caller knows it: the form the token is sent
         in (_auth)."""
+        self._stop()
         parts = self._allowed(url, token_host)
         host = parts.hostname.lower()
         whose = token_key(token_host) if token_host else _host(parts)      # the host this request is made for
@@ -294,11 +352,10 @@ class Http:
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1
+        started = time.monotonic()
         try:
             with self._open(req, timeout=self.timeout) as r:
-                data = r.read(max_bytes + 1)
-                if len(data) > max_bytes:
-                    raise Unreachable(f"response from {host} too large")
+                data = self._read(r, host, max_bytes, started)
                 return data, {k.lower(): v for k, v in r.headers.items()}, r.geturl()
         except urllib.error.HTTPError as e:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}

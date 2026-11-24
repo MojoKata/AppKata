@@ -12,7 +12,11 @@ While Sync runs, the header shows a progress ring with "Syncing 12 / 40". Clicki
 the current item and a **Cancel** button.
 
 R9.2.1. At most four hosts are fetched at the same time. Rate limits are respected:
-`x-ratelimit-reset`, `Retry-After`, and backoff for other failures.
+`x-ratelimit-reset`, `Retry-After`, and backoff for other failures. A request is given two minutes
+for the whole of its answer, however steadily the answer keeps coming: one that takes longer is
+given up, as an `Unreachable` error (R2.10) or, for an image, passed over for the next one.
+**Cancel** stops the requests under way as well, an answer that is still being read included: an
+app whose sync it stops keeps what the last Sync stored.
 
 R9.2.2. API tokens are kept per host (R11.1.6). A host is one address: its name, and its port
 when the forge is on one; a name alone means the default port. A host's token is sent only to that

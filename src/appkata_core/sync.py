@@ -16,7 +16,7 @@ import logging
 
 from . import audit, channels, forges, gitsig, metadata, trustfile, urls
 from .db import DB, now
-from .http import Http, NotFound, RateLimited, SourceError, Unreachable
+from .http import Cancelled, Http, NotFound, RateLimited, SourceError, Unreachable
 from .platform import data_dir
 
 MAX_IMAGE = 8 << 20
@@ -450,7 +450,12 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
             return
         progress.current = url.split("/", 3)[-1]
         try:
-            sync_app(db, http, url, root)
+            # Cancel stops this app's requests where they are, an answer still being read too
+            # (CR1 #296): the app keeps what the last Sync stored, and isn't counted as done
+            with http.stopping(lambda: progress.cancelled):
+                sync_app(db, http, url, root)
+        except Cancelled:
+            return
         except Exception:        # noqa: BLE001 — sync_app puts an app's error on its row; this is what
             # it couldn't: an address nothing can parse, a database that can't be written. The apps
             # after it are still synced, and the Sync ends as one does (CR1 #269)

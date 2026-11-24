@@ -1254,3 +1254,164 @@ def test_through_real_sockets_a_source_whose_own_address_cant_be_sent_has_that_o
     assert db.get("last_sync") and apps[other]["error_code"] is None and apps[other]["readme"] == "# Other\n"
     assert apps[spaced]["error_code"] == "Unreachable" and "127.0.0.1" in apps[spaced]["error"], apps[spaced]
     assert [p for p, _ in a.seen if "my" in p] == []
+
+
+# ---------------------------------------------------------------- a host that answers slowly (R9.2, R9.2.1)
+# CR1's #296: Http's timeout is for each read of the socket, and the answer was read in one call
+# with no limit on the whole: a host that sent a byte every few seconds held a Sync's worker for as
+# long as it liked, and Cancel, which was looked at only before an app's sync started, couldn't stop
+# it, so the Sync never ended and no later one started. Any project can name such a host for its
+# images. How it slipped past: every stand-in answer was whole at its first read, and no test
+# cancelled a Sync. The class is "how long a request may take is up to the host", so the answers
+# here come a byte a read on a stepped clock, where no read is slow and only the whole is.
+class Dripping(FakeResponse):
+    """An answer that comes a byte a read, each read taking `every` seconds of the clock: none of
+    them is slow enough to time out. `then` is called with the number of reads so far."""
+
+    def __init__(self, url, body, clock, every, then=None):
+        super().__init__(url, body)
+        self.clock, self.every, self.reads, self.then = clock, every, 0, then
+
+    def read1(self, n=-1):
+        self.reads += 1
+        self.clock.now += self.every
+        self.then and self.then(self.reads)
+        return super().read(1)
+
+    read = read1
+
+
+def dripping(clock, every, body=b"x" * 1_000_000, then=None, answers=None):
+    def open_(req, timeout=0):
+        answer = Dripping(req.full_url, body, clock, every, then)
+        answers is not None and answers.append(answer)
+        return answer
+    return open_
+
+
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_an_answer_that_comes_a_byte_at_a_time_ends_at_the_requests_deadline(clock, call):
+    answers = []
+    http = names(Http(opener=dripping(clock, 4.0, answers=answers)))
+    assert (http.timeout, http.deadline) == (20, 120)                 # no read takes as long as the timeout
+    with pytest.raises(Unreachable, match="git.example.org hadn't finished its answer after 120 seconds") as e:
+        getattr(http, call)("https://git.example.org/shot.png")
+    assert e.value.extra["timeout"] is True
+    assert [a.reads for a in answers] == [31]                # 124 seconds of it, and it isn't asked for again
+    assert clock.waits == []
+
+
+def test_the_deadline_counts_the_wait_for_an_answer_to_start(clock):
+    answers = []
+
+    def open_(req, timeout=0):
+        clock.now += 121                                      # redirects, and headers that come slowly
+        return dripping(clock, 0.0, answers=answers)(req, timeout)
+    with pytest.raises(Unreachable, match="hadn't finished its answer"):
+        names(Http(opener=open_)).bytes("https://git.example.org/shot.png")
+    assert [a.reads for a in answers] == [0]
+
+
+def test_an_answer_that_comes_in_pieces_in_time_is_whole_and_the_size_limit_holds(clock):
+    body, answers = PNG * 50, []
+    http = names(Http(opener=dripping(clock, 0.05, body, answers=answers)))
+    assert http.bytes("https://git.example.org/shot.png") == body
+    assert http.bytes("https://git.example.org/shot.png", max_bytes=len(body)) == body
+    assert [a.reads for a in answers] == [len(body) + 1] * 2
+    answers.clear()
+    with pytest.raises(Unreachable, match="too large"):
+        http.bytes("https://git.example.org/shot.png", max_bytes=100)
+    assert [a.reads for a in answers] == [101]               # and no more of it is read than shows that
+
+
+def test_r9_2_1_says_how_long_a_request_is_given_and_that_cancel_stops_one():
+    text = " ".join(reqdocs.item("R9.2.1").split())
+    assert "A request is given two minutes for the whole of its answer" in text and Http().deadline == 120
+    assert "**Cancel** stops the requests under way as well" in text
+
+
+def test_a_cancel_is_its_own_threads_and_its_own_blocks(clock):
+    """The application has one Http for everything: a Sync's Cancel stops that Sync's requests, and
+    isn't left on the client for an install's lookup, or the next Sync, to trip over."""
+    url = "https://git.example.org/shot.png"
+    http = names(Http(opener=opener({url: PNG})))
+    elsewhere = []
+    with http.stopping(lambda: True):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(url)
+        other = threading.Thread(target=lambda: elsewhere.append(http.bytes(url)))       # an install's lookup, meanwhile
+        other.start()
+        other.join()
+        with http.stopping(lambda: False):                   # a block inside a block is its own, too
+            assert http.bytes(url) == PNG
+        with pytest.raises(http_.Cancelled):
+            http.bytes(url)
+    assert elsewhere == [PNG] and http.bytes(url) == PNG
+    assert http.calls == 3                                   # a cancelled request is never sent
+    assert not issubclass(http_.Cancelled, Exception)        # so nothing takes it for a failure of the host
+
+
+def test_a_cancel_stops_a_request_before_it_is_asked_for_again(clock):
+    seen = []
+    http = names(Http(opener=recording({"https://git.example.org/": urllib.error.HTTPError("", 503, "busy", {}, None)}, seen)))
+    with http.stopping(lambda: bool(seen)):
+        with pytest.raises(http_.Cancelled):
+            http.bytes("https://git.example.org/api/x")
+    assert len(seen) == 1 and clock.waits == [1.5]
+
+
+@pytest.mark.parametrize("place", ["releases", "readme", "metainfo", "image"])
+def test_cancel_stops_a_sync_while_an_answer_is_still_being_read(tmp_path, monkeypatch, clock, place):
+    """A Sync, then one that is cancelled as the user would, while an answer of one app's sync drips
+    in: it ends at the next read, that app keeps what the first Sync stored with no error on its row,
+    and the Cancel was that Sync's own."""
+    source, routes = "https://git.example.org/o/r", three_forges()
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    http = names(Http({}, opener=opener(routes)))
+    sync.sync_all(db, http, root=str(tmp_path))
+    db.x("UPDATE apps SET fetched_at='by the first Sync'")
+    before = rows(db)
+    assert sorted(before) == sorted(ELSEWHERE) and all(app["error_code"] is None for app in before.values())
+
+    slow = tuple(k for k in routes if k.startswith(OWN[source]) and k.endswith(PLACES[place]))
+    progress, answers = sync.Progress(), []
+    drip = dripping(clock, 4.0, answers=answers, then=lambda reads: reads == 5 and setattr(progress, "cancelled", True))
+    http._open = lambda req, timeout=0: (drip if req.full_url.startswith(slow) else opener(routes))(req, timeout)
+    sync.sync_all(db, http, progress, root=str(tmp_path), workers=1)
+    assert [a.reads for a in answers] == [5] and clock.waits == []        # not a read more, and no other request for it
+    after = rows(db)
+    assert after[source] == before[source]                    # as the first Sync left it: no error, no half of an app
+    assert progress.done == len([u for u in after if after[u] != before[u]]) < 3 and progress.total == 3       # the apps before it
+
+    http._open = opener(routes)                               # the next Sync, with the same Http, is a whole one
+    again = sync.Progress()
+    sync.sync_all(db, http, again, root=str(tmp_path))
+    assert (again.done, again.total) == (3, 3) and all(app["error_code"] is None for app in rows(db).values())
+
+
+def a_byte_at_a_time(handler):
+    handler.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
+    try:
+        for _ in range(60):                                   # three seconds of it at most
+            handler.wfile.write(b"x")
+            time.sleep(0.05)
+    except OSError:                                           # its reader has gone
+        pass
+
+
+def test_through_real_sockets_a_byte_at_a_time_ends_at_the_deadline_and_at_cancel(pair):
+    # the finding's own run, with Http's own opener and the real clock: no read meets the two-second timeout
+    a, b = pair
+    a.files = {"/slow.png": a_byte_at_a_time}
+    http = Http(timeout=2.0)
+    http.deadline = 0.4
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="hadn't finished its answer") as e:
+        http.bytes(f"https://{a.at}/slow.png")
+    assert e.value.extra["timeout"] is True and time.monotonic() - started < 2.0 and len(a.seen) == 1
+    http.deadline = 120
+    started = time.monotonic()
+    with http.stopping(lambda: time.monotonic() - started > 0.3):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(f"https://{a.at}/slow.png")
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 2
