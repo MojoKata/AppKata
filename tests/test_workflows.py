@@ -35,7 +35,9 @@ import written
 
 DOWNLOAD, UPLOAD = "actions/download-artifact", "actions/upload-artifact"
 EXPR = re.compile(r"\$\{\{.*?\}\}")
-RELEASED = ["appimage", "signature", "windows"]             # the artifacts that hold a release's files
+# a release's files by the artifact that carries each, as the ends of AppKata-<version>-<end>
+RELEASED = {"appimage": ["x86_64.AppImage", "x86_64.AppImage.sha256"], "signature": ["x86_64.AppImage.asc"],
+            "windows": ["setup.exe", "setup.exe.sha256"]}
 RELEASE_FLAGS = {"--draft", "--verify-tag", "--generate-notes"}
 RELEASE_VALUED = {"--repo", "--title"}
 
@@ -225,15 +227,17 @@ def release_command(run):
 def release_faults(text, publish):
     """What is wrong with a workflow's release job, by publish.sh's text. Nothing, when it takes the
     three artifacts by name into one folder, checks there each file that has a .sha256 against it,
-    and gives `gh release create` the five files `publish.sh verify` expects, each by its name."""
+    and gives `gh release create` the five files `publish.sh verify` expects, each by its name; and
+    each artifact holds its own files of the five (RELEASED), by what its job keeps."""
     version, faults = "1.2.3", []
     expect = re.search(r'^\s*expect="([^"\n]*)"', publish, re.M).group(1).replace("$V", version).split()
-    assert len(expect) == 5, expect
+    carried = {artifact: [f"AppKata-{version}-{end}" for end in ends] for artifact, ends in RELEASED.items()}
+    assert sorted(n for held in carried.values() for n in held) == sorted(expect), f"RELEASED isn't publish.sh's {expect}"
     job = steps(jobs(text)["release"])
     taken = [s.get("with", {}) for s in job if _uses(s, DOWNLOAD)]
     (create,) = [s for s in job if "gh release create" in s.get("run", "")]
     run = create["run"]
-    if sorted(w.get("name", "") for w in taken) != RELEASED or any(set(w) - {"name", "path"} for w in taken):
+    if sorted(w.get("name", "") for w in taken) != sorted(RELEASED) or any(set(w) - {"name", "path"} for w in taken):
         faults.append(f"it takes {[w.get('name') or w.get('pattern') or 'every artifact' for w in taken]}")
     if {w.get("path") for w in taken} != {create.get("working-directory")}:
         faults.append("it attaches from a folder other than the one its downloads go to")
@@ -250,8 +254,9 @@ def release_faults(text, publish):
         faults.append(f"the release is of {tag}")
     if names(files) != sorted(expect):
         faults.append(f"it attaches {files}; publish.sh verify wants {expect}")
-    held = [os.path.basename(path) for _, name, path in uploads(text) if name in RELEASED]
-    faults.extend(f"no artifact it takes holds {n}" for n in names(files) if not any(fnmatch.fnmatchcase(n, h) for h in held))
+    for artifact, held in carried.items():      # each against its own artifact: one's glob can take another's name
+        kept = [os.path.basename(p) for _, name, path in uploads(text) if name == artifact for p in path.split()]
+        faults.extend(f"{artifact} doesn't hold {n}" for n in held if not any(fnmatch.fnmatchcase(n, k) for k in kept))
     checked = [w for words in _command(run[:run.index("gh release create")], "sha256sum", "-c") for w in words]
     if names(checked) != sorted(n for n in expect if n.endswith(".sha256")):
         faults.append(f"before the release it checks {checked}")
@@ -345,7 +350,7 @@ def test_the_checks_find_each_fault():
     assert out_of_reach(tour) == ["release: tour"] and "it takes ['appimage', 'windows', 'tour']" in faults(tour)
     renamed = _changed(ci, "          name: appimage\n          path: releases/", "          name: linux\n          path: releases/")
     assert out_of_reach(renamed) == ["sign: appimage", "release: appimage"]
-    assert "no artifact it takes holds AppKata-1.2.3-x86_64.AppImage" in faults(renamed)
+    assert "appimage doesn't hold AppKata-1.2.3-x86_64.AppImage" in faults(renamed)
     assert out_of_reach(_changed(ci, "    needs: [sign]\n", "    needs: [version]\n")) == [
         "release: appimage", "release: windows", "release: signature"]
     assert out_of_reach(_changed(ci, "    needs: [coverage, tour]\n", "    needs: [coverage]\n")) == ["site: tour"]
@@ -366,9 +371,16 @@ def test_the_checks_find_each_fault():
     assert "$v isn't the tag's version" in faults(_changed(ci, "          v=${GITHUB_REF_NAME#v}\n", "          v=$GITHUB_REF_NAME\n"))
     assert "the release is of v1" in faults(_changed(ci, 'gh release create "$GITHUB_REF_NAME"', "gh release create v1"))
     moved = _changed(ci, "          path: releases/AppKata-*-setup.exe*\n", "          path: releases/Setup-*.exe*\n")
-    assert "no artifact it takes holds AppKata-1.2.3-setup.exe" in faults(moved)
+    assert "windows doesn't hold AppKata-1.2.3-setup.exe" in faults(moved)
     unchecked = _changed(ci, ' "AppKata-$v-setup.exe.sha256"\n          gh release create', "\n          gh release create")
     assert "before the release it checks ['AppKata-$v-x86_64.AppImage.sha256']" in faults(unchecked)
+    # the signature's artifact without the .asc, whose name the appimage's glob takes too: the sign job
+    # still ends well on the second, and the release job would be the one to fail, after the signing
+    for path in ("out/signature.sig", "out/AppKata-*-x86_64.AppImage"):
+        unsigned = _changed(ci, "          path: out/AppKata-*-x86_64.AppImage.asc\n", f"          path: {path}\n")
+        assert faults(unsigned) == "signature doesn't hold AppKata-1.2.3-x86_64.AppImage.asc"
+    assert faults(_changed(ci, "          path: releases/AppKata-*-x86_64.AppImage*\n",
+                           "          path: releases/AppKata-*-x86_64.AppImage\n")) == "appimage doesn't hold AppKata-1.2.3-x86_64.AppImage.sha256"
 
     # a release changed by another job
     upload = _changed(ci, "          f=$(echo AppKata-*-x86_64.AppImage)\n",
