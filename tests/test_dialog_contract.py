@@ -496,3 +496,24 @@ def test_what_the_dialogs_show_of_an_installed_app_is_the_folder_it_is_in_not_th
     # an app that isn't installed goes where Settings says
     be.db.x("DELETE FROM installs WHERE url=?", (URL,))
     assert be._app_options(URL).root == str(new) and _real_plan(be, monkeypatch, "Demo")["portable"]["folder"] == str(new)
+
+
+# ---------------------------------------------------------------- Settings' Portable apps hint (CR1.9-33)
+
+def test_settings_portable_apps_hint_says_when_its_settings_apply_as_r11_1_4_does():
+    # CR1.9-33: since CR1.3-12 an installed app keeps its folder through its updates (R4.3.1), but the
+    # hint still said "Changes apply to new installs and updates; apps already installed stay where
+    # they are", as R4.3.1 used to. Which settings apply at an update is a rule the user reads in
+    # Settings and in R11.1.4: the hint's words are R11.1.4's.
+    import re
+    root = os.path.join(os.path.dirname(__file__), "..")
+    qml = open(os.path.join(root, "src", "appkata", "qml", "SettingsDialog.qml"), encoding="utf-8").read()
+    section = qml[qml.index('Section { id: secPortable'):]
+    hint = re.search(r'\+ " ([^"]+)" \}', section[:section.index("SettingRow")]).group(1)
+    req = open(os.path.join(root, "docs", "requirements", "R11-settings.md"), encoding="utf-8").read()
+    r11 = " ".join(req[req.index("R11.1.4. "):req.index("R11.1.4.1. ")].split())
+    said = re.search(r'The group\'s hint says when its settings apply: "([^"]+)"', r11)
+    assert said and said.group(1) == hint
+    assert "updates; apps already installed stay where they are" not in hint
+    for setting in ("Command links folder", "Keep older versions"):          # the two it names are rows of the section
+        assert f'label: "{setting}"' in section
