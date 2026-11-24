@@ -108,7 +108,7 @@ differ from its list (review 3, harness B).
 | R17.5.1 | So per-interface --call and --broadcast rules allow each service's own | test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed, test_standard_apps_reach_the_filtered_bus_when_there_is_one, test_a_tray_icon_registers_with_a_watcher_which_can_talk_back_to_it |
 | R17.5.1 | Media keys lets the app own its own MPRIS name, the one a review gives | test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it, test_a_review_names_the_apps_mpris_name_and_reviews_merge_to_the_narrower_one, test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app |
 | R17.5.1 | An app no review has named may own every name below org.mpris.MediaPlayer2 | test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it, test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app, test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog |
-| R17.5.1 | The full mapping table is A1.2.3.14. | statement |
+| R17.5.1 | The full mapping table is A1.2.3.14, which is also where each capability's names meet | test_every_fact_the_documents_state_is_what_the_code_says_but_the_listed |
 | R17.6 | The launcher presents each app a stable id | test_identity_is_a_valid_bus_name, test_identity_marker_cannot_be_swapped_for_a_host_file |
 | R17.6 | PipeWire/WirePlumber take the app for a sandboxed client | harness:wayland, claim |
 | R17.6 | The id is also the app's D-Bus name | test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus, test_two_apps_with_one_name_get_their_own_folder_launcher_identity_and_home |

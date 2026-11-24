@@ -48,6 +48,16 @@ def _labels_to_keys(text: str) -> set:
     return {by_label[p.strip().lower()] for p in re.split(r"[·,]", text) if p.strip().lower() in by_label}
 
 
+def _named(cell: str) -> dict:
+    """A "Named elsewhere" cell of A1.2.3.14's table as {where: name}: "R17.5.1 and R17.3: tray; the
+    dialog: Tray icon" is {"R17.5.1": "tray", "R17.3": "tray", "dialog": "Tray icon"}."""
+    out = {}
+    for part in cell.split("; "):
+        where, _, name = part.partition(": ")
+        out.update({w.removeprefix("the "): name for w in where.split(" and ")})
+    return out
+
+
 def _audit_actions() -> dict:
     """{(kind, action)} the Backend writes, from its _audit calls."""
     # the actor may be a word or a name ("you", actor): a call with a variable actor slipped past (F11)
@@ -110,6 +120,29 @@ def _facts() -> dict:
     stated = {k for k, lab in sb.CAP_LABELS.items() if lab in rows and all(a.split("=", 1)[-1].split("@")[0].split(".")[-1].rstrip("*").rstrip(".")
                                                                            in rows[lab] for a in sb.CAP_PROXY_ARGS[k][:1])}
     f["A1.2.3.14: the capability table"] = (stated, set(sb.CAP_LABELS))
+    # ...and the one table of each capability's names (CR1.11-80: the requirement, the template table,
+    # the review lines and the dialog each had their own, and only the code held the mapping): its
+    # word in a review, then what R17.5.1, R17.3's table, the dialog's switch and the summary's chip call it
+    table = plan[plan.index("### A1.2.3.14. Capability → proxy arguments"):]
+    cells = {r[0]: r for r in (tuple(c.strip() for c in line.strip("|").split(" | ")) for line in table.splitlines() if line.startswith("| "))
+             if len(r) == 5}
+    names = {k: _named(cells[lab][3]) for k, lab in sb.CAP_LABELS.items() if lab in cells}
+    word = {k: m.group(1) for k, lab in sb.CAP_LABELS.items() if lab in cells and (m := re.match(r"`([a-z-]+)`", cells[lab][2]))}
+    f["A1.2.3.14: each capability's word in a review"] = (word, sb.LINE_WORDS["caps"])
+    switch = {k: re.sub(r" \(chip: .*\)$", "", n.get("dialog", "")) for k, n in names.items()}
+    qml = _read("src/appkata/qml/SandboxDialog.qml")
+    f["A1.2.3.14: each capability's switch in the dialog"] = (
+        switch, {k: lab for lab, k in re.findall(r'SbxToggle \{ label: "([^"]+)"; ic: "[a-z]+";(?: warn: true;)? on: root\.has\(root\.gs\.caps, "([a-z-]+)"\)', qml)})
+    chip = {k: (m.group(1) if (m := re.search(r"\(chip: (.*)\)$", n.get("dialog", ""))) else switch[k]) for k, n in names.items()}
+    f["A1.2.3.14: each capability's chip in the summary"] = (chip, {k: v[0] for k, v in sb._CAP_CHIP.items()})
+    f["A1.2.3.14: the names R17.5.1 gives the capabilities"] = ({n.get("R17.5.1", "").split(",")[0] for n in names.values()}, bold & set(caps17))
+    services = {m.group(1): {w for w in m.group(2).split(", ") if w != "—"}
+                for m in re.finditer(r"^\| `([a-z-]+)` \|(?:[^|]*\|){5} ([^|]+) \|", _req("R17.3"), re.M)}
+    f["A1.2.3.14: the words of R17.3's table"] = ({t: {names.get(c, {}).get("R17.3") for c in sb.TEMPLATES[t]["caps"]} for t in sb.TEMPLATES}, services)
+    f["A1.2.3.14: the names R17.3.1 gives the keyring's two"] = (
+        {k: n["R17.3.1"] for k, n in names.items() if "R17.3.1" in n and n["R17.3.1"] in re.sub(r"\s+", " ", _req("R17.3.1"))},
+        {"secrets": "saved passwords", "secrets-provide": "the password service"})
+    f["R17.5.1: where the capabilities' names are"] = ("review" in re.sub(r"\s+", " ", _req("R17.5.1")).split("The full mapping table is A1.2.3.14")[-1], True)
     text = re.sub(r"\s+", " ", _req("R17.17"))
     old = re.search(r"process (\d+) \(or (\d+)\)", text)                # the wording review 2 found
     new = re.search(r"processes (\d+) to (\d+)", text)
