@@ -8,7 +8,7 @@ then `docs/relay/progress.md`, then your batch file. Nothing else from earlier a
 AppKata is the owner's own project, and CR1 is its own code review. The review's findings are GitHub
 issues, and the owner approved a schedule of work units, one pull request each
 (`docs/remediation/CR1-schedule.json`). This relay is the unit **U03, "The portable install: layout,
-command links and menu entries"**: 18 findings (16, and two its own batches found), fixed in four batches by one agent at a time on the
+command links and menu entries"**: 20 findings (16, and four its own batches found), fixed in four batches by one agent at a time on the
 branch `cr1-u03-portable-install`. You fix your batch's findings in the owner's own code and prove
 each fix. You push nothing and write nothing on GitHub.
 
@@ -17,7 +17,7 @@ each fix. You push nothing and write nothing on GitHub.
 | 1 | #305, #407, #388 | the two High findings, and the launcher files #407 and #388 share |
 | 2 | #313, #309, #331, #312, #688 | the command link and the menu entry, and one finding batch 1 found |
 | 3 | #310, #311, #336, #156, #698 | folders and versions through an update, and one finding batch 2 found |
-| 4 | #315, #319, #329, #317, #661 | the program that is picked and started, and what kind of app it is |
+| 4 | #315, #319, #329, #317, #661, #702, #704 | the program that is picked and started, what kind of app it is, and two findings batch 3 found |
 
 Your batch is one file, `docs/relay/batch-N.txt`. Its first lines say where its items came from. The
 code at the head of `cr1-u03-portable-install` is the code you work on: earlier batches' commits are

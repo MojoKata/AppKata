@@ -7,3 +7,6 @@
 #329  small  CR1.3-30 An unused helper in the install code runs any command as administrator through `pkexec`, with no caller, test or requirement.
 #317  small  CR1.3-19 A program larger than 64 MB is never classified by the libraries it links, so a large command-line tool runs Strict as an app.
 #661  small  CR1.3-43 A tarball whose program loads its display libraries at run time, as Firefox's does, is taken for a command-line tool.
+# Added by the coordinator on 2026-11-24, found by batch 3 and filed since: take them last.
+#702  small  CR1.8-36 On Windows, Install options shows Settings' install folders for an installed app, not the folder the app is in.
+#704  small  CR1.9-33 Settings' Portable apps hint says changes apply to new installs and updates, though the install folder now applies to new installs only.

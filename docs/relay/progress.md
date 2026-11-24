@@ -519,3 +519,22 @@ so the launcher tier wasn't run.
 14. **The session's working directory**: every command that ran git or touched the repository
     began with a `cd` into this worktree. A few that only read or wrote the scratch folder began
     there, or waited on a log by its absolute path. I saw no sign of the directory moving.
+
+### The coordinator, after batch 3 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_install_review.py`,
+`tests/test_sandbox_transitions.py` and the document tests, whole; the batch pushed.
+
+- **#698 (doubt 1) stands as built.** Going through with the rewrite and making no command link,
+    with the reason recorded, is the owner's decision on #407 applied to this case, so it is the
+    implementer's pick and not a new choice. R4.3.1.3's sentence goes under Needs your eye.
+- **New findings filed:** #701 (new 1, `_protected_roots` and two install folders: rated Med, and
+    U05's, with #632), #702 (new 2, Windows' "Installs to": this unit's, batch 4), #703 (new 3, a
+    rewrite that fails part-way: U17's, with #468) and #704 (new 4, Settings' hint: this unit's,
+    batch 4).
+- **Doubts 3 to 6** stand as built; #156 removing the kept versions with no question, the
+    AppImage naming rule of #311 and the uninstall notice go to the owner under Needs your eye.
+- **Doubt 8** (two commit messages loose in a detail) is said in the pull request, not amended.
+- **Needs a run** (the Windows VM tests; the desktop VMs for #156 and batch 1): the coordinator's,
+    when batch 4 is in.
+
