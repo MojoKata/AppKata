@@ -459,3 +459,16 @@ def test_no_worker_thread_of_the_application_makes_a_timer():
             sources[os.path.relpath(path, written.path("src")).replace(os.sep, "/")] = f.read()
     assert {"appkata/backend.py", "appkata/channelui.py", "appkata_core/install.py"} <= set(sources)
     assert timers_within_reach(sources) == []
+
+
+# ---------------------------------------------------------------- an API token's host (R11.1.6; CR1, #297)
+def test_a_token_is_kept_under_the_one_address_it_belongs_to(be):
+    """Settings' host field took any text as the key, and Http looked a token up under another: what
+    is typed is kept as a Source's host is written, which is the key every request looks up."""
+    be.setToken("Git.Example.org:3000", "on-the-port")
+    be.setToken("https://git.example.org:443/o/r", "on-the-default-port")
+    kept = {"git.example.org:3000": "on-the-port", "git.example.org": "on-the-default-port"}
+    assert be.db.get("tokens") == kept == be.http.tokens
+    assert [row["host"] for row in be.tokenHosts] == ["git.example.org", "git.example.org:3000"]
+    be.setToken("git.example.org:3000", "")                        # the row's trash button
+    assert be.db.get("tokens") == {"git.example.org": "on-the-default-port"} == be.http.tokens

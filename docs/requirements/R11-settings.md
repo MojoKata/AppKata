@@ -43,6 +43,11 @@ characters and a trash button; then a host field, a hidden token field and a "+"
 text explains that tokens raise rate limits (GitHub allows 60 requests an hour without one),
 are only sent to their own host, and are never exported.
 
+A token belongs to one address. The host is entered as a Source's address has it: its name, and
+its port when the forge is on one (`git.example.org:3000`); a name alone means the default port.
+The host field's placeholder is "host or host:port", and the help text says how a forge on its own
+port is entered. A whole address pasted into the field is kept as its host.
+
 R11.1.7. **Nostr relays** (R1.5): the relay list, each with a trash button, and a field and "+"
 button to add one (`wss://…`).
 

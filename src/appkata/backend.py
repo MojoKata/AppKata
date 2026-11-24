@@ -20,7 +20,7 @@ from appkata_core import versions as vcmp
 from appkata_core.catalog import authority_view, short_fp
 from appkata_core.db import DB, now
 from appkata_core.forges import Asset
-from appkata_core.http import Http, SourceError
+from appkata_core.http import Http, SourceError, token_key
 from appkata_core import APPKATA_REPO, __version__ as APPKATA_VERSION
 from appkata_core.platform import data_dir
 
@@ -597,14 +597,17 @@ class Backend(QObject):
 
     @Slot(str, str)
     def setToken(self, host: str, token: str) -> None:
+        """A token is kept for one address (R11.1.6): the host as a Source's is written, with its
+        port when the forge is on one, which is the key Http looks it up under (token_key)."""
+        host = token_key(host)
         t = self.db.get("tokens", {})
         if token:
-            t[host.lower()] = token
+            t[host] = token
         else:
-            t.pop(host.lower(), None)
+            t.pop(host, None)
         self.db.put("tokens", t)
         self.http.tokens = t
-        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", host.lower())
+        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", host)
         self.prefsChanged.emit()
 
     # ---------------------------------------------------------------- sync

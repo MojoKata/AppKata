@@ -250,7 +250,7 @@ Dialog {
 
             Section { id: secAccounts; text: "ACCOUNTS AND TOKENS" }
             Text { width: col.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; bottomPadding: 4
-                   text: "A token raises a forge's rate limit (GitHub allows 60 requests an hour without one). Tokens are only sent to their own host and are never exported." }
+                   text: "A token raises a forge's rate limit (GitHub allows 60 requests an hour without one). Tokens are only sent to their own host and are never exported. A forge on its own port is entered with it (git.example.org:3000); a host alone means the default port." }
             Repeater {
                 model: backend.tokenHosts
                 Item { width: col.width; height: 36
@@ -261,7 +261,7 @@ Dialog {
                                 onClicked: root.confirmAction("removeToken", { host: modelData.host }) } }
             }
             Item { width: col.width; height: 46
-                Field { id: tokenHost; width: 170; y: 4; placeholder: "github.com" }
+                Field { id: tokenHost; width: 170; y: 4; placeholder: "host or host:port" }
                 Field { id: tokenValue; x: 178; y: 4; width: col.width - 178 - 44; mono: true; placeholder: "Paste a token"; field.echoMode: TextInput.Password }
                 TipButton { anchors.right: parent.right; y: 7; icon: "plus"; accent: true; tip: "Add token"
                             enabledButton: tokenHost.text.trim() !== "" && tokenValue.text.trim() !== ""

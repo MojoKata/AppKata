@@ -51,12 +51,28 @@ class Renamed(SourceError):
 
 # R9.2.2's list, in its one place: the other hosts a host's token is sent to, which are the forge's
 # own API and raw-file hosts. A host that isn't a key here has none, and its token goes to it alone.
+# A host, here and wherever a token is looked up, is one address (_host): a name alone is the
+# default port, and none of these is asked on another.
 TOKEN_HOSTS = {"github.com": ("api.github.com", "raw.githubusercontent.com")}
 
 
 def token_hosts(host: str) -> tuple[str, ...]:
     """Every host the token kept for `host` may be sent to (R9.2.2): itself and its named ones."""
     return (host, *TOKEN_HOSTS.get(host, ()))
+
+
+def token_key(host: str) -> str:
+    """The host a token is kept under, from what was typed for it (R11.1.6) or what a caller names:
+    one address, written as a Source's host is (urls.parse), `git.example.org` or, on a port,
+    `git.example.org:3000`. A name alone is the default port, so https's own port is left out, and so
+    is the rest of a whole address where one was pasted."""
+    text = host.strip().lower()
+    try:
+        parts = urlsplit(text if "://" in text else "https://" + text)
+        parts.port
+    except ValueError:
+        return text
+    return _host(parts) if parts.hostname else text
 
 
 # How each forge type takes a token (CR1 #275): the header, and what stands before the token in it.
@@ -77,29 +93,33 @@ def _forge_by_name(host: str) -> str:
     return "gitlab" if "gitlab" in name else "forgejo"
 
 
-def _host_port(parts) -> str:
-    """An address's host as a Source's host is written (urls.parse): with its port, unless that is
-    http's or https's own."""
-    try:
-        port = parts.port
-    except ValueError:
-        port = None
-    host = (parts.hostname or "").lower()
-    return f"{host}:{port}" if port and port not in (80, 443) else host
+PORTS = {"http": 80, "https": 443}
 
 
 def _origin(parts) -> tuple:
     """(scheme, host, port) of an address: what a redirect must keep for a token to go on with it."""
     try:
-        port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+        port = parts.port or PORTS.get(parts.scheme)
     except ValueError:
         port = None
     return parts.scheme, (parts.hostname or "").lower(), port
 
 
+def _host(parts) -> str:
+    """An address's host, as a token is kept for it and as a Source's host is written (urls.parse):
+    its name, and its port unless that is its scheme's own. The one notion of a host that every
+    lookup uses (CR1 #297): the forges named a Source's host with its port and Http looked a token
+    up without it, so a token on a port was sent by some calls and not by others, and a token kept
+    for a name went to every port of it."""
+    scheme, name, port = _origin(parts)
+    name = f"[{name}]" if ":" in name else name            # an IPv6 address, as an address writes it
+    return name if port in (None, PORTS.get(scheme)) else f"{name}:{port}"
+
+
 def _is_for(parts, whose: str) -> bool:
-    """Whether an address is on the host `whose`, or on one of its named hosts (token_hosts)."""
-    return bool({(parts.hostname or "").lower(), _host_port(parts)} & set(token_hosts(whose)))
+    """Whether an address is on the host `whose`, or on one of its named hosts (token_hosts): the
+    same name and the same port."""
+    return _host(parts) in token_hosts(whose)
 
 
 def _http_address(url: str):
@@ -159,7 +179,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         was = urlsplit(req.full_url)
-        whose = getattr(req, "whose", (was.hostname or "").lower())
+        whose = getattr(req, "whose", _host(was))
         token = {k: v for k, v in req.unredirected_hdrs.items() if k.lower() in TOKEN_HEADERS}
         try:
             to = self.allowed(newurl, whose)
@@ -180,7 +200,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
 
 class Http:
     def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None):
-        self.tokens = {k.lower(): v for k, v in (tokens or {}).items() if v}
+        self.tokens = {token_key(k): v for k, v in (tokens or {}).items() if v}     # by host: one address each
         self.timeout = timeout
         self._open = opener or _opener(_Redirects(self._allowed)).open
         self._lookup = _addresses                # host -> its addresses
@@ -192,7 +212,7 @@ class Http:
         """Says which forge type a host runs: each Forge says it of its Source's host when it is
         made (forges.Forge), from the type the Source has (R2.6.5) or the one that was detected."""
         if forge in TOKEN_FORMS:
-            self.forges[host.lower()] = forge
+            self.forges[token_key(host)] = forge
 
     def _auth(self, host: str, forge: str | None = None) -> dict:
         """The header a host's token is sent in, in the form its forge type takes (TOKEN_FORMS).
@@ -211,8 +231,9 @@ class Http:
         """The token header a request to this address carries (R9.2.2), decided here for every caller
         from the address itself. `whose` only says whose token is meant (a caller's `token_host`, or
         without one the address's own host): it is sent over https alone, and only when the address's
-        host is one of that host's token_hosts(). A caller that names a host for an address
-        elsewhere, as Sync does for an image a project's README or metainfo names, sends no token."""
+        host is one of that host's token_hosts(), on the same port. A caller that names a host for an
+        address elsewhere, as Sync does for an image a project's README or metainfo names, sends no
+        token, and neither does a request to another port of the host."""
         if parts.scheme != "https" or not _is_for(parts, whose):
             return {}
         return self._auth(whose, forge)
@@ -223,11 +244,12 @@ class Http:
         names its images' addresses, and a forge its avatars' and its redirects', and none of them
         gets a request sent into this computer or its network. The one host that may be local is
         `whose`, the host the request is made for (a forge on the user's own network), with its
-        named hosts; without one, that is the address's own host. A first address and every
-        redirect of it are held to this."""
+        named hosts; without one, that is the address's own host. A host is one address (_host):
+        another port of a Source's host is whatever else listens there, and isn't the Source's. A
+        first address and every redirect of it are held to this."""
         parts = _http_address(url)
         host = parts.hostname.lower()
-        if whose is None or _is_for(parts, whose.lower()):
+        if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:
             local = [a for a in self._lookup(host) if _local(a)]
@@ -258,7 +280,7 @@ class Http:
         in (_auth)."""
         parts = self._allowed(url, token_host)
         host = parts.hostname.lower()
-        whose = (token_host or host).lower()       # the host this request is made for
+        whose = token_key(token_host) if token_host else _host(parts)      # the host this request is made for
         reset = self.limited.get(host)
         if reset and reset > time.time():
             raise RateLimited(host, reset)

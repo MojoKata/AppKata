@@ -14,12 +14,14 @@ the current item and a **Cancel** button.
 R9.2.1. At most four hosts are fetched at the same time. Rate limits are respected:
 `x-ratelimit-reset`, `Retry-After`, and backoff for other failures.
 
-R9.2.2. API tokens are kept per host (R11.1). A host's token is sent only to that host and to the
-forge's own API and raw-file hosts, which are named here: for `github.com`, `api.github.com` and
-`raw.githubusercontent.com`; for every other host, the host alone. It is never sent to any other
-host. It is sent over https only, never over plain http. A redirect carries it on only to an
-address with the same scheme, host and port: to any other address the request goes on without the
-token, and a redirect to plain http of a request that carried one isn't followed.
+R9.2.2. API tokens are kept per host (R11.1.6). A host is one address: its name, and its port
+when the forge is on one; a name alone means the default port. A host's token is sent only to that
+host and to the forge's own API and raw-file hosts, which are named here: for `github.com`,
+`api.github.com` and `raw.githubusercontent.com`; for every other host, the host alone. It is
+never sent to any other host, nor to another port of its own. It is sent over https only, never
+over plain http. A redirect carries it on only to an address with the same scheme, host and port:
+to any other address the request goes on without the token, and a redirect to plain http of a
+request that carried one isn't followed.
 
 R9.2.3. Sync fetches release information for every app in the Catalog, whether it comes from a
 Source or a Trust, so tiles show current versions.

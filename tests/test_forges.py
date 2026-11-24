@@ -3,6 +3,7 @@
 import io
 import ipaddress
 import json
+import os
 import re
 import threading
 import time
@@ -374,10 +375,11 @@ def pair(monkeypatch):
         server.server_close()
 
 
-def _with_token(monkeypatch, header):
-    """An Http with a token for server A, sent in the named header. Server B's name counts as a public
-    host's here: a redirect to an address on this computer is refused (further down)."""
-    http = names(Http({"127.0.0.1": "SECRET-TOKEN"}, timeout=10))
+def _with_token(monkeypatch, header, a):
+    """An Http with a token for server A (its address: its name and its port), sent in the named
+    header. Server B's name counts as a public host's here: a redirect to an address on this computer
+    is refused (further down)."""
+    http = names(Http({a.at: "SECRET-TOKEN"}, timeout=10))
     if header == "private-token":            # the form a host named for GitLab gets
         monkeypatch.setattr(http, "_auth", lambda *a, **k: {"PRIVATE-TOKEN": "SECRET-TOKEN"})
     return http
@@ -391,7 +393,7 @@ def _secrets(seen):
 def test_a_redirect_to_another_host_arrives_without_the_token(pair, monkeypatch, header):
     a, b = pair
     a.redirects["/api/x"] = f"https://{b.at}/elsewhere"
-    assert _with_token(monkeypatch, header).json(f"https://{a.at}/api/x") == {"ok": True}
+    assert _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/x") == {"ok": True}
     assert _secrets(a.seen) == [("/api/x", header)]
     assert [path for path, _ in b.seen] == ["/elsewhere"] and _secrets(b.seen) == []
     assert not {"authorization", "private-token"} & set(b.seen[0][1])
@@ -402,7 +404,7 @@ def test_a_redirect_on_the_same_host_keeps_the_token(pair, monkeypatch, header):
     # a renamed repository's API address answers with a redirect on the same host
     a, b = pair
     a.redirects["/api/old"] = "/api/new"
-    assert _with_token(monkeypatch, header).json(f"https://{a.at}/api/old") == {"ok": True}
+    assert _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/old") == {"ok": True}
     assert _secrets(a.seen) == [("/api/old", header), ("/api/new", header)]
 
 
@@ -412,7 +414,7 @@ def test_a_redirect_from_https_to_http_of_a_request_with_a_token_is_refused(pair
     a, b = pair
     a.redirects["/api/x"] = f"http://{(a if to == 'a' else b).at}/plain"
     with pytest.raises(Unreachable, match="http"):
-        _with_token(monkeypatch, header).json(f"https://{a.at}/api/x")
+        _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/x")
     assert [path for path, _ in a.seen] == ["/api/x"] and b.seen == []      # /plain was never asked for
 
 
@@ -669,3 +671,129 @@ def test_a_search_sends_the_token_in_the_form_of_the_forge_it_searches():
     assert explore.codeberg(http, "q", host="gitlab-mirror.example.org") == []
     assert explore.github(http, "q") == []
     assert [sent for _, sent in tokens_sent(seen)] == [dict([FORMS["gitlab"]]), dict([FORMS["forgejo"]]), dict([FORMS["github"]])]
+
+
+# ---------------------------------------------------------------- which host a token is kept for (R9.2.2, R11.1.6)
+# CR1's #297: two notions of a host met. A Source's host carries its port (urls.parse) and the forges
+# named it so, while Http looked a token up by the address's name alone: a token kept for a forge on
+# a port was sent by some calls and not by others, and one kept for a name went to every port of it.
+# The owner's decision: a token belongs to one address; a name alone means the default port. The
+# hosts in the tests had no ports, so the two notions never differed. The class is "one fact, two
+# spellings", so the tests hold every call a Source makes to the Source's host as urls.parse writes it.
+LAN = "git.lan.example"
+
+
+@pytest.mark.parametrize("kept, url, token_host, sent", [
+    # kept for the forge on its port: its calls (which name the Source's host) and the probes (which don't)
+    (LAN + ":3000", f"https://{LAN}:3000/api/v1/repos/o/r", LAN + ":3000", True),
+    (LAN + ":3000", f"https://{LAN}:3000/api/v1/version", None, True),
+    (LAN + ":3000", f"https://{LAN}/api/v1/version", None, False),              # the default port: another address
+    (LAN + ":3000", f"https://{LAN}:9999/other-service", None, False),
+    (LAN + ":3000", f"https://{LAN}:9999/other-service", LAN + ":3000", False),
+    (LAN + ":3000", f"https://{LAN}/o/r/raw/branch/main/icon.png", LAN + ":3000", False),
+    (LAN + ":3000", f"http://{LAN}:3000/api/v1/version", None, False),          # plain http: never
+    # kept for the name alone: the default port only
+    (LAN, f"https://{LAN}/api/v1/repos/o/r", LAN, True),
+    (LAN, f"https://{LAN}/api/v1/version", None, True),
+    (LAN, f"https://{LAN}:443/api/v1/version", None, True),                     # the default port, written out
+    (LAN, f"https://{LAN}:3000/api/v1/version", None, False),
+    (LAN, f"https://{LAN}:3000/api/v1/repos/o/r", LAN + ":3000", False),
+    (LAN, f"https://{LAN}:3000/api/v1/repos/o/r", LAN, False),
+    (LAN, f"https://{LAN}:9999/other-service", LAN, False),
+    (LAN, f"https://{LAN}:80/x", None, False),                                  # https on http's port isn't the default
+    (LAN + ":443", f"https://{LAN}/api/v1/version", None, True),                # however the default port was typed
+    # a named host is asked on its default port too
+    ("github.com", "https://api.github.com/repos/o/r", "github.com", True),
+    ("github.com", "https://api.github.com:8443/repos/o/r", "github.com", False),
+    ("github.com", "https://raw.githubusercontent.com:8443/o/r/main/icon.png", "github.com", False),
+    ("github.com:8443", "https://api.github.com/repos/o/r", "github.com:8443", False),
+])
+def test_a_token_is_sent_to_the_one_address_it_is_kept_for(kept, url, token_host, sent):
+    seen = []
+    http = names(Http({kept: "SECRET"}, opener=recording({}, seen)))
+    _ask(http, url, **({"token_host": token_host} if token_host else {}))
+    assert [u for u, _ in seen] == [url] and tokened(seen) == ([url] if sent else []), seen
+
+
+@pytest.mark.parametrize("source, host", [
+    (f"https://{LAN}/o/r", LAN), (f"https://{LAN}:443/o/r", LAN), (f"http://{LAN}/o/r", LAN),
+    (f"https://{LAN}:3000/o/r", LAN + ":3000"), (f"http://{LAN}:3000/o/r.git", LAN + ":3000"),
+    (f"https://{LAN.upper()}:8443/o/r/releases", LAN + ":8443"),
+])
+@pytest.mark.parametrize("kind", ["gitlab", "forgejo", "ghe"])
+def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_path, source, host, kind):
+    """The token is kept under the host as the Source shows it (urls.parse), and another port of the
+    same name has a token of its own. From the probes to an image, every request for the Source
+    carries the Source's, and none carries the other."""
+    repo = urls.parse(source)
+    other = LAN + ":9999" if repo.host == LAN else LAN
+    assert repo.host == host == http_.token_key(host)
+    seen = []
+    web = f"https://{host}"
+    http = names(Http({host: "SECRET", other: "OTHER"}, opener=recording({web + "/api/": PROJECT, web + "/": PNG}, seen)))
+    with pytest.raises(SourceError):
+        forges.detect(http, repo.host)                    # the four probes: nothing here says what it runs
+    f = forges.forge_for(http, repo, kind)
+    assert f.info().name == "r" and f.raw("icon.png", "main") == PNG
+    assert sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=repo.host).endswith("icon.png")
+    assert len(seen) == 7 and all(url.startswith(web + "/") for url, _ in seen), seen
+    sent = [value for _, headers in tokens_sent(seen) for value in headers.values()]
+    assert len(sent) == 7 and all("SECRET" in value for value in sent), seen
+    _ask(http, f"https://{other}/elsewhere", token_host=repo.host)       # an address on the other port, asked for the Source
+    assert tokens_sent(seen)[-1] == (f"https://{other}/elsewhere", {})
+
+
+@pytest.mark.parametrize("typed, key", [
+    ("github.com", "github.com"), ("  GitHub.com ", "github.com"),
+    ("git.example.org:3000", "git.example.org:3000"), ("Git.Example.Org:3000", "git.example.org:3000"),
+    ("git.example.org:443", "git.example.org"),                       # the default port, typed out
+    ("https://git.example.org:3000/o/r", "git.example.org:3000"),     # a whole address, pasted
+    ("https://git.example.org/", "git.example.org"), ("git.example.org/o/r", "git.example.org"),
+    ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
+    ("git.example.org:port", "git.example.org:port"),                 # no address: kept as typed
+])
+def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(typed, key):
+    assert http_.token_key(typed) == key == http_.token_key(key)
+    seen = []
+    http = names(Http({typed: "SECRET"}, opener=recording({}, seen)))
+    assert list(http.tokens) == [key]
+    if ":port" not in key:
+        _ask(http, f"https://{key}/x")
+        assert tokened(seen) == [f"https://{key}/x"]
+
+
+@pytest.mark.parametrize("source_host, url, fetched", [
+    (LAN + ":3000", f"https://{LAN}:3000/o/r/raw/branch/main/shot.png", True),
+    (LAN + ":3000", f"http://{LAN}:3000/o/r/raw/branch/main/shot.png", True),      # the same port, in plain http
+    (LAN + ":3000", f"https://{LAN}:9999/admin/shot.png", False),                  # whatever else listens on that machine
+    (LAN + ":3000", f"https://{LAN}/shot.png", False),
+    (LAN, f"https://{LAN}/o/r/raw/branch/main/shot.png", True),
+    (LAN, f"http://{LAN}/o/r/raw/branch/main/shot.png", True),                     # http's own port, as the Source's host is written
+    (LAN, f"http://{LAN}:631/admin/shot.png", False),
+    (LAN, f"https://{LAN}:9999/admin/shot.png", False),
+])
+def test_on_a_local_forge_only_the_sources_own_address_may_be_local(tmp_path, source_host, url, fetched):
+    # CR1 #266's exception is for the Source's own host, and a host is one address (#297)
+    seen = []
+    http = names(Http({source_host: "SECRET"}, opener=recording({url: PNG}, seen)), {LAN: ["192.168.1.5"]})
+    if fetched:
+        assert sync._save_image(http, url, str(tmp_path / "hero"), token_host=source_host).endswith("hero.png")
+    else:
+        with pytest.raises(Unreachable, match="local network"):
+            sync._save_image(http, url, str(tmp_path / "hero"), token_host=source_host)
+    assert [u for u, _ in seen] == ([url] if fetched else [])
+
+
+def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
+    """The finding's last part: Settings' host field took any text and nothing said which key was
+    meant. The requirement, the field and its help text say it, and the example they give is a key."""
+    r11, r9 = " ".join(reqdocs.item("R11.1.6").split()), " ".join(reqdocs.item("R9.2.2").split())
+    assert "A token belongs to one address" in r11 and "a name alone means the default port" in r11
+    assert "A host is one address" in r9 and "a name alone means the default port" in r9
+    assert "nor to another port of its own" in r9
+    with open(os.path.join(reqdocs.ROOT, "src", "appkata", "qml", "SettingsDialog.qml"), encoding="utf-8") as f:
+        qml = f.read()
+    assert 'placeholder: "host or host:port"' in qml and '"host or host:port"' in r11
+    example = "git.example.org:3000"
+    assert f"`{example}`" in r11 and f"({example})" in qml and http_.token_key(example) == example
+    assert "a host alone means the default port" in qml

@@ -11,8 +11,9 @@ R3.1.1. **Where an image is fetched from.** The icon and the hero image come fro
 project or its forge names: its metainfo's icon and screenshot, its README's images, the owner's
 avatar. Only http and https addresses are asked for. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
-Source's own host (a forge on the user's own network). A redirect is held to the same rule. An
-image that is refused is passed over for the next one in R3.2's or R3.3's list.
+Source's own host (a forge on the user's own network), on the Source's own port. A redirect is held
+to the same rule. An image that is refused is passed over for the next one in R3.2's or R3.3's
+list.
 
 R3.2. **Icon.** AppKata uses the first one it finds:
 
