@@ -1,0 +1,7 @@
+# Batch 3 of the relay for CR1's unit U09
+# From docs/remediation/CR1-schedule.json at upstream/master ae63101, the unit U09. Wording: the Network hint and the documents' lists of portals.
+# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
+
+#404  small  CR1.5-29 An app with no network can still send data out by having the portal open a link or email, and neither the chip nor the limits say so.
+#202  small  CR1.11-86 The portals a sandboxed app may always use are listed four times, and two of the lists leave out ProxyResolver.
+#201  small  CR1.11-85 The architecture says GTK4 falls back cleanly when the file chooser portal is refused, which holds for GTK 4.14 only.

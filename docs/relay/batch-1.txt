@@ -1,0 +1,7 @@
+# Batch 1 of the relay for CR1's unit U09
+# From docs/remediation/CR1-schedule.json at upstream/master ae63101, the unit U09. The unit's High finding first; #631 changes the same capability table, and #195 is the documents' side of both.
+# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
+
+#378  medium  CR1.5-3 The notifications, inhibit and tray capabilities open everything the connection owning each name serves, not only that service.
+#631  large  CR1.5-36 The Media keys capability owns every `org.mpris.MediaPlayer2` name on the session bus, so an app with it can call every other media player.
+#195  small  CR1.11-80 The sandbox's service capabilities have different names in the requirement, the template table, the review lines and the dialog.
