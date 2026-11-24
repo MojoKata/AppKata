@@ -65,6 +65,7 @@
     "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "docs/requirements/R5-main-window.md",
     "src/appkata/backend.py",
     "src/appkata/qml/InstallDialog.qml",
     "src/appkata/qml/SettingsDialog.qml",
@@ -768,7 +769,8 @@
     286,
     294,
     299,
-    419
+    419,
+    708
    ],
    "files": [
     "docs/requirements/R2-apps-and-sources.md",
@@ -1020,7 +1022,8 @@
     507,
     508,
     511,
-    615
+    615,
+    709
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.7-screens.md",
@@ -10907,6 +10910,41 @@
    "size": "small",
    "proof": "tests/test_dialog_contract.py holds the hint's text to R11.1.4's; the document checks.",
    "note": "Found by U03's third batch (2026-11-24) after #310's fix, and filed by the coordinator: the hint says which settings apply at an update, and that the install folder applies to new installs. A hint's wording: list it under Needs your eye."
+  },
+  {
+   "finding": 708,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "docs/requirements/R2-apps-and-sources.md",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    705
+   ],
+   "related": [
+    273,
+    277
+   ],
+   "size": "small",
+   "proof": "A test of the Source row's text for a rate limit from the token's own host (with the hint) and from a file storage host a redirect led to (without it); the document checks for R2.10.",
+   "note": "Found by U07's fifth batch (2026-11-24), and filed by the coordinator. #273 adds R2.10's other rows: one pass over R2.10's table."
+  },
+  {
+   "finding": 709,
+   "readiness": "ready",
+   "files": [
+    "screenshots/src/render.js"
+   ],
+   "depends_on": [
+    704
+   ],
+   "related": [
+    511
+   ],
+   "size": "small",
+   "proof": "The mockups rendered again (the project's screenshot script, as docs/build.md says), and the screenshots page's checks.",
+   "note": "Found by U03's fourth batch (2026-11-24) after #704's fix, and filed by the coordinator. The rendered SVGs and PNGs of the Settings mockups change with render.js; the unit lists them as the render makes them."
   }
  ],
  "shared_files": [
