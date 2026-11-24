@@ -1,8 +1,0 @@
-# Batch 3 of the relay for CR1's unit U07
-# From docs/remediation/CR1-schedule.json at upstream/master ae63101, the unit U07. Errors, slow answers, Retry-After and cut-off answers: one path through http.py and sync.py.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#269  medium  CR1.2-9 An unexpected error, such as from a bad README image address, ends the whole Sync instead of being recorded on that app's row.
-#296  small  CR1.2-36 A host that sends its answer one byte at a time holds a Sync worker indefinitely, and Cancel can't stop it.
-#277  small  CR1.2-17 A `Retry-After` on a 503 is ignored, and a host that only times out holds a Sync worker for minutes per app.
-#626  small  CR1.2-42 An HTTP answer cut off before its declared length is taken as complete, so a truncated icon, README or release list is used as if whole.
