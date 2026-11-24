@@ -242,10 +242,14 @@
     297,
     298,
     485,
-    626
+    626,
+    681,
+    682,
+    683
    ],
    "files": [
     "docs/requirements/R11-settings.md",
+    "docs/requirements/R3-app-metadata.md",
     "docs/requirements/R9-sync-and-updates.md",
     "scripts/areas.py",
     "src/appkata/backend.py",
@@ -10714,6 +10718,49 @@
    "size": "small",
    "proof": "The project's document checks: tests/test_doccheck.py, tests/test_doc_links.py, tests/test_docs_facts.py and tests/test_public_text.py.",
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
+  },
+  {
+   "finding": 681,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/metadata.py",
+    "tests/test_forges.py"
+   ],
+   "related": [
+    263,
+    266
+   ],
+   "size": "small",
+   "proof": "A test of metadata.resolve: an address on another host that holds \"github.com/\" and \"/blob/\" (in its host's name, and in its query) comes back unchanged, and a real GitHub page link is still rewritten.",
+   "note": "Found by U07's first batch (2026-11-24) while fixing #266, and filed by the coordinator; its remedy is the issue's. The test goes where resolve's other tests are; the guard names the file if it isn't tests/test_forges.py."
+  },
+  {
+   "finding": 682,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    266
+   ],
+   "size": "medium",
+   "proof": "A test with a resolver that gives a public address on its first call and a loopback one on its second: the request is refused, and nothing is sent to the stand-in server on the loopback address.",
+   "note": "Found by U07's first batch (2026-11-24) in #266's own fix, and filed by the coordinator: the local-address check and the connection each resolve the name. The remedy is the issue's: connection classes of Http's own that connect to the address they checked. If that turns out to need more than http.py, the alternative (say in the requirement that the check is of the name's first answer) is a refine."
+  },
+  {
+   "finding": 683,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    264
+   ],
+   "size": "small",
+   "proof": "A test with a stand-in server that redirects a request carrying a token to a second host, which answers 401: the error names that host and doesn't say the token was rejected; a 401 from the token's own host still does.",
+   "note": "Found by U07's first batch (2026-11-24) after #264's fix, and filed by the coordinator; its remedy is the issue's."
   }
  ],
  "shared_files": [
@@ -10742,6 +10789,7 @@
   "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
   "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md",
   "docs/requirements/R2-apps-and-sources.md",
+  "docs/requirements/R3-app-metadata.md",
   "docs/requirements/R4-installing-updating-and-uninstalling.md",
   "docs/requirements/R5-main-window.md",
   "docs/requirements/R7-sources-perspective.md",
