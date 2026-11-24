@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 
 import pytest
 
@@ -129,3 +130,90 @@ def test_logs_kept_by_name_move_to_their_installs_id_unless_two_shared_one(tmp_p
     if not folded:                                                        # names that differ only in case
         assert not (apps / "Demo-App.log").exists() and not (apps / "notes.log").exists()
         assert (apps / "Taken.log").read_text() == "old taken"
+
+
+# ---------------------------------------------------------------- Open for a system package (CR1.3-21)
+
+def _package(db, package, manager="apt"):
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
+         (URL, "Demo App", "1.0", "deb", json.dumps({"package": package, "manager": manager}), now()))
+
+
+_SHOWN = "[Desktop Entry]\nType=Application\nName=X\nExec=x %U\n"
+_NVIM = "[Desktop Entry]\nType=Application\nName=Neovim\nTryExec=nvim\nExec=nvim %F\nTerminal=true\n"
+
+
+def _a_system(tmp_path, monkeypatch, own, others, program="prog"):
+    """A system whose package installed `program` and the .desktop files `own`, {name: text}, and
+    whose applications folder also has `others`, other packages' entries. Returns what its manager
+    lists of the package's files."""
+    apps, bin_ = tmp_path / "usr" / "share" / "applications", tmp_path / "usr" / "bin"
+    apps.mkdir(parents=True)
+    bin_.mkdir(parents=True)
+    for name in ("nvim", "prog", "other"):
+        (bin_ / name).write_text("#!/bin/sh\n")
+        (bin_ / name).chmod(0o755)
+    listed = [str(bin_ / program), str(tmp_path / "usr" / "share" / "doc")]
+    for name, text in {**own, **others}.items():
+        (apps / name).write_text(text)
+        listed += [str(apps / name)] if name in own else []
+    monkeypatch.setattr(install, "_APPLICATIONS", (str(apps), str(tmp_path / "nowhere")))
+    return "\n".join(listed) + "\n"
+
+
+# packages whose program isn't named after them, as their managers list them: the package, its
+# manager, its own .desktop files, other packages' entries, its program, and the entry Open starts
+_PACKAGES = {
+    "libreoffice-writer": ("apt", {"libreoffice-writer.desktop": _SHOWN}, {}, "prog", "libreoffice-writer.desktop"),
+    "kde-spectacle": ("dnf", {"org.kde.spectacle.desktop": _SHOWN,
+                              "org.kde.spectacle.service.desktop": _SHOWN.replace("Type=Application", "Type=Service")},
+                      {}, "prog", "org.kde.spectacle.desktop"),
+    # Ubuntu 24.04: neovim installs /usr/bin/nvim, and its entry is neovim-runtime's
+    "neovim": ("apt", {}, {"nvim.desktop": _NVIM, "a-vim.desktop": _SHOWN.replace("Exec=x", "Exec=other")}, "nvim", "nvim.desktop"),
+    "demo-suite": ("apt", {"demo-helper.desktop": _SHOWN + "NoDisplay=true\n", "zz-other.desktop": _SHOWN,
+                           "demo-suite.desktop": _SHOWN, "aa-hidden.desktop": _SHOWN + "Hidden=true\n"},
+                   {"nvim.desktop": _NVIM}, "nvim", "demo-suite.desktop"),
+}
+
+
+@pytest.mark.skipif(install.OS == "windows", reason="system packages are Linux's (R16)")
+@pytest.mark.parametrize("launcher", ["gio", "gtk-launch"])
+@pytest.mark.parametrize("package", list(_PACKAGES))
+def test_open_starts_a_packages_own_menu_entry_whatever_its_program_is_called(db, tmp_path, monkeypatch, package, launcher):
+    # CR1.3-21: Open looked for a program named after the package, so it failed for every package
+    # whose program is named otherwise (libreoffice-writer's is lowriter), and would have started
+    # another package's program that had the name. It starts the package's app-menu entry now, as
+    # the desktop does: its own, the one named after it first and never one the menu doesn't show;
+    # else the entry of a program it installed.
+    manager, own, others, program, started = _PACKAGES[package]
+    listing = _a_system(tmp_path, monkeypatch, own, others, program)
+    asked, ran = [], []
+
+    def run(cmd, **kw):
+        asked.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, listing, "")
+    monkeypatch.setattr(install.subprocess, "run", run)
+    monkeypatch.setattr(install.subprocess, "Popen", lambda cmd, **kw: ran.append(cmd))
+    monkeypatch.setattr(install.shutil, "which", lambda name: str(tmp_path / "usr" / "bin" / name) if name in (
+        "nvim", "prog", "other") else f"/usr/bin/{name}" if name in ("dpkg-query", "rpm", launcher, package) else None)
+    _package(db, package, manager)
+    install.launch(db, URL)
+    assert asked == [["dpkg-query", "-L", package] if manager == "apt" else ["rpm", "-ql", package]]
+    entry = str(tmp_path / "usr" / "share" / "applications" / started)
+    assert ran == [["gio", "launch", entry] if launcher == "gio" else ["gtk-launch", started]]
+
+
+@pytest.mark.skipif(install.OS == "windows", reason="system packages are Linux's (R16)")
+@pytest.mark.parametrize("own,others", [({}, {}), ({"ssh.desktop": _SHOWN + "NoDisplay=true\n"}, {}), ({}, {"nvim.desktop": _NVIM})],
+                         ids=["none", "one the menu doesn't show", "another program's"])
+def test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name(db, tmp_path, monkeypatch, own, others):
+    listing = _a_system(tmp_path, monkeypatch, own, others)
+    ran = []
+    monkeypatch.setattr(install.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, listing, ""))
+    monkeypatch.setattr(install.subprocess, "Popen", lambda cmd, **kw: ran.append(cmd))
+    monkeypatch.setattr(install.shutil, "which", lambda name: str(tmp_path / "usr" / "bin" / name) if name == "nvim"
+                        else f"/usr/bin/{name}")                     # a program called openssh-clients too
+    _package(db, "openssh-clients")
+    with pytest.raises(install.InstallError, match="Demo App has no app-menu entry to open it with"):
+        install.launch(db, URL)
+    assert ran == []

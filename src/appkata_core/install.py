@@ -1475,10 +1475,84 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
     elif rec.get("flatpak"):
         subprocess.Popen(["flatpak", "run", rec["flatpak"]], start_new_session=True)
     elif rec.get("package"):
-        exe = shutil.which(rec["package"])
-        if not exe:
-            raise InstallError(f"couldn't find a program called {rec['package']}")
-        subprocess.Popen([exe], start_new_session=True)
+        from .platform import linux_family
+        _launch_package(row["name"], rec["package"], rec.get("manager") or ("apt" if linux_family() == "debian" else "dnf"))
+
+
+def _menu_entry(path: str):
+    """The [Desktop Entry] group of an app-menu entry the menu shows, or None: not an application,
+    hidden (`NoDisplay`, `Hidden`), or not readable."""
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
+            return None
+        cp.read(path, encoding="utf-8")
+        entry = cp["Desktop Entry"]
+    except (configparser.Error, OSError, UnicodeDecodeError, KeyError):
+        return None
+    if entry.get("Type", "Application") != "Application" or "true" in (entry.get("NoDisplay", "").lower(), entry.get("Hidden", "").lower()):
+        return None
+    return entry
+
+
+def _package_entries(package: str, manager: str) -> list[str]:
+    """The app-menu entries that open a system package (R5.7.4's Open): the `.desktop` files it put in
+    an `applications` folder that the menu shows, the one named after the package first. A package
+    that ships none may have its program's entry in another of its family (neovim's `nvim.desktop`
+    is neovim-runtime's): then the entries in the system's applications folders whose program is a
+    file the package installed."""
+    cmd = ["dpkg-query", "-L", package] if manager == "apt" else ["rpm", "-ql", package]
+    if not shutil.which(cmd[0]):
+        return []
+    try:
+        listed = subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    stem = lambda p: os.path.basename(p)[:-len(".desktop")]       # noqa: E731
+    own = [p for p in listed if p.endswith(".desktop") and os.path.basename(os.path.dirname(p)) == "applications"
+           and _menu_entry(p) is not None]
+    if own:
+        return sorted(own, key=lambda p: (_squash(package) not in _squash(stem(p)), stem(p)))
+    files = {os.path.realpath(p) for p in listed if os.path.isfile(p)}
+    found = []
+    for folder in _APPLICATIONS:
+        try:
+            names = sorted(n for n in os.listdir(folder) if n.endswith(".desktop"))
+        except OSError:
+            continue
+        for name in names:
+            entry = _menu_entry(os.path.join(folder, name))
+            try:
+                words = shlex.split(entry.get("Exec", "")) if entry is not None else []
+            except ValueError:
+                continue
+            while words and (os.path.basename(words[0]) == "env" or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0])):
+                words = words[1:]
+            program = words and (words[0] if os.path.isabs(words[0]) else shutil.which(words[0]))
+            if program and os.path.realpath(program) in files:
+                found.append(os.path.join(folder, name))
+    return found
+
+
+# where the system's app-menu entries are, for a package's program whose entry another package ships
+_APPLICATIONS = ("/usr/share/applications", "/usr/local/share/applications")
+
+
+def _launch_package(name: str, package: str, manager: str) -> None:
+    """Open for a system package: its own app-menu entry, started as the desktop starts it (`gio
+    launch`, else `gtk-launch`). Its name says nothing of its program's (`libreoffice-writer` installs
+    `lowriter`; `openssh-clients`, `ssh`), and a program named after it may be another package's
+    (CR1.3-21)."""
+    entries = _package_entries(package, manager)
+    if not entries:
+        raise InstallError(f"{name} has no app-menu entry to open it with")
+    if shutil.which("gio"):
+        cmd = ["gio", "launch", entries[0]]
+    elif shutil.which("gtk-launch"):
+        cmd = ["gtk-launch", os.path.basename(entries[0])]
+    else:
+        raise InstallError(f"couldn't open {name}: neither gio nor gtk-launch is on this computer")
+    subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _launch_windows(name: str, rec: dict) -> None:

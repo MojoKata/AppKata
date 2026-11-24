@@ -46,8 +46,10 @@ tests/test_launch.py::test_a_launch_that_runs_is_not_reported  # portable launch
 tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[refused]  # portable launch on Linux/macOS
 tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[died-at-start]  # portable launch on Linux/macOS
 tests/test_launch.py::test_a_launchers_refusal_is_reported_after_any_delay_but_a_crash_later_is_not[crashed-later]  # portable launch on Linux/macOS
+tests/test_launch.py::test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name  # system packages are Linux's (R16)
 tests/test_launch.py::test_a_program_run_directly_is_only_reported_within_the_grace  # portable launch on Linux/macOS
 tests/test_launch.py::test_launches_append_to_the_app_log_and_rotate_it  # portable launch on Linux/macOS
+tests/test_launch.py::test_open_starts_a_packages_own_menu_entry_whatever_its_program_is_called  # system packages are Linux's (R16)
 tests/test_launcher_golden.py::*  # the sandbox and its launchers are Linux-only (R17.1)
 tests/test_layout.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_platform_matrix.py::test_the_launcher_passes_no_variable_its_shell_made_up  # the launcher is a Linux /bin/sh script (R17.1)
