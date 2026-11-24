@@ -2470,7 +2470,8 @@ def test_a_password_service_app_serves_a_host_client_only_with_the_provide_capab
 # secretstorage (jeepney's, the Python `keyring` package's: store, search, relabel, delete, lock,
 # and an unlock whose prompt must complete), then what else the keyring's connection serves.
 _KEYRING_PROBE = """
-import ctypes, sys
+import ctypes, faulthandler, sys
+faulthandler.enable()               # a crash names its line on stderr, which the test shows
 def say(*a): print(*a, flush=True)
 try:
     ls = ctypes.CDLL("libsecret-1.so.0"); gl = ctypes.CDLL("libglib-2.0.so.0")
@@ -2489,6 +2490,7 @@ if ls:
     e = ctypes.c_void_p(); ls.secret_password_lookup_sync.restype = ctypes.c_char_p
     pw = ls.secret_password_lookup_sync(ctypes.byref(schema), None, ctypes.byref(e), b"app", b"probe", None)
     say("LIBSECRET lookup", "OK" if pw == b"s3cret-1" else f"FAIL {pw} {why(e)}")
+    gl.g_hash_table_new.restype = ctypes.c_void_p      # a pointer: ctypes' default, a C int, cuts one above 2 GiB
     ht = gl.g_hash_table_new(ctypes.cast(gl.g_str_hash, ctypes.c_void_p), ctypes.cast(gl.g_str_equal, ctypes.c_void_p))
     gl.g_hash_table_insert(ctypes.c_void_p(ht), b"app", b"probe")
     for f, t in (("secret_service_search_sync", ctypes.c_void_p), ("secret_item_get_secret", ctypes.c_void_p), ("secret_value_get_text", ctypes.c_char_p)):
@@ -2589,12 +2591,13 @@ def test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_s
     assert [l for l in clients if not l.endswith("absent")], (r.stdout, r.stderr)                  # one client at least
     assert not [l for l in clients if "FAIL" in l], (r.stdout, r.stderr)                           # each works through the filter
     others = [l for l in out if l.startswith("OTHER")]
-    assert len(others) >= 10 and not [l for l in others if "ANSWERED" in l], r.stdout             # name and owner, five calls each
-    assert not [l for l in others if not l.startswith("OTHER keyring") and not l.endswith("org.freedesktop.DBus.Error.AccessDenied")], r.stdout
+    assert len(others) >= 10 and not [l for l in others if "ANSWERED" in l], (r.returncode, r.stdout, r.stderr)     # name and owner, five calls each
+    assert not [l for l in others if not l.startswith("OTHER keyring") and not l.endswith("org.freedesktop.DBus.Error.AccessDenied")], \
+        (r.returncode, r.stdout, r.stderr)
     out2 = r2.stdout.splitlines()                                                                     # and without the capability, no keyring
     assert not [l for l in out2 if "ANSWERED" in l or l.startswith(("LIBSECRET", "SECRETSTORAGE")) and "FAIL" not in l and not l.endswith("absent")], \
-        (r2.stdout, r2.stderr)
-    assert "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, r2.stdout
+        (r2.returncode, r2.stdout, r2.stderr)
+    assert "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.returncode, r2.stdout, r2.stderr)
 
 
 @needs_proxy
