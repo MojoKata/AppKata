@@ -13,7 +13,9 @@ A fourth kind is the names of commands (CR1.5-31). A launcher runs a dozen host 
 around bwrap, as the user, outside every sandbox, and an app's command link is a command named by
 the app's publisher: the launcher took whatever the PATH it was started with gave it for `python3`,
 `readlink` or `mktemp`, and evaluated what the first of them printed. Two more invariants: nothing on
-the caller's PATH is ever run, and what the helper prints is only ever read as arguments.
+the caller's PATH is ever run, and what the helper prints is only ever read as arguments. The one
+folder a launcher's PATH may hold beside the system's is that of a bwrap the system lacks, and never
+one an app is.
 """
 
 import os
@@ -311,5 +313,114 @@ def test_a_launcher_runs_no_host_command_but_the_listed_ones(which, menu, tmp_pa
     text = _launchers(tmp_path, monkeypatch, str(only))[which]
     r = _run_launcher(text, tmp_path, *(["--appkata-menu"] if menu else []), "an argument", str(tmp_path / "only"))
     log = tmp_path / "home/.local/state/appkata/apps/demo.log"
+    said = r.stderr + (log.read_text() if log.exists() else "")
+    assert r.returncode == 0 and "BWRAP-REACHED" in r.stdout and "not found" not in said, (r.stdout, said)
+
+
+# A bwrap the system's folders lack (sandbox.host_path): the launcher takes its commands from those
+# folders alone, and AppKata takes bwrap from its own PATH (sandbox.have_tools), so a bwrap the user
+# built or installed with a package manager of their own has its folder added after them.
+def _system_without_bwrap(tmp_path, monkeypatch) -> str:
+    """A machine whose command folders (sandbox.HOST_PATH, here one folder) hold every command a
+    launcher runs but bwrap, with a home; returns that folder."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run.d"))
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
+        monkeypatch.delenv(v, raising=False)
+    (tmp_path / "run.d").mkdir()
+    system = tmp_path / "system"
+    system.mkdir()
+    for n in sb.HOST_COMMANDS:
+        real = shutil.which(n, path=sb.HOST_PATH)
+        if real and n != "bwrap":
+            os.symlink(real, system / n)
+    monkeypatch.setattr(sb, "HOST_PATH", str(system))
+    return str(system)
+
+
+def _program(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+
+
+# Where AppKata's own PATH finds a bwrap the system's folders lack, under the test's folder: the bwrap,
+# what it is a link to (or None), the entry of AppKata's PATH that finds it, and the folder a
+# launcher's PATH gains after the system's (None: none, since that bwrap is an app).
+FOUND_BWRAP = {
+    "installed-in-local-bin": ("home/.local/bin/bwrap", None, "{tmp}/home/.local/bin", "home/.local/bin"),
+    "a-link-to-a-build": ("home/.local/bin/bwrap", "home/src/bubblewrap/_build/bwrap-0.11", "{tmp}/home/.local/bin",
+                          "home/.local/bin"),
+    "by-a-relative-entry": ("tools/bwrap", None, "tools", "tools"),
+    "named-like-the-install-folder": ("home/bin/apps-tools/bwrap", None, "{tmp}/home/bin/apps-tools", "home/bin/apps-tools"),
+    "an-apps-command-link": ("home/bin/bwrap", "home/bin/apps/demo/run", "{tmp}/home/bin", None),
+    "in-the-install-folder": ("home/bin/apps/demo/1/bin/bwrap", None, "{tmp}/home/bin/apps/demo/1/bin", None),
+    "in-a-private-home": ("home/.local/share/appkata/sandboxes/demo/bin/bwrap", None,
+                          "{tmp}/home/.local/share/appkata/sandboxes/demo/bin", None),
+    "a-link-into-a-private-home": ("home/.local/bin/bwrap", "home/.local/share/appkata/sandboxes/demo/.local/bin/bwrap",
+                                   "{tmp}/home/.local/bin", None),
+}
+
+
+@pytest.mark.parametrize("case", FOUND_BWRAP)
+def test_a_launchers_path_gains_the_folder_of_a_bwrap_the_system_lacks_unless_that_bwrap_is_an_app(case, tmp_path, monkeypatch):
+    # The folder comes after the system's, so it decides bwrap and nothing the system has. It is the
+    # folder AppKata found the name in, not where a link leads (the launcher runs `bwrap` by name),
+    # and absolute: a relative one would be looked up from wherever the launcher is started. Never
+    # when that bwrap is an app -- a file in the install folder or in a private home, or a link into
+    # one, as an app's command link named bwrap is -- which would run as the user, outside every
+    # sandbox, at each start of every app; a folder whose name only begins like the install
+    # folder's isn't in it. And once the system's folders have a bwrap, nothing joins them.
+    tmp = tmp_path.resolve()
+    system = _system_without_bwrap(tmp, monkeypatch)
+    where, target, entry, gains = FOUND_BWRAP[case]
+    _program(tmp / (target or where))
+    if target:
+        (tmp / where).parent.mkdir(parents=True, exist_ok=True)
+        (tmp / where).symlink_to(tmp / target)
+    monkeypatch.chdir(tmp)
+    monkeypatch.setenv("PATH", f"{entry.format(tmp=tmp)}:{system}")    # AppKata's own, a login's: the user's folder first
+    apps = str(tmp / "home/bin/apps")
+    assert sb.have_tools()                                             # AppKata says the sandbox works here
+    assert sb.host_path(apps) == (f"{system}:{tmp / gains}" if gains else system)
+    _program(tmp / "system/bwrap")
+    assert sb.host_path(apps) == system
+
+
+def test_a_folder_whose_name_holds_a_colon_never_joins_a_launchers_path(tmp_path, monkeypatch):
+    # A PATH splits at every colon, so such a folder can't be one of its entries: written into the
+    # launcher's PATH line it would be read as two folders, neither of them the one AppKata found, the
+    # second relative to wherever the launcher is started. AppKata finds a bwrap there only through
+    # a relative entry of its own PATH, from inside it; the launcher keeps the system's folders alone,
+    # and says bwrap isn't installed (test_sandbox.py, test_a_launcher_says_plainly_when_bwrap_is_missing).
+    tmp = tmp_path.resolve()
+    system = _system_without_bwrap(tmp, monkeypatch)
+    _program(tmp / "a:b/bwrap")
+    monkeypatch.chdir(tmp / "a:b")
+    monkeypatch.setenv("PATH", f".:{system}")
+    assert sb.have_tools()
+    assert sb.host_path(str(tmp / "home/bin/apps")) == system
+
+
+@pytest.mark.parametrize("menu", [False, True], ids=["command", "menu"])
+def test_a_launcher_reaches_the_bwrap_appkata_found_outside_the_systems_folders(menu, tmp_path, monkeypatch):
+    # What the folder is for: AppKata found a bwrap and says the sandbox works, so an app installed
+    # sandboxed has to start, from the app menu too, whose PATH has no ~/.local/bin. A launcher with
+    # the system's folders alone would stop at "bwrap isn't installed" there.
+    tmp = tmp_path.resolve()
+    system = _system_without_bwrap(tmp, monkeypatch)
+    own = tmp / "home/.local/bin"
+    own.mkdir(parents=True)
+    (own / "bwrap").symlink_to(os.path.join(_stub_bwrap(tmp), "bwrap"))
+    monkeypatch.setenv("PATH", f"{own}:{system}")
+    monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)    # its probe would run the stand-in
+    apps = tmp / "home/bin/apps"
+    lp = sb.write_launcher("demo", "Demo", str(apps), str(apps / "demo/1"), "bin/demo", sb.resolve_template("strict"))
+    with open(lp) as f:
+        text = f.read()
+    assert f"\nPATH={shlex.quote(f'{system}:{own}')}; export PATH\n" in text
+    r = _run_launcher(text, tmp, *(["--appkata-menu"] if menu else []), "an argument", path="/usr/bin:/bin")
+    log = tmp / "home/.local/state/appkata/apps/demo.log"
     said = r.stderr + (log.read_text() if log.exists() else "")
     assert r.returncode == 0 and "BWRAP-REACHED" in r.stdout and "not found" not in said, (r.stdout, said)
