@@ -578,6 +578,35 @@ def _leave_fixed_layout(cur: dict, target: str) -> dict:
     return cur
 
 
+def _enter_fixed_layout(rec: dict, app: dict, portable: "Portable", target: str) -> tuple[list[dict], tuple[str, str, str]]:
+    """The reverse of :func:`_leave_fixed_layout`: an app in version folders goes back to the
+    fixed-name layout of R4.10.2 (one `<App>.AppImage`, or an `app` folder), as its sandbox is
+    turned Off and it updates itself again (R4.10.5, R17.12; the owner's decision on CR1.11-41:
+    nothing moved it back, so its own updater found version folders, a stable link and kept
+    versions it knew nothing of). The current version is renamed to the fixed name and the record
+    says so; `rec` is changed, nothing is stored. A kept version at that name (the `app` folder
+    the app had before AppKata updated it) is set aside for it, as :func:`_swap_in` does.
+
+    Returns what the caller removes once the record is stored (:func:`_forget`: the kept versions,
+    where they are now), and (the fixed name, the name before, what was set aside or ""), to take
+    back if a later step fails. Refused, before anything is changed, when something else is at the
+    fixed name: neither a link AppKata made nor one of the app's own versions."""
+    cur, kept, own = rec["current"], rec.get("kept", []), (portable.root, os.path.dirname(target))
+    appimage = cur["path"].lower().endswith(".appimage") and not os.path.isdir(cur["path"])
+    fixed = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if appimage else "app")
+    aside = ""
+    if fixed != cur["path"]:
+        if os.path.lexists(fixed) and not _points_into(fixed, own) and fixed not in [k["path"] for k in kept]:
+            raise InstallError(f"{fixed} is where the app's own file goes, and isn't AppKata's; not replacing it")
+        _remove_links(rec.get("links", []), own)        # the stable link is exactly where an AppImage's fixed name is
+        _swap_in(cur["path"], fixed)
+        aside = _set_aside({"path": fixed})
+    inner = os.path.relpath(os.path.join(target, cur["exec"]), cur["path"])        # the program, inside an unpacked archive
+    rec.update(current={**cur, "path": fixed, "exec": os.path.normpath(os.path.join(os.path.basename(fixed), inner))},
+               kept=[], selfUpdating=True)
+    return [k for k in kept if k["path"] != fixed] + ([{"path": aside}] if aside else []), (fixed, cur["path"], aside)
+
+
 # _activate removes and re-creates the stable link, the menu entry, the command link and the
 # launcher; two of them at once (the startup heal pass on its thread and a sandbox change on the UI
 # thread, or an install on a worker) raced on the links -- "File exists: '1.0' -> .../current" --
@@ -1167,7 +1196,14 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
 def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     """Regenerate ~/bin/apps/<app>/run for the current version and grant set, without reinstalling
     (R17.4): used when the user changes an installed app's sandbox. `app["sandbox"]` is the
-    resolved grant set (or None/Off to drop the launcher)."""
+    resolved grant set (or None/Off to drop the launcher).
+
+    An app that updates itself (`app["autoUpdate"]`, R4.10) and has a launcher is in version
+    folders, where AppKata updated it (R17.12). When its sandbox is turned Off here it updates
+    itself again, so it goes back to the fixed-name layout of R4.10.2, without its kept versions
+    (R4.10.5). If a step after the rename fails, the layout, the links, the launcher and the
+    record are put back as they were. An app in that layout has no `current` link whatever the
+    options say, here as at its install."""
     row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
     if not row:
         return {}
@@ -1175,8 +1211,32 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     if not rec.get("current") or OS != "linux":
         return rec
     portable = _where_it_is(rec, portable)
-    _activate(rec, app, portable, rec["target"])
-    db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
+    stored, target, gs = json.loads(row["record"]), rec["target"], app.get("sandbox")
+    retired, moved = [], None
+    try:
+        if (app.get("autoUpdate") and rec.get("launcher") and (not gs or sandbox.level_of(gs) == "off")
+                and not rec.get("selfUpdating") and not rec.get("selfInstalled")):
+            retired, moved = _enter_fixed_layout(rec, app, portable, target)
+        if rec.get("selfUpdating"):
+            portable = replace(portable, stable_name=False, keep=0)
+        _activate(rec, app, portable, target)
+        db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
+    except BaseException:
+        if moved:               # back in version folders, under the record that says so
+            fixed, before, aside = moved
+            try:
+                if os.path.lexists(fixed) and not os.path.lexists(before):
+                    os.replace(fixed, before)
+                if aside and os.path.lexists(aside) and not os.path.lexists(fixed):
+                    os.replace(aside, fixed)
+            except OSError:
+                log.exception("couldn't move %s back to %s", fixed, before)
+            _undo_portable(db, app, {**rec, "current": stored["current"]}, stored, portable, target, {})
+        raise
+    if moved:                   # a sandboxed AppImage's unpacked copies: it runs Off now (R17.7)
+        for k in [stored["current"]] + stored.get("kept", []):
+            _remove_extracted(k)
+    _forget(retired)
     return rec
 
 

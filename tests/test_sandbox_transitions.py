@@ -15,7 +15,9 @@ import os
 
 import pytest
 
+from appkata_core import install
 from appkata_core import sandbox as sb
+from test_install_review import _appimage, _tarball, server   # noqa: F401
 from test_sandbox_backend import URL, _review, _tarball_install, be   # noqa: F401
 
 SKIP = ("appkata.db", "appkata.db-journal", "appkata.db-wal", "appkata.db-shm", ".log", "AppKata.log")
@@ -120,3 +122,66 @@ def test_uninstall_leaves_only_what_it_promises_to_keep(be, sandboxed, remove_ho
     assert all(k.startswith(home + os.sep) for k in leftovers), leftovers
     assert bool(leftovers) is not remove_home
     assert json.loads(after["<install record>"]) is None and "sandboxPinned" not in json.loads(after["<settings row>"])
+
+
+@pytest.mark.parametrize("kind", ["appimage", "tarball"])
+def test_turning_the_sandbox_off_puts_an_app_that_updates_itself_back_under_its_fixed_name(be, server, tmp_path, monkeypatch, kind):   # noqa: F811
+    # CR1.11-41, the owner's decision: R4.10.5 and R17.12 said "Switched to Off, it updates itself
+    # again" and nothing of the layout. While it runs sandboxed AppKata updates such an app, and
+    # its first update moves it out of R4.10.2's fixed-name layout into version folders; nothing
+    # moved it back, so with the sandbox Off again the app's own updater found a versioned file
+    # behind a stable link, and kept versions it would never replace. Turning the sandbox Off now
+    # moves the current version back to the fixed name and removes the kept versions. The whole
+    # road is walked here, by the install and by the backend's own sandbox change: installed Off
+    # (fixed), sandboxed (still fixed, with its launcher), updated by AppKata (version folders,
+    # the old version kept), and Off again.
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "have_bus_filter", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".local" / "share"))
+    a = {"url": URL, "name": "Demo", "installed": "", "autoUpdate": True, "summary": "", "icon": ""}
+    monkeypatch.setattr(be, "_app", lambda url: a)
+    home, cmd, entry = tmp_path / "bin" / "apps" / "demo", tmp_path / "bin" / "demo", tmp_path / ".local" / "share" / "applications" / "appkata-demo.desktop"
+    fixed = "Demo.AppImage" if kind == "appimage" else "app"
+
+    def update_to(v):
+        """What Backend._install does for the app, with the layout and the grant set it would pass."""
+        r = (_appimage(server, f"Demo-{v}-x86_64.AppImage", f"#!/bin/sh\necho {v}\n".encode()) if kind == "appimage"
+             else _tarball(server, f"demo-{v}.tar.gz", {f"demo-{v}/demo": 0o755}))
+        gs = be._sandbox_for_install(URL, kind=kind)
+        rec = install.install(be.db, {**a, "installVersion": v, "autoUpdate": be._updates_itself(a, gs), "sandbox": gs}, r, kind, [r],
+                              portable=be._app_options(URL))
+        a["installed"] = v
+        return rec
+
+    def says(path):
+        import subprocess
+        return subprocess.run([str(path)], capture_output=True, text=True, timeout=30).stdout.strip()
+
+    def record():
+        return json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+
+    be.setSandbox(URL, {"template": "off"})
+    rec = update_to("1.0")
+    assert rec["selfUpdating"] and sorted(os.listdir(home)) == [fixed] and "1.0" in says(cmd)
+    be.setSandbox(URL, {"template": "standard"})                # sandboxed: it can't update itself, and stays where it is
+    assert sorted(os.listdir(home)) == [fixed, "run"] and record()["selfUpdating"] and be._updates_itself(a, be._sandbox_for_install(URL)) is False
+    rec = update_to("2.0")                                      # AppKata's update: into version folders, 1.0 kept (R17.12)
+    assert not rec.get("selfUpdating") and [k["version"] for k in rec["kept"]] == ["1.0"] and rec["exec"] == rec["launcher"] == str(home / "run")
+    assert os.path.islink(home / ("Demo.AppImage" if kind == "appimage" else "current")) and len(os.listdir(home)) == 4
+
+    be.setSandbox(URL, {"template": "off"})                     # and Off: it updates itself again (R4.10.5)
+    rec = record()
+    assert sorted(os.listdir(home)) == [fixed] and not os.path.islink(home / fixed)        # no version folders, kept versions, link or launcher
+    assert rec["selfUpdating"] and rec["kept"] == [] and "launcher" not in rec and "sandbox" not in rec
+    assert rec["current"] == {"version": "2.0", "path": str(home / fixed), "exec": fixed if kind == "appimage" else "app/demo-2.0/demo"}
+    assert rec["exec"] == str(home / rec["current"]["exec"]) and "2.0" in says(rec["exec"]) and "2.0" in says(cmd)
+    assert os.readlink(cmd) == rec["exec"] and f'Exec="{rec["exec"]}" %U' in entry.read_text()
+    assert be._updates_itself(a, be._sandbox_for_install(URL)) is True and not sb.runs_sandboxed(rec)
+    off = snapshot(be, tmp_path)
+    be.setSandbox(URL, {"template": "off"})                     # the same choice again changes nothing but the audit
+    assert set(diff(off, snapshot(be, tmp_path))) <= {"<audit>"}
+    be.setSandbox(URL, {"template": "standard"})                # sandboxed again: still its fixed name, until AppKata's next update
+    assert sorted(os.listdir(home)) == [fixed, "run"] and record()["selfUpdating"] and record()["current"] == rec["current"]
+    be._uninstall(URL, False, remove_home=True)
+    assert not os.path.lexists(home) and not os.path.lexists(cmd) and not entry.exists()

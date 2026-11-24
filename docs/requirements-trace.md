@@ -212,7 +212,7 @@ differ from its list (review 3, harness B).
 | R17.12 | So while it runs sandboxed — whenever it | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed, test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it |
 | R17.12 | App Detail says "It would update itself, but | test_app_detail_says_appkata_updates_a_self_updating_app_while_it_runs_sandboxed |
 | R17.12 | Its own updater simply fails (how gracefully is | statement |
-| R17.12 | Switched to Off, it updates itself again. | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed |
+| R17.12 | When its sandbox is turned Off, it updates | test_a_self_updating_app_is_updated_by_appkata_while_it_runs_sandboxed, test_turning_the_sandbox_off_puts_an_app_that_updates_itself_back_under_its_fixed_name, test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_folders |
 | R17.12 | (Review 2, F3: an earlier draft named a | statement |
 | R17.13 | Enabling a sandbox after install warns that the | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.13 | AppKata doesn't import the app's configuration (R17.18). | deferred |

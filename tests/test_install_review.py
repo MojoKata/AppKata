@@ -1288,3 +1288,52 @@ def test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_n
     assert _changed(before, _left(tmp_path, env)) == {}
     rec = install.install(env, {**APP, "installVersion": "2.0"}, good, kind, [good], portable=p)
     assert _runs(cmd) == _runs(rec["exec"]) == "2.0" and [k["version"] for k in rec["kept"]] == ["1.1", "1.0"] and _downloads() == []
+
+
+# ---------------------------------------------------------------- back to the fixed name, sandbox Off (CR1.11-41)
+
+@linux_only
+@pytest.mark.parametrize("kind", ["appimage", "tarball"])
+@pytest.mark.parametrize("fails", ["the menu entry", "the command link", "the record"])
+def test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_folders(env, server, tmp_path, monkeypatch, fails, kind):
+    # CR1.11-41's other side. Turning the sandbox Off for an app that updates itself renames its
+    # current version to R4.10.2's fixed name and drops its kept versions (R4.10.5); the proof of
+    # that road is in tests/test_sandbox_transitions.py. It is the one change to an installed
+    # app's files that isn't an install, so it has R4.6's rule to keep on its own: when a step
+    # after the rename fails, the version folders, the links, the launcher, the kept versions and
+    # the record are what they were; and then the move goes through.
+    from appkata_core import sandbox
+    cmd, home = tmp_path / "cmd", tmp_path / "apps" / "demo-tool"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    gs = sandbox.resolve_template("standard")
+    a = _version(server, kind, "1.0")
+    install.install(env, {**APP, "installVersion": "1.0", "autoUpdate": True}, a, kind, [a], portable=p)       # runs Off: the fixed name
+    install.rewrite_launcher(env, {**APP, "autoUpdate": True, "sandbox": gs}, p)                              # sandboxed
+    a = _version(server, kind, "2.0")
+    was = install.install(env, {**APP, "installVersion": "2.0", "sandbox": gs}, a, kind, [a], portable=p)      # AppKata's update (R17.12)
+    assert not was.get("selfUpdating") and [k["version"] for k in was["kept"]] == ["1.0"] and was["launcher"]
+    before = _left(tmp_path, env)
+    with monkeypatch.context() as m:
+        if fails == "the menu entry":
+            m.setattr(install, "_desktop_entry", _failing_once(install._desktop_entry))
+        elif fails == "the command link":
+            m.setattr(install, "_link", _failing_once(install._link, lambda target, link, own=None: os.path.dirname(link) == str(cmd)))
+        else:
+            m.setattr(env, "x", _failing_once(env.x, lambda sql, *a: sql.startswith("UPDATE installs")))
+        with pytest.raises(OSError, match="No space left"):
+            install.rewrite_launcher(env, {**APP, "autoUpdate": True, "sandbox": None}, p)
+    assert _changed(before, _left(tmp_path, env)) == {}
+    rec = install.rewrite_launcher(env, {**APP, "autoUpdate": True, "sandbox": None}, p)
+    fixed = "DemoTool.AppImage" if kind == "appimage" else "app"
+    assert sorted(os.listdir(home)) == [fixed] and rec["selfUpdating"] and rec["kept"] == [] and "launcher" not in rec
+    assert rec["current"]["path"] == str(home / fixed) and os.access(rec["exec"], os.X_OK) and os.readlink(cmd / "demo-tool") == rec["exec"]
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    # an app that doesn't update itself stays in its version folders when its sandbox is turned Off,
+    # and so does one that never had a launcher
+    assert install.rewrite_launcher(env, {**APP, "sandbox": None}, p) == rec
+    b = _appimage(server, "Other-1.0-x86_64.AppImage", b"other")
+    other = {**APP, "url": APP["url"] + "-other", "name": "Other"}
+    for sbx, auto in ((gs, False), (None, True)):
+        install.install(env, {**other, "sandbox": sbx}, b, "appimage", [b], portable=p)
+        rec = install.rewrite_launcher(env, {**other, "autoUpdate": auto, "sandbox": None}, p)
+        assert not rec.get("selfUpdating") and rec["current"]["path"].endswith("Other-1.0-x86_64.AppImage") and os.path.islink(rec["exec"])

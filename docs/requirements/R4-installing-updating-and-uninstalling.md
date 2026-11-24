@@ -270,5 +270,6 @@ a recipe per app.
 R4.10.5. **While it runs sandboxed** (R17), an app that updates itself can't: its files, and an
 AppImage's own file, are read-only. AppKata then updates it as if it didn't update itself — it has
 the Update button, Update all includes it, and its next update moves it from the fixed-name layout
-of R4.10.2 to version folders — and App Detail and the install dialog say why (R17.12). Switched to
-Off, it updates itself again.
+of R4.10.2 to version folders — and App Detail and the install dialog say why (R17.12). When its
+sandbox is turned Off, it updates itself again, in the fixed-name layout: AppKata renames its
+current version to the fixed name of R4.10.2 and removes its kept versions and its `current` link.
