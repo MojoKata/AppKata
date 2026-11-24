@@ -11,6 +11,7 @@ import ssl
 import subprocess
 import threading
 import time
+import types
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1847,3 +1848,267 @@ def test_a_sync_and_a_file_list_of_an_enterprise_source_ask_nothing_of_github_co
     except SourceError:
         pass
     assert seen and off("ghe.corp.example", seen) == [] and git == []
+
+
+# ---------------------------------------------------------------- what Http makes of each answer (R9.2.1, R2.10)
+# CR1's #298: one test held Http's handling of a failing answer, a 403 with both of GitHub's
+# rate-limit headers, because the stand-in opener sent no other: both headers on every error status,
+# and a 404 for every address it had no route for. A Retry-After in either form, a 429 that says
+# nothing, the retries and their waits, the 401 of a token, an answer that isn't JSON and a 404 were
+# all unheld, and #269 and #277 were in those gaps. The fixes of #269, #277, #296 and #626 each
+# brought tests of their own branch. This is the whole of it in one table instead, a row for each
+# thing a host can answer and what Http makes of it: the error's kind, its words and its `extra` as
+# a Sync writes them on a row, how many times the address was asked and after which waits, and what
+# is remembered of the host. The stand-in sends exactly what a row says and nothing more. Left to
+# their own tests above: the deadline and Cancel, which need an answer that comes in pieces.
+ASKED = "https://git.example.org/api/x"
+OK = (200, {}, b'{"ok": true}')
+Y2100, Y2100_AS_A_DATE = 4102444800, "Fri, 01 Jan 2100 00:00:00 GMT"
+Y2015, Y2015_AS_A_DATE = 1445412480, "Wed, 21 Oct 2015 07:28:00 GMT"
+USED_UP = {"x-ratelimit-remaining": "0"}
+
+
+def scripted(answers, seen):
+    """A recording opener that answers the first request with the first of `answers`, the second
+    with the second, and every later one with the last. An answer is (status, headers, body), sent
+    as it stands, or what opening the address ends in."""
+    def open_(req, timeout=0):
+        seen.append(req)
+        answer = answers[min(len(seen), len(answers)) - 1]
+        if isinstance(answer, BaseException):
+            raise answer
+        status, headers, body = answer
+        if status >= 400:                                      # as urllib's own opener hands a failing status on
+            raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+        return FakeResponse(req.full_url, body, dict(headers))
+    return open_
+
+
+def answer(id, *answers, call="json", raises=None, says=None, extra=None, gives=None, asked=1, waits=(), limited_in=None,
+           limited_at=None, tokens=None, **kw):
+    return pytest.param(types.SimpleNamespace(answers=answers, call=call, raises=raises, says=says, extra=extra or {}, gives=gives,
+                                              asked=asked, waits=list(waits), limited_in=limited_in, limited_at=limited_at,
+                                              tokens=tokens, kw=kw), id=id)
+
+
+def failing(status, **extra):
+    return dict(raises=Unreachable, says=f"git.example.org answered HTTP {status}", extra={"status": status, **extra})
+
+
+def limit(status, **when):
+    """A RateLimited whose status is `status`, until `limited_in` seconds from now or the time `limited_at`."""
+    says = "rate limit reached" if status in (403, 429) else f"answered HTTP {status} and said when to come back"
+    return dict(raises=RateLimited, says="git.example.org " + says, extra={"host": "git.example.org", "status": status}, **when)
+
+
+NO_ANSWER_AT_ALL = dict(raises=Unreachable, extra={"no_answer": True})
+ANSWERS = [
+    # an answer
+    answer("200", OK, gives={"ok": True}),
+    answer("200-as-text", OK, call="text", gives='{"ok": true}'),
+    answer("200-as-bytes", OK, call="bytes", gives=b'{"ok": true}'),
+    answer("200-with-its-headers", (200, {"ETag": "W/1", "X-RateLimit-Remaining": "59"}, b"[1]"), call="json_with_headers",
+           gives=([1], {"etag": "W/1", "x-ratelimit-remaining": "59"}, ASKED)),
+    answer("200-not-json", (200, {}, b"<html>Sign in</html>"), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-not-json-with-its-headers", (200, {}, b"<html>Sign in</html>"), call="json_with_headers", raises=Unreachable,
+           says="git.example.org didn't return JSON"),
+    answer("200-not-utf-8", (200, {}, b"\xff\xfe{"), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-empty", (200, {}, b""), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-not-utf-8-as-text", (200, {}, b"caf\xe9"), call="text", gives="caf\ufffd"),
+    answer("200-as-large-as-allowed", (200, {}, b"x" * 100), call="bytes", max_bytes=100, gives=b"x" * 100),
+    answer("200-a-byte-too-large", (200, {}, b"x" * 101), call="bytes", max_bytes=100, raises=Unreachable,
+           says="response from git.example.org too large"),
+    # a failing status that says nothing about when: its own kind, and no retry but for 502, 503 and 504
+    answer("404", (404, {}, b""), raises=http_.NotFound, says=ASKED + " not found"),
+    answer("401-with-the-hosts-token", (401, {}, b""), tokens={"git.example.org": "SECRET"}, raises=Unreachable,
+           says="git.example.org rejected the API token (HTTP 401)"),
+    answer("401-with-no-token", (401, {}, b""), **failing(401)),
+    answer("401-with-another-hosts-token", (401, {}, b""), tokens={"codeberg.org": "SECRET"}, **failing(401)),
+    answer("401-with-a-token-for-another-port-of-it", (401, {}, b""), tokens={"git.example.org:8080": "SECRET"}, **failing(401)),
+    answer("403-that-says-nothing", (403, {}, b""), **failing(403)),
+    answer("403-with-requests-left", (403, {"x-ratelimit-remaining": "12", "x-ratelimit-reset": str(Y2100)}, b""), **failing(403)),
+    answer("410", (410, {}, b""), **failing(410)),
+    answer("500", (500, {}, b""), **failing(500)),
+    answer("502", (502, {}, b""), asked=3, waits=[1.5, 3.0], **failing(502)),
+    answer("503", (503, {}, b""), asked=3, waits=[1.5, 3.0], **failing(503)),
+    answer("504", (504, {}, b""), asked=3, waits=[1.5, 3.0], **failing(504)),
+    answer("503-then-200", (503, {}, b""), OK, gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("502-504-then-200", (502, {}, b""), (504, {}, b""), OK, gives={"ok": True}, asked=3, waits=[1.5, 3.0]),
+    answer("503-then-404", (503, {}, b""), (404, {}, b""), raises=http_.NotFound, says=ASKED + " not found", asked=2, waits=[1.5]),
+    answer("503-then-500", (503, {}, b""), (500, {}, b""), asked=2, waits=[1.5], **failing(500)),
+    # a forge's rate limit: a 403 that says the requests are used up or when to come back, and any 429
+    answer("403-used-up-until", (403, {**USED_UP, "x-ratelimit-reset": str(Y2100)}, b""), **limit(403, limited_at=Y2100)),
+    answer("403-used-up-and-no-time", (403, USED_UP, b""), **limit(403, limited_in=60)),
+    answer("403-retry-after-seconds", (403, {"Retry-After": "30"}, b""), **limit(403, limited_in=30)),
+    answer("403-retry-after-a-short-one", (403, {"Retry-After": "2"}, b""), **limit(403, limited_in=2)),
+    answer("403-retry-after-a-date", (403, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(403, limited_at=Y2100)),
+    answer("429-that-says-nothing", (429, {}, b""), **limit(429, limited_in=60)),
+    answer("429-retry-after-seconds", (429, {"Retry-After": "120"}, b""), **limit(429, limited_in=120)),
+    answer("429-retry-after-zero", (429, {"Retry-After": "0"}, b""), **limit(429, limited_in=0)),
+    answer("429-retry-after-a-date", (429, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(429, limited_at=Y2100)),
+    answer("429-retry-after-a-date-gone-by", (429, {"Retry-After": Y2015_AS_A_DATE}, b""), **limit(429, limited_at=Y2015)),
+    answer("429-retry-after-unreadable", (429, {"Retry-After": "soon"}, b""), **limit(429, limited_in=60)),
+    answer("429-the-reset-time-comes-first", (429, {"x-ratelimit-reset": str(Y2100), "Retry-After": "120"}, b""), **limit(429, limited_at=Y2100)),
+    answer("429-reset-time-unreadable", (429, {"x-ratelimit-reset": "soon", "Retry-After": "120"}, b""), **limit(429, limited_in=120)),
+    # a Retry-After on any other failing answer (CR1 #277)
+    answer("503-retry-after-long", (503, {"Retry-After": "120"}, b""), **limit(503, limited_in=120)),
+    answer("500-retry-after-a-date", (500, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(500, limited_at=Y2100)),
+    answer("503-retry-after-short", (503, {"Retry-After": "2"}, b""), asked=3, waits=[2, 3.0], **failing(503, retry_after=2)),
+    answer("503-retry-after-short-then-200", (503, {"Retry-After": "3"}, b""), OK, gives={"ok": True}, asked=2, waits=[3]),
+    answer("500-retry-after-short", (500, {"Retry-After": "2"}, b""), **failing(500, retry_after=2)),
+    answer("404-retry-after-long", (404, {"Retry-After": "120"}, b""), raises=http_.NotFound, says=ASKED + " not found", limited_in=120),
+    answer("404-retry-after-short", (404, {"Retry-After": "3"}, b""), raises=http_.NotFound, says=ASKED + " not found"),
+    answer("401-retry-after-long", (401, {"Retry-After": "120"}, b""), limited_in=120, **failing(401)),
+    # no answer at all: asked again only when it timed out
+    answer("timed-out", TimeoutError("timed out"), asked=3, waits=[1.5, 3.0], says="couldn't reach git.example.org: timed out",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-as-urllib-says-it", urllib.error.URLError(TimeoutError("timed out")), asked=3, waits=[1.5, 3.0],
+           says="couldn't reach git.example.org: timed out", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-in-words-alone", urllib.error.URLError("_ssl.c:1011: The handshake operation timed out"), asked=3, waits=[1.5, 3.0],
+           says="couldn't reach git.example.org: _ssl.c:1011: The handshake operation timed out",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-without-a-word", TimeoutError(), asked=3, waits=[1.5, 3.0], says="couldn't reach git.example.org: ",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-then-200", TimeoutError("timed out"), OK, gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("refused", urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+           says="couldn't reach git.example.org: [Errno 111] Connection refused", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    answer("no-such-name", urllib.error.URLError(OSError(-2, "Name or service not known")),
+           says="couldn't reach git.example.org: [Errno -2] Name or service not known",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    answer("reset", ConnectionResetError(104, "Connection reset by peer"),
+           says="couldn't reach git.example.org: [Errno 104] Connection reset by peer", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    # an answer that isn't whole, and one that can't be read (CR1 #269, #626)
+    answer("cut-short-in-its-chunks", IncompleteRead(b"half", 96), raises=Unreachable, says="git.example.org cut its answer short",
+           extra={"cut": True}, asked=3, waits=[1.5, 3.0]),
+    answer("cut-short-of-its-length", (200, {"Content-Length": "40"}, b'{"ok": true}'), raises=Unreachable,
+           says="git.example.org cut its answer short (12 of 40 bytes)", extra={"cut": True}, asked=3, waits=[1.5, 3.0]),
+    answer("cut-short-then-whole", (200, {"Content-Length": "40"}, b'{"ok": true}'), (200, {"Content-Length": "12"}, b'{"ok": true}'),
+           gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("an-address-that-cant-be-sent", InvalidURL("URL can't contain control characters"), raises=Unreachable,
+           says=f"couldn't ask git.example.org: the address {ASKED!r} can't be sent (InvalidURL)"),
+    answer("an-answer-that-cant-be-read", BadStatusLine("\x16\x03\x01"), raises=Unreachable,
+           says="couldn't read git.example.org's answer (BadStatusLine: \x16\x03\x01)"),
+]
+
+
+@pytest.mark.parametrize("c", ANSWERS)
+def test_what_http_makes_of_each_answer(clock, c):
+    seen = []
+    http = names(Http(c.tokens, opener=scripted(c.answers, seen)))
+    started = clock.now
+    if c.raises:
+        with pytest.raises(c.raises) as e:
+            getattr(http, c.call)(ASKED, **c.kw)
+        assert type(e.value) is c.raises and str(e.value) == c.says
+        assert {k: e.value.extra.get(k) for k in c.extra} == c.extra and json.dumps(e.value.extra)      # as a row keeps them
+        if c.raises is not RateLimited:
+            assert not {"host", "reset"} & set(e.value.extra)
+    else:
+        assert getattr(http, c.call)(ASKED, **c.kw) == c.gives
+    assert len(seen) == c.asked == http.calls and clock.waits == c.waits
+    until = c.limited_at if c.limited_at is not None else None if c.limited_in is None else started + c.limited_in
+    assert http.limited == ({} if until is None else {"git.example.org": until})
+    if c.raises is RateLimited:
+        assert e.value.reset == e.value.extra["reset"] == until and e.value.host == "git.example.org"
+
+
+def test_the_table_has_a_row_for_each_kind_of_error_and_each_thing_a_retry_turns_on():
+    # the table is only as whole as its rows: every kind Http itself gives, every reason it asks again, each status it tells apart
+    rows_ = [p.values[0] for p in ANSWERS]
+    assert {c.raises for c in rows_ if c.raises} == {Unreachable, http_.NotFound, RateLimited}
+    assert {k for c in rows_ for k in c.extra} == {"status", "retry_after", "timeout", "no_answer", "cut", "host"}
+    statuses = {a[0] for c in rows_ for a in c.answers if isinstance(a, tuple)}
+    assert statuses >= {200, 401, 403, 404, 429, 500, 502, 503, 504}
+    assert {c.call for c in rows_} == {"json", "json_with_headers", "text", "bytes"}
+
+
+@pytest.mark.parametrize("headers, at, after", [
+    ({}, None, 60),
+    ({"x-ratelimit-reset": str(Y2100)}, Y2100, None), ({"x-ratelimit-reset": "0"}, 0, None),
+    ({"x-ratelimit-reset": str(Y2100), "retry-after": "5"}, Y2100, None),               # GitHub's own header first
+    ({"x-ratelimit-reset": "", "retry-after": "5"}, None, 5), ({"x-ratelimit-reset": "soon"}, None, 60),
+    ({"x-ratelimit-reset": "-1"}, None, 60), ({"x-ratelimit-reset": "1.5e9"}, None, 60),
+    ({"retry-after": "0"}, None, 0), ({"retry-after": "1"}, None, 1), ({"retry-after": "86400"}, None, 86400),
+    ({"retry-after": Y2100_AS_A_DATE}, Y2100, None), ({"retry-after": Y2015_AS_A_DATE}, Y2015, None),
+    ({"retry-after": "Friday, 01-Jan-00 00:00:00 GMT"}, 946684800, None),                 # the older form of a date
+    ({"retry-after": ""}, None, 60), ({"retry-after": "soon"}, None, 60), ({"retry-after": "-5"}, None, 60),
+    ({"retry-after": "1.5"}, None, 60), ({"retry-after": "12 seconds"}, None, 60),
+])
+def test_when_a_host_may_be_asked_again_is_read_from_its_headers(clock, headers, at, after):
+    """_reset_time: GitHub's reset time, else a Retry-After in seconds or as a date, else a minute."""
+    assert http_._reset_time(headers) == (at if at is not None else clock.now + after)
+
+
+def test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come(clock):
+    seen = []
+    http = names(Http(opener=scripted([(429, {"Retry-After": "120"}, b""), OK], seen)))
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    for call, url in (("json", ASKED), ("bytes", "https://git.example.org/o/r/raw/branch/main/icon.png"),
+                      ("text", "http://git.example.org/"), ("json", "https://git.example.org:3000/api/x")):
+        with pytest.raises(RateLimited, match="git.example.org rate limit reached") as e:
+            getattr(http, call)(url)
+        assert e.value.reset == clock.now + 120 and e.value.extra["status"] == 429
+    assert len(seen) == 1 == http.calls and clock.waits == []            # refused here: nothing was sent, and nothing waited
+    assert http.json("https://codeberg.org/api/x") == {"ok": True}       # the limit is that host's
+    assert http.json("https://api.git.example.org/x") == {"ok": True}    # and not a host's whose name ends in its name
+    clock.now += 119.5                                                   # until the time it gave, to the second
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    clock.now += 1
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 4
+
+
+def test_a_time_to_come_back_that_has_gone_by_limits_nothing(clock):
+    seen = []
+    http = names(Http(opener=scripted([(429, {"Retry-After": Y2015_AS_A_DATE}, b""), OK], seen)))
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 2
+
+
+@pytest.mark.parametrize("call, kw, accept", [
+    ("json", {}, "application/json"), ("json_with_headers", {}, "application/json"), ("request", {}, "application/json"),
+    ("text", {}, "*/*"), ("bytes", {}, "*/*"),
+    ("json", {"accept": "application/vnd.github+json"}, "application/vnd.github+json"),
+    ("request", {"accept": "text/html"}, "text/html"),
+])
+def test_what_a_request_carries(clock, call, kw, accept):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=scripted([OK], seen)))
+    http.set_forge("git.example.org", "gitlab")
+    getattr(http, call)(ASKED, **kw)
+    (req,) = seen
+    assert (req.full_url, req.get_method(), req.data) == (ASKED, "GET", None)
+    assert {k.lower(): v for k, v in req.header_items()} == {
+        "user-agent": http_.UA, "accept": accept, "private-token": "SECRET"}
+    assert http_.UA.startswith("AppKata/") and "(+https://" in http_.UA
+    assert dict(req.unredirected_hdrs) == {"Private-token": "SECRET"}       # the token: never a header a redirect copies
+
+
+def test_a_request_with_a_method_a_body_and_headers_of_its_own(clock):
+    seen = []
+    http = names(Http(opener=scripted([OK], seen)))
+    assert http.request(ASKED, method="POST", body=b'{"q": 1}', headers={"Content-Type": "application/json", "Accept": "text/plain"}) == (
+        b'{"ok": true}', {}, ASKED)
+    (req,) = seen
+    assert (req.get_method(), req.data) == ("POST", b'{"q": 1}')
+    assert {k.lower(): v for k, v in req.header_items()} == {"user-agent": http_.UA, "accept": "text/plain", "content-type": "application/json"}
+    http.request(ASKED, method="HEAD")
+    assert [r.get_method() for r in seen] == ["POST", "HEAD"]
+
+
+def test_how_large_an_answer_may_be_and_how_long_a_request_is_given():
+    # the numbers themselves: R9.2.1's two minutes, the 64 MiB of an answer and the 8 MiB of an image
+    limits = inspect.signature(Http._request).parameters
+    assert limits["max_bytes"].default == 64 << 20 == 67108864 and sync.MAX_IMAGE == 8 << 20
+    made = inspect.signature(Http.__init__).parameters
+    assert (made["timeout"].default, made["deadline"].default) == (20.0, 120.0) and http_.WAITS == (1.5, 3.0)
+
+
+def test_an_image_larger_than_an_image_may_be_is_passed_over(tmp_path, clock):
+    seen = []
+    http = names(Http(opener=scripted([(200, {}, PNG + b"\0" * sync.MAX_IMAGE)], seen)))
+    with pytest.raises(Unreachable, match="too large"):
+        sync._save_image(http, "https://git.example.org/o/r/raw/branch/main/icon.png", str(tmp_path / "icon"), token_host="git.example.org")
+    assert len(seen) == 1 and list(tmp_path.iterdir()) == []
