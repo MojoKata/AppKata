@@ -375,9 +375,10 @@ class _Recorder(BaseHTTPRequestHandler):
 def pair(monkeypatch):
     """Servers A and B, reached as https://127.0.0.1:<port> and https://localhost:<port>: two host
     names. A token is only ever sent over https, and a certificate for this machine would have to be
-    made first, so urllib's https handler is given a plain connection: the request, its headers and
-    the redirect are handled as https all the way, and only the encryption is left out."""
-    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", lambda self, req: self.do_open(HTTPConnection, req))
+    made first, so Http's https handler is given a plain connection, Http's own as for http: the
+    request, its headers and the redirect are handled as https all the way, and only the encryption
+    is left out."""
+    monkeypatch.setattr(http_._Connections, "https_open", http_._Connections.http_open)
     servers = []
     for host in ("127.0.0.1", "localhost"):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
@@ -391,11 +392,21 @@ def pair(monkeypatch):
         server.server_close()
 
 
+def elsewhere(monkeypatch, http):
+    """For a test through real sockets whose server B stands for a host elsewhere: B's name is
+    looked up as this computer's address, which the connection needs (it connects to the addresses
+    the lookup gave, CR1 #682), and that address counts as a public one, as a host elsewhere's does.
+    What is local is tested without it."""
+    real = http_._local
+    monkeypatch.setattr(http_, "_local", lambda address: address != "127.0.0.1" and real(address))
+    return names(http, {"localhost": ["127.0.0.1"]})
+
+
 def _with_token(monkeypatch, header, a):
     """An Http with a token for server A (its address: its name and its port), sent in the named
     header. Server B's name counts as a public host's here: a redirect to an address on this computer
     is refused (further down)."""
-    http = names(Http({a.at: "SECRET-TOKEN"}, timeout=10))
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN"}, timeout=10))
     if header == "private-token":            # the form a host named for GitLab gets
         monkeypatch.setattr(http, "_auth", lambda *a, **k: {"PRIVATE-TOKEN": "SECRET-TOKEN"})
     return http
@@ -434,10 +445,10 @@ def test_a_redirect_from_https_to_http_of_a_request_with_a_token_is_refused(pair
     assert [path for path, _ in a.seen] == ["/api/x"] and b.seen == []      # /plain was never asked for
 
 
-def test_a_redirect_from_https_to_http_without_a_token_is_followed(pair):
+def test_a_redirect_from_https_to_http_without_a_token_is_followed(pair, monkeypatch):
     a, b = pair
     a.redirects["/x"] = f"http://{b.at}/plain"
-    assert names(Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10)).json(f"https://{a.at}/x") == {"ok": True}
+    assert elsewhere(monkeypatch, Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10)).json(f"https://{a.at}/x") == {"ok": True}
     assert [path for path, _ in b.seen] == ["/plain"] and _secrets(a.seen + b.seen) == []
 
 
@@ -577,6 +588,68 @@ def test_a_redirect_to_anything_but_http_and_https_is_refused(pair, to, says):
     a.redirects["/x"] = to
     with pytest.raises(Unreachable, match=says):
         Http(timeout=10).json(f"https://{a.at}/x")
+
+
+# CR1's #682: the check above looked a host's name up, and urllib's connection looked it up again,
+# so a name that answered the check with a public address and the connection with a local one had
+# the request sent into this computer after all. How it slipped past: every test of the rule stood
+# in for Http's lookup alone, which the connection never asked. The class is "the address checked
+# isn't the one connected to", so the name server is stood in for where every lookup goes, the
+# socket's own, and its answer changes between one lookup and the next.
+def rebinding(monkeypatch, name, *answers):
+    """Stands in for the name server at the socket's own lookup, which a connection makes as much as
+    Http's check does: `name` gets the first of `answers` at its first lookup, the second at its
+    second, and the last at every later one. Every other name and address is looked up as ever.
+    Gives the list of `name`'s lookups."""
+    real, asked = socket.getaddrinfo, []
+
+    def getaddrinfo(host, *a, **k):
+        if host != name:
+            return real(host, *a, **k)
+        asked.append(host)
+        return real(answers[min(len(asked), len(answers)) - 1], *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return asked
+
+
+def test_a_name_that_answers_the_check_with_a_public_address_and_the_connection_with_a_local_one_is_refused(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    asked = rebinding(monkeypatch, "rebound.example", PUBLIC, "127.0.0.1")
+    with pytest.raises(Unreachable, match=r"^rebound.example is on this computer or its local network \(127.0.0.1\)"):
+        sync._save_image(Http(timeout=5), f"https://rebound.example:{a.server_address[1]}/shot.png", str(tmp_path / "hero"),
+                         token_host="github.com")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []
+    assert len(asked) == 2                     # the check's, and the connection's, which is the one it connects to
+
+
+def test_a_redirect_to_a_name_that_answers_the_connection_with_a_local_address_is_refused(pair, monkeypatch):
+    a, b = pair
+    rebinding(monkeypatch, "rebound.example", PUBLIC, "127.0.0.1")
+    a.redirects["/x"] = f"https://rebound.example:{b.server_address[1]}/admin"
+    with pytest.raises(Unreachable, match="^rebound.example is on this computer"):
+        Http(timeout=5).json(f"https://{a.at}/x")
+    assert [p for p, _ in a.seen] == ["/x"] and b.seen == []
+
+
+def test_the_sources_own_host_on_the_local_network_is_still_reached_by_its_name(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/api/v1/version": {"version": "1.22.0"}, "/o/r/raw/branch/main/shot.png": PNG}
+    rebinding(monkeypatch, "git.lan.example", "127.0.0.1")
+    host = f"git.lan.example:{a.server_address[1]}"
+    http = Http(timeout=5)
+    assert http.json(f"https://{host}/api/v1/version") == {"version": "1.22.0"}
+    assert sync._save_image(http, f"https://{host}/o/r/raw/branch/main/shot.png", str(tmp_path / "hero"), token_host=host).endswith("hero.png")
+
+
+def test_a_proxy_on_this_computer_is_still_used_for_a_host_elsewhere(pair, monkeypatch):
+    # the connection is the proxy's, which may be on this computer: the host asked is the proxy's to look up
+    a, b = pair
+    for name in ("no_proxy", "NO_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("http_proxy", f"http://{a.at}")
+    assert names(Http(timeout=5)).json("http://img.example/x.json", token_host="github.com") == {"ok": True}
+    assert [p for p, _ in a.seen] == ["http://img.example/x.json"]
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
@@ -960,12 +1033,12 @@ def test_the_harness_itself_sees_each_way_r9_2_2_is_broken():
 
 
 @pytest.mark.parametrize("kind", ["gitlab", "forgejo", "ghe"])
-def test_through_real_sockets_a_forges_token_reaches_its_own_address_alone(pair, kind):
+def test_through_real_sockets_a_forges_token_reaches_its_own_address_alone(pair, monkeypatch, kind):
     """Http's own opener, a forge on a port, and its redirects: a file that is kept on another host, an
     API address that moved on its own, and one that points at plain http."""
     a, b = pair
     repo = urls.parse(f"https://{a.at}/o/r")
-    http = names(Http({a.at: "SECRET-TOKEN", "127.0.0.1": "ITS-DEFAULT-PORT", b.at: "ANOTHER-HOSTS"}, timeout=10))
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN", "127.0.0.1": "ITS-DEFAULT-PORT", b.at: "ANOTHER-HOSTS"}, timeout=10))
     f = forges.forge_for(http, repo, kind)
     raw, api = urllib.parse.urlsplit(f.raw_url("big.bin", "main")).path, urllib.parse.urlsplit(f.base).path
     a.redirects[raw] = f"https://{b.at}/storage/big.bin"
@@ -2660,13 +2733,13 @@ def saying(status):
     ("/direct", 500, "127.0.0.1 answered HTTP 500"),
 ], ids=["direct-401", "moved-on-the-host-401", "to-another-host-401", "there-and-back-401", "to-another-host-403", "to-another-host-500",
         "direct-500"])
-def test_through_real_sockets_an_error_after_a_redirect_is_the_last_hosts_and_the_tokens_only_if_it_went_there(pair, clock, path, status, says):
+def test_through_real_sockets_an_error_after_a_redirect_is_the_last_hosts_and_the_tokens_only_if_it_went_there(pair, clock, monkeypatch, path, status, says):
     a, b = pair
     a.redirects.update({"/moved-on-the-host": "/api/new", "/to-another-host": f"https://{b.at}/elsewhere", "/there-and-back": f"https://{b.at}/back"})
     b.redirects["/back"] = f"https://{a.at}/again"
     a.files = {p: saying(status) for p in ("/direct", "/api/new", "/again")}
     b.files = {"/elsewhere": saying(status)}
-    http = names(Http({a.at: "SECRET-TOKEN", b.at: "ANOTHER-HOSTS"}, timeout=10))       # B's own token isn't sent on a redirect to B either
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN", b.at: "ANOTHER-HOSTS"}, timeout=10))       # B's own token isn't sent on a redirect to B either
     with pytest.raises(Unreachable) as e:
         http.json(f"https://{a.at}{path}")
     assert str(e.value) == says and e.value.extra == ({"status": status} if "answered" in says else {})
@@ -2822,7 +2895,7 @@ def test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_sai
     a.redirects["/api/x"] = f"https://{b.at}{path}"
     a.files, b.files = {path: answer}, {path: answer}
     monkeypatch.setattr(http_.time, "monotonic", time.monotonic)        # the real clock for the deadline, and no waiting between retries
-    http = names(Http(timeout=10, deadline=0.3 if path == "/a-byte-at-a-time" else 120))
+    http = elsewhere(monkeypatch, Http(timeout=10, deadline=0.3 if path == "/a-byte-at-a-time" else 120))
     with pytest.raises(kind) as e:
         http.json(f"https://{a.at}/api/x", max_bytes=1000)
     assert type(e.value) is kind and str(e.value).startswith(says.format(b=b.at)), str(e.value)
@@ -2832,12 +2905,12 @@ def test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_sai
     assert str(e.value).startswith(says.format(b=a.at).replace("localhost", "127.0.0.1")), str(e.value)
 
 
-def test_through_real_sockets_a_redirect_to_where_nothing_listens_is_that_hosts_failure(pair, clock):
+def test_through_real_sockets_a_redirect_to_where_nothing_listens_is_that_hosts_failure(pair, clock, monkeypatch):
     a, b = pair
     with socket.socket() as nothing:
         nothing.bind(("127.0.0.1", 0))
         closed = nothing.getsockname()[1]
     a.redirects["/api/x"] = f"https://localhost:{closed}/elsewhere"
     with pytest.raises(Unreachable, match="^couldn't reach localhost: ") as e:
-        names(Http(timeout=5)).json(f"https://{a.at}/api/x")
+        elsewhere(monkeypatch, Http(timeout=5)).json(f"https://{a.at}/api/x")
     assert e.value.extra["no_answer"] is True and len(a.seen) == 1

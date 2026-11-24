@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import ipaddress
 import json
 import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -169,14 +171,49 @@ def _local(address: str) -> bool:
     return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or not ip.is_global
 
 
-def _opener(redirects) -> urllib.request.OpenerDirector:
+def _refuse_local(host: str, addresses) -> None:
+    local = [a for a in addresses if _local(a)]
+    if local:
+        raise Unreachable(f"{host} is on this computer or its local network ({local[0]}): not fetched, "
+                          "since it isn't the Source's own host")
+
+
+class _Connections(urllib.request.AbstractHTTPHandler):
+    """urllib's handlers of http and https, with connections whose socket is Http's own (`connect`,
+    Http._connect): the name is looked up once, held to the rule for a local address, and the socket
+    connects to the addresses that were checked. urllib's own connections look the name up again
+    when they connect, so a name that answered with a public address for the check and a local one
+    for the connection got its request sent into this computer or its network (CR1 #682)."""
+
+    def __init__(self, connect):
+        super().__init__()
+        self.connect = connect
+        self.tls = ssl.create_default_context()           # as urllib's own: the system's certificates, the name checked
+        self.tls.set_alpn_protocols(["http/1.1"])
+
+    def _with(self, kind, req, **args):
+        def made(host, **kw):
+            conn = kind(host, **kw, **args)
+            conn._create_connection = lambda address, timeout, source=None: self.connect(req, address, timeout, source)
+            return conn
+        return made
+
+    def http_open(self, req):
+        return self.do_open(self._with(http.client.HTTPConnection, req), req)
+
+    def https_open(self, req):
+        return self.do_open(self._with(http.client.HTTPSConnection, req, context=self.tls), req)
+
+    http_request = https_request = urllib.request.AbstractHTTPHandler.do_request_
+
+
+def _opener(redirects, connect) -> urllib.request.OpenerDirector:
     """Http's own opener: urllib's default one without its file:, ftp: and data: handlers (CR1 #266),
-    and with Http's rules for a redirect."""
+    with Http's rules for a redirect, and Http's own connections (CR1 #682)."""
     proxies = {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
     opener = urllib.request.OpenerDirector()
-    for handler in (urllib.request.ProxyHandler(proxies), urllib.request.UnknownHandler(), urllib.request.HTTPHandler(),
-                    urllib.request.HTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(), redirects,
-                    urllib.request.HTTPErrorProcessor()):
+    for handler in (urllib.request.ProxyHandler(proxies), urllib.request.UnknownHandler(), _Connections(connect),
+                    urllib.request.HTTPDefaultErrorHandler(), redirects, urllib.request.HTTPErrorProcessor()):
         opener.add_handler(handler)
     return opener
 
@@ -238,8 +275,8 @@ class Http:
         self.tokens = {token_key(k): v for k, v in (tokens or {}).items() if v}     # by host: one address each
         self.timeout, self.deadline = timeout, deadline
         self._here = threading.local()           # this thread's `cancelled`, inside a `stopping` block
-        self._open = opener or _opener(_Redirects(self._allowed)).open
-        self._lookup = _addresses                # host -> its addresses
+        self._open = opener or _opener(_Redirects(self._allowed), self._connect).open
+        self._lookup = _addresses                # host -> its addresses: the check's and the connection's (_connect)
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
         self.limited: dict[str, float] = {}      # host -> reset time
         self.limit_status: dict[str, int] = {}   # host -> the status of the answer that set its reset time
@@ -289,13 +326,41 @@ class Http:
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:
-            local = [a for a in self._lookup(host) if _local(a)]
+            addresses = self._lookup(host)
         except (OSError, ValueError) as e:        # no such name: what the connection would have found
             raise Unreachable(f"couldn't reach {host}: {e}") from None
-        if local:
-            raise Unreachable(f"{host} is on this computer or its local network ({local[0]}): not fetched, "
-                              "since it isn't the Source's own host")
+        _refuse_local(host, addresses)
         return parts
+
+    def _connect(self, req, address, timeout, source=None) -> socket.socket:
+        """The socket of a connection of Http's own opener (_Connections), to `address`, (name, port).
+        The name is looked up here, once, and the socket connects to the addresses that lookup gave:
+        so the rule of _allowed holds for the address the request is sent to, whatever the name
+        answers to another lookup (CR1 #682). _allowed checks a first address and each redirect
+        before it is asked for, with its own lookup; this is what the request is held to.
+
+        Behind a proxy the connection is the proxy's, which may well be on this computer: the
+        request's own host is then looked up by the proxy, and only _allowed's check is made."""
+        name, port = address
+        addresses = self._lookup(name)              # an OSError: urllib's "couldn't reach", as before
+        parts = urlsplit(req.full_url)
+        if not (req.has_proxy() or req._tunnel_host or _is_for(parts, getattr(req, "whose", None) or _host(parts))):
+            _refuse_local(parts.hostname or name, addresses)
+        failed = OSError(f"{name} has no address")
+        for each in addresses:
+            family, kind, proto, _, at = socket.getaddrinfo(each, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)[0]
+            sock = socket.socket(family, kind, proto)
+            try:
+                if isinstance(timeout, (int, float)):        # else urllib's "no timeout given"
+                    sock.settimeout(timeout)
+                if source:
+                    sock.bind(source)
+                sock.connect(at)
+                return sock
+            except OSError as e:
+                sock.close()
+                failed = e
+        raise failed
 
     @contextlib.contextmanager
     def stopping(self, cancelled):
