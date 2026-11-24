@@ -1,0 +1,9 @@
+# Batch 2 of the relay for CR1's unit U07
+# From docs/remediation/CR1-schedule.json at upstream/master ae63101, the unit U07. #292 is a test of what #263, #264 (batch 1), #275 and #297 fix: do it after them.
+# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
+
+#275  medium  CR1.2-15 The token header's form is guessed from the host's name, so a GitLab host without "gitlab" in its name gets a form GitLab ignores.
+#297  medium  CR1.2-37 A forge token on a non-default port is sent by some calls and not others, and a token for a host is sent to every port of it.
+#292  small  CR1.2-32 No test checks which host the user's API tokens are sent to, or in which form.
+#434  small  CR1.7-5 On Linux, API tokens are kept in plain text in a database file that other local accounts can read wherever the home folder lets them in.
+#485  small  CR1.8-27 Three backend members nothing uses are left in, and one of them, tokens, hands every stored API token in full to the QML.
