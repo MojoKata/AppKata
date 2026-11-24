@@ -12,9 +12,13 @@ On a worker thread it never does: the thread has no Qt event loop, and ends."""
 
 import ast
 import glob
+import io
 import json
 import os
 import threading
+import time
+import types
+from http.client import IncompleteRead, InvalidURL
 
 import pytest
 
@@ -472,3 +476,55 @@ def test_a_token_is_kept_under_the_one_address_it_belongs_to(be):
     assert [row["host"] for row in be.tokenHosts] == ["git.example.org", "git.example.org:3000"]
     be.setToken("git.example.org:3000", "")                        # the row's trash button
     assert be.db.get("tokens") == {"git.example.org": "on-the-default-port"} == be.http.tokens
+
+
+# ---------------------------------------------------------------- the Add source preview (R7.2; CR1, #269)
+
+class Answer(io.BytesIO):
+    """A forge's answer to one request, as Http reads one."""
+
+    def __init__(self, url, body):
+        super().__init__(json.dumps(body).encode())
+        self.url, self.headers = url, {}
+
+    def geturl(self):
+        return self.url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def a_forge_that_answers(info):
+    """Http's opener for a host that says it runs Forgejo, and answers `info` for the project itself:
+    what a forge can answer, or the error that opening its address ends in."""
+    def open_(req, timeout=0):
+        if req.full_url.endswith("/api/v1/version"):
+            return Answer(req.full_url, {"version": "11.0.1+gitea-1.22.0"})
+        if isinstance(info, BaseException):
+            raise info
+        return Answer(req.full_url, info)
+    return open_
+
+
+@pytest.mark.parametrize("info, says", [
+    (["a", "list"], "unexpected error (AttributeError"),            # a forge's answer of another shape
+    ({"name": "r", "full_name": 7}, "unexpected error (AttributeError"),
+    (RuntimeError("anything at all"), "unexpected error (RuntimeError: anything at all)"),
+    (InvalidURL("URL can't contain control characters"), "can't be sent"),      # Http's own errors, as before
+    (IncompleteRead(b"half", 96), "cut its answer short"),
+], ids=["a-list", "a-number-for-a-name", "RuntimeError", "InvalidURL", "IncompleteRead"])
+def test_the_add_source_preview_answers_whatever_asking_the_forge_ends_in(be, monkeypatch, info, says):
+    """The preview's thread caught a ValueError and a SourceError: anything else ended it, and the Add
+    source dialog waited for an answer that never came."""
+    from appkata_core import http
+    waits = types.SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=lambda seconds: None)
+    monkeypatch.setattr(http, "time", waits)                 # a cut answer is asked for three times: no waiting between
+    be.http = http.Http(opener=a_forge_that_answers(info))
+    got = []
+    be.sourcePreview.connect(got.append)
+    be.previewSource("https://git.example.org/o/r")
+    assert wait(lambda: got), "the preview never answered"
+    assert got[0]["ok"] is False and says in got[0]["error"] and got[0]["host"] == "git.example.org", got

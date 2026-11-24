@@ -76,8 +76,13 @@ class Forge:
 
 
 def _git_out(args: list[str]) -> str:
-    p = _sp.run(["git", *args], capture_output=True, text=True, timeout=120,
-                env={"GIT_TERMINAL_PROMPT": "0", "PATH": __import__("os").environ.get("PATH", ""), "HOME": __import__("os").environ.get("HOME", "")})
+    """What git prints, or "" when it fails: when it isn't installed or can't be started, and when
+    it takes over two minutes, too (CR1 #269: those two raised, and ended the Sync)."""
+    try:
+        p = _sp.run(["git", *args], capture_output=True, text=True, timeout=120,
+                    env={"GIT_TERMINAL_PROMPT": "0", "PATH": __import__("os").environ.get("PATH", ""), "HOME": __import__("os").environ.get("HOME", "")})
+    except (OSError, _sp.TimeoutExpired):
+        return ""
     return p.stdout if p.returncode == 0 else ""
 
 

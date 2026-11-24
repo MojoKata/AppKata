@@ -5,19 +5,21 @@ import ipaddress
 import json
 import os
 import re
+import ssl
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.client import HTTPConnection
+from http.client import BadStatusLine, HTTPConnection, IncompleteRead, InvalidURL, LineTooLong
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from appkata_core import explore, forges, sync, urls
+from appkata_core import channels, explore, forges, metadata, sync, urls
 from appkata_core import http as http_
-from appkata_core.db import DB
+from appkata_core.db import DB, now
 from appkata_core.http import Http, RateLimited, SourceError, Unreachable
 import reqdocs
 
@@ -42,6 +44,8 @@ def opener(routes):
         url = req.full_url
         for prefix, body in routes.items():
             if url.startswith(prefix):
+                if isinstance(body, BaseException):         # what opening the address ends in
+                    raise body
                 if isinstance(body, int):
                     raise urllib.error.HTTPError(url, body, "err", {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(time.time()) + 60)}, None)
                 return FakeResponse(url, body)
@@ -339,13 +343,21 @@ def test_r9_2_2_names_the_hosts_the_code_sends_a_token_to():
 # and follows https to http. The fake openers above stand in for urlopen whole, so no test ever ran
 # a redirect: these go through Http's own opener and real sockets, to two servers on this machine.
 class _Recorder(BaseHTTPRequestHandler):
-    """Notes each request as (path, its headers by lower-case name), and redirects the paths it is told to."""
+    """Notes each request as (path, its headers by lower-case name), and redirects the paths it is told to.
+    With `files` it is a forge: a path there (its query left out) is answered with its bytes, or as
+    JSON, or by a function that writes the answer itself, and any other path is a 404."""
 
     def do_GET(self):
         self.server.seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
         to = self.server.redirects.get(self.path)
-        body = b"" if to else b'{"ok": true}'
-        self.send_response(302 if to else 200)
+        body, status = (b"" if to else b'{"ok": true}'), (302 if to else 200)
+        if not to and self.server.files is not None:
+            body = self.server.files.get(urllib.parse.urlsplit(self.path).path)
+            if callable(body):
+                return body(self)
+            status = 404 if body is None else 200
+            body = b"" if body is None else body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(status)
         if to:
             self.send_header("Location", to)
         self.send_header("Content-Length", str(len(body)))
@@ -366,7 +378,7 @@ def pair(monkeypatch):
     servers = []
     for host in ("127.0.0.1", "localhost"):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
-        server.seen, server.redirects = [], {}
+        server.seen, server.redirects, server.files = [], {}, None
         server.at = f"{host}:{server.server_address[1]}"
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
         servers.append(server)
@@ -963,3 +975,282 @@ def test_through_real_sockets_a_forges_token_reaches_its_own_address_alone(pair,
     assert [(path, [f"{k}: {v}" for k, v in h.items() if k in CARRIES]) for path, h in a.seen] == [
         (raw, [form]), (api, [form]), (api + "-renamed", [form]), (api + "/releases", [form])]
     assert [(path, [k for k in h if k in CARRIES]) for path, h in b.seen] == [("/storage/big.bin", [])]
+
+
+# ---------------------------------------------------------------- what a Sync didn't expect (R9.2, R2.10)
+# CR1's #269: Http promised typed errors and mapped urllib's OSErrors alone, and a Sync recorded on
+# an app's row only a SourceError: anything else, such as http.client's own errors for an address it
+# can't send or an answer cut short, a forge's answer of another shape, or git missing, left the
+# worker and ended the whole Sync, with the apps still queued dropped and no time of the last Sync
+# kept. How it slipped past: no test called sync_all, every stand-in opener raised only an HTTPError,
+# and every stand-in forge answered as its documentation says. The class is "something a Sync didn't
+# expect ends it", so it is held at each of its layers: whatever opening or reading an address ends
+# in, Http gives a SourceError; whatever one app's sync ends in, wherever, the Sync goes on, that
+# app's row says so and every other app is stored.
+class Clock:
+    """Http's clock and its waits: a wait is noted and moves the time on, and nothing waits."""
+
+    def __init__(self):
+        self.now, self.waits = time.time(), []
+
+    def time(self):
+        return self.now
+
+    monotonic = time
+
+    def sleep(self, seconds):
+        self.waits.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    monkeypatch.setattr(http_, "time", Clock())
+    return http_.time
+
+
+class Broken(FakeResponse):
+    """An answer whose body can't be read."""
+
+    def __init__(self, url, error):
+        super().__init__(url, b"")
+        self.error = error
+
+    def read(self, *a):
+        raise self.error
+
+    read1 = read
+
+
+def ending_in(error, when, seen=None):
+    """An opener whose every request ends in `error`: when the address is opened, or when its answer is read."""
+    def open_(req, timeout=0):
+        seen is not None and seen.append(req.full_url)
+        if when == "opened":
+            raise error
+        return Broken(req.full_url, error)
+    return open_
+
+
+ENDS_IN = [InvalidURL("URL can't contain control characters. '/a b.png' (found at least ' ')"),       # http.client's own
+           UnicodeEncodeError("ascii", "/ä.png", 1, 2, "ordinal not in range(128)"),
+           ValueError("Invalid header value b'x\\n'"), BadStatusLine("\x16\x03\x01"), LineTooLong("header line"),
+           IncompleteRead(b"half", 96),
+           ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"),                         # and what was mapped already
+           ConnectionResetError(104, "Connection reset by peer"), TimeoutError("timed out"),
+           urllib.error.URLError(OSError(111, "Connection refused"))]
+
+
+@pytest.mark.parametrize("error", ENDS_IN, ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize("when", ["opened", "read"])
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_whatever_opening_or_reading_an_address_ends_in_http_gives_a_source_error(clock, error, when, call):
+    http = names(Http(opener=ending_in(error, when)))
+    with pytest.raises(Unreachable) as e:
+        getattr(http, call)("https://git.example.org/api/x")
+    assert "git.example.org" in str(e.value) and json.dumps(e.value.extra)        # a Sync writes both on the row
+
+
+def test_an_answer_cut_short_is_asked_for_again(clock):
+    seen = []
+    http = names(Http(opener=ending_in(IncompleteRead(b"half", 96), "read", seen)))
+    with pytest.raises(Unreachable, match="git.example.org cut its answer short"):
+        http.bytes("https://git.example.org/api/x")
+    assert len(seen) == 3 and clock.waits == [1.5, 3.0]
+    seen.clear()                                             # an address that can't be sent isn't: it never can be
+    http._open = ending_in(InvalidURL("URL can't contain control characters"), "opened", seen)
+    with pytest.raises(Unreachable):
+        http.bytes("https://git.example.org/a b.png")
+    assert len(seen) == 1
+
+
+def half_a_chunk(handler):
+    handler.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n64\r\nhalf of the first chunk")
+
+
+@pytest.mark.parametrize("path", ["/a b.png", "/ä.png", "/截图.png", "/a\tb.png"])
+def test_through_real_sockets_an_address_that_cant_be_sent_and_an_answer_cut_short_are_unreachable(pair, clock, tmp_path, path):
+    # the finding's own runs, with Http's own opener: http.client refuses the address before it connects
+    a, b = pair
+    a.files = {"/cut.png": half_a_chunk}
+    http = Http(timeout=10)
+    with pytest.raises(Unreachable, match="127.0.0.1"):
+        sync._save_image(http, f"https://{a.at}{path}", str(tmp_path / "hero"), token_host=a.at)
+    assert a.seen == [] and clock.waits == []
+    with pytest.raises(Unreachable, match="cut its answer short"):
+        sync._save_image(http, f"https://{a.at}/cut.png", str(tmp_path / "hero"), token_host=a.at)
+    assert [p for p, _ in a.seen] == ["/cut.png"] * 3 and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url, at", [
+    ("a b.png", "/a%20b.png"), ("docs/screen shot.png", "/docs/screen%20shot.png"),
+    ("docs/截图.png", "/docs/%E6%88%AA%E5%9B%BE.png"), ("../img/ä \"1\".png", "/img/%C3%A4%20%221%22.png"),
+    ("docs/screen%20shot.png", "/docs/screen%20shot.png"),                     # written quoted: left as it is
+    ("docs/shot.png?raw=true", "/docs/shot.png?raw=true"), ("/docs/shot.png#gh-dark-mode-only", "/docs/shot.png#gh-dark-mode-only"),
+    ("docs/a+b_(1)~x.png", "/docs/a+b_(1)~x.png"),
+])
+def test_a_readme_images_own_path_is_written_as_an_address_can_be_sent(url, at):
+    base = "https://raw.githubusercontent.com/o/r/main"
+    assert metadata.resolve(url, base, "docs" if url.startswith("..") else "") == base + at
+    http = names(Http(opener=opener({base + at: PNG})))
+    assert http.bytes(metadata.resolve(url, base, "docs" if url.startswith("..") else "")) == PNG
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError(2, "No such file or directory: 'git'"), PermissionError(13, "Permission denied"),
+                                   subprocess.TimeoutExpired(["git"], 120)], ids=lambda e: type(e).__name__)
+def test_git_missing_or_too_slow_is_no_answer_from_it(monkeypatch, error):
+    def run(*a, **k):
+        raise error
+    monkeypatch.setattr(forges._sp, "run", run)
+    assert forges._git_out(["ls-remote", "--tags", "--refs", "https://github.com/o/r"]) == ""
+    # and so the pages' way to a project's tags and files, which is what asks git, has none to show
+    http = Http(opener=opener({"https://api.github.com/": 403}))
+    http.limited["api.github.com"] = time.time() + 60
+    f = forges.forge_for(http, urls.parse("https://github.com/o/r"), "github")
+    assert f.web and f.tags() == [] and f.tree("main") == []
+
+
+def test_with_no_git_on_the_path_there_is_no_answer_from_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))                # the real subprocess call, and nothing to find
+    assert forges._git_out(["--version"]) == ""
+
+
+# ---- a whole Sync
+FORGEJO = {"https://code.example.net:3000/o/r": "https://code.example.net:3000/api/v1/repos/o/r"}
+PLACES = {      # where in an app's sync: what its address ends in
+    "info": ("/repos/o/r", "/projects/o%2Fr"), "releases": ("/releases",), "files": ("/git/trees/main", "/repository/tree"),
+    "readme": ("/README.md",), "metainfo": (".metainfo.xml",), "image": ("/docs/shot-window.png",),
+}
+SHAPES = {      # what a forge can answer that its documentation doesn't say
+    "info": ["a", "list"], "releases": {"message": "an object, where the releases are a list"},
+    "files": [{"type": "blob"}],
+}
+
+
+def catalog(tmp_path, monkeypatch, sources):
+    """A database with these Sources, and no package channels of this machine's to read."""
+    monkeypatch.setattr(channels, "enabled", lambda: False)
+    db = DB(str(tmp_path / "a.db"))
+    for url in sources:
+        db.x("INSERT INTO sources(url, settings, added_at) VALUES(?,?,?)", (url, "{}", now()))
+    return db
+
+
+def rows(db):
+    return {a["url"]: a for a in db.all("SELECT * FROM apps")}
+
+
+def at(routes, source, place, answer):
+    """The routes, with `answer` wherever a request of this Source's sync reaches `place`."""
+    hit = [k for k in routes if k.startswith(OWN[source]) and k.endswith(PLACES[place])]
+    assert hit, (source, place)
+    return {k: answer if k in hit else v for k, v in routes.items()}
+
+
+def synced_but(tmp_path, monkeypatch, routes, source):
+    """A Sync of the three forges' Sources over these routes: it ends, the time of it is kept, every
+    Source has its row, and each one but `source` is stored whole. Returns that one's row."""
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    progress = sync.Progress()
+    sync.sync_all(db, names(Http({}, opener=opener(routes))), progress, root=str(tmp_path))
+    apps = rows(db)
+    assert db.get("last_sync") and sorted(apps) == sorted(ELSEWHERE) and (progress.done, progress.total) == (3, 3)
+    for url, app in apps.items():
+        if url != source:
+            assert app["error_code"] is None and app["releases"] and app["hero"].endswith("hero.png"), (url, app["error"])
+    return apps[source]
+
+
+@pytest.mark.parametrize("source", sorted(ELSEWHERE))
+@pytest.mark.parametrize("place", sorted(PLACES))
+@pytest.mark.parametrize("error", [RuntimeError("anything at all"), KeyError("name"), InvalidURL("can't contain control characters"),
+                                   UnicodeEncodeError("ascii", "ä", 0, 1, "ordinal not in range(128)")],
+                         ids=lambda e: type(e).__name__)
+def test_whatever_one_apps_sync_ends_in_wherever_the_sync_goes_on_and_its_row_says_so(tmp_path, monkeypatch, source, place, error):
+    app = synced_but(tmp_path, monkeypatch, at(three_forges(), source, place, error), source)
+    if isinstance(error, (InvalidURL, UnicodeEncodeError)) and place in ("files", "metainfo", "image"):
+        assert app["error_code"] is None                 # Http's own error for it, which those three pass over
+    else:
+        assert app["error_code"] == "Unreachable" and app["error"] and app["fetched_at"], app
+        if isinstance(error, (RuntimeError, KeyError)):
+            assert f"unexpected error ({type(error).__name__}" in app["error"]
+
+
+@pytest.mark.parametrize("source", sorted(ELSEWHERE))
+@pytest.mark.parametrize("place", sorted(SHAPES))
+def test_a_forges_answer_of_another_shape_is_an_error_on_that_apps_row(tmp_path, monkeypatch, source, place):
+    app = synced_but(tmp_path, monkeypatch, at(three_forges(), source, place, SHAPES[place]), source)
+    assert app["error_code"] == "Unreachable" and "unexpected error (" in app["error"], app
+
+
+def test_an_error_on_an_apps_row_keeps_what_the_last_sync_stored(tmp_path, monkeypatch):
+    source = "https://git.example.org/o/r"
+    db = catalog(tmp_path, monkeypatch, [source])
+    http = names(Http({}, opener=opener(three_forges())))
+    sync.sync_all(db, http, root=str(tmp_path))
+    before = rows(db)[source]
+    assert before["error_code"] is None and before["readme"] and before["icon"] and before["hero"]
+    http._open = opener(at(three_forges(), source, "releases", SHAPES["releases"]))
+    sync.sync_all(db, http, root=str(tmp_path))
+    after = rows(db)[source]
+    assert after["error_code"] == "Unreachable" and "unexpected error (AttributeError" in after["error"]
+    kept = ("name", "readme", "releases", "icon", "hero", "forge", "summary")
+    assert {k: after[k] for k in kept} == {k: before[k] for k in kept}
+
+
+def test_what_sync_app_itself_lets_out_is_passed_over_and_the_rest_are_synced(tmp_path, monkeypatch, caplog):
+    # what is left for sync_all: a Catalog address nothing can parse, a database that can't be written
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    real, bad = sync.sync_app, "https://git.example.org/o/r"
+
+    def sync_app(db_, http_, url, root=None):
+        if url == bad:
+            raise ValueError("URL doesn't name a repository")
+        real(db_, http_, url, root)
+    monkeypatch.setattr(sync, "sync_app", sync_app)
+    progress, items = sync.Progress(), []
+    sync.sync_all(db, names(Http({}, opener=opener(three_forges()))), progress, root=str(tmp_path), workers=1,
+                  on_item=lambda: items.append(progress.done))
+    assert db.get("last_sync") and sorted(rows(db)) == sorted(set(ELSEWHERE) - {bad})
+    assert (progress.done, progress.total) == (3, 3) and items == [1, 2, 3]
+    assert [r for r in caplog.records if r.exc_info and bad in r.getMessage()]         # with its traceback, in the app log
+
+
+def forgejo_project(server, path, files, **info):
+    """A project on the stand-in forge, which answers as Forgejo: its info, a release, its file list and its files."""
+    api = f"/api/v1/repos/{path}"
+    server.files = {**(server.files or {}), "/api/v1/version": {"version": "11.0.1+gitea-1.22.0"},
+                    api: {"name": path.rsplit("/", 1)[-1], "full_name": path, "default_branch": "main", **info},
+                    api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+                    api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in files]},
+                    **{f"/{path}/raw/branch/main/{urllib.parse.quote(p)}": body for p, body in files.items()}}
+    return f"https://{server.at}/{path}"
+
+
+def test_through_real_sockets_a_readme_image_that_cant_be_sent_as_written_doesnt_end_the_sync(pair, tmp_path, monkeypatch, clock):
+    """The finding's case, with Http's own opener: a README names its images as its author wrote them,
+    with a space and with letters outside ASCII. The Sync ends, both apps are stored, and the image
+    is asked for as an address can be sent."""
+    a, b = pair
+    spaced = forgejo_project(a, "o/spaced", {"README.md": b'# Spaced\n\n<img src="a b.png">\n', "a b.png": PNG})
+    other = forgejo_project(a, "o/other", {"README.md": "# Other\n\n![shot](docs/截图.png)\n".encode(), "docs/截图.png": PNG})
+    db = catalog(tmp_path, monkeypatch, [spaced, other])
+    sync.sync_all(db, Http(timeout=10), root=str(tmp_path))
+    apps = rows(db)
+    assert db.get("last_sync") and sorted(apps) == sorted([spaced, other])
+    for app in apps.values():
+        assert app["error_code"] is None and app["forge"] == "forgejo" and app["hero"].endswith("hero.png"), app["error"]
+    asked = [p for p, _ in a.seen]
+    assert "/o/spaced/raw/branch/main/a%20b.png" in asked and "/o/other/raw/branch/main/docs/%E6%88%AA%E5%9B%BE.png" in asked
+
+
+def test_through_real_sockets_a_source_whose_own_address_cant_be_sent_has_that_on_its_row(pair, tmp_path, monkeypatch, clock):
+    # a row stored with such a path still reaches Sync: its error is its own, and the app after it is stored
+    a, b = pair
+    spaced, other = f"https://{a.at}/o/my app", forgejo_project(a, "o/other", {"README.md": b"# Other\n"})
+    db = catalog(tmp_path, monkeypatch, [spaced, other])
+    sync.sync_all(db, Http(timeout=10), root=str(tmp_path), workers=1)
+    apps = rows(db)
+    assert db.get("last_sync") and apps[other]["error_code"] is None and apps[other]["readme"] == "# Other\n"
+    assert apps[spaced]["error_code"] == "Unreachable" and "127.0.0.1" in apps[spaced]["error"], apps[spaced]
+    assert [p for p, _ in a.seen if "my" in p] == []

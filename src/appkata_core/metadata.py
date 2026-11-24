@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
 
 BADGE = re.compile(r"shields\.io|badge|travis-ci|circleci|codecov|coveralls|/workflows/|actions/workflow|"
                    r"liberapay\.com/assets|ko-fi|buymeacoffee|opencollective\.com/.+/(backers|sponsors)|"
@@ -60,8 +61,14 @@ def readme_images(markdown: str, hero: bool = True) -> list[str]:
     return out
 
 
+# what an address may hold as it stands: a README's author writes a file's path as the file is named,
+# with its spaces and its letters outside ASCII, which no request can carry (CR1 #269). "%" stays, so a
+# path written quoted isn't quoted twice, and so do a query and a fragment ("shot.png?raw=true").
+_IN_AN_ADDRESS = "/%?#&=+:@,;!$'()*[]"
+
+
 def resolve(url: str, raw_base: str, readme_dir: str = "") -> str:
-    """Relative README links against the raw-file URL (R3.4)."""
+    """Relative README links against the raw-file URL (R3.4), written as an address can be sent."""
     if re.match(r"^[a-z]+://", url, re.I) or url.startswith("data:"):
         if "github.com/" in url and "/blob/" in url:
             return url.replace("github.com/", "raw.githubusercontent.com/", 1).replace("/blob/", "/", 1)
@@ -73,7 +80,7 @@ def resolve(url: str, raw_base: str, readme_dir: str = "") -> str:
             parts and parts.pop()
         elif seg not in ("", "."):
             parts.append(seg)
-    return raw_base.rstrip("/") + "/" + "/".join(parts)
+    return raw_base.rstrip("/") + "/" + quote("/".join(parts), safe=_IN_AN_ADDRESS)
 
 
 ICON_NAMES = re.compile(r"(^|/)(icon|logo|app[-_]?icon|appicon|[\w.-]*?(?:logo|icon))[-_@]?(\d+x\d+|\d+|square|round|hd)?\.(svg|png)$", re.I)

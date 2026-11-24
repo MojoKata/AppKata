@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from email.utils import parsedate_to_datetime
+from http.client import HTTPException, IncompleteRead, InvalidURL
 from urllib.parse import urlsplit
 
 from . import APPKATA_REPO, __version__
@@ -261,12 +262,14 @@ class Http:
         return parts
 
     def request(self, url: str, **kw) -> tuple[bytes, dict, str]:
-        """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts)."""
+        """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts, an
+        answer cut short)."""
         for attempt in range(3):
             try:
                 return self._request(url, **kw)
             except Unreachable as e:
-                if attempt == 2 or not (e.extra.get("status") in (502, 503, 504) or e.extra.get("timeout")):
+                again = e.extra.get("status") in (502, 503, 504) or e.extra.get("timeout") or e.extra.get("cut")
+                if attempt == 2 or not again:
                     raise
                 time.sleep(1.5 * (attempt + 1))
 
@@ -311,6 +314,16 @@ class Http:
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             reason = getattr(e, "reason", e)
             raise Unreachable(f"couldn't reach {host}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason)) from None
+        except IncompleteRead:                     # a chunked answer that ended early: worth asking again
+            raise Unreachable(f"{host} cut its answer short", cut=True) from None
+        except (HTTPException, ValueError) as e:
+            # what urllib lets through as http.client raised it (CR1 #269): an address that can't be
+            # sent (InvalidURL for a space or a control character in it, UnicodeEncodeError for a
+            # letter outside ASCII, both before anything is sent) and an answer that can't be read (a
+            # status line or a header that isn't one). Every error of a request is a SourceError.
+            if isinstance(e, (InvalidURL, ValueError)):
+                raise Unreachable(f"couldn't ask {host}: the address {url[:200]!r} can't be sent ({type(e).__name__})") from None
+            raise Unreachable(f"couldn't read {host}'s answer ({type(e).__name__}: {str(e)[:200]})") from None
 
     def json(self, url: str, **kw):
         data, hdr, final = self.request(url, **kw)

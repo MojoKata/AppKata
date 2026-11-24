@@ -152,11 +152,22 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                 db.x("INSERT OR REPLACE INTO app_meta(url, appstream_id) VALUES(?,?)", (url, meta_info["id"]))
     except SourceError as e:
         log.warning("%s: %s (%s)", url, e, e.code)
-        extra = dict(e.extra)
-        db.x("""INSERT INTO apps(url, name, host, repo, fetched_at, error, error_code, error_extra) VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(url) DO UPDATE SET error=excluded.error, error_code=excluded.error_code,
-                error_extra=excluded.error_extra, fetched_at=excluded.fetched_at""",
-             (url, repo.name, repo.host, repo.path, now(), str(e), e.code, json.dumps(extra)))
+        _failed(db, url, repo, str(e), e.code, dict(e.extra))
+    except Exception as e:        # noqa: BLE001 — one app's sync must never end the Sync (CR1 #269)
+        # what nothing above expected, such as a forge's answer of another shape (a KeyError, an
+        # AttributeError): on this app's row like any other error (R2.10), as the kind for a Source
+        # that couldn't be read, and in the app log with its traceback
+        log.exception("%s: an unexpected error", url)
+        said = f"unexpected error ({type(e).__name__}: {str(e)[:200]}); the app log has the details"
+        _failed(db, url, repo, said, Unreachable.code, {"unexpected": type(e).__name__})
+
+
+def _failed(db: DB, url: str, repo: urls.Repo, error: str, code: str, extra: dict) -> None:
+    """An app's last error, on its row (R2.10). What an earlier sync stored stays."""
+    db.x("""INSERT INTO apps(url, name, host, repo, fetched_at, error, error_code, error_extra) VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(url) DO UPDATE SET error=excluded.error, error_code=excluded.error_code,
+            error_extra=excluded.error_extra, fetched_at=excluded.fetched_at""",
+         (url, repo.name, repo.host, repo.path, now(), error, code, json.dumps(extra)))
 
 
 # ---------------------------------------------------------------- trusts
@@ -438,7 +449,12 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
         if progress.cancelled:
             return
         progress.current = url.split("/", 3)[-1]
-        sync_app(db, http, url, root)
+        try:
+            sync_app(db, http, url, root)
+        except Exception:        # noqa: BLE001 — sync_app puts an app's error on its row; this is what
+            # it couldn't: an address nothing can parse, a database that can't be written. The apps
+            # after it are still synced, and the Sync ends as one does (CR1 #269)
+            log.exception("%s: its sync couldn't be finished", url)
         with progress.lock:
             progress.done += 1
         on_item and on_item()

@@ -1283,6 +1283,11 @@ class Backend(QObject):
                            exists=bool(self.db.one("SELECT 1 FROM sources WHERE url=?", (repo.url,))))
             except (ValueError, SourceError) as e:
                 out.update(ok=False, error=str(e))
+            except Exception as e:        # noqa: BLE001 — the dialog waits for an answer (CR1 #269)
+                # as a Sync does: a forge's answer of another shape ended this thread, and the Add
+                # source dialog was never told
+                log.exception("previewing %s: an unexpected error", text)
+                out.update(ok=False, error=f"unexpected error ({type(e).__name__}: {str(e)[:200]}); the app log has the details")
             self.sourcePreview.emit(out)
         threading.Thread(target=work, daemon=True).start()
 
