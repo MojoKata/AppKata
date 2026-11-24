@@ -173,22 +173,26 @@ def downloads(text):
 
 
 def whole_run_downloads(text):
-    """The jobs with a download that names nothing, or everything: it takes every artifact the run
-    holds when it starts, so whatever a later job keeps."""
-    return [job for job, w in downloads(text) if not (w.get("name") or w.get("pattern", "").strip("*"))]
+    """The jobs with a download that names nothing: no name, and no pattern or one that starts with
+    no name (`*`, `?*`, `[a-z]*`, an expression). It takes every artifact the run holds when it starts,
+    or as good as, so whatever a later job keeps."""
+    return [job for job, w in downloads(text)
+            if not (w.get("name") or re.match(r"[^*?\[]", EXPR.sub("*", w.get("pattern", ""))))]
 
 
 def out_of_reach(text):
-    """The downloads of an artifact that no job the downloading job waits for keeps: it may not be
-    there yet, or ever. One from another run (`run-id`) needs only a job of the workflow that keeps it.
-    A pattern is read as fnmatch reads it, so one with braces matches nothing here: name the artifacts."""
+    """The downloads of an artifact kept by no job, or by a job the downloading job doesn't wait for:
+    it may not be there yet, or ever. A pattern is held for every artifact it takes, so one that also
+    takes the artifact of a job not waited for is found. One from another run (`run-id`) needs only a
+    job of the workflow that keeps it. A pattern is read as fnmatch reads it, so one with braces
+    matches nothing here: name the artifacts."""
     kept, before, found = uploads(text), waits_for(text), []
     for job, w in downloads(text):
         want = w.get("name") or w.get("pattern")
         if not want:
             continue                                        # whole_run_downloads names it
         by = {j for j, name, _ in kept if fnmatch.fnmatchcase(EXPR.sub("1", name), EXPR.sub("*", want))}
-        if not (by if "run-id" in w else by & before[job]):
+        if not (by if "run-id" in w else by and by <= before[job]):
             found.append(f"{job}: {want}")
     return found
 
@@ -344,6 +348,14 @@ def test_the_checks_find_each_fault():
     star = _changed(was, "          path: out\n          merge-multiple: true\n",
                     "          pattern: \"*\"\n          path: out\n          merge-multiple: true\n")
     assert whole_run_downloads(star) == ["release"] and "it takes ['*']" in faults(star)
+    # and by a pattern that starts with no name, however it is spelt
+    for pattern in ("?*", "[a-z]*", "${{ matrix.any }}"):
+        broad = _changed(ci, "          name: coverage\n          path: build/coverage\n",
+                         f"          pattern: \"{pattern}\"\n          path: build/coverage\n")
+        assert whole_run_downloads(broad) == ["site"], pattern
+    # a pattern that takes what its job waits for, and with it the artifact of a job it doesn't wait for
+    assert out_of_reach(_changed(ci, "          name: site\n          path: site\n",
+                                 "          pattern: si*\n          path: site\n")) == ["pages: si*"]
 
     # an artifact of a job the release doesn't wait for, and one no job keeps
     tour = _changed(ci, "          name: signature\n          path: out\n", "          name: tour\n          path: out\n")
