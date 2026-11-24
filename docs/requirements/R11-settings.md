@@ -48,6 +48,10 @@ its port when the forge is on one (`git.example.org:3000`); a name alone means t
 The host field's placeholder is "host or host:port", and the help text says how a forge on its own
 port is entered. A whole address pasted into the field is kept as its host.
 
+Tokens are kept in the database (R1.8). On Linux the data folder and the log folder (R14.3) are
+the user's own account's alone (mode 0700), and so is the database file (0600); one that is there
+already and wider is narrowed when AppKata starts.
+
 R11.1.7. **Nostr relays** (R1.5): the relay list, each with a trash button, and a field and "+"
 button to add one (`wss://…`).
 

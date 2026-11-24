@@ -2,6 +2,7 @@
 # A skip not listed here fails the run, and so does a listed test that ran (tests/conftest.py).
 tests/test_appkind.py::test_a_real_system_program_is_read  # no /usr/bin/true
 tests/test_audit_log_explore.py::test_autostart_and_links  # Linux desktop files; Windows: tests/test_windows.py
+tests/test_audit_log_explore.py::test_the_data_and_log_folders_and_the_database_are_the_users_alone  # POSIX file modes; on Windows %LOCALAPPDATA% is the user's own
 tests/test_backend.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_booted.py::test_this_system_boots_what_testing_md_says  # only where the tier boots the environment's own kernel (the VMs); a container has the test machine's
 tests/test_channel_ui.py::test_same_digest_and_source_settings  # could not import 'PySide6': No module named 'PySide6'
