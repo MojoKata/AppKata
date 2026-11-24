@@ -10,6 +10,7 @@
     464
    ],
    "files": [
+    "docs/requirements/R7-sources-perspective.md",
     "scripts/areas.py",
     "src/appkata/backend.py",
     "tests/skips/windows.txt",

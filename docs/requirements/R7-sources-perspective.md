@@ -35,7 +35,8 @@ R7.2. **Adding a Source.** The **+ Add source** button opens a dialog:
 2. AppKata detects the forge type (R2.4) and shows a preview: icon, name, latest version and
    the asset it would choose.
 3. The user can open **Source settings** to adjust them.
-4. **Add** saves the Source.
+4. **Add** saves the Source. **Add and install** saves the Source and then installs the app as
+   **Install** does (R4.9); it is offered when the preview found a download for this computer.
 
 If the app is foreign-installed (R4.5), the preview says so. If Trusts already list the app, the
 preview says "Already listed by desk-collective / reviews". Adding it anyway is allowed and

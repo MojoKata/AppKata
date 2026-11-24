@@ -56,7 +56,7 @@ TESTS = {
     "channels": ["tests/test_channels.py", "tests/test_channel_ui.py"],
     # the Audit and the App log, with Explore beside them
     "store": ["tests/test_audit_log_explore.py"],
-    "ui-backend": ["tests/test_tour_rules.py", "tests/test_demo_promises.py"],
+    "ui-backend": ["tests/test_backend.py", "tests/test_tour_rules.py", "tests/test_demo_promises.py"],
     "qml": ["tests/test_qml_slots.py", "tests/test_dialog_contract.py", "tests/test_layout.py",
             "tests/test_theme_shown.py", "tests/test_time_shown.py"],
     "scripts": ["tests/test_appimage_host_libs.py", "tests/test_appimage_trim.py", "tests/test_demo_remake.py",
