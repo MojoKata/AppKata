@@ -335,6 +335,136 @@ def test_standard_apps_run_without_a_session_bus(env, bus):
     assert r.returncode == 0 and "RAN" in r.stdout, (r.stdout, r.stderr)
 
 
+# A desktop's shell, as far as the bus shows it: one connection that owns a capability's direct name
+# and serves that service -- and owns a name of its own, with an object that runs what it is sent
+# (as Cinnamon's org.Cinnamon.Eval does). It serves that interface on the service's own object
+# too, and broadcasts a signal of its own beside the service's.
+_SHELL = """
+import sys
+from gi.repository import Gio, GLib
+name, paths, log = sys.argv[1], sys.argv[2].split(","), open(sys.argv[3], "a")
+SERVICES = {
+ "org.freedesktop.Notifications": '''<method name="GetServerInformation"><arg type="s" direction="out"/><arg type="s" direction="out"/>
+   <arg type="s" direction="out"/><arg type="s" direction="out"/></method><signal name="NotificationClosed"><arg type="u"/><arg type="u"/></signal>''',
+ "org.freedesktop.ScreenSaver": '''<method name="Inhibit"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
+   <signal name="ActiveChanged"><arg type="b"/></signal>''',
+ "org.kde.StatusNotifierWatcher": '''<method name="RegisterStatusNotifierItem"><arg type="s" direction="in"/></method>
+   <property name="IsStatusNotifierHostRegistered" type="b" access="read"/><signal name="StatusNotifierHostRegistered"/>''',
+}
+ANSWERS = {"GetServerInformation": GLib.Variant("(ssss)", ("stand-in", "AppKata", "1", "1.2")), "Inhibit": GLib.Variant("(u)", (42,)),
+           "RegisterStatusNotifierItem": None}
+SIGNALS = {"org.freedesktop.Notifications": ("NotificationClosed", GLib.Variant("(uu)", (1, 2))),
+           "org.freedesktop.ScreenSaver": ("ActiveChanged", GLib.Variant("(b)", (False,))), "org.kde.StatusNotifierWatcher": ("StatusNotifierHostRegistered", None)}
+service = Gio.DBusNodeInfo.new_for_xml(f'<node><interface name="{name}">{SERVICES[name]}</interface></node>').interfaces[0]
+shell = Gio.DBusNodeInfo.new_for_xml('''<node><interface name="org.appkata.Shell"><method name="Eval"><arg type="s" direction="in"/>
+  <arg type="b" direction="out"/></method><signal name="Said"><arg type="s"/></signal></interface></node>''').interfaces[0]
+def call(conn, sender, path, iface, method, params, inv):
+    log.write(f"{'EVAL' if method == 'Eval' else 'SERVED'} {iface}.{method} at {path} {params.unpack()}\\n"); log.flush()
+    inv.return_value(GLib.Variant("(b)", (True,)) if method == "Eval" else ANSWERS[method])
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+for path in paths:
+    bus.register_object(path, service, call, lambda *a: GLib.Variant("b", True), None)
+    bus.register_object(path, shell, call, None, None)              # another interface on the service's own object
+bus.register_object("/org/appkata/Shell", shell, call, None, None)  # a second object on the same connection
+def tick():
+    bus.emit_signal(None, paths[0], name, *SIGNALS[name])
+    bus.emit_signal(None, "/org/appkata/Shell", "org.appkata.Shell", "Said", GLib.Variant("(s)", ("the shell's own",)))
+    return True
+GLib.timeout_add(100, tick)
+Gio.bus_own_name_on_connection(bus, "org.appkata.Shell", Gio.BusNameOwnerFlags.NONE, None, None)
+Gio.bus_own_name_on_connection(bus, name, Gio.BusNameOwnerFlags.NONE, None, None)
+GLib.MainLoop().run()
+"""
+
+# The app: its service's own call, then every road to the shell's Eval, then what it hears.
+_SHELL_PROBE = """
+import sys
+from gi.repository import Gio, GLib
+name, paths = sys.argv[1], sys.argv[2].split(",")
+OWN = {"org.freedesktop.Notifications": ("GetServerInformation", None), "org.freedesktop.ScreenSaver": ("Inhibit", GLib.Variant("(ss)", ("appkata", "a call"))),
+       "org.kde.StatusNotifierWatcher": ("RegisterStatusNotifierItem", GLib.Variant("(s)", ("/an/item",)))}
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+heard = set()
+bus.signal_subscribe(None, None, None, None, None, Gio.DBusSignalFlags.NONE, lambda c, s, p, i, m, a: heard.add(f"{i}.{m}"))
+def ask(what, dest, path, iface, method, args=None):
+    try:
+        bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+        print(what, "ANSWERED", flush=True)
+    except GLib.Error as e:
+        print(what, "REFUSED", Gio.DBusError.get_remote_error(e), flush=True)
+eval_ = lambda road: GLib.Variant("(s)", (road,))
+for path in paths:
+    ask(f"SERVICE {path}", name, path, name, *OWN[name])
+    ask(f"INTROSPECT {path}", name, path, "org.freedesktop.DBus.Introspectable", "Introspect")
+    ask(f"OTHER-INTERFACE {path}", name, path, "org.appkata.Shell", "Eval", eval_("the service's own object"))
+ask("PROPERTY", name, paths[0], "org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", (name, "IsStatusNotifierHostRegistered")))
+ask("SECOND-OBJECT", name, "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the service's name"))
+try:
+    owner = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", GLib.Variant("(s)", (name,)),
+                          None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+    ask("UNIQUE-NAME", owner, "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the owner's unique name"))
+except GLib.Error as e:
+    print("OWNER HIDDEN", Gio.DBusError.get_remote_error(e), flush=True)
+ask("SHELL-NAME", "org.appkata.Shell", "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the shell's own name"))
+loop = GLib.MainLoop()
+GLib.timeout_add(700, loop.quit)
+loop.run()
+print("HEARD", *sorted(h for h in heard if not h.startswith("org.freedesktop.DBus.")), flush=True)
+"""
+
+# capability: its direct name, the objects its service is on, the signal the stand-in sends from it
+_DIRECT_NAMES = {"notifications": ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "NotificationClosed"),
+                 "inhibit": ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver,/ScreenSaver", "ActiveChanged"),
+                 "tray": ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "StatusNotifierHostRegistered")}
+
+
+def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap):
+    """CR1.5-3: `--talk=NAME` is no grant of one service. xdg-dbus-proxy gives it to the connection
+    that owns NAME -- every object and interface it serves, by its unique name too -- and on
+    Cinnamon the desktop's own shell owns org.freedesktop.Notifications: a `standard` app's
+    "Notifications" chip reached org.Cinnamon.Eval, which ran a command as the user outside the
+    sandbox (shown on the Mint 22.3 desktop). Every stand-in until then owned one name and served
+    one object, so nothing showed it. This one is a shell: the app's own service answers, on each
+    of its objects, and the shell's Eval is refused by every road, and never arrives."""
+    name, paths, signal = _DIRECT_NAMES[cap]
+    log = tmp_path / f"shell-{cap}.log"
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    shell = subprocess.Popen(["python3", "-c", _SHELL, name, paths, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", name], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            subprocess.run(["sleep", "0.1"])
+        for app_id in (cap, f"no-{cap}"):
+            d = env.home / "apps" / app_id / "1.0" / "bin"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "probe.py").write_text(_SHELL_PROBE)
+        probe = f'python3 "$(dirname "$0")/probe.py" {name} {paths}'
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": [cap]})
+        r = env.run(env.app(cap, gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        served = log.read_text()
+        r2 = env.run(env.app(f"no-{cap}", sb.apply_overrides(gs, {"caps": []})), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+    finally:
+        shell.terminate()
+        shell.wait()
+    out = r.stdout.splitlines()
+    for path in paths.split(","):
+        assert f"SERVICE {path} ANSWERED" in out and f"INTROSPECT {path} ANSWERED" in out, (r.stdout, r.stderr)   # the capability still works
+        assert f"OTHER-INTERFACE {path} REFUSED org.freedesktop.DBus.Error.AccessDenied" in out, r.stdout
+    for road in ("SECOND-OBJECT", "UNIQUE-NAME"):
+        assert f"{road} REFUSED org.freedesktop.DBus.Error.AccessDenied" in out, r.stdout
+    assert any(l.startswith("SHELL-NAME REFUSED") for l in out), r.stdout              # a name it was never given: not there at all
+    assert "EVAL" not in served and served.count("SERVED") == len(paths.split(",")), served   # nothing but the service's own calls arrived
+    # the Properties calls a tray library makes (Qt: IsStatusNotifierHostRegistered) pass; the other services have none
+    assert ("PROPERTY ANSWERED" if cap == "tray" else "PROPERTY REFUSED org.freedesktop.DBus.Error.AccessDenied") in out, r.stdout
+    assert f"HEARD {name}.{signal}" in out, r.stdout                                    # the service's own signal, and not the shell's
+    out2 = r2.stdout.splitlines()                                                       # and without the capability, not even the service
+    assert not [l for l in out2 if "ANSWERED" in l] and "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.stdout, r2.stderr)
+    assert "HEARD" in out2, r2.stdout
+
+
 @needs_proxy
 def test_standard_apps_reach_the_filtered_bus_when_there_is_one(env, tmp_path):
     bus = _Bus(env)
@@ -342,9 +472,12 @@ def test_standard_apps_reach_the_filtered_bus_when_there_is_one(env, tmp_path):
         r = env.run(env.app("gui", sb.resolve_template("online-app")),
                     'echo "A=$DBUS_SESSION_BUS_ADDRESS"; [ -S "$XDG_RUNTIME_DIR/bus" ] && echo BUS',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        assert "BUS" in r.stdout and f"A=unix:path={env.rt}/bus" in r.stdout, (r.stdout, r.stderr)
+        # and what they reach on it by a capability's direct name is that service alone (CR1.5-3)
+        for cap in _DIRECT_NAMES:
+            _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap)
     finally:
         bus.close()
-    assert "BUS" in r.stdout and f"A=unix:path={env.rt}/bus" in r.stdout, (r.stdout, r.stderr)
 
 
 # ---------------------------------------------------------------- run-time words stay whole

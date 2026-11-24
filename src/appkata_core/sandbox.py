@@ -1340,16 +1340,48 @@ def _portal_call(interface: str, obj: str = _PORTAL_PATH) -> str:
     return f"--call={_PORTAL}=org.freedesktop.portal.{interface}.*@{obj}"
 
 
+def _service_rules(name: str, *paths: str, also: tuple[str, ...] = ()) -> list[str]:
+    """xdg-dbus-proxy rules that open a desktop service by its direct name the way the portal is
+    opened: the service's own interface (named as its bus name is) on its own objects, and nothing
+    else on that name. Never `--talk=NAME`, which is no grant of one service: the proxy gives it to
+    the connection that owns NAME -- every object and interface that connection serves, by its
+    unique name too, and every signal it broadcasts -- and on Cinnamon the owner of
+    org.freedesktop.Notifications is the desktop's own shell. A `standard` app's "Notifications"
+    chip reached org.Cinnamon.Eval that way, which ran a command as the user, outside the sandbox
+    (CR1.5-3, shown on the Mint 22.3 desktop).
+
+    Beside the interface: Introspectable on the same objects, which `gdbus call` and dbus-python
+    type a call's arguments from (without it neither got a Notify to dunst: an int32 guessed for
+    its uint32, no guess for its empty list) and Qt's QDBusInterface reads before it gives a
+    property; the `also` calls; and the service's own broadcast signals (NotificationClosed,
+    ActionInvoked), where `--talk` let every broadcast of the owner in."""
+    rules = []
+    for path in paths:
+        rules += [f"--call={name}={name}.*@{path}", f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}"]
+        rules += [f"--call={name}={method}@{path}" for method in also]
+        rules.append(f"--broadcast={name}={name}.*@{path}")
+    return rules
+
+
+# What a tray library reads of the watcher before it registers its icon, as real ones were seen to
+# (dbus-monitor on a test bus, then each behind a generated launcher): Qt 5.15 and 6.4 Introspect
+# the watcher and ask for IsStatusNotifierHostRegistered through Properties.Get, and register no
+# icon when either is refused; libayatana-appindicator 0.5.93 makes neither call. GetAll is what a
+# GDBus proxy loads its properties with.
+_WATCHER_PROPERTIES = ("org.freedesktop.DBus.Properties.Get", "org.freedesktop.DBus.Properties.GetAll")
+
 # capability → the extra xdg-dbus-proxy arguments it adds (A1.2.3.14). Where a portal
 # covers the need, the capability opens *both* roads -- the portal interface, which GLib/GTK apps
 # take when they see /.flatpak-info, and the direct name the others use -- so the capability is the
 # one switch, and an app without it has neither (round three, R3-6: the Notification and Inhibit
 # portals were open to every Standard app, so an offline-editor with no "Notifications" chip still
-# notified through GLib). Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix).
+# notified through GLib). A direct name is opened for its service alone (_service_rules).
+# Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix).
 CAP_PROXY_ARGS = {
-    "notifications": [_portal_call("Notification"), "--talk=org.freedesktop.Notifications"],
-    "inhibit": [_portal_call("Inhibit"), "--talk=org.freedesktop.ScreenSaver"],
-    "tray": ["--talk=org.kde.StatusNotifierWatcher", *_TRAY_OWNS],
+    "notifications": [_portal_call("Notification"), *_service_rules("org.freedesktop.Notifications", "/org/freedesktop/Notifications")],
+    # the direct name's service is on two objects
+    "inhibit": [_portal_call("Inhibit"), *_service_rules("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "/ScreenSaver")],
+    "tray": [*_service_rules("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", also=_WATCHER_PROPERTIES), *_TRAY_OWNS],
     "mpris": ["--own=org.mpris.MediaPlayer2.*"],
     "secrets": ["--talk=org.freedesktop.secrets"],
     "secrets-provide": ["--own=org.freedesktop.secrets"],

@@ -140,7 +140,7 @@ def test_standard_launcher_has_proxy_and_private_home():
     text = sb.build_launcher("signal", "Signal", "/apps/signal/7", "AppRun", gs)
     assert "xdg-dbus-proxy" in text                      # filtered session bus (R17.5)
     assert "--own=io.appkata.signal" in text             # app identity on the bus
-    assert "--talk=org.kde.StatusNotifierWatcher" in text  # the tray capability
+    assert "--call=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher" in text  # the tray capability
     assert "--share-net" in text                         # messenger has network
     assert '--bind "$home" "$HOME"' in text              # private home over $HOME
     assert _valid_sh(text)
@@ -357,7 +357,48 @@ def test_proxy_startup_is_set_u_safe_and_bails_if_proxy_dies():
 def test_proxy_args_map_capabilities():
     args = sb.proxy_args(sb.resolve_template("media-player"), "vlc")
     assert "--own=org.mpris.MediaPlayer2.*" in args      # media keys
-    assert "--talk=org.freedesktop.ScreenSaver" in args  # inhibit
+    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver" in args  # inhibit
+
+
+# The names a grant set opens whole (`--talk`: whatever the connection that owns the name serves),
+# each with what was seen of that connection: no wider than the name.
+OPENED_WHOLE = {
+    "org.freedesktop.portal.IBus": "IBus 1.5.29's ibus-portal: a process and connection of its own, with the portal object alone",
+    "org.freedesktop.portal.Fcitx": "Fcitx 5.1.7: a connection of its own, with the input-method objects alone",
+    "org.freedesktop.secrets": "the keyring, which has no per-app walls: every unlocked password (A1.2.3.14)",
+}
+
+
+def test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed():
+    # CR1.5-3: the notifications, inhibit and tray capabilities passed `--talk=NAME`, which
+    # xdg-dbus-proxy gives to the connection owning NAME -- on Cinnamon the desktop's own shell,
+    # with everything it serves (org.Cinnamon.Eval ran a command outside the sandbox). Each
+    # direct name is opened as the portal is, for its service's own interface on its own objects;
+    # and since the tests then checked that `--talk` word itself, this one holds the whole class:
+    # no `--talk` but the listed names, and no rule without both an interface and an object.
+    every = sb.proxy_args({"caps": sorted(sb.CAP_PROXY_ARGS)}, "demo")
+    assert {a.split("=", 1)[1] for a in every if a.startswith("--talk=")} == set(OPENED_WHOLE)
+    assert not [a for a in every if a.startswith("--see=")]
+    for a in every:
+        if a.startswith(("--call=", "--broadcast=")):
+            name, rule = a.split("=", 2)[1:]
+            member, at, path = rule.partition("@")
+            assert member.startswith(("org.", "com.")) and at and path.startswith("/") and path != "/*", a
+    services = {"notifications": ("org.freedesktop.Notifications", ["/org/freedesktop/Notifications"]),
+                "inhibit": ("org.freedesktop.ScreenSaver", ["/org/freedesktop/ScreenSaver", "/ScreenSaver"]),
+                "tray": ("org.kde.StatusNotifierWatcher", ["/StatusNotifierWatcher"])}
+    for cap, (name, paths) in services.items():
+        rules = [a for a in sb.CAP_PROXY_ARGS[cap] if a.split("=", 2)[1] == name]
+        want = set()
+        for path in paths:
+            want |= {f"--call={name}={name}.*@{path}", f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}",
+                     f"--broadcast={name}={name}.*@{path}"}
+        if cap == "tray":       # what Qt's tray icon reads before it registers (IsStatusNotifierHostRegistered)
+            want |= {f"--call={name}=org.freedesktop.DBus.Properties.{m}@/StatusNotifierWatcher" for m in ("Get", "GetAll")}
+        assert set(rules) == want, cap
+    # an app without a capability has none of its rules, on either road
+    plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")
+    assert not [a for a in plain for name, _ in services.values() if name in a]
 
 
 def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
@@ -367,14 +408,15 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     # name -- and an app without it has neither.
     portal = "--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.{}.*@/org/freedesktop/portal/desktop"
     plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")        # no capabilities
-    assert portal.format("Notification") not in plain and "--talk=org.freedesktop.Notifications" not in plain
-    assert portal.format("Inhibit") not in plain and "--talk=org.freedesktop.ScreenSaver" not in plain
+    direct = "--call=org.freedesktop.{0}=org.freedesktop.{0}.*@/org/freedesktop/{0}"
+    assert portal.format("Notification") not in plain and not [a for a in plain if "org.freedesktop.Notifications" in a]
+    assert portal.format("Inhibit") not in plain and not [a for a in plain if "org.freedesktop.ScreenSaver" in a]
     assert portal.format("OpenURI") in plain                                   # the always-on portals stay
     web = sb.proxy_args(sb.resolve_template("online-app"), "web")            # notifications only
-    assert portal.format("Notification") in web and "--talk=org.freedesktop.Notifications" in web
-    assert portal.format("Inhibit") not in web
+    assert portal.format("Notification") in web and direct.format("Notifications") in web
+    assert portal.format("Inhibit") not in web and not [a for a in web if "org.freedesktop.ScreenSaver" in a]
     chat = sb.proxy_args(sb.resolve_template("messenger"), "chat")           # both
-    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and "--talk=org.freedesktop.ScreenSaver" in chat
+    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and direct.format("ScreenSaver") in chat
 
 
 # ---------------------------------------------------------------- the review lines (R10.3.1)
@@ -648,8 +690,10 @@ def test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy(tmp_p
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     args = sb.proxy_args(sb.resolve_template("online-app"), "web")
     assert "--talk=org.freedesktop.portal.Desktop" not in args
-    rules = [a for a in args if a.startswith(("--call=", "--broadcast="))]
-    assert all(a.startswith(("--call=org.freedesktop.portal.Desktop=", "--broadcast=org.freedesktop.portal.Desktop=")) for a in rules)
+    ruled = [a for a in args if a.startswith(("--call=", "--broadcast="))]
+    # rules on the portal's name, and on the direct name of online-app's one capability (CR1.5-3), no other
+    assert {a.split("=", 2)[1] for a in ruled} == {"org.freedesktop.portal.Desktop", "org.freedesktop.Notifications"}
+    rules = [a for a in ruled if a.split("=", 2)[1] == "org.freedesktop.portal.Desktop"]
     for allowed in ("OpenURI", "Notification", "Settings", "Request", "Session"):   # Notification: online-app's capability
         assert any(f"org.freedesktop.portal.{allowed}.*@" in a for a in rules), allowed
     for denied in ("FileChooser", "Background", "DynamicLauncher", "Documents", "Camera", "ScreenCast",
