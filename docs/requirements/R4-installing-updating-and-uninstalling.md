@@ -52,6 +52,10 @@ after its version (`2.1/`). The install folder is a setting (R11.1.4); by defaul
 - On Windows, by who the app is for (R15.4): `%LOCALAPPDATA%\Programs` for **Just me** (the
   default), `C:\Programs` for **Everyone**. Neither needs administrator rights.
 
+The install folder and the command links folder (R4.3.1.3) are read the same way: a leading `~`
+is the user's home folder, and environment variables are filled in (`$HOME/bin`; on Windows
+`%LOCALAPPDATA%\Programs` too).
+
 No elevation is needed. Changing the install folder applies to new installs and updates; apps
 already installed stay where they are until they're updated or reinstalled.
 

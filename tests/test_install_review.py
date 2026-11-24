@@ -877,3 +877,36 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
             assert _changed(before, _left(tmp_path, env)) == {}
     assert (os.readlink(link) if link.is_symlink() else link.read_text()) == was
     assert os.path.islink(link) is (theirs != "a file")
+
+
+# ---------------------------------------------------------------- a folder as Settings holds it (CR1.3-32)
+
+@linux_only
+@pytest.mark.parametrize("typed", ["$HOME", "${HOME}", "~", "$HOME/../home", "$ELSEWHERE/there"])
+def test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_command_links(env, server, tmp_path, monkeypatch, typed):
+    # CR1.3-32: the install folder had `~` and `$VARIABLES` expanded, the command links folder `~`
+    # alone, so one typed as `$HOME/bin` was a folder named `$HOME` under AppKata's working
+    # directory, with the command link in it and that relative path in the record. Every test gave
+    # both folders as absolute paths, and each was read by its own expression (a third on Windows).
+    # They are read by one now, so each spelling here names the same place for both, the record
+    # holds absolute paths, and nothing is made in the working directory.
+    home, cwd = tmp_path / "home", tmp_path / "cwd"
+    home.mkdir()
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ELSEWHERE", str(tmp_path / "else where"))
+    monkeypatch.chdir(cwd)
+    base = tmp_path / "else where" / "there" if "ELSEWHERE" in typed else home
+    p = install.Portable(folder=f"{typed}/apps", command_dir=f"{typed}/bin")
+    a = _appimage(server)
+    rec = install.install(env, APP, a, "appimage", [a], portable=p)
+    assert rec["links"] == [str(base / "apps" / "demo-tool" / "DemoTool.AppImage"), str(base / "bin" / "demo-tool")]
+    assert (p.root, p.command_folder) == (str(base / "apps"), str(base / "bin"))
+    assert os.path.realpath(base / "bin" / "demo-tool") == str(base / "apps" / "demo-tool" / "t.AppImage")
+    assert rec["root"] == str(base / "apps") and os.listdir(cwd) == []
+    install.uninstall(env, APP["url"])
+    assert not os.path.lexists(base / "bin" / "demo-tool") and not os.path.lexists(base / "apps" / "demo-tool") and os.listdir(cwd) == []
+    # a relative folder is under the working directory, for both; and no command link has no folder
+    rel = install.Portable(folder="rel/apps", command_dir="rel/bin")
+    assert (rel.root, rel.command_folder) == (str(cwd / "rel" / "apps"), str(cwd / "rel" / "bin"))
+    assert install.Portable(command_dir="").command_folder == ""

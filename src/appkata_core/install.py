@@ -303,6 +303,15 @@ def _find_executable(root: str, names: list[str]) -> str:
     return cands[0][2]
 
 
+def _folder(path: str) -> str:
+    """A folder as Settings holds it (R11.1.4, what the user typed or picked), as the path it names:
+    `~` and `$VARIABLES` (on Windows `%VARIABLES%` too) expanded, and absolute. The one reading
+    of every such folder: the install folder was read this way and the command links folder with
+    `~` alone, so one typed as `$HOME/bin` was a folder named `$HOME` under whatever AppKata's
+    working directory was, and the link in it (CR1.3-32)."""
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+
+
 @dataclass
 class Portable:
     """Where and how apps are installed (R4.3.1, R11.1.4, R15.4)."""
@@ -318,8 +327,13 @@ class Portable:
     @property
     def root(self) -> str:
         if OS == "windows" and self.scope == "everyone":
-            return os.path.abspath(os.path.expandvars(self.folder_everyone)) if self.folder_everyone else apps_dir("everyone")
-        return os.path.abspath(os.path.expandvars(os.path.expanduser(self.folder))) if self.folder else apps_dir()
+            return _folder(self.folder_everyone) if self.folder_everyone else apps_dir("everyone")
+        return _folder(self.folder) if self.folder else apps_dir()
+
+    @property
+    def command_folder(self) -> str:
+        """The command links folder as a path (R4.3.1.3), or "" when the app gets no command link."""
+        return _folder(self.command_dir) if self.command_dir else ""
 
 
 def _points_into(link: str, roots: tuple[str, ...]) -> bool:
@@ -548,7 +562,7 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         # that is already a command here, or a reserved one, and the record says why (R4.3.1.3). The
         # option stays as chosen, so the command comes once the name is free. Never an error: the
         # app is installed either way, with its app-menu entry.
-        link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
+        link = os.path.join(portable.command_folder, app_id)
         if why := command_link_refusal(app_id, link, own):
             rec["commandRefused"] = why
             log.info("no command link %s: %s", link, why)
@@ -650,7 +664,7 @@ def _activate_windows(rec: dict, app: dict, portable: "Portable", target: str) -
     shims = []
     if portable.command_dir:
         try:
-            shims.append(windows.write_shim(os.path.expandvars(os.path.expanduser(portable.command_dir)), app_id, run))
+            shims.append(windows.write_shim(portable.command_folder, app_id, run))
         except FileExistsError as e:
             raise InstallError(str(e)) from None
     for old in rec.get("shims", []):
@@ -756,7 +770,7 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
     something in the app's folder (the program, or the sandbox launcher beside it)."""
     if OS == "windows":
         from . import windows
-        shim = os.path.join(os.path.expandvars(os.path.expanduser(portable.command_dir)), app_id + ".cmd") if portable.command_dir else ""
+        shim = os.path.join(portable.command_folder, app_id + ".cmd") if portable.command_dir else ""
         if shim and os.path.exists(shim):
             with open(shim, encoding="utf-8", errors="replace") as f:
                 if not f.read().startswith(windows.SHIM_MARK):
@@ -767,7 +781,7 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
             and os.path.dirname(sandbox.launcher_path(app_id, portable.root)) == target:
         _menu_exec(target)
     if portable.command_dir:
-        link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
+        link = os.path.join(portable.command_folder, app_id)
         own = (portable.root, os.path.dirname(target))
         if not command_link_refusal(app_id, link, own) and (why := _link_refusal(link, own)):
             raise InstallError(why)
