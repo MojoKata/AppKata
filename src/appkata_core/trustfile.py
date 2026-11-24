@@ -40,17 +40,17 @@ SETTINGS_KEYS = {"app menu": "appMenu", "command link": "commandLink", "stable n
                  "flatpak": "flatpak", "debian package": "debianPackage", "fedora package": "fedoraPackage", "channel": "channel",
                  "sandbox": "sandbox", "sandbox folders": "sandboxFolders", "sandbox network": "sandboxNetwork",
                  "sandbox sound": "sandboxSound", "sandbox devices": "sandboxDevices", "sandbox services": "sandboxServices",
-                 "sandbox app folder": "sandboxAppFolder"}
+                 "sandbox mpris name": "sandboxMprisName", "sandbox app folder": "sandboxAppFolder"}
 SETTINGS_LABELS = {"appMenu": "App menu", "commandLink": "Command link", "stableName": "Stable name link",
                    "forge": "Forge", "assetFilter": "Download filter", "autoUpdate": "Auto update",
                    "flatpak": "Flatpak", "debianPackage": "Debian package", "fedoraPackage": "Fedora package", "channel": "Channel",
                    "sandbox": "Sandbox", "sandboxFolders": "Sandbox folders", "sandboxNetwork": "Sandbox network",
                    "sandboxSound": "Sandbox sound", "sandboxDevices": "Sandbox devices", "sandboxServices": "Sandbox services",
-                   "sandboxAppFolder": "Sandbox app folder"}
+                   "sandboxMprisName": "Sandbox MPRIS name", "sandboxAppFolder": "Sandbox app folder"}
 SETTINGS_ORDER = ("appMenu", "commandLink", "stableName", "forge", "assetFilter", "autoUpdate",
                   "flatpak", "debianPackage", "fedoraPackage", "channel",
                   "sandbox", "sandboxFolders", "sandboxNetwork", "sandboxSound", "sandboxDevices", "sandboxServices",
-                  "sandboxAppFolder")
+                  "sandboxMprisName", "sandboxAppFolder")
 # The suggested sandbox template, and each kind of grant changed from it (R17.3, R10.3.1); Linux-only.
 # Kept equal to sandbox.TEMPLATE_ORDER (a test checks), without importing the sandbox module here.
 SANDBOX_TEMPLATES = ("strict", "standard", "offline-editor", "online-app", "messenger", "media-player", "developer", "cli-tool")
@@ -58,6 +58,9 @@ SANDBOX_TEMPLATES = ("strict", "standard", "offline-editor", "online-app", "mess
 SANDBOX_SETS = {"sandboxSound": {"play", "record"}, "sandboxDevices": {"camera", "x11", "xwayland"},
                 "sandboxServices": {"notifications", "keep-awake", "inhibit", "tray", "media-keys", "mpris", "passwords",
                                     "secrets", "password-service", "secrets-provide"}}
+# The app's own MPRIS name (R17.5.1): a bus name below org.mpris.MediaPlayer2, or every name below
+# one with a `.*` suffix; equal to sandbox.mpris_name's (a test checks), as above
+_MPRIS_NAME = re.compile(r"org\.mpris\.MediaPlayer2(\.[A-Za-z_-][A-Za-z0-9_-]*)+(\.\*)?")
 VERDICT = ("trust", "rating", "tags")          # a review's own values, never platform-specific (R10.3.1)
 CHANNELS = ("release", "flatpak", "package")
 FORGE_NAMES = {"github": "github", "github enterprise": "ghe", "ghe": "ghe", "gitlab": "gitlab", "forgejo": "forgejo",
@@ -94,6 +97,9 @@ def _setting_value(key: str, raw: str):
     if key == "sandboxFolders":          # kept as written; parsed by sandbox.parse_folders (R17.3.1)
         v = raw.strip("`").strip()
         return v or None
+    if key == "sandboxMprisName":
+        v = raw.strip("`").strip()
+        return v if len(v) <= 255 and _MPRIS_NAME.fullmatch(v) else None
     if key in SANDBOX_SETS:              # kept as written, its known words only; parsed by sandbox.parse_set
         words = [w.strip() for w in raw.strip("`").split(",") if w.strip()]
         ok = [w for w in words if w.lower().lstrip("+-") in SANDBOX_SETS[key] or w.lower() == "none"]
@@ -354,7 +360,7 @@ def verdict_lines(trust: int | None, rating: int | None, tags: list[str]) -> lis
 # options whose right value depends on the platform; the review dialog writes them for this one.
 # The Sandbox* lines are Linux-only (R10.3.1), so they're written as this platform's lines too.
 SANDBOX_KEYS = ("sandbox", "sandboxFolders", "sandboxNetwork", "sandboxSound", "sandboxDevices", "sandboxServices",
-                "sandboxAppFolder")
+                "sandboxMprisName", "sandboxAppFolder")
 PLATFORM_SPECIFIC = {"autoUpdate", "assetFilter", *SANDBOX_KEYS}
 
 
@@ -401,7 +407,7 @@ def _format_value(key: str, v) -> str:
         return f"`{v}`"
     if key == "forge":
         return FORGE_WRITE.get(v, v)
-    if key in ("flatpak", "debianPackage", "fedoraPackage", "channel", "sandbox", "sandboxFolders", *SANDBOX_SETS):
+    if key in ("flatpak", "debianPackage", "fedoraPackage", "channel", "sandbox", "sandboxFolders", "sandboxMprisName", *SANDBOX_SETS):
         return str(v)
     return "yes" if v else "no"
 

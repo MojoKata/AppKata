@@ -257,7 +257,8 @@ Dialog {
                             hint: "Show a status-bar icon (StatusNotifierItem) and own its own bus name. Two sandboxed apps with a tray icon running at once can collide on that name, as with Flatpak."
                             onToggled: on => root.toggleIn("caps", "tray", on) }
                 SbxToggle { label: "Media keys"; ic: "play"; on: root.has(root.gs.caps, "mpris")
-                            hint: "Play/pause and track info on the keyboard and lock screen (MPRIS)."
+                            hint: root.gs.mpris_name ? "Play/pause and track info on the keyboard and lock screen (MPRIS), under its own player name alone: " + root.gs.mpris_name + "."
+                                                     : "Play/pause and track info on the keyboard and lock screen (MPRIS). It has no player name of its own here (a review gives one), so it may take any, and can reach every other media player that is running."
                             onToggled: on => root.toggleIn("caps", "mpris", on) }
                 SbxToggle { label: "Notifications"; ic: "info"; on: root.has(root.gs.caps, "notifications")
                             hint: "Show desktop notifications, through the notification portal or the desktop's own notification service. Without it the app's notifications never appear."

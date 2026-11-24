@@ -47,9 +47,23 @@ def stricter(a: str, b: str) -> str:
     return a if LEVELS.index(a) >= LEVELS.index(b) else b
 
 
+# The app's own MPRIS name (R17.5.1): one bus name below org.mpris.MediaPlayer2, which is where a
+# media player is found (`org.mpris.MediaPlayer2.vlc`), or, with a `.*` suffix, that name and every
+# name below it (`org.mpris.MediaPlayer2.chromium.*`, for an app that takes a name per instance).
+# Never the prefix itself with `.*`, which is every player's name. Each element as xdg-dbus-proxy
+# takes one (it exits on a name it refuses, and the app then has no bus): no leading digit.
+_MPRIS_NAME = re.compile(r"org\.mpris\.MediaPlayer2(\.[A-Za-z_-][A-Za-z0-9_-]*)+(\.\*)?")
+
+
+def mpris_name(value) -> str | None:
+    """`value` as an app's own MPRIS name, or None when it isn't one."""
+    ok = isinstance(value, str) and len(value) <= 255 and _MPRIS_NAME.fullmatch(value)
+    return value if ok else None
+
+
 def blank_grants(level: str = "standard") -> dict:
     return dict(level=level, folders={}, network=False, ports=None, sound=set(),
-                devices=set(), caps=set(), exec_deny=True, write_app=False)
+                devices=set(), caps=set(), mpris_name=None, exec_deny=True, write_app=False)
 
 
 def normalize(gs: dict) -> dict:
@@ -70,6 +84,9 @@ def normalize(gs: dict) -> dict:
     out["sound"] = set() if strict else set(gs.get("sound") or [])
     out["devices"] = set(gs.get("devices") or []) & ({"x11"} if strict else set(gs.get("devices") or []))
     out["caps"] = set() if strict else set(gs.get("caps") or [])
+    # the one MPRIS name Media keys may own, where a review named it; a name is no capability, so
+    # without Media keys the set has none
+    out["mpris_name"] = mpris_name(gs.get("mpris_name")) if "mpris" in out["caps"] else None
     out["exec_deny"] = bool(gs.get("exec_deny", True))
     out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (R17.7.1)
     return out
@@ -80,7 +97,7 @@ def to_json(gs: dict) -> dict:
     gs = normalize(gs)
     return dict(level=gs["level"], folders=gs["folders"], network=gs["network"], ports=gs["ports"],
                 sound=sorted(gs["sound"]), devices=sorted(gs["devices"]), caps=sorted(gs["caps"]),
-                exec_deny=gs["exec_deny"], write_app=gs["write_app"])
+                mpris_name=gs["mpris_name"], exec_deny=gs["exec_deny"], write_app=gs["write_app"])
 
 
 # -------------------------------------------------------------------------- templates (R17.3)
@@ -135,7 +152,7 @@ def resolve_template(name: str) -> dict:
     return normalize(TEMPLATES[name])
 
 
-GRANT_KEYS = ("level", "folders", "network", "ports", "sound", "devices", "caps", "exec_deny", "write_app")
+GRANT_KEYS = ("level", "folders", "network", "ports", "sound", "devices", "caps", "mpris_name", "exec_deny", "write_app")
 
 
 def as_overrides(template: str, gs: dict) -> dict:
@@ -189,6 +206,8 @@ def as_review(template: str, gs: dict) -> tuple[dict, list[tuple[str, str]]]:
             words = LINE_WORDS[grant]
             out[key] = ", ".join([f"+{words[x]}" for x in sorted(kept[grant] - base[grant])] +
                                  [f"-{words[x]}" for x in sorted(base[grant] - kept[grant])])
+    if ov.get("mpris_name"):
+        out["sandboxMprisName"] = ov["mpris_name"]
     if "write_app" in ov:
         out["sandboxAppFolder"] = bool(ov["write_app"])
     return out, refused
@@ -220,6 +239,16 @@ def changes(before: dict, after: dict) -> tuple[list[str], list[str]]:
     for grant in ("sound", "devices", "caps"):
         added += [_PHRASES.get((grant, x), x) for x in sorted(b[grant] - a[grant])]
         removed += [_PHRASES.get((grant, x), x) for x in sorted(a[grant] - b[grant])]
+    # the MPRIS name, where both have Media keys (the capability coming or going is said above): a
+    # name takes every other name away, so naming one is less access and dropping it is more
+    if "mpris" in a["caps"] & b["caps"] and a["mpris_name"] != b["mpris_name"]:
+        if a["mpris_name"] is None:
+            removed.append(f"media-player names other than {b['mpris_name']}")
+        elif b["mpris_name"] is None:
+            added.append("every media-player name")
+        else:
+            added.append(f"the media-player name {b['mpris_name']}")
+            removed.append(f"the media-player name {a['mpris_name']}")
     if a["write_app"] != b["write_app"]:
         (added if b["write_app"] else removed).append("changing its own files")
     return added, removed
@@ -376,6 +405,8 @@ def config_from_review(opts: dict) -> dict | None:
     for key, grant in (("sandboxSound", "sound"), ("sandboxDevices", "devices"), ("sandboxServices", "caps")):
         if opts.get(key):
             overrides[grant] = parse_set(grant, opts[key])
+    if mpris_name(opts.get("sandboxMprisName")):
+        overrides["mpris_name"] = opts["sandboxMprisName"]
     if "sandboxAppFolder" in opts:
         overrides["write_app"] = bool(opts["sandboxAppFolder"])
     return {"template": name, "overrides": overrides}
@@ -611,10 +642,26 @@ def _intersect_ports(ap, bp):
     return sorted(set(ap) & set(bp))
 
 
+def _narrower_mpris(a: str | None, b: str | None) -> tuple[bool, str | None]:
+    """Two sets' MPRIS names as (whether any name is left to both, the name): None is every name, so
+    the other's stands; of two names the one the other covers (`….chromium.*` covers `….chromium`
+    and `….chromium.instance7`, as the proxy reads the suffix); and two that name different players
+    leave none."""
+    if a is None or b is None or a == b:
+        return True, a if b is None else b
+    covers = lambda wide, narrow: wide.endswith(".*") and (narrow == wide[:-2] or narrow.startswith(wide[:-1]))      # noqa: E731
+    if covers(a, b):
+        return True, b
+    if covers(b, a):
+        return True, a
+    return False, None
+
+
 def intersect(a: dict, b: dict) -> dict:
     """The least-privilege combination of two grant sets, across Trusts (R17.3.2): strictest level; a
     folder only if both grant it (read-write only if both do); network/sound/devices/caps the
-    intersection; execute-deny if either denies.
+    intersection, and of two MPRIS names the narrower, with no media keys where they name different
+    players; execute-deny if either denies.
 
     `off` means no sandbox — everything allowed — so it adds no limit of its own: off ∩ X is X. (Its
     grant set is empty only because Off has nothing to configure; taking that literally made a review
@@ -627,6 +674,10 @@ def intersect(a: dict, b: dict) -> dict:
     folders = {}
     for p in set(a["folders"]) & set(b["folders"]):
         folders[p] = "rw" if a["folders"][p] == "rw" and b["folders"][p] == "rw" else "ro"
+    caps = a["caps"] & b["caps"]
+    named, name = _narrower_mpris(a["mpris_name"], b["mpris_name"])
+    if not named:
+        caps = caps - {"mpris"}
     return dict(
         level=stricter(a["level"], b["level"]),
         folders=folders,
@@ -634,7 +685,8 @@ def intersect(a: dict, b: dict) -> dict:
         ports=_intersect_ports(a["ports"], b["ports"]),
         sound=a["sound"] & b["sound"],
         devices=a["devices"] & b["devices"],
-        caps=a["caps"] & b["caps"],
+        caps=caps,
+        mpris_name=name if "mpris" in caps else None,
         exec_deny=a["exec_deny"] or b["exec_deny"],
         write_app=a["write_app"] and b["write_app"],
     )
@@ -1376,7 +1428,8 @@ _WATCHER_PROPERTIES = ("org.freedesktop.DBus.Properties.Get", "org.freedesktop.D
 # one switch, and an app without it has neither (round three, R3-6: the Notification and Inhibit
 # portals were open to every Standard app, so an offline-editor with no "Notifications" chip still
 # notified through GLib). A direct name is opened for its service alone (_service_rules).
-# Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix).
+# Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix). Media keys' is what an
+# app nobody named gets; a named one owns its own name alone (proxy_args).
 CAP_PROXY_ARGS = {
     "notifications": [_portal_call("Notification"), *_service_rules("org.freedesktop.Notifications", "/org/freedesktop/Notifications")],
     # the direct name's service is on two objects
@@ -1433,9 +1486,13 @@ INPUT_METHOD_PORTALS = ("org.freedesktop.portal.IBus", "org.freedesktop.portal.F
 def proxy_args(gs: dict, app_id: str) -> list[str]:
     """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal, the
     input-method portals and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
+    gs = normalize(gs)
     args = ["--filter", *portal_rules(), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
-    for cap in sorted(normalize(gs)["caps"]):
-        args += CAP_PROXY_ARGS.get(cap, [])
+    for cap in sorted(gs["caps"]):
+        # Media keys: to the proxy an own is a talk too, on every name the pattern covers, whoever
+        # owns it. So the app's own MPRIS name alone where a review gave it; every player's name,
+        # and so every other player, only where nobody did (CR1.5-36)
+        args += [f"--own={gs['mpris_name']}"] if cap == "mpris" and gs["mpris_name"] else CAP_PROXY_ARGS.get(cap, [])
     return args
 
 

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="th
 def test_templates_resolve_to_normalized_grant_sets():
     for name in sb.TEMPLATE_ORDER:
         gs = sb.resolve_template(name)
-        assert set(gs) == {"level", "folders", "network", "ports", "sound", "devices", "caps", "exec_deny", "write_app"}
+        assert set(gs) == {"level", "folders", "network", "ports", "sound", "devices", "caps", "mpris_name", "exec_deny", "write_app"}
         assert gs["level"] in ("standard", "strict")
 
 
@@ -417,6 +417,120 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     assert portal.format("Inhibit") not in web and not [a for a in web if "org.freedesktop.ScreenSaver" in a]
     chat = sb.proxy_args(sb.resolve_template("messenger"), "chat")           # both
     assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and direct.format("ScreenSaver") in chat
+
+
+# ---------------------------------------------------------------- the app's own MPRIS name (R17.5.1, CR1.5-36)
+
+VLC = "org.mpris.MediaPlayer2.vlc"
+
+
+def _player(name=None, template="media-player"):
+    return sb.apply_overrides(sb.resolve_template(template), {"mpris_name": name} if name else {})
+
+
+def test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it():
+    # CR1.5-36: Media keys passed `--own=org.mpris.MediaPlayer2.*`, and to xdg-dbus-proxy an own is
+    # a talk too, on every name below the prefix, whoever owns it: the app could call every other
+    # media player (and whatever else that player's connection serves). The need is the reverse,
+    # the desktop calling the app on the app's own name, so the launcher owns the name a review
+    # gives, and that alone. The only test of the capability ran the daemon calling the app.
+    own = lambda gs: [a for a in sb.proxy_args(gs, "player") if "mpris" in a]      # noqa: E731
+    assert own(_player(VLC)) == [f"--own={VLC}"]
+    assert own(_player("org.mpris.MediaPlayer2.chromium.*")) == ["--own=org.mpris.MediaPlayer2.chromium.*"]   # a name per instance
+    assert own(_player()) == ["--own=org.mpris.MediaPlayer2.*"]                 # nobody named it: every name, as before
+    assert sb.CAP_PROXY_ARGS["mpris"] == ["--own=org.mpris.MediaPlayer2.*"]
+    # a name is no capability: without Media keys it grants nothing, and the set doesn't keep it
+    plain = sb.apply_overrides(sb.resolve_template("online-app"), {"mpris_name": VLC})
+    assert own(plain) == [] and sb.normalize(plain)["mpris_name"] is None
+    assert sb.normalize({**_player(VLC), "level": "strict"})["mpris_name"] is None     # Strict has no bus
+    # what isn't one name below the prefix is no name: the whole prefix, another service's name, an
+    # element xdg-dbus-proxy refuses (it exits, and the app has no bus), a second argument
+    for bad in ("org.mpris.MediaPlayer2.*", "org.mpris.MediaPlayer2", "org.freedesktop.secrets", "org.mpris.MediaPlayer2.7zip",
+                "org.mpris.MediaPlayer2..vlc", "org.mpris.MediaPlayer2.*.vlc", "org.mpris.MediaPlayer2.vlc --talk=org.freedesktop.secrets",
+                "org.mpris.MediaPlayer2.vlc.", "org.mpris.MediaPlayer3.vlc", "vlc", "org.mpris.MediaPlayer2." + "x" * 240, 7, ["x"]):
+        assert sb.mpris_name(bad) is None, bad
+        assert own(_player(bad)) == ["--own=org.mpris.MediaPlayer2.*"], bad
+        assert trustfile._setting_value("sandboxMprisName", str(bad)) is None, bad      # the review line's reader agrees
+    for good in (VLC, "org.mpris.MediaPlayer2.chromium.instance4711", "org.mpris.MediaPlayer2.firefox.instance_1_23",
+                 "org.mpris.MediaPlayer2.io.github.Some-Player", "org.mpris.MediaPlayer2.chromium.*"):
+        assert sb.mpris_name(good) == good and trustfile._setting_value("sandboxMprisName", f"`{good}`") == good, good
+    # the grant set carries it wherever a set goes: stored, compared, customized, reset
+    gs = _player(VLC)
+    assert sb.to_json(gs)["mpris_name"] == VLC and sb.normalize(sb.to_json(gs)) == sb.normalize(gs)
+    assert sb.customized("media-player", gs) and not sb.customized("media-player", _player())
+    assert sb.as_overrides("media-player", gs) == {"mpris_name": VLC}
+    assert sb.grants_from_config({"template": "media-player", "overrides": sb.as_overrides("media-player", gs)}) == sb.normalize(gs)
+
+
+def test_a_review_names_the_apps_mpris_name_and_reviews_merge_to_the_narrower_one():
+    # R10.3.1: the line a review names it with, read, applied, written back and merged across Trusts
+    section = ("## VLC::Settings\n\n- Sandbox (linux): media-player\n"
+               f"- Sandbox MPRIS name (linux): `{VLC}`\n")
+    parsed, warns = trustfile.parse_section("VLC", section)
+    assert not warns
+    opts = trustfile.resolve_settings(parsed["opts"], "linux")
+    assert opts["sandboxMprisName"] == VLC
+    assert trustfile.resolve_settings(parsed["opts"], "windows").get("sandboxMprisName") is None      # Linux-only, as every Sandbox line
+    gs = sb.grants_from_config(sb.config_from_review(opts))
+    assert gs["mpris_name"] == VLC and f"--own={VLC}" in sb.proxy_args(gs, "vlc")
+    bad, _ = trustfile.parse_section("VLC", "## VLC::Settings\n\n- Sandbox: media-player\n- Sandbox MPRIS name: org.freedesktop.secrets\n")
+    assert "sandboxMprisName" not in bad["opts"]                                 # no name below the prefix: ignored, as an unknown word is
+    # ...and written: the user's own set as their review's lines, and read back the same
+    written, refused = sb.as_review("media-player", gs)
+    assert written == {"sandbox": "media-player", "sandboxMprisName": VLC} and not refused
+    assert sb.grants_from_config(sb.config_from_review(written)) == sb.normalize(gs)
+    text = trustfile.format_settings("VLC", trustfile.options_to_write({}, "", written, "linux"))
+    assert f"- Sandbox MPRIS name (linux): {VLC}" in text
+    assert "sandboxMprisName" not in sb.as_review("media-player", _player())[0]
+    assert "sandboxMprisName" in trustfile.SANDBOX_KEYS and "sandboxMprisName" in trustfile.SETTINGS_ORDER
+    # across Trusts the least privilege (R17.3.2): a name beats no name, the narrower of two wins,
+    # and two reviews that name different players leave no name both allow, so no media keys
+    one = lambda a, b: sb.intersect(_player(a), _player(b))                      # noqa: E731
+    assert one(VLC, None)["mpris_name"] == VLC and one(None, VLC)["mpris_name"] == VLC
+    assert one(VLC, VLC)["mpris_name"] == VLC and one(None, None)["mpris_name"] is None
+    assert "mpris" in one(VLC, None)["caps"] and "mpris" in one(None, None)["caps"]
+    per, inst = "org.mpris.MediaPlayer2.chromium.*", "org.mpris.MediaPlayer2.chromium.instance7"
+    assert one(per, inst)["mpris_name"] == inst and one(inst, per)["mpris_name"] == inst
+    assert one(per, "org.mpris.MediaPlayer2.chromium")["mpris_name"] == "org.mpris.MediaPlayer2.chromium"     # `.*` covers the name itself too
+    assert one("org.mpris.MediaPlayer2.chromium.*", "org.mpris.MediaPlayer2.chromium.beta.*")["mpris_name"] == "org.mpris.MediaPlayer2.chromium.beta.*"
+    for a, b in ((VLC, "org.mpris.MediaPlayer2.mpv"), (per, "org.mpris.MediaPlayer2.chromiumdev"), (VLC, "org.mpris.MediaPlayer2.vlc.instance1")):
+        both = one(a, b)
+        assert "mpris" not in both["caps"] and both["mpris_name"] is None and "inhibit" in both["caps"], (a, b)
+    assert sb.intersect(_player(VLC), sb.resolve_template("online-app"))["mpris_name"] is None     # no Media keys in one: none
+    # ...whatever the two say, in either order: the merged set never has a name one of them lacks
+    covers = lambda wide, name: wide is None or wide == name or (wide.endswith(".*") and (name == wide[:-2] or name.startswith(wide[:-1])))   # noqa: E731
+    names = (None, VLC, "org.mpris.MediaPlayer2.mpv", per, inst, "org.mpris.MediaPlayer2.chromium", "org.mpris.MediaPlayer2.chromium.beta.*",
+             "org.mpris.MediaPlayer2.chromium.beta.instance1")
+    for a in names:
+        assert sb.intersect(_player(a), _player(a)) == sb.normalize(_player(a))
+        for b in names:
+            m = one(a, b)
+            assert m == one(b, a), (a, b)
+            if "mpris" in m["caps"]:
+                assert covers(a, m["mpris_name"] or "org.mpris.MediaPlayer2.*") and covers(b, m["mpris_name"] or "org.mpris.MediaPlayer2.*"), (a, b, m["mpris_name"])
+            else:
+                assert a and b and not covers(a, b) and not covers(b, a), (a, b)
+    _, merged = sb.resolve(reviews=[{"template": "media-player", "overrides": {"mpris_name": VLC}}, {"template": "media-player", "overrides": {}}])
+    assert merged["mpris_name"] == VLC
+
+
+def test_a_named_mpris_name_shows_as_the_narrowing_it_is():
+    # the dialog's description, the Audit and the review badge say a set by its changes (R17.3.4,
+    # R17.11): a name takes away every other one, so it reads as less access, never as more
+    named, any_ = _player(VLC), _player()
+    assert sb.changes(any_, named) == ([], [f"media-player names other than {VLC}"])
+    assert sb.changes(named, any_) == (["every media-player name"], [])
+    assert sb.changes(named, _player("org.mpris.MediaPlayer2.mpv")) == (["the media-player name org.mpris.MediaPlayer2.mpv"], [f"the media-player name {VLC}"])
+    assert sb.changes(named, named) == ([], [])
+    assert sb.describe("media-player", named) == f"Media player, without media-player names other than {VLC}"
+    assert sb.describe("media-player", any_) == "Media player"
+    narrower = sb.suggestion_text(any_, named, "Ana")
+    assert narrower == f"Ana suggests removing media-player names other than {VLC}. The app may have more access than it needs."
+    wider = sb.suggestion_text(named, any_, "Ana")
+    assert wider == "Ana suggests adding every media-player name. Until you review it, the app may not work fully."
+    # Media keys itself coming or going is said as that, once
+    assert sb.changes(sb.resolve_template("online-app"), sb.apply_overrides(sb.resolve_template("online-app"), {"caps": ["notifications", "mpris"], "mpris_name": VLC})) == (["media keys"], [])
+    assert sb.summary(named) == sb.summary(any_)                                  # the chip is the capability's; its hint says which names
 
 
 # ---------------------------------------------------------------- the review lines (R10.3.1)

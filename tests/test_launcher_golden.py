@@ -33,7 +33,9 @@ CASES = {
     "messenger-camera": dict(gs=sb.resolve_template("messenger"), appimage=None),
     "cli-tool": dict(gs=sb.resolve_template("cli-tool"), appimage=None),
     "standard-writable-no-x11": dict(gs=sb.apply_overrides(sb.resolve_template("standard"), {"write_app": True, "devices": []}), appimage=None),
-    "developer-every-capability": dict(gs=sb.apply_overrides(sb.resolve_template("developer"), {"caps": sorted(sb.CAP_LABELS), "sound": ["play", "record"]}), appimage=None),
+    # every capability, Media keys under the app's own MPRIS name, as a review gives it (R17.5.1)
+    "developer-every-capability": dict(gs=sb.apply_overrides(sb.resolve_template("developer"), {
+        "caps": sorted(sb.CAP_LABELS), "sound": ["play", "record"], "mpris_name": "org.mpris.MediaPlayer2.app"}), appimage=None),
 }
 
 

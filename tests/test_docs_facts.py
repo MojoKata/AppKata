@@ -79,6 +79,10 @@ def _facts() -> dict:
     row = re.search(r"^\| Sandbox \| a template name \((.*?)\) or `off`", _req("R10.3.1"), re.M)
     f["R10.3.1: the templates a review may name"] = (set(re.findall(r"`([a-z-]+)`", row.group(1))) if row else set(),
                                                     set(trustfile.SANDBOX_TEMPLATES))
+    # every option a review's Settings may hold has its row in R10.3.1's table, and no row is of none
+    # (CR1.5-36 added one, `Sandbox MPRIS name`; Trust, Rating and Tags are the review's own values)
+    options = set(re.findall(r"^\| ([A-Z][A-Za-z ]+?) \|", _req("R10.3.1"), re.M)) - {"Option", "Trust", "Rating", "Tags"}
+    f["R10.3.1: the options in its table"] = (options, set(trustfile.SETTINGS_LABELS.values()))
     hint = re.search(r'label: "Built-in templates"\s*hint: "([^"]*)\. Each app', _read("src/appkata/qml/SettingsDialog.qml"))
     f["Settings: the built-in templates row"] = (_labels_to_keys(hint.group(1)) if hint else set(), set(sb.TEMPLATE_ORDER))
     # every count of the templates, wherever a document states one (found fixing review 2: R17.3.4 and

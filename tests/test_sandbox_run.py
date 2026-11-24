@@ -1959,7 +1959,38 @@ bus.register_object("/org/mpris/MediaPlayer2", Gio.DBusNodeInfo.new_for_xml(XML)
                     lambda *a: GLib.Variant("s", "Playing"), None)
 Gio.bus_own_name_on_connection(bus, "org.mpris.MediaPlayer2.appkataprobe", Gio.BusNameOwnerFlags.NONE,
                                lambda *a: print("OWNED", flush=True), lambda *a: print("NOT-OWNED", flush=True))
+def others():                       # what the app can do to another player on the bus (CR1.5-36)
+    def ask(what, dest, path, iface, method, args=None):
+        try:
+            r = bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+            print(what, "ANSWERED", *([r.unpack()[0]] if method == "RequestName" else []), flush=True)
+        except GLib.Error as e:
+            print(what, "REFUSED", Gio.DBusError.get_remote_error(e), flush=True)
+    names = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", None, None, 0, 3000, None).unpack()[0]
+    print("SEES", *sorted(n for n in names if n.startswith("org.mpris.")), flush=True)
+    ask("OTHER-PLAYER", "org.mpris.MediaPlayer2.other", "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Pause")
+    ask("OTHER-OBJECT", "org.mpris.MediaPlayer2.other", "/org/appkata/Other", "org.appkata.Other", "Open", GLib.Variant("(s)", ("file:///etc/hostname",)))
+    ask("OTHER-NAME", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", ("org.mpris.MediaPlayer2.another", 4)))
+GLib.timeout_add(1200, others)
 GLib.timeout_add(2500, lambda: sys.exit(0))
+GLib.MainLoop().run()
+"""
+
+# Another media player on the bus, as the user's own one is: its MPRIS object, and a second object
+# of its own on the same connection that opens what it is sent.
+_OTHER_PLAYER = """
+import sys
+from gi.repository import Gio, GLib
+log = open(sys.argv[1], "a")
+player = Gio.DBusNodeInfo.new_for_xml('<node><interface name="org.mpris.MediaPlayer2.Player"><method name="Play"/><method name="Pause"/>'
+                                      '<property name="PlaybackStatus" type="s" access="read"/></interface></node>').interfaces[0]
+own = Gio.DBusNodeInfo.new_for_xml('<node><interface name="org.appkata.Other"><method name="Open"><arg type="s" direction="in"/></method></interface></node>').interfaces[0]
+def call(conn, sender, path, iface, method, params, inv):
+    log.write(f"OTHER {method} {params.unpack()}\\n"); log.flush(); inv.return_value(None)
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+bus.register_object("/org/mpris/MediaPlayer2", player, call, lambda *a: GLib.Variant("s", "Playing"), None)
+bus.register_object("/org/appkata/Other", own, call, None, None)
+Gio.bus_own_name_on_connection(bus, "org.mpris.MediaPlayer2.other", Gio.BusNameOwnerFlags.NONE, None, None)
 GLib.MainLoop().run()
 """
 
@@ -1990,25 +2021,49 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
     # proxy rule was tested. A stand-in media-key daemon on the test bus finds the app's MPRIS name,
     # calls Play on it and reads its status back -- through the proxy, into the sandbox -- for the app
     # with the capability; the app without it can't even own the name.
+    # CR1.5-36: that was the daemon calling the app, and never the app calling out. To the proxy a
+    # name an app may own is one it may call, so `--own=org.mpris.MediaPlayer2.*` let the app call
+    # every other player, and whatever else that player's connection serves. Another player is on
+    # the bus now: the app whose review names its MPRIS name owns that one, is driven on it, and
+    # neither sees nor reaches the other; the app nobody named still does (R17.17 says so).
     bus = _Bus(env)
-    log = tmp_path / "keys.log"
-    daemon = subprocess.Popen(["python3", "-c", _MEDIA_KEYS, str(log)], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log, other_log = tmp_path / "keys.log", tmp_path / "other.log"
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    daemon = subprocess.Popen(["python3", "-c", _MEDIA_KEYS, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    other = subprocess.Popen(["python3", "-c", _OTHER_PLAYER, str(other_log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        for name in ("player", "noplayer"):
+        for name in ("named", "player", "noplayer"):
             d = env.home / "apps" / name / "1.0" / "bin"
             d.mkdir(parents=True, exist_ok=True)
             (d / "mpris.py").write_text(_MPRIS_APP)
+        its_own = sb.apply_overrides(sb.resolve_template("media-player"), {"mpris_name": "org.mpris.MediaPlayer2.appkataprobe"})
+        rn = env.run(env.app("named", its_own), 'python3 "$(dirname "$0")/mpris.py"', env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        reached_by_named = [l for l in other_log.read_text().splitlines() if "Pause" in l or "Open" in l]
         r = env.run(env.app("player", sb.resolve_template("media-player")), 'python3 "$(dirname "$0")/mpris.py"',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
         r2 = env.run(env.app("noplayer", sb.resolve_template("online-app")), 'python3 "$(dirname "$0")/mpris.py"',
                      env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
     finally:
         daemon.terminate()
+        other.terminate()
         bus.close()
     assert "OWNED" in r.stdout and "CALLED Play" in r.stdout, (r.stdout, r.stderr)
-    assert "PLAYED org.mpris.MediaPlayer2.appkataprobe status=Playing" in log.read_text()
+    assert log.read_text().count("PLAYED org.mpris.MediaPlayer2.appkataprobe status=Playing") >= 2      # the named app and the unnamed one
     assert "NOT-OWNED" in r2.stdout and "CALLED" not in r2.stdout, (r2.stdout, r2.stderr)
+    # named: driven on its own name, and that is all of MPRIS it has
+    out = rn.stdout.splitlines()
+    assert "OWNED" in out and any(l.startswith("CALLED Play") for l in out), (rn.stdout, rn.stderr)
+    assert "SEES org.mpris.MediaPlayer2.appkataprobe" in out, rn.stdout                  # not the other player
+    assert "OTHER-PLAYER REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out and "OTHER-OBJECT REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out, rn.stdout
+    assert "OTHER-NAME REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out, rn.stdout   # nor a second name of its own
+    assert reached_by_named == [], reached_by_named
+    # nobody named it: every player's name, so every player, and what else its connection serves
+    out = r.stdout.splitlines()
+    assert "SEES org.mpris.MediaPlayer2.appkataprobe org.mpris.MediaPlayer2.other" in out, r.stdout
+    assert "OTHER-PLAYER ANSWERED" in out and "OTHER-OBJECT ANSWERED" in out and "OTHER-NAME ANSWERED 1" in out, r.stdout
+    reached = other_log.read_text()
+    assert "OTHER Pause ()" in reached and "OTHER Open ('file:///etc/hostname',)" in reached, reached
+    assert "OTHER-PLAYER REFUSED" in r2.stdout and "OTHER-OBJECT REFUSED" in r2.stdout, r2.stdout    # no capability: no player at all
 
 
 _SCREENSAVER = """

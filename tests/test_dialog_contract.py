@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 
 from appkata_core import sandbox as sb                      # noqa: E402
 from appkata_core import trustfile                          # noqa: E402
-from test_sandbox_backend import URL, _installed, _review, _tarball_install, be   # noqa: E402,F401
+from test_sandbox_backend import URL, _installed, _review, _review_lines, _tarball_install, be   # noqa: E402,F401
 
 HARNESS = os.path.join(os.path.dirname(__file__), "qml", "DialogHarness.qml")
 
@@ -132,6 +132,44 @@ def test_picking_a_template_in_the_sandbox_dialog_applies_that_template(ui, be, 
     assert info["source"] == "user" and info["template"] == key
     want = sb.summary(sb.resolve_template(key), template=key) if key != "off" else ["No sandbox"]
     assert [c[0] for c in info["chips"]] == want
+
+
+def _hint(dlg, label):
+    """What the dialog says under one of its switches."""
+    from PySide6.QtCore import QObject
+    return next(o.property("hint") for o in dlg.findChildren(QObject) if o.property("label") == label)
+
+
+def test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog(ui, be, monkeypatch):
+    # CR1.5-36: the MPRIS name a review gives an app is part of its grant set, and the dialog has no
+    # control for it: it rides in the working set. A Save that dropped it would hand the app every
+    # player's name again under the same chips, which is all the untouched-Save test above compares.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    name = "org.mpris.MediaPlayer2.demo"
+    _review_lines(be, f"- Sandbox (linux): media-player\n- Sandbox MPRIS name (linux): {name}\n")
+    dlg = _dialog(ui, "sandbox")
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "tpl") == "media-player" and _prop(dlg, "gs")["mpris_name"] == name
+    assert _hint(dlg, "Media keys") == f"Play/pause and track info on the keyboard and lock screen (MPRIS), under its own player name alone: {name}."
+    _call(dlg, "toggleIn", "caps", "mpris", False)               # Media keys off and on again: still its own name
+    _call(dlg, "toggleIn", "caps", "mpris", True)
+    _call(dlg, "setField", "network", True)                      # and another change beside it
+    _press(dlg, "save")
+    assert be._user_sandbox_config(URL) == {"template": "media-player", "overrides": {"network": True, "mpris_name": name}}
+    args = sb.proxy_args(be._resolved_sandbox(URL)["grants"], "demo")
+    assert f"--own={name}" in args and "--own=org.mpris.MediaPlayer2.*" not in args
+    _call(dlg, "openFor", URL)                                   # reopened: the same
+    assert _prop(dlg, "gs")["mpris_name"] == name
+    # the bare template is the user's own set, with no name: the hint says what that reaches, and
+    # the review badge offers the reviewer's narrower one
+    _pick(dlg, "templateSelect", "media-player")
+    assert not _prop(dlg, "gs").get("mpris_name")
+    assert _hint(dlg, "Media keys") == ("Play/pause and track info on the keyboard and lock screen (MPRIS). It has no player name of its own here "
+                                        "(a review gives one), so it may take any, and can reach every other media player that is running.")
+    _press(dlg, "save")
+    info = be.sandboxInfo(URL)
+    assert "--own=org.mpris.MediaPlayer2.*" in sb.proxy_args(be._resolved_sandbox(URL)["grants"], "demo")
+    assert f"removing media-player names other than {name}" in json.dumps(info), info
 
 
 def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be, monkeypatch):
