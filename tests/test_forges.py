@@ -2241,10 +2241,47 @@ def test_through_real_sockets_a_limit_answered_on_one_port_of_a_name_leaves_its_
     assert [p for p, _ in a.seen] == ["/api/x"] and [p for p, _ in b.seen] == ["/api/x"]
 
 
+# CR1's #705: a limit was kept under the host a request was first made to, whichever host answered:
+# a forge's file storage, which its redirect leads to, answering 429 held back the forge's own API
+# for every app, and the storage was asked again at the next redirect. How it slipped past: the
+# tests of a limit asked one host and no redirect. The class is "a record of the host asked first
+# for what another host said" (#683 was its errors), so the limit here comes from the host a
+# redirect led to, as a forge's rate limit and as a forge being maintained.
+def saying_when(status, after=None):
+    def answer(handler):
+        when = f"Retry-After: {after}\r\n" if after else ""
+        handler.wfile.write(f"HTTP/1.1 {status} Said\r\n{when}Content-Length: 0\r\n\r\n".encode())
+    return answer
+
+
+@pytest.mark.parametrize("status, after, until", [(429, None, 60), (403, "120", 120), (503, "120", 120)])
+def test_through_real_sockets_a_limit_from_the_host_a_redirect_led_to_is_that_hosts(pair, clock, monkeypatch, status, after, until):
+    a, b = pair
+    a.redirects["/o/r/releases/download/v1/app.AppImage"] = f"https://{b.at}/storage/app.AppImage"
+    a.files, b.files = {"/api/v1/repos/o/r": {"ok": True}}, {"/storage/app.AppImage": saying_when(status, after)}
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN"}, timeout=5))
+    with pytest.raises(RateLimited, match=f"^{b.at} ") as e:
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert e.value.host == e.value.extra["host"] == b.at and e.value.status == status
+    assert http.limited == {b.at: clock.now + until} and http.limit_status == {b.at: status}
+    assert http.json(f"https://{a.at}/api/v1/repos/o/r") == {"ok": True}         # the forge's own API still goes out
+    with pytest.raises(RateLimited, match=f"^{b.at} "):                           # and the storage isn't asked again until then
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert [p for p, _ in b.seen] == ["/storage/app.AppImage"] and clock.waits == []
+    assert [p for p, _ in a.seen] == ["/o/r/releases/download/v1/app.AppImage", "/api/v1/repos/o/r",
+                                      "/o/r/releases/download/v1/app.AppImage"]
+    clock.now += until + 1                                                         # once its time has come, it is
+    with pytest.raises(RateLimited):
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert len(b.seen) == 2
+
+
 def test_r9_2_1_says_whose_a_rate_limit_is():
     text = " ".join(reqdocs.item("R9.2.1").split())
     assert "A rate limit holds back the requests to the host that gave it and to no other host" in text
     assert "another port of its name is another host (R9.2.2)" in text
+    assert "where a redirect led there, the host that gave it is the one it led to" in text
+    assert "a redirect to that host isn't followed either" in text
 
 
 @pytest.mark.parametrize("call, kw, accept", [

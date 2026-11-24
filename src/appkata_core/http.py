@@ -302,8 +302,8 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     last, and whether the token went there. An error is that host's, and is the token's only if it
     was sent (CR1 #683)."""
 
-    def __init__(self, allowed):
-        self.allowed = allowed
+    def __init__(self, allowed, unlimited):
+        self.allowed, self.unlimited = allowed, unlimited
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         was = urlsplit(req.full_url)
@@ -314,7 +314,8 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
             if token and to.scheme != "https":
                 raise Unreachable(f"{was.hostname} redirected a request that carried its API token to plain http; "
                                   "the redirect wasn't followed")
-        except Unreachable:
+            self.unlimited(to)                     # a host that said when to come back isn't asked before then (CR1 #705)
+        except SourceError:
             fp.close()
             raise
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -342,7 +343,7 @@ class Http:
         self.tokens = {token_key(k): v for k, v in (tokens or {}).items() if v}     # by host: one address each
         self.timeout, self.deadline = timeout, deadline
         self._here = threading.local()           # this thread's `cancelled`, inside a `stopping` block
-        self._open = opener or _opener(_Redirects(self._allowed), self._connect).open
+        self._open = opener or _opener(_Redirects(self._allowed, self._unlimited), self._connect).open
         self._lookup = _addresses                # host -> its addresses: the check's and the connection's (_connect)
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
         self.limited: dict[str, float] = {}      # host (_host: one address) -> reset time
@@ -398,6 +399,17 @@ class Http:
             raise Unreachable(f"couldn't reach {host}: {e}") from None
         _refuse_local(host, addresses)
         return parts
+
+    def _unlimited(self, parts) -> None:
+        """RateLimited when the host of this address said when to come back and that time hasn't
+        come (R9.2.1): before a request is sent, and before a redirect is followed. A host's limit
+        is kept as its token is (CR1 #697): under the one address, its name and its port (_host).
+        Kept by the name alone, two forges on one name shared it, and a limit one of them answered
+        refused every request to the other until it ran out."""
+        limit = _host(parts)
+        reset = self.limited.get(limit)
+        if reset and reset > time.time():
+            raise RateLimited(limit, reset, self.limit_status.get(limit))
 
     def _connect(self, req, address, timeout, source=None) -> socket.socket:
         """The socket of a connection of Http's own opener (_Connections), to `address`, (name, port).
@@ -499,13 +511,7 @@ class Http:
         parts = self._allowed(url, token_host)
         host = parts.hostname.lower()
         whose = token_key(token_host) if token_host else _host(parts)      # the host this request is made for
-        # a host's limit is kept as its token is (CR1 #697): under the one address, its name and its
-        # port (_host). Kept by the name alone, two forges on one name shared it: a limit one of
-        # them answered refused every request to the other until it ran out
-        limit = _host(parts)
-        reset = self.limited.get(limit)
-        if reset and reset > time.time():
-            raise RateLimited(limit, reset, self.limit_status.get(limit))
+        self._unlimited(parts)
         token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
@@ -513,7 +519,7 @@ class Http:
         # the address and the host asked last, and whether the token went there: _Redirects moves
         # them on, since what comes after a redirect is another host's answer, or its failure to
         # give one, and that host may have been sent no token. Every error below is said of the
-        # host asked last (CR1 #683); `limit`, the one asked first, is whose limit is kept.
+        # host asked last (CR1 #683), and so is a limit (CR1 #705).
         req.asked = asked = {"url": url, "host": host, "token": bool(token)}
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
@@ -532,6 +538,10 @@ class Http:
                 return data, hdr, r.geturl()
         except urllib.error.HTTPError as e:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
+            # a limit is the host's that answered with it (CR1 #705): after a redirect, the host it
+            # led to, such as a forge's file storage, and not the forge first asked, whose own API
+            # was held back for a limit it never gave
+            limit = _host(urlsplit(asked["url"]))
             if e.code in (403, 429) and (hdr.get("x-ratelimit-remaining") == "0" or "retry-after" in hdr or e.code == 429):
                 reset = _reset_time(hdr)
                 self.limited[limit], self.limit_status[limit] = reset, e.code
