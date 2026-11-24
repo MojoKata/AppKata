@@ -1,6 +1,0 @@
-# Batch 4 of the relay for CR1's unit U09
-# From docs/remediation/CR1-schedule.json on this branch, the unit U09: two findings batch 1 found, filed since by the coordinator. Both are about what a capability's bus name opens, as #378 was.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#693  medium  CR1.5-44 Keep the screen awake opens the whole ScreenSaver interface, so an app with it may be able to lock the screen or switch the screen saver on. (A check: see its record.)
-#691  medium  CR1.5-43 The Saved passwords capability opens the keyring's whole connection, its daemon and master-password interfaces included, not the Secret Service alone.

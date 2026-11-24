@@ -1,7 +1,0 @@
-# Batch 2 of the relay for CR1's unit U09
-# From docs/remediation/CR1-schedule.json at upstream/master ae63101, the unit U09. #393 and #399 change the same lines of the proxy's launch; #403 the portals it lets through.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#393  medium  CR1.5-18 The D-Bus proxy can't reach a session bus outside the runtime folder, so in a dbus-run-session session Standard apps get no bus.
-#399  medium  CR1.5-24 The D-Bus proxy parses what a hostile app sends yet runs with the runtime folder read-write and no seccomp, and no limit lists it.
-#403  medium  CR1.5-28 The ProxyResolver portal gives an app without the network grant the host's proxy credentials the launcher withholds.

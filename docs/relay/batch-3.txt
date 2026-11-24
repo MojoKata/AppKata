@@ -1,9 +1,0 @@
-# Batch 3 of the relay for CR1's unit U09
-# From docs/remediation/CR1-schedule.json on this branch, the unit U09. #403 was left by batch 2 with its fix written and proven as a patch; the rest is wording: the Network hint, the documents' lists of portals, the chip's names.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#403  medium  CR1.5-28 The ProxyResolver portal gives an app without the network grant the host's proxy credentials the launcher withholds. (Batch 2's patch: see the coordinator's notes after batch 2.)
-#404  small  CR1.5-29 An app with no network can still send data out by having the portal open a link or email, and neither the chip nor the limits say so.
-#202  small  CR1.11-85 The portals a sandboxed app may always use are listed four times, and two of the lists leave out ProxyResolver.
-#201  small  CR1.11-84 The architecture says GTK4 falls back cleanly when the file chooser portal is refused, which holds for GTK 4.14 only in part.
-#692  small  CR1.9-32 The sandbox summary chip names two capabilities differently from the Sandbox dialog's switches: "Secrets" and "Keep screen awake".
