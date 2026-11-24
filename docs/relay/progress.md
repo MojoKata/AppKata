@@ -538,3 +538,124 @@ Checked: every answer of the agent on its named model; the guard; `tests/test_in
 - **Needs a run** (the Windows VM tests; the desktop VMs for #156 and batch 1): the coordinator's,
     when batch 4 is in.
 
+
+## Batch 4
+
+Done 2026-11-24 by one agent (Opus 5.5, high effort), on `cr1-u03-portable-install` from 140770e.
+**Taken over:** the agent that started this batch (Fable 5.2) stopped at a usage limit before its
+first commit, leaving an uncommitted change to `install.py`'s `_find_executable` for #315. It was
+kept, with one fault fixed: it ranked each folder's files as the walk reached them, so a `.desktop`
+file in a folder visited after the program's (`share/` after `bin/`) wasn't read yet. The new test's
+".desktop file names it" case caught it. Its tests and the requirement sentence are mine.
+
+**Files touched**
+
+- `src/appkata_core/install.py`, `src/appkata_core/appkind.py`, `src/appkata/backend.py`,
+  `src/appkata/qml/SettingsDialog.qml`
+- `tests/test_install_review.py`, `tests/test_launch.py`, `tests/test_appkind.py`,
+  `tests/test_dialog_contract.py`, `tests/skips/windows.txt`
+- `docs/requirements/R4-installing-updating-and-uninstalling.md` (R4.3.1),
+  `docs/requirements/R5-main-window.md` (R5.7.4), `docs/requirements/R11-settings.md` (R11.1.4),
+  `docs/requirements/R17-app-sandboxing/R17.3-templates.md` (R17.3.3),
+  `docs/architecture/A1-app-sandboxing/A1.12-decisions.md` (A1.12.10), `docs/requirements-trace.md`
+
+**Counts**: fixed 7, no defect 0, remedy changed 0, set aside 0, still left 0, new 1.
+
+**The findings**
+
+| Finding | Outcome | Commit | Tests | Shown failing on the code before |
+|---|---|---|---|---|
+| #315 (Low) | fixed | 039d969 | `tests/test_install_review.py`: `test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says` (7 layouts: VSCodium flat, its own .desktop, ELF before script, helpers first, Firefox's `-bin`, no repository, ripgrep), `test_an_archive_with_nothing_but_helpers_has_no_program`, `test_what_an_archive_installs_starts_its_program_not_a_helper` (the record, the command link and the menu entry start `codium`) | `git archive` of 140770e with the test file copied in: 7 failed, 2 passed. VSCodium and "helpers first" gave `chrome-sandbox`; the others the old pick (`bin/zed`, the script `tool`, `aaa`); "nothing but helpers" `DID NOT RAISE`; the install's record `chrome-sandbox`. Firefox's and ripgrep's passed there and hold the class |
+| #319 (Low) | fixed | 49a64ed | `tests/test_launch.py`: `test_open_starts_a_packages_own_menu_entry_whatever_its_program_is_called` (libreoffice-writer, kde-spectacle on dnf, neovim, a package with hidden and several entries × gio, gtk-launch), `test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name` (none, a hidden one, another program's) | `git archive` of 039d969 with the test file copied in, `_APPLICATIONS` set with `raising=False` (the name is new): 11 failed, 9 passed. 8 asked no package manager and started `/usr/bin/<package>`; 3 `DID NOT RAISE` (a program named after the package was started). Also a real package: Ubuntu 24.04 in a container on Xvfb, `neovim` and `xterm` installed, Open through this code ran `xterm -e nvim` from `/usr/share/applications/nvim.desktop`; `xauth` gave "… has no app-menu entry to open it with" |
+| #329 (Low) | fixed (no test, as the record says) | c49c404 | none: `grep -rn _elevate src tests scripts` finds nothing, and tier 1 passes | the record's proof; nothing calls the deleted code, so no test can fail on it |
+| #317 (Low) | fixed | ee7ae38 | `tests/test_appkind.py`: `test_a_program_larger_than_any_length_read_whole_is_read_by_what_it_links` (a sparse 80 MB ELF, the gap before the section headers or before the string table × 32, 64 bits × none, C run-time, GTK: 12 cases); `make_elf` gained `gap` | `git archive` of 039d969 (`appkind.py` as at c49c404) with the test file copied in: 12 failed (`None == [...]`), 16 passed |
+| #661 (Low) | fixed | 5e4fb39 | `tests/test_appkind.py`: `test_a_tarballs_program_is_an_app_when_it_or_a_library_beside_it_links_a_display_library` (Firefox 159.0's layout and links, a versioned `.so.2`, a tool with libraries of its own, a tool with none, an app linking its own) | `git archive` of ee7ae38 with the test file copied in: 2 failed (`'cli' == 'gui'`: Firefox and the `.so.2`), 3 passed and hold the class |
+| #702 (Low) | fixed | c67534e | `tests/test_install_review.py`: `test_install_options_on_windows_show_the_folder_an_installed_app_is_in` (installed for Just me, for Everyone: the plan's two folders, and the folder a move to the other installs into) | `git archive` of 49a64ed (`backend.py` as at 5e4fb39) with the test file copied in: 2 failed, on "Installs to" (`now/me == then/me`). With the plan's assertions taken out in a scratch copy, both fail again on the move: `_app_options(url, {"scope": other}).root` was the app's old folder (doubt 1) |
+| #704 (Low) | fixed | 0880d61 | `tests/test_dialog_contract.py`: `test_settings_portable_apps_hint_says_when_its_settings_apply_as_r11_1_4_does` | `git archive` of 49a64ed (the QML and R11 as at c67534e) with the test file copied in: 1 failed (R11.1.4 had no hint sentence; the QML's was the old one) |
+
+Each commit: the touched test files whole with the project's venv, the four document checks,
+`tests/test_skip_lists.py`, and for #661 `tests/test_requirements_trace.py` and
+`tests/test_docs_facts.py`; the guard; and the whole of tier 1 in its container (doubt 6): 2991
+passed for #315, 3002 for #319, 3002 for #329, 3014 for #317, 3019 for #661, 3021 for #702, 3022 for
+#704, each with 121 skipped, all listed. No launcher's text changed, so the launcher tier wasn't run.
+
+**Remedy, where it differs in a detail** (each said in its commit; none changes the behaviour asked)
+
+- #315: an app with no repository passed `""` as a name, which every file name holds, so every file
+  ranked as named after the app; an empty name now matches nothing. Same function, said in the commit.
+- #319: of the remedy's two sources, the `.desktop` files the package ships, with one step more: a
+  package that ships none is opened by an entry in the system's applications folders whose program
+  is a file the package installed. Ubuntu 24.04's `neovim` ships no entry; its `nvim.desktop` is
+  `neovim-runtime`'s (found by the real-package run). The record leaves the source to the implementer.
+- #317: the second of the remedy's two ways (seek to each part), not `PT_DYNAMIC`.
+- #702: the fault in `_app_options` (doubt 1) is fixed in the same commit, in the same lines.
+
+**new** (no finding covers it; nothing was changed for it)
+
+1. `screenshots/src/render.js:1987` and `:2009`, and the generated `screenshots/src/svg/*/X04-settings-portable.svg`:
+   the design mock-ups still carry the old Portable apps hint ("Changes apply to new installs and
+   updates; apps already installed stay where they are."). Not a U03 file; a re-render follows a
+   change of the text there. Nothing in tier 1 compares them.
+
+**needs your eye**
+
+- 039d969 (#315): R4.3.1 says how an archive's program is picked (its `.desktop` file, its name, a
+  compiled program before a script, nearest the top; never a shared library, a `.sh` or a helper:
+  `chrome-sandbox`, a crash handler, `<program>-bin` beside `<program>`). The pick itself changes
+  for archives with no file named after the app. Nothing new on screen.
+- 49a64ed (#319): R5.7.4 says what Open does for a system package. New: Open starts the package's
+  app-menu entry through `gio launch` (else `gtk-launch`); a package with none is not opened, with
+  the toast "<App> has no app-menu entry to open it with", and with neither tool, "couldn't open
+  <App>: neither gio nor gtk-launch is on this computer". Before, a program named after the package
+  was started, whatever it was.
+- c67534e (#702): R4.3.1 gains "Install options (R4.9.5) shows that folder as the one it installs
+  to; on Windows, a move to the other of Just me and Everyone (R15.4.1) is a new install, which goes
+  to that one's install folder in Settings." Windows' "Installs to" shows the app's own folder.
+- 5e4fb39 (#661): R17.3.3's tarball rule gains "and no shared library beside it, in its folder,
+  links one (Firefox's program links none and loads its `libxul.so`, which does, at run time)";
+  A1.12.10 the same clause.
+- 0880d61 (#704): the hint and R11.1.4: "New installs take these settings. An app already installed
+  stays in its folder and keeps the options it was installed with (its Install options change
+  them); the command links folder and Keep older versions apply to it at its next update."
+- ee7ae38 (#317), c49c404 (#329): nothing a user sees or a requirement says changes (#317 makes the
+  reader do what R17.3.3 says).
+
+**needs a run**
+
+- `scripts/test-windows-vm.sh --tests`, with the earlier batches': `tests/skips/windows.txt` has 6
+  new lines no run has held it to (#315's three, #319's two, #702's one); `backend.py`'s Windows
+  plan (#702) has run only off Windows, with `OS` patched.
+- CI's `tour` job: the Settings dialog's Portable apps section with #704's longer hint.
+
+**guard**
+
+- `docs/requirements/R5-main-window.md`: a shared file; add it to U03's files (#319's sentence in R5.7.4).
+
+**Doubts**
+
+1. **#702's second fault is batch 3's.** #310's change to `_app_options` set both
+   `folder` and `folder_everyone` to the record's root. On Windows, saving Install options with the
+   other scope reinstalls the app there (R15.4.1, `install()`'s `moving_from`), and that install
+   took its folder from those options: an app moved to Everyone would have gone into the user's own
+   install folder. Shown by the test (both scopes), fixed in c67534e. Read and tested off Windows only.
+2. **#319 reads only the system's own applications folders** (`/usr/share/applications`,
+   `/usr/local/share/applications`) for another package's entry, and only when the package itself
+   ships none. Which entry is chosen when a package ships several is a judgement: the one whose
+   file name holds the package's name, else the first by name.
+3. **#319's Open does not watch the start**: `gio launch` runs detached with its output dropped, as
+   the old `Popen` of the program did. A failure after `gio` starts (no display) says nothing.
+4. **#661 looks only in the program's own folder**, as the decision says ("a .so in its folder").
+   An archive that keeps its libraries in `lib/` beside `bin/` is not looked at; such an app with a
+   loader program would still be a tool.
+5. **#329 has no test**, as its record says; it is the only one of the batch.
+6. **How tier 1 was run**: as the earlier batches, by a scratch script making the same `docker run`
+   as `scripts/test-tier1.sh` with the main checkout's Python, PySide6 and `.git` read-only, held to
+   3 GB, but over a snapshot: a `git clone --shared` of the worktree at HEAD with the finding's own
+   uncommitted files applied and the two submodules copied in, so the next finding's work could go
+   on while it ran. Each commit holds exactly the snapshot's files. One run (#661's first) was
+   stopped, its container killed by its own mount, when the trace row was found missing; the rerun
+   passed. Nothing was written into either checkout.
+7. **The real-package run for #319** used `ubuntu:24.04` from the network (apt), held to 3 GB, not
+   `scripts/test-channels.sh`, whose `channels_e2e.py` isn't a U03 file.
+8. **The session's working directory**: every command that ran git or touched the repository began
+   with a `cd` into this worktree, or named it by its absolute path.
