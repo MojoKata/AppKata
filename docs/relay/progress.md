@@ -497,3 +497,200 @@ document tests, whole; the batch pushed.
     Needs your eye in the pull request.
 - **Needs a run** (the Windows VM tests): the coordinator's, when the last batch is in.
 
+## Batch 4
+
+Files touched: `src/appkata_core/forges.py`, `src/appkata_core/sync.py`, `src/appkata_core/http.py`,
+`src/appkata_core/metadata.py`, `src/appkata/backend.py`, `tests/test_forges.py`,
+`tests/test_backend.py`. No requirement's text changed.
+
+Counts: 5 fixed (two of them tests only), 0 no defect, 0 remedy changed, 0 set aside, 0 still left,
+3 new. The follow-up to #277 that the coordinator's notes asked for is its own commit, and #683 has
+three follow-up commits (doubt 8).
+
+Each new test of a fix was shown failing by exporting the commit before it with `git archive` to a
+scratch folder, putting the new test files over it and running them there. The two findings whose
+fix is tests were shown to hold something on copies of the code with one fault put in each (a
+scratch script: the module rewritten in a scratch copy of the tree, the new tests run there).
+
+| Finding | Outcome | Commit | Tests (`tests/test_forges.py` unless said) | Before the fix |
+|---|---|---|---|---|
+| #265 | fixed | `601e34f` | `test_a_github_on_another_host_takes_no_files_from_github_coms_project_of_its_path`, `test_every_way_to_github_coms_pages_is_refused_for_another_host`, `test_a_sync_and_a_file_list_of_an_enterprise_source_ask_nothing_of_github_com`, `test_github_com_itself_reads_its_page_when_its_api_says_to_come_back_and_only_then`; holding what must stay: `test_a_github_on_another_host_has_its_own_apis_files`, `test_github_com_known_to_be_limited_is_asked_for_its_page_alone` | On `0a1dc78`: 38 failed, 515 passed (github.com was asked for the Enterprise project's path and its files were stored: "DID NOT RAISE SourceError") |
+| #277, the follow-up | done | `995c79e` | `test_what_said_when_to_come_back_is_kept_with_the_limit`, `test_a_limit_nothing_gave_a_status_for_has_none`, one more line in `test_a_sync_asks_a_host_that_said_when_to_come_back_once`; `tests/test_backend.py`: `test_a_rate_limit_hints_at_a_token_and_a_forge_being_maintained_says_only_until_when` | On `601e34f`, both files: 13 failed, 574 passed (the three 5xx rows read "… · add a token in Settings") |
+| #298 | fixed (the tests are the fix) | `9cdaec5` | `test_what_http_makes_of_each_answer` (a table, 61 rows then, 64 now), `test_the_table_has_a_row_for_each_kind_of_error_and_each_thing_a_retry_turns_on`, `test_when_a_host_may_be_asked_again_is_read_from_its_headers`, `test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come`, `test_a_time_to_come_back_that_has_gone_by_limits_nothing`, `test_what_a_request_carries`, `test_a_request_with_a_method_a_body_and_headers_of_its_own`, `test_how_large_an_answer_may_be_and_how_long_a_request_is_given`, `test_an_image_larger_than_an_image_may_be_is_passed_over` | Passes on the commit before it, as tests of right behaviour do. On 60 copies of `http.py` with one fault each: failed on 58; the two it passed (a limit ending a second early, a request's method not passed on) each got an assertion and fail now. On the code before this unit (`ae63101`): 41 of its 93 cases fail |
+| #293 | fixed (the tests are the fix) | `2b0f7d4` | `test_what_a_sync_stores_for_an_app`, `test_the_images_are_tried_in_r3_2s_and_r3_3s_order_and_no_others`, `test_the_first_image_that_answers_is_the_one_kept`, `test_an_app_keeps_the_icon_it_had_when_none_answers`, `test_a_project_that_says_nothing_of_itself_is_stored_as_its_forge_describes_it`, `test_a_metainfo_whose_name_is_a_placeholder_leaves_the_forges_name`, `test_a_project_that_moved_has_where_to_on_its_row`, `test_tags_stand_in_for_releases_only_where_the_source_tracks_them`, `test_a_hosts_forge_type_is_found_once_and_kept_for_the_next_sync`, `test_an_app_a_trust_lists_keeps_the_forge_type_found_for_it_too`, `test_the_forge_type_is_the_sources_setting_then_a_trusts_then_the_one_found`, `test_a_sync_reads_the_trusts_first_and_syncs_every_app_of_the_catalog_once`, `test_at_most_four_apps_are_fetched_at_the_same_time`, `test_a_sync_cancelled_before_it_starts_asks_for_nothing`, `test_a_sync_cancelled_between_two_apps_leaves_the_rest_as_they_were`, `test_the_package_channels_are_read_once_after_the_apps_and_never_end_a_sync`, `test_a_source_that_is_no_forges_project_has_that_on_its_row`, `test_each_probe_of_a_hosts_forge_type_in_its_order`, `test_a_host_appkata_knows_is_never_probed`, `test_a_whole_sync_of_a_github_project_by_its_pages_and_git`, `test_by_the_pages_a_projects_tags_come_from_git_newest_version_first`, `test_by_the_pages_a_project_that_moved_is_renamed` (94 cases) | Passes on the commit before it. On 58 copies of `sync.py` and 28 of `forges.py` with one fault each: failed on all but four. Two of the four got an assertion and fail now (a Cancel not looked at before an app that asks for nothing; a release's own date by the pages). The other two change nothing these tests could see: a prerelease marked on the releases page alone (an earlier test fails on it) and a front-page marker that a wider one beside it covers |
+| #683 | fixed | `01d57ef`, then `b637650` (a test row), `1d3ce29` (the rest of its class) and `ca3c7d0` (a date held as a number is) | `test_through_real_sockets_an_error_after_a_redirect_is_the_last_hosts_and_the_tokens_only_if_it_went_there`, `test_a_401_with_no_token_sent_is_never_the_tokens`; in `1d3ce29`: `test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_said_of_the_host_it_led_to`, `test_through_real_sockets_a_redirect_to_where_nothing_listens_is_that_hosts_failure`; for the two faults of `_reset_time` fixed with it: `test_a_time_no_clock_can_show_never_reaches_a_sources_row`, three rows of #298's table, ten of `_reset_time`'s, one case of the backend's test, and in `ca3c7d0` `test_whatever_a_host_says_and_wherever_the_clock_is_the_time_to_come_back_is_one_a_clock_shows` | On `2b0f7d4`, both files: 18 failed, 779 passed (4 of them the finding's: "127.0.0.1 rejected the API token (HTTP 401)" for the second host's 401; 14 the reset time's). `1d3ce29`'s on `b637650`: 8 failed, 804 passed. `ca3c7d0`'s on `1d3ce29`: 2 failed (the two zones east of Greenwich), 860 passed |
+| #681 | fixed | `be6b3d0` | `test_an_address_that_is_no_github_page_of_a_file_is_asked_for_as_its_readme_wrote_it`, `test_a_github_page_of_a_file_becomes_the_address_of_the_file`, `test_a_whole_address_is_written_as_an_address_can_be_sent_too`, `test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written` | On `01d57ef`: 22 failed, 782 passed (the finding's two addresses rewritten, and eleven more) |
+
+Runs at the batch's head (`ca3c7d0`), from the worktree's root:
+
+- `tests/test_forges.py` whole: 862 passed. With `tests/test_backend.py` and the four document
+    checks of the brief: 914 passed. Before each commit: the files it touched and the four document
+    checks; before #265's, #277's, #683's and #681's, the five other files that use `Http` and
+    `tests/test_requirements_trace.py` as well.
+- The whole suite with the project's `.venv` (`pytest -q tests/`, no skip list): 3645 passed, 39
+    skipped, in 3 min 15 s.
+- The whole suite in the tier 1 image with no network and 3 GB (`docker run --network none
+    --memory=3g`, `APPKATA_SKIPS=tier1`, the main checkout's `build/python-3.14` and
+    `build/pyside-6.12.0-py3.14` mounted read-only, and its `.git` read-only at its own path, as in
+    batch 3): 3563 passed, 121 skipped, in 2 min 35 s. `scripts/test-tier1.sh` itself was not run, as in the earlier batches.
+- The guard passed before each commit, naming only `docs/relay/`.
+
+How the design fits together, for batch 5:
+
+- **`req.asked`** (`Http._request`, `http._Redirects`): a dict on the request, shared by every hop,
+    with the address and the host asked last and whether the token went there. `_Redirects` moves
+    it on at each redirect. Every error of `_request` is said of `asked["host"]`; `host`, the one
+    asked first, is still the key of `Http.limited` and the host a `RateLimited` names (the second
+    item under New, which is #697's subject). #682's connection classes can check the address a
+    socket reached at the same place.
+- **`RateLimited(host, reset, status)`**, `Http.limit_status` (host to the status that set its
+    limit, beside `Http.limited` and under the same key) and `http.LIMIT_STATUSES` (403, 429): #697
+    changes both dicts' key together.
+- **`_reset_time`** takes a value only when it is a plain number or a date, and a time the
+    platform's clock can show in this time zone (`http._a_time`).
+- **`GitHub._page()`** is the one place a github.com page address is made, and refuses another host.
+- **The tests' harness** (`tests/test_forges.py`): `scripted` (an opener that sends what each case
+    says, an answer a request, and records the request objects), the table `ANSWERS` with `answer`,
+    `failing` and `limit` (a new branch of `_request` gets a row; `test_the_table_has_a_row_…` names
+    what the rows must cover), `widget(forge)` (one project with everything a Sync reads, as each
+    forge serves it, its images in R3.2's and R3.3's order), `sync_of`, `kept`, `own_reviews`,
+    `saying(status)` for the `pair` servers, and the `git` fixture (a stand-in for
+    `forges._git_out`).
+
+### New
+
+- `src/appkata_core/forges.py:225` and `:231`, `GitHub._releases_web`: `pre`, the count of
+    prereleases whose files were read, is overwritten at each feed entry by that entry's own
+    prerelease flag, so `pre < 1 and rel.prerelease` is never true: by github.com's pages no
+    prerelease's files are read at a Sync, where the comment above says the newest one's are. Run,
+    in a scratch script: a feed of `v2.0.0-rc1` and `v1.0.0`, each with a file on its assets page:
+    the assets page of `v1.0.0` alone was asked for, and `v2.0.0-rc1` was stored with no files.
+    Low: its files are read when the version is opened (`ensure_assets`). Not fixed: found after
+    #265's commit, and no finding of this batch is about those lines.
+- `src/appkata_core/http.py:400` and `:413`, `_request`: a limit is kept for the host asked first,
+    whichever host answered. A file that a forge redirects to another host (object storage), which
+    answers 429 or a 5xx with a Retry-After, limits the forge itself: its API is refused for every
+    app until then, and the storage host is asked again by the next redirect. Run, in a scratch
+    test through real sockets: A redirects to B, B answers 429 with `Retry-After: 120`:
+    `http.limited` was `{A: 120 seconds from now}`, and A's own API was refused next without a
+    request. Low. Not fixed: it is the key of `Http.limited`, which is #697's (batch 5).
+- `src/appkata/backend.py:709-718` (`install`'s worker) and `:737` (`_plan`), with
+    `sync.ensure_assets` (`src/appkata_core/sync.py:380`): the worker of a first install catches a
+    `SourceError` alone. A forge's answer of another shape for a release's files ends the thread
+    with nothing handed back, so the Install button does nothing and says nothing: #269's fault,
+    in the one worker batch 3's tenth doubt left. Run, in a scratch script: a release list that is
+    `["a", "list"]` on a Forgejo, and a GitHub Enterprise's release that is a list:
+    `ensure_assets` raised `AttributeError`, which is no `SourceError`. Low. Not fixed: no finding
+    of this batch has `backend.py`'s workers.
+
+Fixed here though no finding's, each said in its commit: the two faults of `_reset_time` (`01d57ef`:
+a Retry-After of "²" raised a `ValueError` out of Http; one of thirty nines was kept as the time and
+made `backend.sourceItems` raise an `OverflowError`, so the Sources list showed nothing while that
+row's error stood); and a whole README image address with a space or a letter outside ASCII, which
+Http refused (`be6b3d0`, batch 3's sixth doubt). The coordinator may want an issue for the first,
+for the record: it was reachable by any Source's host.
+
+### Needs your eye
+
+- `601e34f` (#265), what the user sees: for a Source on a GitHub Enterprise, or on any host whose
+    forge type is set to GitHub, an install of a release stored without files shows the forge's own
+    error when its API fails ("<host> rejected the API token (HTTP 401)", "… not found", "couldn't
+    reach <host>: …"), where it went on with whatever github.com listed under the same path. For
+    github.com itself the pages are read when the API says to come back later, as R2.4.1 says, and
+    any other failure of the API is now an error at that step (it fell to the pages on a 404, a
+    401 and a timeout too). No requirement's text changes: R2.4.1 has the pages under github.com
+    alone.
+- `995c79e` (#277's follow-up), what the user sees: a Source whose forge answered a 5xx with a
+    Retry-After reads "Rate limited until 14:32", R2.10's own words, and no longer "… · add a token
+    in Settings"; a 403 or a 429 keeps the hint. The error's own words, which the install plan and
+    the Add source dialog show, are "<host> answered HTTP 503 and said when to come back" for such
+    an answer. Both rows of two Sources on that host read the same.
+- `01d57ef` and `1d3ce29` (#683), what the user sees: after a redirect, an error names the host
+    the redirect led to: "<that host> answered HTTP 401" where it said "<the Source's host>
+    rejected the API token (HTTP 401)", and likewise "couldn't reach", "cut its answer short",
+    "didn't return JSON" and the rest. "rejected the API token" is said only of a host that was
+    sent the token.
+- `01d57ef`, what the user sees: a Retry-After or reset time that can't be read, or is no time a
+    clock can show, counts as a minute, as "soon" already did.
+- `be6b3d0` (#681), what the user sees: a README image on another host is asked for at the address
+    its README wrote; a link to a file's page on `www.github.com` is fetched (it never was); and a
+    whole address with a space or a letter outside ASCII is fetched, so it can become the hero.
+- `9cdaec5` (#298) and `2b0f7d4` (#293) are tests and change nothing.
+
+### Needs a run
+
+- The Windows suite, once, with the earlier batches': `scripts/test-windows-vm.sh --tests`. New for
+    it here: the tests through real sockets of a redirect that ends in each kind of error (one
+    drips a byte every 50 ms against a 0.3 second deadline); the eight Sources whose first requests
+    wait for one another on a `threading.Barrier` (ten seconds at most); a review file read from
+    the test's folder; one test that turns the package channels on with their three steps stubbed
+    (`channels.enabled` is false on Windows by itself); and `_reset_time`, which now asks the
+    platform whether a number is a time (`datetime.fromtimestamp`): the times the tests expect back
+    are in 2001, 2015 and 2100. The time zone test sets the zone with `time.tzset`, which Windows
+    doesn't have: there it runs in the machine's own zone, with nothing skipped. No test of this
+    batch is skipped anywhere, and no skip list changed. `tests/test_backend.py` doesn't run there
+    (no PySide6).
+
+### Guard
+
+Nothing: every file changed is in U07's files.
+
+### Doubts
+
+1. **#265 narrows github.com too.** The remedy's "best" way, through `_try`, makes `ensure_assets`
+    fall to the pages on a `RateLimited` alone, as a Sync's own calls do and as R2.4.1 says. Before,
+    github.com's pages also answered for a 404 (a tag with no release), a 401 and a timeout of the
+    API. A tag the pages listed and the API doesn't know now ends the install with "… not found"
+    where it ended with no download found. The remedy's first way (the host test in
+    `ensure_assets`, every failure still falling to the pages for github.com) is the other reading.
+2. **#265: a `RateLimited` is also a 5xx with a Retry-After** (since #277), so github.com's API
+    being maintained sends `ensure_assets`, and every call of `_try`, to the pages. That reads as
+    R2.4.1's intent ("come back later") and isn't its words ("rate limit is used up").
+3. **#265's refusal is an `Unsupported`** ("github.com's pages stand in for github.com's API alone,
+    and <host> isn't github.com"). Nothing reaches it today: it is there for the next caller.
+4. **The follow-up's text.** "Rate limited until 14:32" for a forge being maintained is R2.10's
+    text without the hint, as the note asked ("say only when to try again"). Truer words
+    ("Unavailable until 14:32") would be a new row of R2.10's table, which is the owner's. A
+    limit with no status (none arises in the application) keeps the hint. A 404 or a 401 with a
+    long Retry-After limits the host too (#277): the apps refused after it read "Rate limited
+    until …" without the hint.
+5. **#298's table repeats some of batch 3's cases**, on purpose: it is one place that says what
+    every answer becomes. It pins each error's words exactly, so a change of wording fails a row.
+6. **#293 is in `tests/test_forges.py`, not a new `tests/test_sync.py`.** The record allows either.
+    The Sync harness, the stand-in servers and the fixtures are that file's, and the earlier
+    batches' hundred Sync cases are there. The file is 2,800 lines now; splitting it is a move for
+    after the unit, with `scripts/areas.py`.
+7. **What #293 pins that open findings will move.** The releases' order (by date; the project's
+    dates and versions agree, so #267's change shouldn't break it, apart from where `nightly`
+    sorts); the error kinds on a row (`Renamed`, `NotFound`, `Unsupported`, `RateLimited`: #273);
+    the probes (#278: only real generator and site-name tags are in the table). Not pinned: a hero
+    lost to one failed request and a non-image saved as one (#284), the order of dateless tags
+    (#267), whether a cancelled Sync writes the time of the last Sync.
+8. **#683 has four commits.** The fix as the remedy says it (`01d57ef`); a test row made
+    independent of the platform's clock (`b637650`); the rest of the class (`1d3ce29`): I had fixed
+    the failing status and left "couldn't reach", "cut short" and the others naming the first
+    host; and `_reset_time`'s date branch (`ca3c7d0`), which I had left out of the test of being a
+    time. Both later ones came from reading my own commit again after the suite had run. One
+    commit would have been tidier; the brief says never to amend.
+9. **#683 doesn't move a limit** (the second item under New): `RateLimited` and `Http.limited`
+    still go by the host asked first. A 404's words name the address the redirect led to now.
+10. **`_a_time` asks the platform.** Whether a number of seconds is a time is
+    `datetime.fromtimestamp`'s answer on this computer in its time zone, since the same call shows
+    it on the row. A time that Linux shows and Windows doesn't (past the year 3000) counts as a
+    minute there. A zone changed while AppKata runs could still move a time at the very edge.
+    `backend._error_text` still trusts the number on the row: what a Sync writes is now always a
+    time, and a row another build wrote isn't looked after.
+11. **#681 keeps the README's scheme**: an `http://github.com/…/blob/…` link becomes
+    `http://raw.githubusercontent.com/…`, as before. A host written outside ASCII isn't handled;
+    only the path and the query are quoted.
+12. **R9.2.1 says four hosts; the code runs four apps.** Four apps of one host run together too.
+    The new test pins four apps on eight hosts, which is true under either reading.
+13. **The one-fault copies are mine**, 146 hand-written faults in three modules, not the project's
+    mutation run (its container is capped at 6 GB, over this relay's 3). They show the new tests
+    fail when the code is wrong in those ways, and no more.
+14. Each "before" run changed folder to its scratch copy inside its own command (in a subshell,
+    all but the first); every `git` command ran from the worktree's root, with the folder and the
+    branch checked before each commit, as the coordinator's message asked. Scratch files were
+    under `/tmp/u07b4`, removed at the end; the one container this batch started
+    (`u07b4-tier1`, three times, one after another) ended with its run. `.pytest_cache/` and the
+    `__pycache__` folders in the worktree are git's ignored ones.
