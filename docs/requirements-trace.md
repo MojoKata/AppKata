@@ -78,6 +78,7 @@ differ from its list (review 3, harness B).
 | R17.3.3 | A reviewed GUI app uses the review's template | test_default_template_by_kind_and_review_state, test_user_default_applies_only_to_unreviewed_apps |
 | R17.3.3 | Every default is one click to change in | test_picking_a_template_in_the_sandbox_dialog_applies_that_template, test_the_install_dialog_sends_a_sandbox_only_when_the_card_was_touched |
 | R17.3.3 | The app's kind is decided from the download | test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry, test_an_appimages_kind_is_read_by_its_runtime_inside_a_sandbox, test_a_program_is_an_app_when_it_links_a_display_library |
+| R17.3.3 | Electron links GTK) and no shared library beside it | test_a_tarballs_program_is_an_app_when_it_or_a_library_beside_it_links_a_display_library |
 | R17.3.3 | What can't be told (a script, no bwrap) | test_a_tarball_says_so_in_its_desktop_file_else_its_program_decides, test_an_appimage_without_bwrap_is_unknown |
 | R17.3.3 | The user's own choice in the install options | test_an_apps_kind_is_the_users_word_then_the_downloads_then_an_app, test_the_install_dialogs_kind_choice_moves_the_sandbox_card_and_is_saved, test_the_install_dialogs_sandbox_card_is_what_planfor_computes |
 | R17.3.3 | A command-line tool gets no app-menu entry when | test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry |

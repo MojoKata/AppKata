@@ -106,6 +106,37 @@ def test_a_tarball_says_so_in_its_desktop_file_else_its_program_decides(tmp_path
     assert appkind.kind_of_folder(str(v), "bin/tool") is None        # can't tell: the caller treats it as an app
 
 
+# ---------------------------------------------------------------- a program that loads its window's libraries (CR1.3-43)
+
+_C = ["libpthread.so.0", "libc.so.6"]
+_CXX = ["libdl.so.2", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libpthread.so.0", "libc.so.6", "ld-linux-x86-64.so.2"]
+
+# tarballs with no .desktop file, as their publishers lay them out: {file: what it links}, the
+# program, and the kind
+_TARBALLS = {
+    # Firefox 159.0: firefox and firefox-bin link the C and C++ run-times; libxul.so, loaded at run
+    # time, links GTK and X11
+    "Firefox": ({"firefox": _C, "firefox-bin": _CXX, "libxul.so": ["libgtk-3.so.0", "libgdk-3.so.0", "libX11.so.6", "libc.so.6"],
+                 "libmozgtk.so": ["libgtk-3.so.0"], "libnss3.so": _C}, "firefox", "gui"),
+    "a library beside it, versioned": ({"app": _C, "libui.so.2": ["libwayland-client.so.0"]}, "app", "gui"),
+    "a tool with libraries of its own": ({"bin/tool": _CXX, "bin/libtoolcore.so": ["libz.so.1", "libc.so.6"]}, "bin/tool", "cli"),
+    "a tool with none": ({"rg": []}, "rg", "cli"),
+    "an app that links its own": ({"app": ["libgtk-3.so.0"]}, "app", "gui"),
+}
+
+
+@pytest.mark.parametrize("tarball", list(_TARBALLS))
+def test_a_tarballs_program_is_an_app_when_it_or_a_library_beside_it_links_a_display_library(tmp_path, tarball):
+    # CR1.3-43: R17.3.3 made a tarball a command-line tool when its program links no display library,
+    # and Firefox's program links none: it loads libxul.so, which does. So Firefox was installed as
+    # a command-line tool, with the cli-tool template and no app-menu entry. The owner's decision: a
+    # shared library in the program's folder that links a display library makes it an app too.
+    files, program, kind = _TARBALLS[tarball]
+    for name, needed in files.items():
+        (tmp_path / "v" / name).parent.mkdir(parents=True, exist_ok=True)
+        make_elf(tmp_path / "v" / name, needed)
+    assert appkind.kind_of_folder(str(tmp_path / "v"), program) == kind
+
 def test_an_appimage_without_bwrap_is_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(appkind.shutil, "which", lambda name: None)
     img = tmp_path / "X.AppImage"

@@ -10,8 +10,10 @@ and saw nothing. Decided from the download instead (the owner's decision):
   publisher's code, so that runs in the same locked-down bwrap as the launcher's unpacking;
 - a **tarball** rarely carries a `.desktop` (Firefox's and VSCodium's don't); one that does says so
   the same way. Otherwise its program decides: an ELF that links a display library (X11, xcb,
-  Wayland, GTK/GDK, Qt's GUI, SDL, OpenGL/EGL, Vulkan) is an app -- Electron links GTK -- and one that
-  links none (ripgrep, fd: static Rust or Go) is a command-line tool.
+  Wayland, GTK/GDK, Qt's GUI, SDL, OpenGL/EGL, Vulkan) is an app -- Electron links GTK -- and so is
+  one with a shared library beside it, in its folder, that links one (Firefox's program loads
+  `libxul.so`, which links GTK, at run time); one that links none (ripgrep, fd: static Rust or Go)
+  is a command-line tool.
 
 Anything that can't be told (a shell script, an unreadable file, no bwrap) is "unknown", which the
 caller treats as an app: Strict, the tighter of the two.
@@ -120,7 +122,7 @@ def kind_of_program(path: str) -> str | None:
 
 def kind_of_folder(folder: str, exec_rel: str) -> str | None:
     """A tarball's kind: its .desktop files' Terminal key if it has any (within three levels), else
-    its program's libraries; None when neither tells."""
+    its program's libraries and those of the shared libraries beside it; None when neither tells."""
     terminals = []
     base = folder.rstrip(os.sep).count(os.sep)
     for root, dirs, files in os.walk(folder):
@@ -133,7 +135,26 @@ def kind_of_folder(folder: str, exec_rel: str) -> str | None:
                     terminals.append(t)
     if terminals:
         return CLI if all(terminals) else GUI
-    return kind_of_program(os.path.join(folder, exec_rel))
+    program = os.path.join(folder, exec_rel)
+    kind = kind_of_program(program)
+    return GUI if kind == CLI and _ships_a_display_library(os.path.dirname(program)) else kind
+
+
+def _ships_a_display_library(folder: str) -> bool:
+    """Whether a shared library in `folder`, the program's own, links a display library: a program
+    that loads its window's libraries at run time links none itself (Firefox's `firefox` links only
+    the C run-time; its `libxul.so` links GTK and X11, CR1.3-43)."""
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return False
+    for name in names:
+        path = os.path.join(folder, name)
+        if (name.endswith(".so") or ".so." in name) and os.path.isfile(path):
+            needed = elf_needed(path)
+            if needed and any(DISPLAY_LIB.match(n) for n in needed):
+                return True
+    return False
 
 
 def kind_of_appimage(img: str, timeout: float = 60) -> str | None:
