@@ -639,6 +639,7 @@ def test_the_install_notice_says_why_no_command_was_added_and_says_it_once():
     # The owner's decision on CR1.5-31: "the app installs with its menu entry and no command, and the
     # install says why". The notice is the install's own toast; an update whose reason hasn't
     # changed doesn't repeat it.
+    pytest.importorskip("PySide6")                              # the backend is Qt's; the Windows run has none
     from appkata.backend import Backend
     why = "python3 is a name kept for the system's own command"
     assert Backend._command_note(why) == " No command was added: python3 is a name kept for the system's own command."

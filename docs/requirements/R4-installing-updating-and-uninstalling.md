@@ -204,6 +204,9 @@ R4.9.2. **The dialog**, titled "Install <App> <version>":
   stays disabled until one is picked.
 - For a portable choice: where it will go (`<install folder>/<app>`), and this app's **Add to
   the app menu** and **Command `<app>` in `<folder>`** checkboxes, starting from Settings (R11.1.4).
+  On Linux the command checkbox is disabled and unticked when no command link would be made for
+  the app's name (R4.3.1.3), with the reason as its tooltip ("No command will be added: `ls` is
+  already a command on this computer (/usr/bin/ls)."); the option itself stays as it was.
   On Linux, **It is**: "As the download shows" (or "Decide from the download" before it's known), "An
   app with a window" or "A command-line tool" (R17.3.3); choosing one moves the Sandbox card with it.
 - On Windows, **Install for**: **Just me** or **Everyone on this computer** (R15.4), when the file

@@ -227,13 +227,28 @@ Dialog {
                     indicator: Rectangle { y: (parent.height - height) / 2; width: 18; height: 18; radius: 5; color: cbStable.checked ? Theme.accent : "transparent"; border.width: cbStable.checked ? 0 : 1.6; border.color: Theme.borderStrong
                         Icon { anchors.centerIn: parent; visible: cbStable.checked; name: "check"; size: 13; lineWidth: 2.2; color: "#ffffff" } }
                     contentItem: Text { leftPadding: 26; text: "Stable name link"; color: Theme.text; font.pixelSize: 13; font.bold: true; verticalAlignment: Text.AlignVCenter; wrapMode: Text.WordWrap } }
-                CheckBox { id: cbCmd; checked: root.commandLink; onToggled: root.commandLink = checked
-                    width: Math.min(implicitWidth, parent.width)
-                    indicator: Rectangle { y: (parent.height - height) / 2; width: 18; height: 18; radius: 5; color: cbCmd.checked ? Theme.accent : "transparent"; border.width: cbCmd.checked ? 0 : 1.6; border.color: Theme.borderStrong
-                        Icon { anchors.centerIn: parent; visible: cbCmd.checked; name: "check"; size: 13; lineWidth: 2.2; color: "#ffffff" } }
-                    contentItem: Text { leftPadding: 26; textFormat: Text.StyledText; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; color: Theme.text
-                                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                                        text: "<b>Command</b> <tt>" + ((root.plan.portable || {}).command || "") + "</tt> in " + root.home((root.plan.portable || {}).commandDir) } }
+                // No command link is made for a name that is a command here already, or one kept for the
+                // system's own (R4.3.1.3): the plan says why, and the checkbox is then disabled and
+                // unticked, with the reason as its tip. The option itself stays as it was, so the link
+                // comes once the name is free. A disabled control gets no hover, so the tip is the
+                // item's around it (CR1.9-31: the checkbox could be ticked for a link never made).
+                Item {
+                    id: cmdItem
+                    objectName: "commandLink"
+                    readonly property string refusal: (root.plan.portable || {}).commandRefusal || ""
+                    readonly property string tip: refusal ? "No command will be added: " + refusal + "." : ""
+                    width: Math.min(cbCmd.implicitWidth, parent.width); height: cbCmd.height
+                    HoverHandler { id: cmdHover }
+                    ToolTip.visible: cmdItem.tip !== "" && cmdHover.hovered; ToolTip.text: cmdItem.tip; ToolTip.delay: 300
+                    CheckBox { id: cbCmd; objectName: "commandLinkBox"; enabled: cmdItem.refusal === ""; opacity: enabled ? 1 : 0.5
+                        checked: root.commandLink && enabled; onToggled: root.commandLink = checked
+                        width: parent.width
+                        indicator: Rectangle { y: (parent.height - height) / 2; width: 18; height: 18; radius: 5; color: cbCmd.checked ? Theme.accent : "transparent"; border.width: cbCmd.checked ? 0 : 1.6; border.color: Theme.borderStrong
+                            Icon { anchors.centerIn: parent; visible: cbCmd.checked; name: "check"; size: 13; lineWidth: 2.2; color: "#ffffff" } }
+                        contentItem: Text { leftPadding: 26; textFormat: Text.StyledText; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; color: Theme.text
+                                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                            text: "<b>Command</b> <tt>" + ((root.plan.portable || {}).command || "") + "</tt> in " + root.home((root.plan.portable || {}).commandDir) } }
+                }
             }
             Row { spacing: 10; visible: !!root.plan.kind     // the app's kind (R17.3.3)
                 Text { text: "It is"; color: Theme.text; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter }

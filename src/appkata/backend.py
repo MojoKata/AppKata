@@ -776,7 +776,7 @@ class Backend(QObject):
         eff, rec = self._app_options(url), self._recommended(url)
         out["portable"] = {"folder": p.root, "appMenu": eff.app_menu, "commandLink": bool(eff.command_dir),
                            "stableName": eff.stable_name, "commandDir": self._prefs.get("commandDir") or "~/bin",
-                           "command": self._app_id(url), "keep": p.keep,
+                           "command": self._app_id(url), "commandRefusal": self._command_link_refusal(url), "keep": p.keep,
                            "recommendedBy": rec.get("by", "") if not saved else ""}
         out["autoUpdate"], out["autoUpdateBy"] = bool(a.get("autoUpdate")), a.get("autoUpdateBy", "")
         # the Sandbox card (R17.3, C11): the chosen template, its live summary, and the disk cost of
@@ -1720,6 +1720,24 @@ class Backend(QObject):
         name is already a command here, or a reserved one), or "" when it has one or wants none."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         return (json.loads(row["record"] or "{}") if row else {}).get("commandRefused", "")
+
+    def _command_link_refusal(self, url: str) -> str:
+        """Why installing or updating the app at `url` would make no command link, or "" when it
+        would make one (R4.3.1.3): its name is already a command on this computer, or one kept for
+        the system's own. It is the installer's own answer (:func:`install.command_link_refusal`),
+        asked before the install for the install dialog, which showed a checkbox to tick for a
+        link that would not be made, the reason coming only in the notice afterwards (CR1.9-31).
+        The app's own command link, from an earlier install, is no refusal. Linux only: Windows'
+        command links are `.cmd` files (R15.6)."""
+        from appkata_core.platform import OS, command_dir_default
+        if OS != "linux":
+            return ""
+        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
+        rec = json.loads(row["record"] or "{}") if row else {}
+        name = self._app_id(url)
+        folder = install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder
+        return install.command_link_refusal(name, os.path.join(folder, name),
+                                            (self._app_options(url).root, os.path.dirname(rec.get("target") or "")))
 
     @staticmethod
     def _command_note(why: str, before: str = "") -> str:

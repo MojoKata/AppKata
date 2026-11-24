@@ -396,3 +396,70 @@ def test_the_install_card_shows_each_picked_templates_chips_whole(ui, be, monkey
              and o.property("visible") is True and o.property("text")]
     want = sb.summary(sb.resolve_template(key))
     assert sorted(p for p in pills if p in want) == sorted(want), pills
+
+
+# ---------------------------------------------------------------- the command checkbox (CR1.9-31)
+
+def _real_plan(be, monkeypatch, name, installed=""):
+    """What Backend.planFor itself gives the install dialog for an app called `name`, with an
+    AppImage as its one download (the other tests here build their plan by hand)."""
+    from test_sandbox_backend import _plan_with
+    _plan_with(be, monkeypatch, ["App-1.0-x86_64.AppImage"])
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": name, "installed": installed, "version": "1.0", "updateTo": ""})
+    return be.planFor(URL)
+
+
+@pytest.mark.parametrize("name", ["python3", "Git", "ls", "Demo"])
+def test_the_install_dialog_offers_no_command_checkbox_to_tick_for_a_name_no_link_is_made_for(ui, be, tmp_path, monkeypatch, name):
+    # CR1.9-31: since CR1.5-31 no command link is made for an app named after a command (R4.3.1.3),
+    # and the install's notice says why afterwards. The dialog didn't know: it still showed
+    # "Command <app> in <folder>" as a checkbox to tick. planFor now carries the installer's own
+    # answer, and with one the checkbox is disabled and unticked, the reason its tip; the option the
+    # dialog sends is what it was, so the link is made once the name is free. A name that is free
+    # leaves the checkbox as it was: ticked from the plan, and the user's to change.
+    from PySide6.QtCore import QObject
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    plan = _real_plan(be, monkeypatch, name)
+    slug = install.slug(name)
+    want = install.command_link_refusal(slug, str(tmp_path / "bin" / slug), (str(tmp_path / "bin" / "apps"),))
+    assert plan["portable"].get("commandRefusal") == want and plan["portable"]["command"] == slug and plan["portable"]["commandLink"] is True
+    assert bool(want) is (name != "Demo")
+    if name in ("python3", "Git"):
+        assert want == f"{slug} is a name kept for the system's own command"
+    installs = []
+    monkeypatch.setattr(be, "_install", lambda *a, **k: installs.append(a))
+    dlg = _dialog(ui, "install")
+    _call(dlg, "openWith", plan, False)
+    item, box = dlg.findChild(QObject, "commandLink"), dlg.findChild(QObject, "commandLinkBox")
+    assert item.property("refusal") == want and item.property("tip") == (f"No command will be added: {want}." if want else "")
+    assert box.property("enabled") is (not want) and box.property("checked") is (not want)
+    if not want:                                                   # free: the user's to turn off
+        box.setProperty("checked", False)
+        box.toggled.emit()
+        assert _prop(dlg, "commandLink") is False
+    _press(dlg, "save")
+    assert len(installs) == 1 and installs[0][2]["commandLink"] is bool(want)       # refused: the option stays on
+
+
+def test_an_installed_apps_own_command_link_does_not_disable_its_checkbox(ui, be, tmp_path, monkeypatch):
+    # The other side of the name check: an installed app's own command link is on the PATH too
+    # (~/bin comes first on it), and "Install options…" must not take it for someone else's command.
+    from PySide6.QtCore import QObject
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    target = _tarball_install(be, tmp_path)
+    os.symlink(os.path.join(target, "1.0", "bin", "demo"), tmp_path / "bin" / "demo")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"].get("commandRefusal") == ""
+    dlg = _dialog(ui, "install")
+    _call(dlg, "openWith", plan, True)
+    assert dlg.findChild(QObject, "commandLinkBox").property("enabled") is True
+    # and someone else's `demo` there is a refusal, as it is for the install
+    os.remove(tmp_path / "bin" / "demo")
+    (tmp_path / "bin" / "demo").write_text("#!/bin/sh\n")
+    (tmp_path / "bin" / "demo").chmod(0o755)
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["commandRefusal"] == f"demo is already a command on this computer ({tmp_path / 'bin' / 'demo'})"
