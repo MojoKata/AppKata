@@ -379,7 +379,8 @@ def authorities_for(db: DB, tid: int) -> list[gitsig.Authority]:
 
 def ensure_assets(db: DB, http: Http, url: str, version: str) -> dict | None:
     """A release's files, fetched now if the last sync didn't (the GitHub fallback only reads the
-    newest few releases' files). Returns the release dict."""
+    newest few releases' files). Returns the release dict, or raises the forge's SourceError: what
+    is stored stays as it was."""
     row = db.one("SELECT releases, forge FROM apps WHERE url=?", (url,))
     if not row:
         return None
@@ -390,14 +391,11 @@ def ensure_assets(db: DB, http: Http, url: str, version: str) -> dict | None:
     repo = urls.parse(url)
     f = forges.forge_for(http, repo, row["forge"] or None)
     if isinstance(f, forges.GitHub):
-        try:
-            if f.web:
-                raise forges.RateLimited("api.github.com", 0)
-            d = f._get(f"{f.base}/releases/tags/{forges.quote(rel['tag'], safe='')}")
-            assets = [forges.Asset(a["name"], a["browser_download_url"], a.get("size", 0), a.get("digest") or "")
-                      for a in d.get("assets", [])]
-        except (forges.RateLimited, SourceError):
-            assets, _ = f._assets_web(rel["tag"])
+        # the API's list, and github.com's own page of the release for github.com alone, when its
+        # API's limit is used up. Any failure of the API used to end at that page, whichever host
+        # the Source is on: a GitHub Enterprise's release got the files, and the digests, of
+        # whatever project has its path on github.com (CR1 #265). An error is the caller's to show.
+        assets = f.release_assets(rel["tag"])
     else:
         match = next((r for r in f.releases() if r.tag == rel["tag"]), None)
         assets = match.assets if match else []

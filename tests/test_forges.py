@@ -1,5 +1,6 @@
 """Forge API parsing against recorded responses, so no forge needs to be reachable."""
 
+import inspect
 import io
 import ipaddress
 import json
@@ -1647,3 +1648,172 @@ def test_through_real_sockets_a_cut_off_image_isnt_saved_and_a_cut_off_readme_is
     app = rows(db)[source]
     assert app["error_code"] == "Unreachable" and "cut its answer short" in app["error"]
     assert app["readme"] == readme.decode()                   # the whole one, from the Sync before
+
+
+# ---------------------------------------------------------------- github.com's pages are github.com's alone (R2.4.1)
+# CR1's #265: forges.GitHub is the class of a GitHub Enterprise Source too, and of any host whose
+# forge type is set to GitHub, and the pages that stand in for github.com's API have github.com
+# written into them. A Sync's own calls kept to github.com (_try); sync.ensure_assets, which reads a
+# release's files when it is opened for install, had its own fallback with no such test, on any
+# failure of the API: off the VPN, or with an expired token, an Enterprise release was given the
+# files and the SHA-256 digests of whatever project has its path on github.com. How it slipped
+# past: ensure_assets had one test, on a Forgejo, and no test put a GitHub on another host through a
+# failing API. The class is "github.com answers for a host that isn't github.com", so a project of
+# the same path is there in every test below, ready to answer with a file and its digest, and what
+# is held is that nothing is asked of it: by the file list, by a whole Sync, and by each way to the
+# pages there is, whichever is added next.
+GHE = "https://ghe.corp.example/team/tool"
+GHE_API = "https://ghe.corp.example/api/v3/repos/team/tool"
+DIGEST = "sha256:" + "ab" * 32
+FILE = "/team/tool/releases/download/v1.0.0/tool-1.0.0-x86_64.AppImage"
+THEIR_PAGE = (f'<a href="{FILE}">tool-1.0.0-x86_64.AppImage</a> <span>{DIGEST}</span> <span>5 MB</span>'
+              '<relative-time datetime="2026-01-01T00:00:00Z">').encode()
+THEIRS = {       # github.com's project of the same path: its API and its pages, each of which would answer
+    "https://api.github.com/": {"assets": [{"name": "tool-1.0.0-x86_64.AppImage", "browser_download_url": "https://github.com" + FILE,
+                                            "digest": DIGEST}]},
+    "https://github.com/": THEIR_PAGE,
+}
+FROM_THE_PAGE = [{"name": "tool-1.0.0-x86_64.AppImage", "url": "https://github.com" + FILE, "size": 5000000, "digest": DIGEST,
+                  "content_type": ""}]
+
+
+def _status(code, **headers):
+    return urllib.error.HTTPError("", code, "err", headers, None)
+
+
+API_FAILS = {      # what the API's answer can be when a release's files are asked for
+    "limit-used-up": 403, "429": _status(429), "503-come-back-later": _status(503, **{"Retry-After": "600"}),     # RateLimited
+    "token-expired": _status(401), "no-such-release": _status(404), "500": _status(500),
+    "off-the-vpn": urllib.error.URLError(OSError(-2, "Name or service not known")), "timeout": TimeoutError("timed out"),
+    "a-sign-in-page": b"<html>Sign in to continue</html>",
+}
+SAYS_COME_BACK = ("limit-used-up", "429", "503-come-back-later")
+
+
+def stored_without_files(tmp_path, url, kind):
+    """An app as a Sync left it: its newest release with its files, an older one without."""
+    db = DB(str(tmp_path / "a.db"))
+    db.x("INSERT INTO apps(url, name, forge, releases) VALUES(?,?,?,?)", (url, "Tool", kind, json.dumps(
+        [{"tag": "v2.0.0", "version": "2.0.0", "date": "2026-02-01", "assets": [{"name": "tool-2.0.0-x86_64.AppImage"}]},
+         {"tag": "v1.0.0", "version": "1.0.0", "date": "2025-02-01", "assets": []}])))
+    return db
+
+
+def files_of(db, url, version="1.0.0"):
+    releases = json.loads(db.one("SELECT releases FROM apps WHERE url=?", (url,))["releases"])
+    return next(r for r in releases if r["version"] == version)["assets"]
+
+
+@pytest.fixture
+def git(monkeypatch):
+    """Stands in for git, noting what it was asked."""
+    asked = []
+    monkeypatch.setattr(forges, "_git_out", lambda args: asked.append(args) or "")
+    return asked
+
+
+def off(host, seen):
+    return [url for url, _ in seen if not url.startswith(f"https://{host}/")]
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])            # a GitHub Enterprise, and a host whose forge type is set to GitHub
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_a_github_on_another_host_takes_no_files_from_github_coms_project_of_its_path(tmp_path, clock, git, kind, fails):
+    seen = []
+    db = stored_without_files(tmp_path, GHE, kind)
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording({GHE_API + "/releases/tags/v1.0.0": API_FAILS[fails], **THEIRS}, seen)))
+    with pytest.raises(SourceError):                           # the error is the caller's to show
+        sync.ensure_assets(db, http, GHE, "1.0.0")
+    assert seen and off("ghe.corp.example", seen) == [] and git == []
+    assert files_of(db, GHE) == []                             # and what was stored is as it was
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])
+def test_a_github_on_another_host_has_its_own_apis_files(tmp_path, git, kind):
+    seen = []
+    db = stored_without_files(tmp_path, GHE, kind)
+    own = {"name": "tool-1.0.0.tar.gz", "browser_download_url": "https://ghe.corp.example/f", "size": 7, "digest": "sha256:" + "cd" * 32}
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording({GHE_API + "/releases/tags/v1.0.0": {"assets": [own]}, **THEIRS}, seen)))
+    assert sync.ensure_assets(db, http, GHE, "1.0.0")["assets"] == files_of(db, GHE) == [
+        {"name": "tool-1.0.0.tar.gz", "url": "https://ghe.corp.example/f", "size": 7, "digest": "sha256:" + "cd" * 32, "content_type": ""}]
+    assert [url for url, _ in seen] == [GHE_API + "/releases/tags/v1.0.0"] and tokened(seen) == [url for url, _ in seen]
+
+
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_github_com_itself_reads_its_page_when_its_api_says_to_come_back_and_only_then(tmp_path, clock, git, fails):
+    url, api = "https://github.com/team/tool", "https://api.github.com/repos/team/tool/releases/tags/v1.0.0"
+    page, seen = "https://github.com/team/tool/releases/expanded_assets/v1.0.0", []
+    db = stored_without_files(tmp_path, url, "github")
+    http = names(Http(opener=recording({api: API_FAILS[fails], page: THEIR_PAGE}, seen)))
+    if fails in SAYS_COME_BACK:                                # R2.4.1: the pages, when the API's limit is used up
+        assert sync.ensure_assets(db, http, url, "1.0.0")["assets"] == files_of(db, url) == FROM_THE_PAGE
+        assert [u for u, _ in seen] == [api, page]
+    else:                                                      # any other failure is an error, as it is for a Sync's own calls
+        with pytest.raises(SourceError):
+            sync.ensure_assets(db, http, url, "1.0.0")
+        assert set(u for u, _ in seen) == {api} and files_of(db, url) == []
+
+
+def test_github_com_known_to_be_limited_is_asked_for_its_page_alone(tmp_path, git):
+    url, seen = "https://github.com/team/tool", []
+    db = stored_without_files(tmp_path, url, "github")
+    http = names(Http(opener=recording(THEIRS, seen)))
+    http.limited["api.github.com"] = time.time() + 600
+    assert sync.ensure_assets(db, http, url, "1.0.0")["assets"] == FROM_THE_PAGE
+    assert [u for u, _ in seen] == ["https://github.com/team/tool/releases/expanded_assets/v1.0.0"]
+
+
+WEB_ARGS = {"tag": "v1.0.0", "limit": 30, "ref": "main"}
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])
+def test_every_way_to_github_coms_pages_is_refused_for_another_host(git, kind):
+    """Each function that reads github.com's pages or asks git for the project there, found by its
+    name, so the next one written is held too; and each call of a forge that somehow came to think
+    its API's limit is used up."""
+    seen = []
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording(THEIRS, seen)))
+    f = forges.forge_for(http, urls.parse(GHE), kind)
+    assert not f.web
+    ways = sorted(name for name in dir(f) if name.endswith("_web"))
+    assert {"_info_web", "_releases_web", "_release_tags_web", "_bare_tag_web", "_assets_web", "_tags_web", "_tree_web"} <= set(ways)
+    for name in ways:
+        way = getattr(f, name)
+        with pytest.raises(forges.Unsupported, match="ghe.corp.example isn't github.com"):
+            way(*[WEB_ARGS[p] for p in inspect.signature(way).parameters])
+    f.web = True
+    for call in (f.info, f.releases, f.tags, lambda: f.tree("main"), lambda: f.release_assets("v1.0.0")):
+        with pytest.raises(forges.Unsupported, match="ghe.corp.example isn't github.com"):
+            call()
+    assert seen == [] and git == []
+    theirs = forges.forge_for(http, urls.parse("https://github.com/team/tool"), "github")       # and for github.com they are open
+    assert theirs._page("/releases.atom") == "https://github.com/team/tool/releases.atom"
+    assert theirs._assets_web("v1.0.0")[0] == [forges.Asset(a["name"], a["url"], a["size"], a["digest"]) for a in FROM_THE_PAGE]
+
+
+GHE_PLACES = {"info": "", "releases": "/releases", "files": "/git/trees/main", "a-releases-files": "/releases/tags/v1.0.0"}
+
+
+@pytest.mark.parametrize("place", sorted(GHE_PLACES))
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_a_sync_and_a_file_list_of_an_enterprise_source_ask_nothing_of_github_com(tmp_path, monkeypatch, clock, git, place, fails):
+    """Whatever the Enterprise's API answers, wherever: a whole Sync of the Source, then the files of
+    the release it stored without any, as an install asks for them."""
+    raw = "https://ghe.corp.example/team/tool/raw/main/"
+    routes = {GHE_API: {"name": "tool", "full_name": "team/tool", "default_branch": "main"},
+              GHE_API + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2025-02-01T00:00:00Z", "assets": []}],
+              GHE_API + "/git/trees/main": {"tree": [{"path": "README.md", "type": "blob"}]},
+              GHE_API + "/releases/tags/v1.0.0": {"assets": []}, raw + "README.md": b"# Tool\n", **THEIRS}
+    routes[GHE_API + GHE_PLACES[place]] = API_FAILS[fails]
+    seen = []
+    db = catalog(tmp_path, monkeypatch, [GHE])
+    db.x("UPDATE sources SET settings=? WHERE url=?", (json.dumps({"forge": "ghe"}), GHE))
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording(dict(sorted(routes.items(), key=lambda kv: -len(kv[0]))), seen)))
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[GHE]
+    assert (app["error_code"] is None) == (place in ("files", "a-releases-files")), (app["error_code"], app["error"])
+    try:
+        sync.ensure_assets(db, http, GHE, "1.0.0")
+    except SourceError:
+        pass
+    assert seen and off("ghe.corp.example", seen) == [] and git == []

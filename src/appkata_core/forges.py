@@ -152,10 +152,28 @@ class GitHub(Forge):
     def tree(self, ref: str) -> list[str]:
         return self._try(lambda: self._tree_api(ref), lambda: self._tree_web(ref))
 
+    def release_assets(self, tag: str) -> list[Asset]:
+        """One release's files, for a release that was stored without them (sync.ensure_assets). It
+        goes the way every call here does (_try): the API's answer, and github.com's own page of
+        the release only for github.com, when its API's limit is used up (R2.4.1). Any other failure
+        of the API is the caller's error to show, whichever host it is (CR1 #265)."""
+        return self._try(lambda: self._release_assets_api(tag), lambda: self._assets_web(tag)[0])
+
     # ---- web fallback
+    def _page(self, rest: str = "") -> str:
+        """An address of this project on github.com's own pages, the one place the pages' host is
+        written. The pages stand in for github.com's API and for no other host's (R2.4.1): this
+        class is a GitHub Enterprise's too, and any host's whose forge type is set to GitHub, and
+        for those the same path on github.com is someone else's project, whose files and digests
+        would be taken for the Source's (CR1 #265). So each way to the pages asks here first, and
+        for another host is refused before anything is asked of github.com, or of git."""
+        if self.repo.host != "github.com":
+            raise Unsupported(f"github.com's pages stand in for github.com's API alone, and {self.repo.host} isn't github.com")
+        return f"https://github.com/{self.repo.path}{rest}"
+
     def _info_web(self) -> RepoInfo:
         import re
-        data, hdr, final = self.http.request(f"https://github.com/{self.repo.path}", accept="text/html")
+        data, hdr, final = self.http.request(self._page(), accept="text/html")
         page = data.decode("utf-8", "replace")
         moved = final.rstrip("/").split("github.com/", 1)[-1]
         if moved and moved.lower() != self.repo.path.lower() and moved.count("/") == 1:
@@ -166,7 +184,7 @@ class GitHub(Forge):
         if desc.lower().startswith("contribute to " + self.repo.path.lower()):
             desc = ""
         branch = "main"
-        out = _git_out(["ls-remote", "--symref", f"https://github.com/{self.repo.path}", "HEAD"])
+        out = _git_out(["ls-remote", "--symref", self._page(), "HEAD"])
         m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", out)
         if m:
             branch = m.group(1)
@@ -177,8 +195,9 @@ class GitHub(Forge):
     def _releases_web(self, limit: int) -> list[Release]:
         import re
         import xml.etree.ElementTree as ET
+        feed = self._page("/releases.atom")
         try:
-            atom = self.http.text(f"https://github.com/{self.repo.path}/releases.atom")
+            atom = self.http.text(feed)
         except NotFound:
             return []
         ns = {"a": "http://www.w3.org/2005/Atom"}
@@ -224,8 +243,9 @@ class GitHub(Forge):
         prerelease (the label after its heading), or None if the page can't be read."""
         import re
         from urllib.parse import unquote
+        listing = self._page("/releases")          # outside the try: a refusal for another host isn't "no page"
         try:
-            page = self.http.text(f"https://github.com/{self.repo.path}/releases")
+            page = self.http.text(listing)
         except Exception:      # noqa: BLE001 — without the page, every feed entry is kept, as before
             return None
         prefix = f"/{self.repo.path}/releases/tag/"
@@ -241,16 +261,18 @@ class GitHub(Forge):
 
     def _bare_tag_web(self, tag: str) -> bool:
         """Whether the tag has no release: its page says who tagged it, not who released it."""
+        its_page = self._page(f"/releases/tag/{quote(tag, safe='')}")
         try:
-            page = self.http.text(f"https://github.com/{self.repo.path}/releases/tag/{quote(tag, safe='')}")
+            page = self.http.text(its_page)
         except Exception:      # noqa: BLE001 — unknown: keep it
             return False
         return "tagged this" in page and "released this" not in page
 
     def _assets_web(self, tag: str) -> tuple[list[Asset], str]:
         import re
+        files = self._page(f"/releases/expanded_assets/{quote(tag, safe='')}")
         try:
-            page = self.http.text(f"https://github.com/{self.repo.path}/releases/expanded_assets/{quote(tag, safe='')}")
+            page = self.http.text(files)
         except Exception:      # noqa: BLE001 — a missing assets page just means no assets
             return [], ""
         prefix = f"/{self.repo.path}/releases/download/"
@@ -272,7 +294,7 @@ class GitHub(Forge):
         return assets, min(dates) if dates else ""
 
     def _tags_web(self, limit: int) -> list[Release]:
-        out = _git_out(["ls-remote", "--tags", "--refs", f"https://github.com/{self.repo.path}"])
+        out = _git_out(["ls-remote", "--tags", "--refs", self._page()])
         tags = [line.split("refs/tags/", 1)[1] for line in out.splitlines() if "refs/tags/" in line]
         rels = [Release(tag=t, name=t, version=versions.clean(t), date="") for t in tags]
         rels.sort(key=lambda r: versions.key(r.version) or (), reverse=True)
@@ -281,10 +303,11 @@ class GitHub(Forge):
     def _tree_web(self, ref: str) -> list[str]:
         import shutil
         import tempfile
+        project = self._page()
         d = tempfile.mkdtemp(prefix="appkata-tree-")
         try:
             _git_out(["clone", "--quiet", "--depth", "1", "--filter=blob:none", "--no-checkout", "--branch", ref,
-                      f"https://github.com/{self.repo.path}", d])
+                      project, d])
             return _git_out(["-C", d, "ls-tree", "-r", "--name-only", "HEAD"]).splitlines()
         finally:
             shutil.rmtree(d, ignore_errors=True)
@@ -321,6 +344,10 @@ class GitHub(Forge):
     def _tree_api(self, ref: str) -> list[str]:
         d = self._get(f"{self.base}/git/trees/{quote(ref, safe='')}?recursive=1")
         return [t["path"] for t in d.get("tree", []) if t.get("type") == "blob"]
+
+    def _release_assets_api(self, tag: str) -> list[Asset]:
+        d = self._get(f"{self.base}/releases/tags/{quote(tag, safe='')}")
+        return [Asset(a["name"], a["browser_download_url"], a.get("size", 0), a.get("digest") or "") for a in d.get("assets", [])]
 
     def raw_url(self, path: str, ref: str) -> str:
         if self.repo.host == "github.com":
