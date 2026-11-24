@@ -1,5 +1,6 @@
 """App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
+import json
 import os
 import shlex
 import shutil
@@ -345,13 +346,107 @@ def test_proxy_startup_is_set_u_safe_and_bails_if_proxy_dies():
     # readiness loop stops early if the proxy exits instead of blocking for the whole timeout.
     text = sb.build_launcher("signal", "Signal", "/apps/signal/7", "AppRun", sb.resolve_template("messenger"))
     assert '"$DBUS_SESSION_BUS_ADDRESS"' not in text        # not referenced unguarded under set -u
-    assert 'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"' in text
+    assert 'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"' in text
     assert 'kill -0 "$proxy"' in text
     assert _valid_sh(text)
-    # the exact expansion tolerates an unset variable under `set -u`
-    r = subprocess.run(["sh", "-c", 'set -eu; unset DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true; '
-                        'x="${DBUS_SESSION_BUS_ADDRESS:-}"; echo "ok:$x"'], capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout.strip() == "ok:"
+    # the exact expansion tolerates an unset variable under `set -u`, and an empty one is no address either
+    for unset in ("unset DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true", "DBUS_SESSION_BUS_ADDRESS="):
+        r = subprocess.run(["sh", "-c", f'set -eu; rt=/run/user/7; {unset}; x="${{DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}}"; echo "ok:$x"'],
+                           capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout.strip() == "ok:unix:path=/run/user/7/bus"
+
+
+# bwrap as a recorder: each call's words, a JSON line. For the proxy's own bwrap it leaves the
+# socket the proxy would, so the launcher goes on to the app's. With it a generated launcher runs
+# wherever `sh` does, and what it decides at run time -- from the session it finds itself in -- is
+# read from the words it gives bwrap.
+_RECORDER = """import json, socket, sys
+argv = sys.argv[2:]
+with open(sys.argv[1], "a") as f:
+    f.write(json.dumps(argv) + "\\n")
+if "xdg-dbus-proxy" in argv:
+    socket.socket(socket.AF_UNIX).bind(argv[argv.index("xdg-dbus-proxy") + 2])
+"""
+
+
+def _launched(tmp_path, monkeypatch, address, template="standard"):
+    """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
+    None: no address set): the words of the proxy's own bwrap (None where no proxy was started),
+    the app's bwrap's, the run, and the runtime folder."""
+    home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
+    for d in (home, rt, fake):
+        d.mkdir()
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
+    monkeypatch.setenv("HOME", str(home))
+    (fake / "record.py").write_text(_RECORDER)
+    (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
+    (fake / "bwrap").chmod(0o755)
+    lp = tmp_path / "launcher"
+    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", sb.resolve_template(template),
+                                    seccomp=str(fake / "record.py")))            # any file there is: nothing here reads it as a filter
+    env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{os.environ['PATH']}"}
+    if address is not None:
+        env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
+    r = subprocess.run(["sh", str(lp)], env=env, cwd=str(home), capture_output=True, text=True, timeout=60)
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    return next((c for c in calls if "xdg-dbus-proxy" in c), None), next(c for c in calls if "/.flatpak-info" in c), r, rt
+
+
+def _binds(words: list) -> dict:
+    """bwrap's binds among `words`: destination → (the option, the source)."""
+    opts = ("--bind", "--bind-try", "--ro-bind", "--ro-bind-try", "--dev-bind", "--dev-bind-try")
+    return {words[i + 2]: (w, words[i + 1]) for i, w in enumerate(words[:-2]) if w in opts}
+
+
+# A session's bus address → the socket file the proxy has to be shown to reach it (None: an abstract
+# socket, which has no file). The second and third are what `dbus-run-session -- sh -c 'echo
+# $DBUS_SESSION_BUS_ADDRESS'` prints: with dbus 1.14 and later (Mint 22.3: 1.14.10), and with 1.12.
+BUS_ADDRESSES = {
+    "unix:path={rt}/bus": "{rt}/bus",
+    "unix:path=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
+    "unix:path=/srv/session,one/bus": "/srv/session",      # a comma ends the path, to the proxy as to the launcher (GDBus)
+}
+
+
+@pytest.mark.parametrize("address", [None, "", *BUS_ADDRESSES])
+def test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is(tmp_path, monkeypatch, address):
+    # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached a
+    # session bus only there (or on an abstract socket). dbus-run-session and dbus-launch listen at
+    # unix:path=/tmp/dbus-… since dbus 1.14: in such a session the proxy made its socket, the
+    # launcher's wait passed, and every connection the app made failed, with nothing said -- no
+    # portals, no notifications, no "open on the host". And with no address set the proxy was given
+    # "" rather than the runtime folder's bus. How it slipped past: every test's bus, in every tier,
+    # was at $XDG_RUNTIME_DIR/bus, and tier 1 read the launcher's text, never what it does with the
+    # session it starts in. This runs the launcher against each kind of address a session has.
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address)
+    want = (address or "unix:path={rt}/bus").format(rt=rt)
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    at = proxy.index("xdg-dbus-proxy")
+    assert proxy[at + 1] == want and proxy[at + 2].startswith(f"{rt}/appkata/bus-") and proxy[at + 3] == "--filter", proxy[at:at + 4]
+    file = BUS_ADDRESSES.get(address or "unix:path={rt}/bus")
+    shown = {dest: how for dest, how in _binds(proxy[:at]).items() if how[0] == "--ro-bind-try"}
+    assert shown == ({file.format(rt=rt): ("--ro-bind-try", file.format(rt=rt))} if file else {}), shown
+    # ...and the app's bus is that proxy's socket, whatever the session's own address was
+    assert _binds(app)[f"{rt}/bus"] == ("--bind", proxy[at + 2])
+    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"
+
+
+@pytest.mark.parametrize("address", ["unix:path=/tmp/a%20b/bus", "unix:path={rt}/bus;unix:path=/tmp/dbus-MZ8lHbtZ8K", "unix:path=relative/bus",
+                                     "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
+                                     "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
+def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
+    # CR1.5-18's other half: an address whose bus the proxy can't be shown -- one the launcher
+    # doesn't read a socket from -- got a proxy all the same, which failed every connection in
+    # silence. Now the launcher says so, starts no proxy, and the app runs as it does with no bus.
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address)
+    address = address.format(rt=rt)
+    assert proxy is None and r.returncode == 0, (r.stdout, r.stderr)
+    assert r.stderr == (f"AppKata: the session bus here ({address}) is not one the bus filter can reach, "
+                        "so Demo runs without a session bus and gets no desktop services.\n")
+    assert f"{rt}/bus" not in _binds(app) and not [w for w in app if "/appkata/bus-" in w], app
+    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"      # set all the same, and leads nowhere (R3-33)
+    assert os.listdir(rt / "appkata") == []
 
 
 def test_proxy_args_map_capabilities():

@@ -61,8 +61,9 @@ guard() {
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
 rm -f "$sock"
-# Read the host bus with a default so `set -u` can't abort the launcher when it is unset.
-upstream="${DBUS_SESSION_BUS_ADDRESS:-}"
+# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 # Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the
 # launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*
 # /.flatpak-info: the portals judge the caller by the proxy's root, and xdg-desktop-portal
@@ -73,19 +74,41 @@ upstream="${DBUS_SESSION_BUS_ADDRESS:-}"
 # proxy's own death signal is not enough: the kernel clears it at an exec that changes
 # the security domain, as entering Ubuntu 25.04+'s unpriv_bwrap does, and every launch
 # there left its proxy running (review 2, F2; R17.10.2).
-bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
-  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
-  --bind "$rt" "$rt" --unshare-pid --die-with-parent -- \
-  xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Inhibit.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/ScreenSaver' '--broadcast=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.DBus.Introspectable.*@/ScreenSaver' '--broadcast=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/ScreenSaver' --own=org.mpris.MediaPlayer2.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Notification.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' '--call=org.freedesktop.Notifications=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/Notifications' '--broadcast=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' --talk=org.freedesktop.secrets --own=org.freedesktop.secrets '--call=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher' '--call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Introspectable.*@/StatusNotifierWatcher' --call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Properties.Get@/StatusNotifierWatcher --call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Properties.GetAll@/StatusNotifierWatcher '--broadcast=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher' --own=org.kde.StatusNotifierItem-2-1 --own=org.kde.StatusNotifierItem-2-2 --own=org.kde.StatusNotifierItem-2-3 --own=org.kde.StatusNotifierItem-3-1 --own=org.kde.StatusNotifierItem-3-2 --own=org.kde.StatusNotifierItem-3-3 --own=org.kde.StatusNotifierItem-4-1 --own=org.kde.StatusNotifierItem-4-2 --own=org.kde.StatusNotifierItem-4-3 --own=org.kde.StatusNotifierItem-5-1 --own=org.kde.StatusNotifierItem-5-2 --own=org.kde.StatusNotifierItem-5-3 --own=org.kde.StatusNotifierItem-6-1 --own=org.kde.StatusNotifierItem-6-2 --own=org.kde.StatusNotifierItem-6-3 &
-proxy=$!
-# Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of
-# blocking for the full timeout.
-i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
-# Said plainly when it didn't start, rather than left to bwrap ("Can't find source path").
-if [ ! -S "$sock" ]; then
-  kill "$proxy" 2>/dev/null || true
-  printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\n' App >&2
-  exit 1
+start_proxy() {   # "$@": the bwrap words that put this session's bus in the proxy's sight
+  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
+    --bind "$rt" "$rt" "$@" --unshare-pid --die-with-parent -- \
+    xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Inhibit.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/ScreenSaver' '--broadcast=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/ScreenSaver' '--call=org.freedesktop.ScreenSaver=org.freedesktop.DBus.Introspectable.*@/ScreenSaver' '--broadcast=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/ScreenSaver' --own=org.mpris.MediaPlayer2.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Notification.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' '--call=org.freedesktop.Notifications=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/Notifications' '--broadcast=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' --talk=org.freedesktop.secrets --own=org.freedesktop.secrets '--call=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher' '--call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Introspectable.*@/StatusNotifierWatcher' --call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Properties.Get@/StatusNotifierWatcher --call=org.kde.StatusNotifierWatcher=org.freedesktop.DBus.Properties.GetAll@/StatusNotifierWatcher '--broadcast=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher' --own=org.kde.StatusNotifierItem-2-1 --own=org.kde.StatusNotifierItem-2-2 --own=org.kde.StatusNotifierItem-2-3 --own=org.kde.StatusNotifierItem-3-1 --own=org.kde.StatusNotifierItem-3-2 --own=org.kde.StatusNotifierItem-3-3 --own=org.kde.StatusNotifierItem-4-1 --own=org.kde.StatusNotifierItem-4-2 --own=org.kde.StatusNotifierItem-4-3 --own=org.kde.StatusNotifierItem-5-1 --own=org.kde.StatusNotifierItem-5-2 --own=org.kde.StatusNotifierItem-5-3 --own=org.kde.StatusNotifierItem-6-1 --own=org.kde.StatusNotifierItem-6-2 --own=org.kde.StatusNotifierItem-6-3 &
+  proxy=$!
+}
+# The proxy connects to the bus once for each connection the app makes, from inside its own
+# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies:
+# dbus-run-session and dbus-launch put theirs under /tmp, outside the runtime folder, and the
+# proxy then made its socket and failed every connection without a word (CR1.5-18). An abstract
+# socket has no file, and is in the network namespace the proxy shares with the host. Any other
+# address is one the launcher can't read (a list of addresses, a path with an escaped byte or
+# a relative one, another transport), so the proxy couldn't be shown its bus: no proxy then.
+proxy=
+case "$upstream" in
+  *";"*|unix:path=*%*) ;;
+  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" ;;
+  unix:abstract=*) start_proxy ;;
+esac
+if [ -z "$proxy" ]; then
+  # Said plainly, and the app runs with no session bus, as it does where there is none.
+  printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\n' "$upstream" App >&2
+else
+  # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of
+  # blocking for the full timeout.
+  i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+  # Said plainly when it didn't start, rather than left to bwrap ("Can't find source path").
+  if [ ! -S "$sock" ]; then
+    kill "$proxy" 2>/dev/null || true
+    printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\n' App >&2
+    exit 1
+  fi
+  # The app's bus is the proxy's socket. The word lands in "$@", after every baked bind.
+  set -- --bind "$sock" "$rt/bus" "$@"
 fi
 
 x11=0
@@ -143,7 +166,6 @@ bwrap \
   --ro-bind-try "$rt/pipewire-0" "$rt/pipewire-0" \
   --ro-bind-try "$rt/pulse/native" "$rt/pulse/native" \
   --ro-bind "$info" /.flatpak-info \
-  --bind "$sock" "$rt/bus" \
   --ro-bind-try /home/kata/.local/share/appkata/sandboxes/.identity/bin /run/appkata \
   --unshare-all --share-net --die-with-parent --seccomp 3 \
   --clearenv --setenv HOME "$HOME" --setenv PATH /run/appkata:/usr/bin:/bin:/usr/sbin:/sbin \
@@ -153,6 +175,5 @@ bwrap \
   --chdir "$HOME" \
   "$@" || status=$?
 
-kill "$proxy" 2>/dev/null || true
-rm -f "$sock"
+if [ -n "$proxy" ]; then kill "$proxy" 2>/dev/null || true; rm -f "$sock"; fi
 exit $status

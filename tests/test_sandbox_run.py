@@ -522,22 +522,29 @@ _BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configu
 """
 
 
+def _bus_conf(env) -> str:
+    """The test bus's configuration: it starts on demand only the portal services this machine has
+    (`--session` would start any it has installed, and on a desktop gnome-keyring then took a name
+    the app under test should own: review 3, R3-34), and listens where a session's own bus does
+    unless it is told an address."""
+    services = env.rt / "bus-services"
+    services.mkdir(exist_ok=True)
+    for d in ("/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services"):
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if f.startswith(_PORTAL_SERVICES) and not (services / f).exists():
+                (services / f).symlink_to(os.path.join(d, f))
+    conf = env.rt / "bus.conf"
+    conf.write_text(_BUS_CONF.format(services=services))
+    return str(conf)
+
+
 class _Bus:
-    """A real session bus for the test user (dbus-daemon), torn down afterwards. It starts on demand
-    only the portal services this machine has: `--session` would start any it has installed, and on a
-    desktop gnome-keyring then took a name the app under test should own (review 3, R3-34)."""
+    """A real session bus for the test user (dbus-daemon) in the runtime folder, where a login
+    session's is, torn down afterwards."""
 
     def __init__(self, env):
         self.addr = f"unix:path={env.rt}/bus"
-        services = env.rt / "bus-services"
-        services.mkdir(exist_ok=True)
-        for d in ("/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services"):
-            for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-                if f.startswith(_PORTAL_SERVICES) and not (services / f).exists():
-                    (services / f).symlink_to(os.path.join(d, f))
-        conf = env.rt / "bus.conf"
-        conf.write_text(_BUS_CONF.format(services=services))
-        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={conf}", f"--address={self.addr}", "--nofork", "--nopidfile"],
+        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
                                   env=env.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
             if (env.rt / "bus").exists():
@@ -546,6 +553,22 @@ class _Bus:
 
     def close(self):
         self.p.terminate()
+
+
+class _RunSession:
+    """A session started with `dbus-run-session`, as sway and other bare compositors are: its bus
+    listens where the configuration says, unix:tmpdir=/tmp as the session's own does -- a socket
+    file under /tmp with dbus 1.14 and later (Mint 22.3, LMDE 7, Ubuntu 24.04), an abstract socket
+    with 1.12 -- and so outside the runtime folder either way."""
+
+    def __init__(self, env):
+        self.p = subprocess.Popen(["dbus-run-session", "--config-file", _bus_conf(env), "--", "sh", "-c", 'echo "$DBUS_SESSION_BUS_ADDRESS"; exec cat'],
+                                  env=env.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.addr = self.p.stdout.readline().strip()
+
+    def close(self):
+        self.p.stdin.close()            # the session ends with its program, and its bus with it
+        self.p.wait(timeout=10)
 
 
 @needs_proxy
@@ -1000,6 +1023,59 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
     assert lines[6].endswith("AccessDenied")
     lines = r3.stdout.strip().splitlines()
     assert len(lines) == 9 and lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")   # the grant binds devices, opens no portal
+
+
+# ---------------------------------------------------------------- the session's bus, wherever it listens (R17.5, CR1.5-18)
+
+@needs_proxy
+@pytest.mark.parametrize("session", ["no-address", "dbus-run-session"])
+def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
+    # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached
+    # a bus only there. A `dbus-run-session` bus is a socket under /tmp since dbus 1.14: the proxy
+    # made its own socket, the launcher's wait passed, and every connection the app made failed with
+    # nothing said -- a Standard app there had no portals, no notifications, no "open on the host".
+    # And with no address set the proxy was given "", not the runtime folder's bus, which is where
+    # libdbus and GLib look. Every bus of these tests was at $XDG_RUNTIME_DIR/bus with its address
+    # set, so nothing met either. Here: a login session's bus that no variable names, and a real
+    # dbus-run-session, whose address also carries the `,guid=…` every such address does.
+    session_bus = _Bus(env) if session == "no-address" else _RunSession(env)
+    said = {} if session == "no-address" else {"DBUS_SESSION_BUS_ADDRESS": session_bus.addr}
+    calls = (_OWN.format("io.appkata.web") + "; " + _CALL.format("NetworkMonitor.GetAvailable") + "; " +
+             _CALL.format('FileChooser.OpenFile "" Pick "{}"') + "; true")
+    try:
+        assert session_bus.addr.startswith(("unix:path=", "unix:abstract=")), session_bus.addr
+        if session == "dbus-run-session":       # neither in the runtime folder nor named plainly
+            assert str(env.rt) not in session_bus.addr and ",guid=" in session_bus.addr, session_bus.addr
+        portal = _DesktopPortal(env, session_bus)
+        try:
+            r = env.run(env.app("web", sb.resolve_template("online-app")), calls, env=said)
+        finally:
+            portal.close()
+    finally:
+        session_bus.close()
+    lines = r.stdout.strip().splitlines()
+    assert r.returncode == 0 and len(lines) == 3, (session_bus.addr, r.stdout, r.stderr)
+    assert lines[0] == "(uint32 1,)", lines                 # its own name is its own: single instance works
+    assert lines[1] == "(true,)", lines                     # the portal answers through the proxy
+    assert lines[2].endswith("AccessDenied"), lines         # and it is the filtered bus the app is on
+    assert "Failed to connect to bus" not in r.stderr and "not one the bus filter can reach" not in r.stderr, r.stderr
+
+
+@needs_proxy
+@pytest.mark.parametrize("address", ["tcp:host=127.0.0.1,port=1", "unix:path={rt}/bus;unix:path=/tmp/dbus-elsewhere", "unix:path={rt}/a%20bus"],
+                         ids=["another-transport", "a-list", "an-escaped-path"])
+def test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one(env, address):
+    # CR1.5-18's other half: an address that names no one socket the launcher can show the proxy
+    # (another transport, a list, an escaped path) still got a proxy, and the app a bus socket on
+    # which every connection failed, with nothing said. Said now, on stderr, and the app runs as
+    # it does where there is no bus: no proxy is started and nothing is left behind.
+    address = address.format(rt=env.rt)
+    lp = env.app("web", sb.resolve_template("online-app"))
+    r = env.run(lp, '[ -e "$XDG_RUNTIME_DIR/bus" ] && echo BUS; echo "A=$DBUS_SESSION_BUS_ADDRESS"; echo RAN', env={"DBUS_SESSION_BUS_ADDRESS": address})
+    assert r.returncode == 0 and r.stdout.split() == [f"A=unix:path={env.rt}/bus", "RAN"], (r.stdout, r.stderr)
+    assert r.stderr == (f"AppKata: the session bus here ({address}) is not one the bus filter can reach, "
+                        "so Web runs without a session bus and gets no desktop services.\n")
+    assert os.listdir(env.rt / "appkata") == []
 
 
 # A stand-in for the OpenURI portal on the test bus: records what it is asked to open. For a file it

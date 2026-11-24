@@ -38,6 +38,9 @@ tests/test_sandbox_run.py::test_a_review_naming_a_relative_folder_never_opens_th
 tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-list]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[an-escaped-path]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[another-transport]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_standard_app_without_xdg_dbus_proxy_runs_sandboxed_with_no_session_bus  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_standard_launch_leaves_no_proxy_running  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_strict_app_fails_fast_on_every_desktop_road_and_never_falls_back_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
@@ -91,6 +94,8 @@ tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_g
 tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_simultaneous_first_launches_both_start  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_reach_the_filtered_bus_when_there_is_one  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[dbus-run-session]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[no-address]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[dead]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[unset]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_strict_app_runs_and_cannot_read_the_real_home  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)

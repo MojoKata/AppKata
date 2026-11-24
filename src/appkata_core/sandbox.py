@@ -2103,8 +2103,9 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append(
             f'sock="$rt/appkata/bus-{tag}.$$"\n'
             'rm -f "$sock"\n'
-            '# Read the host bus with a default so `set -u` can\'t abort the launcher when it is unset.\n'
-            'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"\n'
+            '# The session bus to filter. With no address set it is where a login session\'s bus is, which is\n'
+            '# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).\n'
+            'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"\n'
             '# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n'
             '# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*\n'
             '# /.flatpak-info: the portals judge the caller by the proxy\'s root, and xdg-desktop-portal\n'
@@ -2115,19 +2116,41 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# proxy\'s own death signal is not enough: the kernel clears it at an exec that changes\n'
             '# the security domain, as entering Ubuntu 25.04+\'s unpriv_bwrap does, and every launch\n'
             '# there left its proxy running (review 2, F2; R17.10.2).\n'
-            'bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
-            '  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
-            '  --bind "$rt" "$rt" --unshare-pid --die-with-parent -- \\\n'
-            '  xdg-dbus-proxy "$upstream" "$sock" ' + pargs + ' &\n'
-            'proxy=$!\n'
-            '# Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n'
-            '# blocking for the full timeout.\n'
-            'i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done\n'
-            '# Said plainly when it didn\'t start, rather than left to bwrap ("Can\'t find source path").\n'
-            'if [ ! -S "$sock" ]; then\n'
-            '  kill "$proxy" 2>/dev/null || true\n'
-            f"  printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\\n' {q(name)} >&2\n"
-            '  exit 1\n'
+            'start_proxy() {   # "$@": the bwrap words that put this session\'s bus in the proxy\'s sight\n'
+            '  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
+            '    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
+            '    --bind "$rt" "$rt" "$@" --unshare-pid --die-with-parent -- \\\n'
+            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + ' &\n'
+            '  proxy=$!\n'
+            '}\n'
+            '# The proxy connects to the bus once for each connection the app makes, from inside its own\n'
+            '# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies:\n'
+            '# dbus-run-session and dbus-launch put theirs under /tmp, outside the runtime folder, and the\n'
+            '# proxy then made its socket and failed every connection without a word (CR1.5-18). An abstract\n'
+            '# socket has no file, and is in the network namespace the proxy shares with the host. Any other\n'
+            '# address is one the launcher can\'t read (a list of addresses, a path with an escaped byte or\n'
+            '# a relative one, another transport), so the proxy couldn\'t be shown its bus: no proxy then.\n'
+            'proxy=\n'
+            'case "$upstream" in\n'
+            '  *";"*|unix:path=*%*) ;;\n'
+            '  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" ;;\n'
+            '  unix:abstract=*) start_proxy ;;\n'
+            'esac\n'
+            'if [ -z "$proxy" ]; then\n'
+            '  # Said plainly, and the app runs with no session bus, as it does where there is none.\n'
+            f"  printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\\n' \"$upstream\" {q(name)} >&2\n"
+            'else\n'
+            '  # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n'
+            '  # blocking for the full timeout.\n'
+            '  i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done\n'
+            '  # Said plainly when it didn\'t start, rather than left to bwrap ("Can\'t find source path").\n'
+            '  if [ ! -S "$sock" ]; then\n'
+            '    kill "$proxy" 2>/dev/null || true\n'
+            f"    printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\\n' {q(name)} >&2\n"
+            '    exit 1\n'
+            '  fi\n'
+            '  # The app\'s bus is the proxy\'s socket. The word lands in "$@", after every baked bind.\n'
+            '  set -- --bind "$sock" "$rt/bus" "$@"\n'
             'fi\n')
 
     # Display: the Wayland socket if present, else X11 with XAUTHORITY (R17.9), decided at run time.
@@ -2257,8 +2280,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # Qt 6.5+ and Chromium read this one and then ask the FileChooser portal, which the proxy denies,
     # so each keeps its own dialog (R17.6.3, PORTAL_INTERFACES).
     parts.append('  --ro-bind "$info" /.flatpak-info \\')
-    if bus:
-        parts.append('  --bind "$sock" "$rt/bus" \\')
     if shims:
         # xdg-open that asks the host through the OpenURI portal (R17.6.3), first on PATH below. At
         # every level: a Strict app has no bus and so nothing to ask, and the shim says so and fails --
@@ -2300,7 +2321,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
 
     # 3. Tear down the proxy (only when there is one), and exit as the program did.
     if bus:
-        out.append('\nkill "$proxy" 2>/dev/null || true\nrm -f "$sock"')
+        out.append('\nif [ -n "$proxy" ]; then kill "$proxy" 2>/dev/null || true; rm -f "$sock"; fi')
     out.append("exit $status")
     return "\n".join(out) + "\n"
 
