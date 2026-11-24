@@ -310,7 +310,10 @@
     393,
     399,
     403,
-    404
+    404,
+    691,
+    692,
+    693
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.10-ui-text.md",
@@ -329,6 +332,10 @@
     "tests/data/launchers/messenger-camera.sh",
     "tests/data/launchers/online-app-appimage-with-folders.sh",
     "tests/data/launchers/standard-writable-no-x11.sh",
+    "tests/skips/tier1.txt",
+    "tests/test_dialog_contract.py",
+    "tests/test_docs_facts.py",
+    "tests/test_launcher_golden.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_run.py"
    ]
@@ -10714,6 +10721,51 @@
    "size": "small",
    "proof": "The project's document checks: tests/test_doccheck.py, tests/test_doc_links.py, tests/test_docs_facts.py and tests/test_public_text.py.",
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
+  },
+  {
+   "finding": 691,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "tests/test_sandbox_run.py",
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "depends_on": [
+    378
+   ],
+   "size": "medium",
+   "proof": "As #378's: tier 1 tests of the launcher's proxy words for Saved passwords, and the launcher container with gnome-keyring: a libsecret client stores and reads a secret through the filter, and the keyring's daemon and master-password interfaces are refused.",
+   "note": "Found by U09's first batch (2026-11-24) while fixing #378, and filed by the coordinator. The remedy is the issue's: open the Secret Service alone, its object tree found from real clients. If a real client can't be made to work through the narrowed rules within the batch, the issue's alternative (keep the name and say so) is a refine."
+  },
+  {
+   "finding": 692,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "related": [
+    195
+   ],
+   "size": "small",
+   "proof": "A test that holds the summary chip's words for each capability to the Sandbox dialog's switch labels.",
+   "note": "Found by U09's first batch (2026-11-24) while fixing #195, and filed by the coordinator: the chip takes the dialog's words (\"Saved passwords\", \"Keep the screen awake\")."
+  },
+  {
+   "finding": 693,
+   "readiness": "check",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    378
+   ],
+   "size": "medium",
+   "proof": "First the check: introspect org.freedesktop.ScreenSaver on each supported desktop (Cinnamon and the others the desktop VMs hold). If any has more than Inhibit and UnInhibit: a tier 1 test of the launcher's words, and the same desktop VM run showing the other members refused.",
+   "note": "Found by U09's first batch (2026-11-24) after #378's fix, and filed by the coordinator. A check: nothing was run. The check needs a desktop VM, which a relay agent doesn't start: the agent writes the command under needs a run, and the coordinator runs it and settles the finding (fixed, or no defect with the evidence on the issue)."
   }
  ],
  "shared_files": [
