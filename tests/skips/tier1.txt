@@ -110,6 +110,8 @@ tests/test_sandbox_run.py::test_the_gpu_renders_inside_the_sandbox_where_the_hos
 tests/test_sandbox_run.py::test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_the_portals_answer_a_sandboxed_app_as_a_host_caller  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_proxy_dying_mid_run_fails_the_apps_bus_calls_but_not_its_run  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone[a-socket-file]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone[an-abstract-socket]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_road_the_shim_covers_still_starts_the_first_browser_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_the_test_bus_starts_only_the_portals_on_demand  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_tray_capability_starts_the_proxy_and_lets_the_app_own_its_item_name  # needs xdg-dbus-proxy and dbus-daemon

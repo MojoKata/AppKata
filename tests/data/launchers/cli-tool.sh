@@ -85,11 +85,17 @@ rm -f "$sock"
 # The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
-# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the
-# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*
-# /.flatpak-info: the portals judge the caller by the proxy's root, and xdg-desktop-portal
-# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the
-# app is a host caller to them and the proxy allows only the portal interfaces safe for one.
+# The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so
+# it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,
+# its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what
+# reaching this session's bus takes. Nothing else of the runtime folder, which holds the
+# ssh and gpg agents' sockets and the document portal's mount; no pid, IPC, UTS or
+# cgroup namespace of the host's, nor its network where the bus can be reached without;
+# and the app's own guard against typing into the terminal (R17.4).
+# What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).
+# It carries *no* /.flatpak-info: the portals judge the caller by the proxy's root, and
+# xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),
+# so the app is a host caller to them and the proxy allows only the portal interfaces safe for one.
 # Its own pid namespace ends it with bwrap: killing bwrap kills the namespace's first
 # process (bwrap's, which keeps --die-with-parent), and with it everything inside. The
 # proxy's own death signal is not enough: the kernel clears it at an exec that changes
@@ -98,21 +104,23 @@ upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 start_proxy() {   # "$@": the bwrap words that put this session's bus in the proxy's sight
   bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
-    --bind "$rt" "$rt" "$@" --unshare-pid --die-with-parent -- \
-    xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app &
+    --bind "$rt/appkata" "$rt/appkata" "$@" \
+    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --die-with-parent --seccomp 3 -- \
+    xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app 3< /home/kata/.local/share/appkata/sandboxes/.identity/seccomp-tty.bpf &
   proxy=$!
 }
 # The proxy connects to the bus once for each connection the app makes, from inside its own
-# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies:
-# dbus-run-session and dbus-launch put theirs under /tmp, outside the runtime folder, and the
-# proxy then made its socket and failed every connection without a word (CR1.5-18). An abstract
-# socket has no file, and is in the network namespace the proxy shares with the host. Any other
+# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies,
+# alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the
+# runtime folder, and the proxy then made its socket and failed every connection without a
+# word (CR1.5-18). An abstract socket has no file: it is in the host's network namespace,
+# so the proxy stays in that only then, and has a network of its own otherwise. Any other
 # address is one the launcher can't read (a list of addresses, a path with an escaped byte or
 # a relative one, another transport), so the proxy couldn't be shown its bus: no proxy then.
 proxy=
 case "$upstream" in
   *";"*|unix:path=*%*) ;;
-  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" ;;
+  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
   unix:abstract=*) start_proxy ;;
 esac
 if [ -z "$proxy" ]; then

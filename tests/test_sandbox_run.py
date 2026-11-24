@@ -6,6 +6,7 @@ launcher (`--clearenv`, 0.5+) that can create user namespaces; elsewhere they sk
 Mint 22.1 container with `scripts/test-sandbox.sh launcher`.
 """
 
+import hashlib
 import os
 import re
 import shlex
@@ -539,15 +540,18 @@ def _bus_conf(env) -> str:
 
 
 class _Bus:
-    """A real session bus for the test user (dbus-daemon) in the runtime folder, where a login
-    session's is, torn down afterwards."""
+    """A real session bus for the test user (dbus-daemon), torn down afterwards: in the runtime
+    folder, where a login session's is, or on an abstract socket, where dbus 1.12 put a
+    dbus-run-session bus (R17.9)."""
 
-    def __init__(self, env):
-        self.addr = f"unix:path={env.rt}/bus"
+    def __init__(self, env, abstract=False):
+        self.addr = f"unix:abstract=/tmp/appkata-test-bus-{os.getpid()}-{id(self)}" if abstract else f"unix:path={env.rt}/bus"
         self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
                                   env=env.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
-            if (env.rt / "bus").exists():
+            if (env.rt / "bus").exists() if not abstract else subprocess.run(
+                    ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                     "org.freedesktop.DBus.GetId"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": self.addr}, capture_output=True).returncode == 0:
                 break
             subprocess.run(["sleep", "0.1"])
 
@@ -1078,6 +1082,62 @@ def test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_witho
     assert os.listdir(env.rt / "appkata") == []
 
 
+# ---------------------------------------------------------------- the proxy's own sandbox (R17.17, CR1.5-24)
+
+# bwrap with a look inside the proxy's own sandbox: the launcher's words unchanged but for the
+# program, which first says what it can see and which namespaces it is in, and then becomes the proxy.
+_LOOK = r"""import os, sys
+real, argv = sys.argv[1], sys.argv[2:]
+if "xdg-dbus-proxy" in argv:
+    look = ('{ find / -mindepth 1 \\( -path /usr -o -path /etc -o -path /proc -o -path /dev \\) -prune -o -exec stat -c "PROXY-SEES %A %n" {} +; '
+            'for ns in net ipc uts pid; do echo "PROXY-NS $ns $(readlink /proc/self/ns/$ns)"; done; '
+            'echo "PROXY-SECCOMP $(sed -n "s/^Seccomp:[[:space:]]*//p" /proc/self/status)"; } >&2; exec "$@"')
+    at = argv.index("xdg-dbus-proxy")
+    argv[at:at] = ["sh", "-c", look, "sh"]
+os.execv(real, [real] + argv)
+"""
+
+
+@needs_proxy
+@pytest.mark.parametrize("bus_on", ["a-socket-file", "an-abstract-socket"])
+def test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone(env, tmp_path, bus_on):
+    # CR1.5-24: the proxy parses every message a hostile app sends, and its bwrap gave it the whole
+    # runtime folder read-write -- the ssh and gpg agents' sockets, the document portal's mount, the
+    # sound and display sockets -- with the host's network and IPC and no seccomp filter: a fault in
+    # it would hand the app all the app's own sandbox withholds. Nothing looked inside that
+    # sandbox; this does, from the proxy's own place in it. What is left is the bus (R17.17).
+    fake = tmp_path / "lookbin"
+    fake.mkdir()
+    (fake / "look.py").write_text(_LOOK)
+    (fake / "bwrap").write_text(f'#!/bin/sh\nexec python3 {shlex.quote(str(fake / "look.py"))} {shlex.quote(shutil.which("bwrap"))} "$@"\n')
+    (fake / "bwrap").chmod(0o755)
+    for name in ("keyring/ssh", "gnupg/S.gpg-agent", "doc/by-app/io.appkata.web/a-document", "pipewire-0", "wayland-0"):
+        (env.rt / name).parent.mkdir(parents=True, exist_ok=True)       # what a session keeps there beside its bus
+        (env.rt / name).write_text("")
+    bus = _Bus(env, abstract=bus_on == "an-abstract-socket")
+    try:
+        r = env.run(env.app("web", sb.resolve_template("online-app")), _OWN.format("io.appkata.web"),
+                    env={"DBUS_SESSION_BUS_ADDRESS": bus.addr, "PATH": f"{fake}:{os.environ['PATH']}"})
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stdout.strip() == "(uint32 1,)", (r.stdout, r.stderr)   # and from in there it still does its work
+    said = [l.split(" ", 2) for l in r.stderr.splitlines() if l.startswith("PROXY-")]
+    sees = {(mode[0], path) for tag, mode, path in (l for l in said if l[0] == "PROXY-SEES")}     # d, l or s, as `ls -l` has it
+    folders = {path for kind, path in sees if kind == "d"}
+    assert folders and all(f"{env.rt}/appkata".startswith(f) for f in folders), sorted(folders)   # its socket folder, and the way to it
+    want = {("l", "/lib"), ("l", "/lib64"), ("l", "/bin")}
+    if bus_on == "a-socket-file":
+        want.add(("s", f"{env.rt}/bus"))
+    assert sees - {("d", f) for f in folders} == want, r.stderr
+    inside = {kind: link for tag, kind, link in (l for l in said if l[0] == "PROXY-NS")}
+    mine = {ns: os.readlink(f"/proc/self/ns/{ns}") for ns in ("net", "ipc", "uts", "pid")}
+    assert set(inside) == set(mine) and not [ns for ns in ("ipc", "uts", "pid") if inside[ns] == mine[ns]], (inside, mine)
+    # the host's network only where the bus is in it: an abstract socket has no file to bind (R17.9)
+    assert (inside["net"] == mine["net"]) is (bus_on == "an-abstract-socket"), (inside, mine)
+    if sb.seccomp_filter() is not None:
+        assert ["PROXY-SECCOMP", "2"] in said, r.stderr                 # a filter is on: the terminal-injection one (R17.4)
+
+
 # A stand-in for the OpenURI portal on the test bus: records what it is asked to open. For a file it
 # records the host path the descriptor points to, which is what the real portal opens.
 _FAKE_OPENURI = """
@@ -1301,16 +1361,28 @@ def test_a_standard_launch_leaves_no_proxy_running(env):
     # the kernel clears at an exec that changes the security domain -- entering unpriv_bwrap does --
     # so killing its bwrap left it alive (and a caller reading the launcher's output waited forever).
     # The proxy's bwrap now has its own pid namespace, which dies with bwrap's first process.
+    # Its socket is named by a hash of the id since R3-12, and this test went on looking for the
+    # id itself: it found no proxy while the app ran either, and so could not fail (seen while
+    # changing the proxy's bwrap for CR1.5-24). It first sees the proxy it then wants gone.
+    tag = hashlib.sha256(b"leak").hexdigest()[:16]
+
+    def proxies():
+        return [l for l in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
+                if "xdg-dbus-proxy" in l and f"bus-{tag}." in l]
+
     bus = _Bus(env)
     try:
         lp = env.app("leak", sb.resolve_template("developer"))
-        r = subprocess.run([lp, "echo RAN"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-        assert r.returncode == 0
+        p = subprocess.Popen([lp, "echo RAN; sleep 2"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        seen = []
+        for _ in range(40):
+            seen = seen or proxies()
+            subprocess.run(["sleep", "0.05"])
+        assert seen and p.wait(timeout=30) == 0, seen
         left = []
         for _ in range(20):                                   # the namespace's processes go with bwrap, at once
-            left = [l for l in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
-                    if "xdg-dbus-proxy" in l and "bus-io.appkata.leak." in l]
+            left = proxies()
             if not left:
                 break
             subprocess.run(["sleep", "0.1"])

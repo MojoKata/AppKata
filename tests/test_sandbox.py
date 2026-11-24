@@ -432,6 +432,51 @@ def test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is(tmp_path, mon
     assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"
 
 
+@pytest.mark.parametrize("address", [None, *BUS_ADDRESSES])
+def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alone(tmp_path, monkeypatch, address):
+    # CR1.5-24: the proxy is the one program that parses bytes a hostile app chooses -- every D-Bus
+    # message it sends -- yet its bwrap had --unshare-pid alone: the whole runtime folder read-write
+    # (the ssh-agent and gpg-agent sockets, the document portal's mount, every other app's
+    # sockets), the host's network and IPC, and no seccomp filter, so a fault in xdg-dbus-proxy
+    # would hand the app what its own sandbox withholds. How it slipped past: the proxy's sandbox
+    # was a documented shape (A1.2.3.12) that no test read; the tests of what a sandbox holds
+    # (the inventory) looked at the app's bwrap alone. This holds every word of the proxy's, for
+    # each kind of session bus: the binds are exactly these, and its namespaces are its own -- the
+    # network too, but where the bus is an abstract socket, which has no file to bind. No word
+    # shares anything back: `--share-net` in a launcher is the sign of the network grant, and the
+    # proxy's bwrap never says it.
+    proxy, _, r, rt = _launched(tmp_path, monkeypatch, address)
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    words = proxy[:proxy.index("--")]
+    file = BUS_ADDRESSES.get(address or "unix:path={rt}/bus")
+    want = {"/usr": ("--ro-bind", "/usr"), "/etc": ("--ro-bind", "/etc"), f"{rt}/appkata": ("--bind", f"{rt}/appkata")}
+    if file:
+        want[file.format(rt=rt)] = ("--ro-bind-try", file.format(rt=rt))
+    assert _binds(words) == want
+    # everything else that puts something in its root: the three links into /usr, /proc and /dev
+    mounts = [w for w in words if w in ("--symlink", "--proc", "--dev", "--tmpfs", "--dir", "--file", "--bind-data", "--ro-bind-data", "--overlay", "--mqueue")]
+    assert mounts == ["--symlink"] * 3 + ["--proc", "--dev"], words
+    unshared = {w for w in words if w.startswith("--unshare")}
+    assert unshared == {"--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"} | ({"--unshare-net"} if file else set()), words
+    assert "--die-with-parent" in words and not [w for w in words if w.startswith("--share")], words
+    assert words[words.index("--seccomp") + 1] == "3" and "--new-session" not in words
+
+
+def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
+    # ...and the terminal-injection filter, as the app's bwrap does: on a descriptor opened for
+    # that command alone, so the launcher's shell holds none (the app's is opened later). Where
+    # the machine's ABI has no filter, a session of its own, which the proxy can afford.
+    gs = sb.resolve_template("standard")
+    with_filter = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs, seccomp="/data/seccomp-tty.bpf")
+    command = with_filter[with_filter.index("start_proxy() {"):with_filter.index("proxy=$!")]
+    assert "--die-with-parent --seccomp 3 -- " in command and command.rstrip().endswith("3< /data/seccomp-tty.bpf &")
+    assert with_filter.index("3< /data/seccomp-tty.bpf &") < with_filter.index("exec 3< /data/seccomp-tty.bpf")
+    without = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    command = without[without.index("start_proxy() {"):without.index("proxy=$!")]
+    assert "--die-with-parent --new-session -- " in command and "--seccomp" not in command and "3<" not in command
+    assert _valid_sh(with_filter) and _valid_sh(without)
+
+
 @pytest.mark.parametrize("address", ["unix:path=/tmp/a%20b/bus", "unix:path={rt}/bus;unix:path=/tmp/dbus-MZ8lHbtZ8K", "unix:path=relative/bus",
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])

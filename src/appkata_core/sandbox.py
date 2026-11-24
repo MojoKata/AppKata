@@ -2038,7 +2038,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     program, relative to `appdir`. `appimage_path`: the kept `.AppImage` (sets APPIMAGE), or None.
     `apps_root`: the install root, which a CLI tool's working-directory grant must never expose.
     `seccomp`: the terminal-injection filter (:func:`write_seccomp_filter`); without one the program
-    runs in a new session instead, safe but cut off from its terminal. `log_path`: the app's log
+    runs in a new session instead, safe but cut off from its terminal, and so does the bus proxy,
+    which takes the same filter. `log_path`: the app's log
     (:func:`applog.app_log_path`), where the launcher sends its stderr when no terminal shows it.
     `forward`: the file-argument helper (:func:`write_forward_helper`); without one, file arguments
     are passed through as they are. `shims`: the folder of programs the app finds first on its PATH
@@ -2100,17 +2101,26 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         # The socket is named by a hash of the id: a Unix socket path holds 107 bytes, and an id is the
         # app name's slug, of any length (review 3, R3-12: an id past ~60 characters couldn't start).
         tag = hashlib.sha256(app_id.encode()).hexdigest()[:16]
+        # the proxy's bwrap takes the terminal-injection filter as the app's does, on a descriptor
+        # opened for that command alone; where there is none, a session of its own
+        psession, pfilter = ("--seccomp 3", f" 3< {q(seccomp)}") if seccomp else ("--new-session", "")
         out.append(
             f'sock="$rt/appkata/bus-{tag}.$$"\n'
             'rm -f "$sock"\n'
             '# The session bus to filter. With no address set it is where a login session\'s bus is, which is\n'
             '# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).\n'
             'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"\n'
-            '# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n'
-            '# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*\n'
-            '# /.flatpak-info: the portals judge the caller by the proxy\'s root, and xdg-desktop-portal\n'
-            '# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the\n'
-            '# app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'
+            '# The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so\n'
+            '# it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,\n'
+            '# its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what\n'
+            '# reaching this session\'s bus takes. Nothing else of the runtime folder, which holds the\n'
+            '# ssh and gpg agents\' sockets and the document portal\'s mount; no pid, IPC, UTS or\n'
+            '# cgroup namespace of the host\'s, nor its network where the bus can be reached without;\n'
+            '# and the app\'s own guard against typing into the terminal (R17.4).\n'
+            '# What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).\n'
+            '# It carries *no* /.flatpak-info: the portals judge the caller by the proxy\'s root, and\n'
+            '# xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),\n'
+            '# so the app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'
             '# Its own pid namespace ends it with bwrap: killing bwrap kills the namespace\'s first\n'
             '# process (bwrap\'s, which keeps --die-with-parent), and with it everything inside. The\n'
             '# proxy\'s own death signal is not enough: the kernel clears it at an exec that changes\n'
@@ -2119,21 +2129,23 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             'start_proxy() {   # "$@": the bwrap words that put this session\'s bus in the proxy\'s sight\n'
             '  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
             '    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
-            '    --bind "$rt" "$rt" "$@" --unshare-pid --die-with-parent -- \\\n'
-            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + ' &\n'
+            '    --bind "$rt/appkata" "$rt/appkata" "$@" \\\n'
+            f'    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --die-with-parent {psession} -- \\\n'
+            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + f'{pfilter} &\n'
             '  proxy=$!\n'
             '}\n'
             '# The proxy connects to the bus once for each connection the app makes, from inside its own\n'
-            '# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies:\n'
-            '# dbus-run-session and dbus-launch put theirs under /tmp, outside the runtime folder, and the\n'
-            '# proxy then made its socket and failed every connection without a word (CR1.5-18). An abstract\n'
-            '# socket has no file, and is in the network namespace the proxy shares with the host. Any other\n'
+            '# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies,\n'
+            '# alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the\n'
+            '# runtime folder, and the proxy then made its socket and failed every connection without a\n'
+            '# word (CR1.5-18). An abstract socket has no file: it is in the host\'s network namespace,\n'
+            '# so the proxy stays in that only then, and has a network of its own otherwise. Any other\n'
             '# address is one the launcher can\'t read (a list of addresses, a path with an escaped byte or\n'
             '# a relative one, another transport), so the proxy couldn\'t be shown its bus: no proxy then.\n'
             'proxy=\n'
             'case "$upstream" in\n'
             '  *";"*|unix:path=*%*) ;;\n'
-            '  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" ;;\n'
+            '  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}"; start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
             '  unix:abstract=*) start_proxy ;;\n'
             'esac\n'
             'if [ -z "$proxy" ]; then\n'

@@ -233,6 +233,8 @@ differ from its list (review 3, harness B).
 | R17.16 | The Audit (R13) records every change of a | test_each_sandbox_mutation_writes_exactly_its_audit_entry, test_the_system_setup_is_audited_once_it_really_worked, test_the_repair_removes_appkatas_profile_heals_and_is_audited, test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.17 | Limits, stated plainly in the UI and docs: | test_every_dialog_hint_has_a_row_in_the_evidence_table, test_the_bus_warning_is_said_only_for_an_abstract_session_bus |
 | R17.17 | Flatpak has the same property); a kernel exploit | statement |
+| R17.17 | The bus filter (R17.5) is itself a program that reads every message | statement |
+| R17.17 | Beside those it holds only /usr and /etc read-only, as the app's | test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alone, test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone, test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own |
 | R17.18 | What the sandbox doesn't do. | statement |
 | R17.18 | It doesn't use the Wayland security-context protocol | deferred |
 | R17.18 | It has no Landlock layer as defense-in-depth | deferred |
