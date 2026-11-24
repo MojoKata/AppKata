@@ -496,7 +496,9 @@ def _reset_time(hdr: dict) -> float:
             return now + int(after)
     elif after:
         try:
-            return parsedate_to_datetime(after).timestamp()
+            at = parsedate_to_datetime(after).timestamp()
         except (TypeError, ValueError, OverflowError):
-            pass
+            at = None
+        if at is not None and _a_time(at):            # the last hours of the year 9999 are the year 10000 east of Greenwich
+            return at
     return now + 60

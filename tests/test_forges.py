@@ -2684,6 +2684,35 @@ def test_a_401_with_no_token_sent_is_never_the_tokens(pair, clock):
     assert _secrets(a.seen) == [] and len(a.seen) == 3
 
 
+@pytest.fixture
+def zone(monkeypatch):
+    """Sets this process's time zone, where the platform lets a process set its own, and puts it back."""
+    def set_(name):
+        if hasattr(time, "tzset"):
+            monkeypatch.setenv("TZ", name)
+            time.tzset()
+    yield set_
+    monkeypatch.undo()
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+@pytest.mark.parametrize("tz", ["UTC", "Asia/Tokyo", "Pacific/Kiritimati", "America/Chicago", "Pacific/Pago_Pago"])
+@pytest.mark.parametrize("headers", [
+    {"retry-after": "Fri, 31 Dec 9999 23:59:59 GMT"},          # the year 10000 east of Greenwich, which no clock there shows
+    {"retry-after": "Fri, 31 Dec 9999 00:00:00 GMT"}, {"retry-after": "Thu, 01 Jan 1970 00:00:00 GMT"},
+    {"retry-after": "Mon, 01 Jan 0001 00:00:00 GMT"}, {"retry-after": "253402300800"}, {"x-ratelimit-reset": "253402300799"},
+    {"x-ratelimit-reset": "253402300800"}, {"retry-after": "9" * 12}, {"retry-after": Y2100_AS_A_DATE}, {},
+], ids=lambda h: "-".join(h.values()).replace(" ", "_") or "nothing")
+def test_whatever_a_host_says_and_wherever_the_clock_is_the_time_to_come_back_is_one_a_clock_shows(zone, tz, headers):
+    import datetime
+    zone(tz)
+    at = http_._reset_time(headers)
+    assert datetime.datetime.fromtimestamp(at).strftime("%H:%M")           # as a Source's row shows it
+    if headers == {"retry-after": Y2100_AS_A_DATE}:
+        assert at == Y2100
+
+
 def test_a_time_no_clock_can_show_never_reaches_a_sources_row(tmp_path, monkeypatch, clock):
     """Found beside #683: a host's Retry-After of thirty nines was kept as the time to come back,
     which the Sources list then failed to show. Whatever a host says, what a Sync writes is a time."""
