@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 BADGE = re.compile(r"shields\.io|badge|travis-ci|circleci|codecov|coveralls|/workflows/|actions/workflow|"
                    r"liberapay\.com/assets|ko-fi|buymeacoffee|opencollective\.com/.+/(backers|sponsors)|"
@@ -67,12 +67,38 @@ def readme_images(markdown: str, hero: bool = True) -> list[str]:
 _IN_AN_ADDRESS = "/%?#&=+:@,;!$'()*[]"
 
 
+GITHUB_PAGES = ("github.com", "www.github.com")      # the hosts of GitHub's page for a file, /<owner>/<repo>/blob/<ref>/<path>
+_A_FILES_PAGE = re.compile(r"^/([^/]+)/([^/]+)/blob/(.+)$")
+
+
+def _whole(url: str) -> str:
+    """An address a README gives whole, as it is asked for. A link to a file's page on github.com
+    becomes the address of the file itself, on raw.githubusercontent.com. That is decided from the
+    address's own host and path: it was decided from its text, so any address that held
+    "github.com/" and "/blob/" anywhere, in another host's name or in a query, was rewritten into
+    one its README never named (CR1 #681). And its path and query are written as an address can be
+    sent, as a relative one's are: a space or a letter outside ASCII in them was refused by Http."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return url
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        return url
+    netloc, path, query = parts.netloc, quote(parts.path, safe=_IN_AN_ADDRESS), quote(parts.query, safe=_IN_AN_ADDRESS)
+    page = _A_FILES_PAGE.match(path)
+    if page and (parts.hostname or "").lower() in GITHUB_PAGES and port in (None, {"http": 80, "https": 443}[scheme]):
+        netloc, path = "raw.githubusercontent.com", "/" + "/".join(page.groups())
+    if (netloc, path, query) == (parts.netloc, parts.path, parts.query):
+        return url
+    return urlunsplit((scheme, netloc, path, query, parts.fragment))
+
+
 def resolve(url: str, raw_base: str, readme_dir: str = "") -> str:
     """Relative README links against the raw-file URL (R3.4), written as an address can be sent."""
     if re.match(r"^[a-z]+://", url, re.I) or url.startswith("data:"):
-        if "github.com/" in url and "/blob/" in url:
-            return url.replace("github.com/", "raw.githubusercontent.com/", 1).replace("/blob/", "/", 1)
-        return url
+        return _whole(url)
     path = url.lstrip("/") if url.startswith("/") else (readme_dir + "/" + url if readme_dir else url)
     parts = []
     for seg in path.split("/"):

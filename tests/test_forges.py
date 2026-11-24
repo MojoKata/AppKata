@@ -2697,3 +2697,73 @@ def test_a_time_no_clock_can_show_never_reaches_a_sources_row(tmp_path, monkeypa
         assert datetime.datetime.fromtimestamp(json.loads(app["error_extra"])["reset"])
         db.x("DELETE FROM sources")
         db.x("DELETE FROM apps")
+
+
+# ---------------------------------------------------------------- a README's link to a file's page on github.com (R3.4)
+# CR1's #681: metadata.resolve turns a link to a file's page on github.com into the address of the
+# file itself, and it knew such a link by its text: "github.com/" and "/blob/" anywhere in it. An
+# address on another host that held both, in its host's name or in a query, was rewritten into one
+# its README never named. How it slipped past: resolve was tested for a relative path alone. The
+# class is "an address read as text", so the two pieces of text are put in every part of an address
+# here, and only github.com's own page of a file is turned into anything.
+RAW = "https://raw.githubusercontent.com/o/r/main"
+
+
+@pytest.mark.parametrize("url", [
+    "https://notgithub.com/o/r/blob/main/shot.png",                       # the finding's: ends in the same letters
+    "https://other.example/x?u=github.com/o/r/blob/main/shot.png",        # the finding's: in its query
+    "https://github.com.evil.example/o/r/blob/main/shot.png", "https://evil.example/github.com/o/r/blob/main/shot.png",
+    "https://github.com@evil.example/o/r/blob/main/shot.png",             # the host is evil.example
+    "https://evil.example/shot.png#github.com/o/r/blob/main/shot.png",
+    "https://gist.github.com/o/r/blob/main/shot.png", "https://raw.github.com/o/r/blob/main/shot.png",       # GitHub's, and no page of a file
+    "https://github.com:8443/o/r/blob/main/shot.png",                     # another port is another host (R9.2.2)
+    "https://github.com/o/r/raw/main/shot.png", "https://github.com/o/r/tree/main/blob/shot.png",            # github.com, and no page of a file
+    "https://github.com/o/blob/shot.png", "https://github.com/blob/main/shot.png", "https://github.com/o/r/blob/",
+    "https://raw.githubusercontent.com/o/r/main/blob/shot.png",
+    "ftp://github.com/o/r/blob/main/shot.png", "data:image/png;base64,github.com/o/r/blob/main/shot.png",
+    "http://[github.com/o/r/blob/main/shot.png",                          # no address at all: as it was written
+])
+def test_an_address_that_is_no_github_page_of_a_file_is_asked_for_as_its_readme_wrote_it(url):
+    assert metadata.resolve(url, RAW, "docs") == url
+
+
+@pytest.mark.parametrize("url, becomes", [
+    ("https://github.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("https://github.com/o/r/blob/main/docs/img/shot.png?raw=true#readme", RAW + "/docs/img/shot.png?raw=true#readme"),
+    ("https://www.github.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("HTTPS://GitHub.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("https://github.com:443/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("http://github.com/o/r/blob/main/shot.png", "http://raw.githubusercontent.com/o/r/main/shot.png"),      # as it was: the scheme is the README's
+    ("https://github.com/o/r/blob/release/blob/docs/blob/shot.png", "https://raw.githubusercontent.com/o/r/release/blob/docs/blob/shot.png"),
+    ("https://github.com/o/r/blob/main/screen shot.png", RAW + "/screen%20shot.png"),
+    ("https://github.com/o/r/blob/main/截图.png", RAW + "/%E6%88%AA%E5%9B%BE.png"),
+])
+def test_a_github_page_of_a_file_becomes_the_address_of_the_file(url, becomes):
+    assert metadata.resolve(url, "https://code.example.net/o/r/raw/branch/main", "docs") == becomes
+
+
+@pytest.mark.parametrize("url, sent", [
+    ("https://cdn.example/a b.png", "https://cdn.example/a%20b.png"),
+    ("https://cdn.example/docs/截图.png?v=ä 1#top", "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top"),
+    ("https://cdn.example/a%20b.png?x=1&y=a+b", "https://cdn.example/a%20b.png?x=1&y=a+b"),          # written quoted: left as it is
+    ("https://user:pw@cdn.example:8443/a b.png", "https://user:pw@cdn.example:8443/a%20b.png"),
+    ("HTTP://CDN.example/Shot.PNG", "HTTP://CDN.example/Shot.PNG"),                                   # nothing to quote: not a letter of it changes
+])
+def test_a_whole_address_is_written_as_an_address_can_be_sent_too(url, sent):
+    assert metadata.resolve(url, RAW) == sent
+    seen = []
+    _ask(names(Http(opener=recording({}, seen))), metadata.resolve(url, RAW))
+    assert [u for u, _ in seen] == [sent]                     # and Http asks for it, where it refused the address as written
+
+
+def test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    theirs = ["https://notgithub.com/o/r/blob/main/demo-1.png", "https://other.example/demo.png?u=github.com/o/r/blob/main/x.png",
+              "https://github.com/acme/widget/blob/trunk/media/demo-3.png"]
+    readme = "# Widget\n\n" + "".join(f"![demo]({url})\n\n" for url in theirs)
+    images = set(w.icons + w.heroes + w.never)
+    routes = {**{k: v for k, v in w.routes.items() if k not in images}, w.raw + "README.md": readme.encode()}
+    db, asked = sync_of(tmp_path, monkeypatch, w, routes)
+    assert rows(db)[w.source]["error_code"] is None
+    assert [url for url in asked if "demo" in url] == theirs[:2] + ["https://raw.githubusercontent.com/acme/widget/trunk/media/demo-3.png"]
+    assert [url for url in asked if "notraw" in url or "u=raw." in url] == []
