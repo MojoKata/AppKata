@@ -694,13 +694,13 @@ def _tarball(server, name, files):
 
 
 _REFUSALS = {"the command link": "isn't a link AppKata made", "the menu entry": "couldn't add the app-menu entry",
-             "an archive with no program": "couldn't find the program"}
+             "an archive with no program": "couldn't find the program", "a folder that can't be put in place": "Not a directory"}
 
 
 @linux_only
 @pytest.mark.parametrize("update", [False, True], ids=["a first install", "an update"])
 @pytest.mark.parametrize("refused", list(_REFUSALS))
-def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, refused, update):
+def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, monkeypatch, refused, update):
     # CR1.3-15: the record is stored last, and nothing took back what a refused install had made by
     # then. A first install refused at its command link (a file of the user's is there) left the
     # app's folder, its stable link and its menu entry with no record: in the desktop's menu, not in
@@ -708,7 +708,8 @@ def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, re
     # were the new version's and the record the old one's, and an archive with no program left its
     # <version>.new folder. Each refusal here is a real one: a file where the command link goes, a
     # program whose path in the archive holds a quote (no menu entry can start it, and that is known
-    # only once it is unpacked), an archive with no program.
+    # only once it is unpacked), an archive with no program. The fourth is the one made to happen:
+    # the unpacked version can't be renamed into place, as when what is at its name isn't a folder.
     apps, cmd, mine = tmp_path / "apps", tmp_path / "cmd", tmp_path / "their-bin"
     mine.mkdir()
     (mine / "tool").write_text("mine")
@@ -722,8 +723,13 @@ def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, re
     a2 = _tarball(server, "tool-2.0.tar.gz", files.get(refused, {"tool-2.0/tool": 0o755}))
     p = install.Portable(folder=str(apps), command_dir=str(mine)) if refused == "the command link" else good
     before = _left(tmp_path, env)
-    with pytest.raises(install.InstallError, match=_REFUSALS[refused]):
-        install.install(env, {**app, "installVersion": "2.0"}, a2, "tarball", [a2], portable=p)
+    with monkeypatch.context() as m:
+        if refused == "a folder that can't be put in place":
+            real = os.replace
+            m.setattr(install.os, "replace", lambda src, dst: (_ for _ in ()).throw(NotADirectoryError(20, "Not a directory", src, None, dst))
+                      if src.endswith(".new") else real(src, dst))
+        with pytest.raises((install.InstallError, OSError), match=_REFUSALS[refused]):
+            install.install(env, {**app, "installVersion": "2.0"}, a2, "tarball", [a2], portable=p)
     assert _changed(before, _left(tmp_path, env)) == {}
     assert (mine / "tool").read_text() == "mine" and os.path.lexists(apps / "tool") is update
     if update:                                                  # and the app is whole: it updates, and uninstalls

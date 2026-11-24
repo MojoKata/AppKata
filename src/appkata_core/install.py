@@ -466,11 +466,11 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
         else:
             _extract(kind, file, staging)
             exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
-    except BaseException:                  # an archive that can't be unpacked, or has no program: nothing of it stays (CR1.3-15)
-        _remove_tree(staging)
+        shutil.rmtree(vdir, ignore_errors=True)
+        os.replace(staging, vdir)
+    except BaseException:                  # an archive that can't be unpacked, has no program or can't be put in
+        _remove_tree(staging)              # place: nothing of it stays (CR1.3-15)
         raise
-    shutil.rmtree(vdir, ignore_errors=True)
-    os.replace(staging, vdir)
     return {"version": version, "path": vdir, "exec": os.path.relpath(exe.replace(staging, vdir, 1), target)}
 
 
