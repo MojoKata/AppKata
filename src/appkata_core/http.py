@@ -470,7 +470,12 @@ class Http:
         before it is asked for, with its own lookup; this is what the request is held to.
 
         Behind a proxy the connection is the proxy's, which may well be on this computer: the
-        request's own host is then looked up by the proxy, and only _allowed's check is made."""
+        request's own host is then looked up by the proxy, and only _allowed's check is made.
+
+        An address that fails at any step, reading it, making its socket (an IPv6 one on a
+        computer with IPv6 off) or connecting, is passed over for the next, as
+        socket.create_connection does (the review's pass 1, P1-B3); the last failure is the
+        request's when none connects."""
         name, port = address
         addresses = self._lookup(name)              # an OSError: urllib's "couldn't reach", as before
         parts = urlsplit(req.full_url)
@@ -478,9 +483,10 @@ class Http:
             _refuse_local(parts.hostname or name, addresses)
         failed = OSError(f"{name} has no address")
         for each in addresses:
-            family, kind, proto, _, at = socket.getaddrinfo(each, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)[0]
-            sock = socket.socket(family, kind, proto)
+            sock = None
             try:
+                family, kind, proto, _, at = socket.getaddrinfo(each, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)[0]
+                sock = socket.socket(family, kind, proto)
                 if isinstance(timeout, (int, float)):        # else urllib's "no timeout given"
                     sock.settimeout(timeout)
                 if source:
@@ -488,10 +494,12 @@ class Http:
                 _hold(sock, sock.connect, at)                # held to the request's clock, as each read is
                 return sock
             except OSError as e:
-                sock.close()
+                if sock is not None:
+                    sock.close()
                 failed = e
             except BaseException:                            # the deadline, or a Cancel
-                sock.close()
+                if sock is not None:
+                    sock.close()
                 raise
         raise failed
 

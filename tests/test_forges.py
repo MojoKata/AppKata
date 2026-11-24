@@ -1,5 +1,6 @@
 """Forge API parsing against recorded responses, so no forge needs to be reachable."""
 
+import errno
 import inspect
 import io
 import ipaddress
@@ -643,6 +644,58 @@ def test_the_sources_own_host_on_the_local_network_is_still_reached_by_its_name(
     http = Http(timeout=5)
     assert http.json(f"https://{host}/api/v1/version") == {"version": "1.22.0"}
     assert sync._save_image(http, f"https://{host}/o/r/raw/branch/main/shot.png", str(tmp_path / "hero"), token_host=host).endswith("hero.png")
+
+
+# The review's pass 1, P1-B3: Http's own connection (CR1 #682) made the socket for each of a host's
+# addresses, and read the address, outside the try that goes on to the next address, so an address
+# whose socket couldn't be made (an IPv6 one on a computer with IPv6 off) ended the request, where
+# socket.create_connection, which it replaced, goes on to the next one. How it slipped past: every
+# lookup in the tests gave one address, or addresses that connect. The class is "a failure at one
+# of a host's addresses ends the request", so the first address here fails at each step of
+# connecting in turn: reading it, making its socket, connecting.
+def failing_at(monkeypatch, address, step):
+    """Stands in for the socket module of Http's connections: `address` fails at `step`, "read"
+    (its numeric lookup), "socket" (no socket of its family can be made: IPv6, which is off) or
+    "connect" (refused). Every other address connects for real. Gives the addresses connected to."""
+    real, tried = socket, []
+
+    def getaddrinfo(host, *a, **k):
+        if host == address and step == "read":
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return real.getaddrinfo(host, *a, **k)
+
+    class Made(real.socket):
+        def connect(self, at):
+            tried.append(at[0])
+            if at[0] == address and step == "connect":
+                raise ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+            return super().connect(at)
+
+    def made(family, kind, proto):
+        if step == "socket" and family == real.AF_INET6:
+            raise OSError(errno.EAFNOSUPPORT, "Address family not supported by protocol")
+        return Made(family, kind, proto)
+    monkeypatch.setattr(http_, "socket", types.SimpleNamespace(**{**vars(real), "getaddrinfo": getaddrinfo, "socket": made}))
+    return tried
+
+
+@pytest.mark.parametrize("first, step", [("::1", "socket"), ("192.0.2.1", "read"), ("192.0.2.1", "connect")])
+def test_an_address_that_fails_is_passed_over_for_the_hosts_next_one(pair, monkeypatch, first, step):
+    a, b = pair
+    a.files = {"/o/r/raw/branch/main/shot.png": PNG}
+    tried = failing_at(monkeypatch, first, step)
+    http = names(Http(timeout=5), {"git.lan.example": [first, "127.0.0.1"]})
+    assert http.bytes(f"https://git.lan.example:{a.server_address[1]}/o/r/raw/branch/main/shot.png") == PNG
+    assert tried == [first] * (step == "connect") + ["127.0.0.1"] and len(a.seen) == 1
+
+
+def test_a_host_none_of_whose_addresses_connects_is_unreachable(pair, monkeypatch):
+    a, b = pair
+    failing_at(monkeypatch, "::1", "socket")
+    http = names(Http(timeout=5), {"git.lan.example": ["::1"]})
+    with pytest.raises(Unreachable, match="^couldn't reach git.lan.example: .*Address family not supported"):
+        http.bytes(f"https://git.lan.example:{a.server_address[1]}/x")
+    assert a.seen == []
 
 
 PROXIES = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
