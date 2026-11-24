@@ -119,6 +119,7 @@ class Backend(QObject):
     _msvcrtNeeded = Signal("QVariant")
     auditChanged = Signal()
     _refresh = Signal()
+    _synced = Signal(object)                     # a sync's worker is done: what was to follow the sync (a callable, or None)
     _toast = Signal(str, str)
 
     def __init__(self, db_path: str | None = None, heal: bool = True):
@@ -137,6 +138,7 @@ class Backend(QObject):
         self._syncing = False
         self._previews: dict[str, sync.Preview] = {}
         self._refresh.connect(self.reload)
+        self._synced.connect(self._after_sync)
         self._toast.connect(self.toast)
         self._inUse.connect(self.inUse)
         self._msvcrtNeeded.connect(self.msvcrtNeeded)
@@ -666,10 +668,17 @@ class Backend(QObject):
             finally:
                 self._syncing = False
                 self.syncChanged.emit()
-                self._refresh.emit()
-                if after:
-                    QTimer.singleShot(0, after)
+                # `after` rides in the signal, which Qt queues to the main thread: a timer made on
+                # this thread never fires, since the thread has no event loop (CR1, #464)
+                self._synced.emit(after)
         threading.Thread(target=work, daemon=True).start()
+
+    def _after_sync(self, after) -> None:
+        """On the main thread, once a sync's worker is done: the catalog with what the sync found,
+        then what was to follow it."""
+        self.reload()
+        if after:
+            after()
 
     @Slot()
     def cancelSync(self) -> None:
