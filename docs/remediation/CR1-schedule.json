@@ -25,6 +25,8 @@
    "files": [
     ".github/workflows/ci.yml",
     "docs/RELEASE.md",
+    "docs/github-workflows.md",
+    "scripts/areas.py",
     "tests/test_workflows.py"
    ]
   },
