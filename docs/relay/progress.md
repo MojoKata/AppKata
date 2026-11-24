@@ -335,3 +335,187 @@ Checked: every answer of the agent on its named model; the guard; `tests/test_in
 - **Needs a run** (the Windows VM tests, the desktop VMs, the launcher VMs): the coordinator's,
     when the last batch is in.
 
+
+## Batch 3
+
+Done 2026-11-24 by one agent (Fable 5.2, high effort), on `cr1-u03-portable-install` from 6361f28.
+
+**Files touched**
+
+- `src/appkata_core/install.py`, `src/appkata/backend.py`
+- `tests/test_install_review.py`, `tests/test_dialog_contract.py`, `tests/test_sandbox_transitions.py`, `tests/skips/windows.txt`
+- `docs/requirements/R4-installing-updating-and-uninstalling.md` (R4.3.1, R4.3.1.3, R4.7, R4.10.5),
+  `docs/requirements/R17-app-sandboxing/R17.12-self-update.md`, `docs/requirements-trace.md`
+
+**Counts**: fixed 4, no defect 0, remedy changed 1 (#698), set aside 0, still left 0, new 4.
+
+**The findings**
+
+| Finding | Outcome | Commit | Tests | Shown failing on the code before |
+|---|---|---|---|---|
+| #310 (Med) | fixed | 49fe2bb | `tests/test_install_review.py`: `test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes` (an update, the same version again, a kept version, the next start × AppImage, archive × sandboxed or not: 16 cases), `test_uninstalling_says_what_it_did_not_remove` (2); `tests/test_dialog_contract.py`: `test_what_the_dialogs_show_of_an_installed_app_is_the_folder_it_is_in_not_the_one_settings_names_now` | `git archive` of 6361f28 with the two test files copied in: 19 failed. The 8 sandboxed cases on the launcher's folder made in the new install folder; the 4 unsandboxed installs on the record's root being the new folder; the dialog's test on `_app_options(url).root`. The 4 unsandboxed cases of a kept version and the next start, and the 2 uninstall tests, fail there only on `uninstall()` returning nothing: their folders were right, and they hold the class |
+| #311 (Med) | fixed | f1e713c | `tests/test_install_review.py`: `test_each_version_of_an_appimage_released_under_one_name_is_kept_as_its_own_file` (5 cases: three names, and two whose name seems to hold a version), `test_the_name_a_version_of_an_appimage_is_kept_under` (9), `test_the_versions_an_app_has_are_there_until_the_new_one_is_installed` (an app that updates itself, the same version again, an app that updates itself from now on, an update that retires a kept version × five failing steps × AppImage, archive: 36 cases) | `git archive` of 49fe2bb with the test file copied in: 49 failed, 7 passed. (a): `[b'3.0'] == [b'1.0', b'2.0', b'3.0']`, one file left of three. (b) and its class: the installed version gone (`apps/demo-tool/app/tool-1.0` a folder before, nothing after), the kept ones gone, the new version under the old record; 4 on `DID NOT RAISE` (an AppImage wasn't renamed into place, so that step couldn't fail). 10 only on a new helper's name (`_appimage_name`, `_forget`), 5 on batch 2's folder test, whose file is now `t-1.2.0.AppImage`. The 7 that passed fail before anything is deleted, and hold the class |
+| #336 (Med) | fixed (tests only) | bb21268 | `tests/test_install_review.py`: `test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_no_download` (its checksum, a Cancel once it is downloaded, placing it, its command link × AppImage, archive: 8 cases), and `test_checksum_mismatch_installs_nothing` looks at the downloads folder | `git archive` of 6672771 (before #313) with the test file copied in: the 4 cases of placing and the command link fail. On today's code changed in a scratch copy: with the `finally` no longer deleting the complete file, both checksum cases and `test_checksum_mismatch_installs_nothing` fail; with a Cancel keeping the file, both Cancel cases fail |
+| #156 (Low) | fixed | d7c71aa | `tests/test_sandbox_transitions.py`: `test_turning_the_sandbox_off_puts_an_app_that_updates_itself_back_under_its_fixed_name` (AppImage, archive: the whole road, by the install and the backend's `setSandbox`); `tests/test_install_review.py`: `test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_folders` (three failing steps × AppImage, archive) | `git archive` of bb21268 with the two test files copied in: 8 failed. The AppImage's road on the finding's own behaviour (`['Demo-1.0.AppImage', 'Demo-2.0-x86_64.AppImage', 'Demo.AppImage'] == ['Demo.AppImage']`). The archive's road fails there one step earlier, on the `current` link a sandbox change gave an archive in the fixed layout (see "Remedy"); the 6 failing-step cases on what was left |
+| #698 (Low) | remedy changed | 8b38196 | `tests/test_install_review.py`: `test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place` (the sandbox turned on, turned Off, changed × a link to their program, a link to nothing, a file × on and off the PATH: 18 cases), and the "next start" cases of batch 2's `test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced` | `git archive` of d7c71aa with the test file copied in: 20 failed, each on the `InstallError` ("… exists and isn't a link AppKata made"). A scratch script showed what was left there: turned Off, the launcher gone and the record still starting it; turned on, the menu entry starting the launcher and the record the program itself. On the fix: no error, and the record, the launcher and the menu entry agree both ways |
+
+Each commit: the touched test files whole with the project's venv, the four document checks,
+`tests/test_skip_lists.py` and (for #156 and #698) `tests/test_requirements_trace.py`, the guard,
+and the whole of tier 1 in its container (doubt 12): 2898 passed for #310, 2948 for #311, 2956 for
+#336, 2964 for #156, 2982 for #698, each with 121 skipped, all listed. No launcher's text changed,
+so the launcher tier wasn't run.
+
+**Remedy, where it differs** (each said in its commit)
+
+- **#698, remedy changed.** The issue offers "check the command link's place first, as the install
+  does" or "take the launcher back when the link is refused". Neither is taken: both leave the old
+  launcher in force under the sandbox the user has just chosen, and the backend only logs the error,
+  so a tightened sandbox would silently not apply (the launcher is the enforcement, R17.4). The
+  rewrite is made in full instead, without the command link: `_activate` records why there is no
+  link (`commandRefused`, as for a name that is a command) and leaves the user's file alone. An
+  install, an update and a switch to a kept version still stop at such a place, before they change
+  anything (`_check_before_placing`, R4.3.1.3's "an install or update stops with an error"). Batch 2
+  called this "a choice"; I took it as the implementer's because no requirement says a sandbox
+  change stops at the command link, and R17.4 and R17.11 say it applies. If the owner prefers a
+  refusal, it is the `or _link_refusal(link, own)` in `_activate_linux` and R4.3.1.3's new sentence.
+- #310: besides `install.py`, the backend's `_app_options` gives an installed app its record's
+  folder, so the chips' "never shared" folders stay the launcher's (they would have parted, with
+  the launcher following the record and the chips Settings), and the uninstall notice is the
+  backend's. `backend.py` is U03's file; #310's record doesn't list it (doubt 2).
+- #310: uninstall still removes only a folder inside the record's root. The remedy's "the id's
+  folder under the recorded root" is that folder now that the root is kept; nothing reads an
+  earlier version's wrong root.
+- #311 (a): the release's own name is kept when it holds this version or any number with a dot in
+  it (a version in the project's own spelling), and the version is added otherwise; `_place` is
+  also told where the app's other versions are and adds the version when the name is one of
+  theirs. An AppImage installed under an unversioned name keeps that file.
+- #311 (b): the class is closed, not the one branch: what a new version takes the place of (a
+  fixed name, the same version again) is set aside as `<name>.old` and removed once the record is
+  stored; the versions an update retires (`_retain`) are removed after the record is stored too.
+- #156: the move back is made by `rewrite_launcher`, when the app updates itself, its record has a
+  launcher and it is given no sandbox. A self-updating record gets no `current` link at any
+  rewrite (a sandbox change gave an archive in the fixed layout one; R4.10.2 has none).
+
+**new** (no finding covers them; nothing was changed for them)
+
+1. `src/appkata_core/sandbox.py:451`, `_protected_roots`: the folders a sandbox never shares
+   (R17.3.1) hold one install folder, the app's own. With apps in two install folders (the setting
+   was changed; since #310 they stay there for good) a sandboxed app in one can be granted the
+   other, read-write, where the other apps' programs and launchers are. Run by a scratch script:
+   `sandbox.protected_folder("<old>/apps/other", "<new>/apps")` is `""`. It was so before this
+   batch (an installed app's files stayed in the old folder then too). Sensitive code: the
+   coordinator may want to rate it before filing.
+2. `src/appkata/backend.py`, `_plan` (`out["windows"]`, `folderMe` and `folderEveryone`): on
+   Windows the install dialog's "Installs to" reads Settings' two folders, so for an installed app
+   whose folder differs (the setting changed since) Install options shows a folder the app isn't
+   in and won't go to. Linux's line reads the app's own folder since #310. Read, not run.
+3. `src/appkata_core/install.py`, `rewrite_launcher`: a rewrite that fails at any other step (a
+   full disk at the menu entry, the record's write) still leaves the launcher and the links as
+   far as it got, with the record not stored: #698's class, of which #698 itself is the one case
+   that needs no failure. Turned Off, the record then starts a launcher that is gone, and the
+   startup pass skips an app whose sandbox is Off. The move back to the fixed name (#156) takes
+   everything back on a failure (`_undo_portable`); doing the same for every rewrite would put the
+   old launcher back under the new choice until the next start rewrites it, which is why I left
+   it: it is a choice. Read, not run; the command link's case is the one that was run.
+4. `src/appkata/qml/SettingsDialog.qml:149`: the Portable apps section says "Changes apply to new
+   installs and updates; apps already installed stay where they are." Since #310 the install
+   folder applies to new installs only (the command links folder and Keep older versions still
+   apply at an update). The sentence isn't wrong for the section, but it reads as R4.3.1 used to.
+   A shared file (U07, U14, U17, U28).
+
+**needs your eye**
+
+- 49fe2bb (#310): R4.3.1 now reads "Changing the install folder applies to new installs: an app
+  already installed stays in the folder it is in through its updates, and is uninstalled from
+  there. It goes to the new folder only when it is uninstalled and installed again." R4.7 gains
+  "What AppKata recorded and didn't remove is named in the notice ("<App> uninstalled. Not removed:
+  <path>."): a folder that is no longer inside the install folder the app was installed into or
+  that couldn't be deleted, and something of the user's where a command link was (R4.3.1.3)." New
+  interface: that addition to the uninstall notice (and a notice after Remove Source with
+  uninstall, only when something was left). Install options' "Installs to" shows the folder an
+  installed app is in.
+- f1e713c (#311): R4.3.1 says how an AppImage's file is named: "the release's own file name, with
+  the version added when the name holds none or is another version's, so `Tool-x86_64.AppImage`
+  is kept as `Tool-x86_64-2.0.AppImage`". Such apps' files get a new name at their next update;
+  the stable link, the menu entry and the command link follow as before.
+- d7c71aa (#156): R4.10.5 ends "When its sandbox is turned Off, it updates itself again, in the
+  fixed-name layout: AppKata renames its current version to the fixed name of R4.10.2 and removes
+  its kept versions and its `current` link." R17.12 says the same. The kept versions go when the
+  sandbox is turned Off, with no question asked.
+- 8b38196 (#698): R4.3.1.3 gains "A change to an installed app's sandbox, and the launcher AppKata
+  rewrites at its start (R17.4), don't stop there: they are made in full, without the command
+  link, which is made at a later start or update once its place is free." Nothing tells the user
+  at that moment; the record holds the reason (doubt 1).
+- bb21268 (#336): tests only.
+
+**needs a run**
+
+- `scripts/test-windows-vm.sh --tests`: `install.py`'s Windows roads changed and have run only
+  off Windows: an update takes its folder from the record (#310, with the scope's two folders),
+  `uninstall()` returns what is left, a version is renamed into place past one set aside
+  (`_swap_in`, #311: on Windows a folder `current` is a junction to), and `_remove_path` removes a
+  folder through `long_path`. `tests/skips/windows.txt` has 7 new lines no run has held it to, and
+  `test_the_name_a_version_of_an_appimage_is_kept_under` and `test_checksum_mismatch_installs_nothing`
+  run there.
+- `scripts/test-desktop-vm.sh run mint22.3` (and `lmde7`), with the earlier batches': #156's app
+  back under its fixed name, started from a real menu after its sandbox is turned Off.
+
+**guard**
+
+- Nothing to add: every changed file is in U03's plan.
+
+**Doubts**
+
+1. **#698 is the batch's one judgement call**: see "Remedy". Two things follow from it. A sandbox
+   change that makes no command link says nothing (the backend's `_regenerate_launcher` has no
+   notice; the record's `commandRefused` is read only for an install's notice). And an update of
+   that app still stops with the error, as R4.3.1.3 says, so the user learns of it there.
+2. **`backend.py` for #310**, outside the finding's record: the uninstall notice, and
+   `_app_options` reading the record's folder. Without the second the chips and the launcher would
+   disagree about the protected folder once the setting changes. Windows' "Installs to" is not
+   done (new 2), nor the Settings hint (new 4).
+3. **The uninstall notice also names the user's own file** where a command link was ("Not
+   removed: ~/bin/tool"). It is what the record names and is still there, but it was never
+   AppKata's to remove; if that reads as noise, `left` in `uninstall()` is one expression.
+4. **An installed app's folder is read back through `Portable.root`**, which expands `~` and
+   `$VARIABLES` again. A recorded folder whose name holds a literal `$NAME` would be read as
+   another folder. `_options_of` already did this for a failed update.
+5. **A record with no `root`** (none is written without one; some tests' hand-made records are)
+   falls back to Settings' folder, as before.
+6. **#311's name rule is a judgement**: "holds a version" is this version, or any number with a
+   dot. `Tool-ubuntu-22.04-x86_64.AppImage` is taken to hold one, so its first version keeps the
+   name and later ones get theirs added (the check of other versions' places); nothing is lost,
+   the names just differ. Someone who starts `Tool-x86_64.AppImage` by its own path, not the
+   stable link, loses that path at the next update.
+7. **What is set aside is named `<name>.old`** beside the version, as staging is `<name>.new`. A
+   crash between the rename and the record's write leaves it there, with the new version under
+   the old record; the next install at that name clears it, and nothing at start looks for it.
+   A version called `1.0.old` would collide, as #699's `current` and `run` do (U04).
+8. **The same version installed again** now keeps the installed files until the new download is
+   in place and recorded; before, they were deleted first. On Windows the rename aside needs the
+   folder not to be in use, which `check_not_running` asks first.
+9. **#311 holds three fixes its finding didn't name** (the retired versions' order, the same
+   version again, `_remove_path` and deep paths), each the same class in the same functions, said
+   in the commit. `_retain` no longer deletes: it returns what to remove, and its one direct test
+   calls `_forget` on that.
+10. **#156's trigger is "has a launcher, updates itself, is given no sandbox"**, at any rewrite:
+    the Sandbox dialog, Install options, "Use theirs". `autoUpdate` there is the catalog's (the
+    user's own setting, else a Trust's line), so a Trust saying "updates itself" is enough for the
+    kept versions to go when the sandbox is turned Off. An app marked as updating itself that
+    never ran sandboxed stays in its version folders until it is installed again, as before.
+11. **Three of batch 2's tests changed**: the "next start" cases of
+    `test_what_the_user_put_where_a_command_link_was…` expect the rewrite to go on (#698);
+    `test_a_folder_typed_in_settings…` expects `t-1.2.0.AppImage` (#311); and
+    `test_retention_never_deletes_an_adopted_file` calls `_forget` (#311).
+12. **How tier 1 was run**: as batches 1 and 2 did, by a scratch script making the same
+    `docker run` as `scripts/test-tier1.sh` with the main checkout's Python, PySide6 and `.git`
+    read-only, held to 3 GB. One difference: it ran over an export of the staged files
+    (`git checkout-index`, with the two submodules copied in), not over the worktree, so the next
+    finding's work could start while it ran; each commit was made from that same staged state
+    after its run passed. Nothing was written into either checkout.
+13. **Two commit messages are loose in a detail**, and commits aren't amended: #311's says "five
+    names" for five cases of four names, and #336's says the previous version runs "through its
+    command link and its stable link" (for an archive the second is `current/…`).
+14. **The session's working directory**: every command that ran git or touched the repository
+    began with a `cd` into this worktree. A few that only read or wrote the scratch folder began
+    there, or waited on a log by its absolute path. I saw no sign of the directory moving.
