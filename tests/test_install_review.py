@@ -910,3 +910,70 @@ def test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_c
     rel = install.Portable(folder="rel/apps", command_dir="rel/bin")
     assert (rel.root, rel.command_folder) == (str(cwd / "rel" / "apps"), str(cwd / "rel" / "bin"))
     assert install.Portable(command_dir="").command_folder == ""
+
+
+# ---------------------------------------------------------------- what an option made, once it is off (CR1.3-14)
+
+_OPTIONS = {"the app menu": {"app_menu": False}, "the stable name": {"stable_name": False}, "the command link": {"command_dir": ""}}
+
+
+@linux_only
+@pytest.mark.parametrize("road", ["an update", "the next start", "a kept version"])
+@pytest.mark.parametrize("off", list(_OPTIONS))
+def test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uninstall(env, server, tmp_path, off, road):
+    # CR1.3-14: each time an app is activated its record forgot its menu entry, and the entry was
+    # written again only while the app-menu option was on; nothing deleted the file. Turned off in
+    # Install options, the entry stayed in the desktop's menu, in no record, and outlasted the
+    # uninstall, starting a program that was gone. The class is what any of an app's three options
+    # made (R4.3.1.6) once the option is off, by each road an app is activated again, and R4.7's
+    # "uninstalling reverses what AppKata recorded": after it, nothing of the app is left anywhere.
+    # The stable name and the command link held this already.
+    from dataclasses import replace
+    nothing = _left(tmp_path, env)
+    on = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    for v in ("1.0", "1.1"):
+        a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
+        rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=on)
+    made = {"the app menu": str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"),
+            "the stable name": str(tmp_path / "apps" / "demo-tool" / "DemoTool.AppImage"),
+            "the command link": str(tmp_path / "cmd" / "demo-tool")}
+    assert all(os.path.lexists(path) and path in rec["files"] + rec["links"] for path in made.values())    # made, and in the record
+    p = replace(on, **_OPTIONS[off])
+    a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
+    rec = {"an update": lambda: install.install(env, {**APP, "installVersion": "2.0"}, a, "appimage", [a], portable=p),
+           "the next start": lambda: install.rewrite_launcher(env, dict(APP), p),
+           "a kept version": lambda: install.switch_to(env, dict(APP), "1.0", p)}[road]()
+    for what, path in made.items():
+        assert os.path.lexists(path) is (what != off), what
+        assert (path in rec["files"] + rec["links"]) is (what != off), what
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    install.uninstall(env, APP["url"])
+    assert _changed(nothing, _left(tmp_path, env)) == {}
+
+
+@linux_only
+def test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_entry_away(env, server, tmp_path):
+    # CR1.3-14's other road: the option came from Settings' default, and the new version's program
+    # shows a command-line tool, which gets no menu entry (R4.3.1.1). The entry 1.0 had, as an app
+    # with a window, goes with the update.
+    from test_appkind import make_elf
+    root, base = server
+    nothing = _left(tmp_path, env)
+    entry = tmp_path / "xdg" / "applications" / "appkata-tool.desktop"
+    p = install.Portable(folder=str(tmp_path / "apps"))
+    for v, libs in (("1.0", ["libgtk-3.so.0", "libc.so.6"]), ("2.0", [])):
+        make_elf(tmp_path / "prog", libs)
+        body = (tmp_path / "prog").read_bytes()
+        (tmp_path / "prog").unlink()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo(f"tool-{v}/tool")
+            info.size, info.mode = len(body), 0o755
+            tf.addfile(info, io.BytesIO(body))
+        (root / f"tool-{v}.tar.gz").write_bytes(buf.getvalue())
+        a = Asset(f"tool-{v}.tar.gz", f"{base}/tool-{v}.tar.gz")
+        rec = install.install(env, {**APP, "name": "tool", "menuFromDefault": True, "installVersion": v}, a, "tarball", [a], portable=p)
+        assert rec["appKind"] == ("gui" if libs else "cli") and rec["options"]["appMenu"] is bool(libs)
+        assert entry.exists() is bool(libs) and (str(entry) in rec["files"]) is bool(libs)
+    install.uninstall(env, APP["url"])
+    assert _changed(nothing, _left(tmp_path, env)) == {}

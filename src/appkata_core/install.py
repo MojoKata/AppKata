@@ -533,7 +533,13 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     own = (portable.root, os.path.dirname(target))
     _remove_links(rec.get("links", []), own)      # the previous version's links
     rec["links"] = []
-    rec["files"] = [f for f in rec.get("files", []) if not os.path.basename(f).startswith("appkata-")]
+    # The app-menu entries the record names (AppKata's own, by name and folder) leave the record
+    # here. One written below comes back into it; one that isn't -- the option was turned off, or
+    # the new version is a command-line tool -- is removed there, not just forgotten: it stayed in
+    # the desktop's menu, in no record, past uninstall (CR1.3-14).
+    entries = [f for f in rec.get("files", []) if os.path.basename(f).startswith("appkata-")
+               and os.path.dirname(f) == os.path.dirname(_menu_entry_path(app_id))]
+    rec["files"] = [f for f in rec.get("files", []) if f not in entries]
     run = os.path.join(target, cur["exec"])
     if portable.stable_name and OS != "windows":       # symlinks need extra rights on Windows
         if cur["path"].lower().endswith(".appimage"):      # LocalSend.AppImage → LocalSend-1.18.2-x86_64.AppImage
@@ -556,6 +562,9 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     elif portable.app_menu:
         rec["files"].append(_desktop_entry(app_id, app["name"], launch_target, app.get("icon") or "", app.get("summary", ""),
                                            launcher=launch_target != run))
+    for old in entries:
+        if old not in rec["files"]:
+            _remove_path(old)
     rec.pop("commandRefused", None)
     if portable.command_dir:
         # The command is named after the app, so its publisher picks the name: none is made for a name
