@@ -712,3 +712,145 @@ document tests, whole; the batch pushed.
 - **Doubts 1, 3, 4, 5 and 6** stand as built; 1 and 6 are said in the pull request.
 - **Needs a run** (the Windows VM tests): the coordinator's, after batch 5.
 
+
+## Batch 5
+
+Run on Opus 5.5 at high effort. The worktree was clean at the start (`4f22489`): nothing was taken
+over.
+
+Files touched: `src/appkata_core/http.py`, `tests/test_forges.py`,
+`docs/requirements/R9-sync-and-updates.md`.
+
+Counts: 4 fixed, 0 no defect, 0 remedy changed, 0 set aside, 0 still left, 0 new. #695 has one
+follow-up commit (doubt 1).
+
+Each new test was shown failing by exporting the commit before it with `git archive` to a scratch
+folder, putting the new `tests/test_forges.py` over it and running it there. For #682 only, the
+`pair` fixture's one line was put back as it was in that scratch copy (it gives urllib's https
+handler a plain connection; it now gives Http's own one), or every test through real sockets
+would have stopped at the fixture.
+
+| Finding | Outcome | Commit | Tests (all in `tests/test_forges.py`) | Before the fix |
+|---|---|---|---|---|
+| #682 | fixed | `8e3c7b2` | `test_a_name_that_answers_the_check_with_a_public_address_and_the_connection_with_a_local_one_is_refused`, `test_a_redirect_to_a_name_that_answers_the_connection_with_a_local_address_is_refused`; holding what must stay: `test_the_sources_own_host_on_the_local_network_is_still_reached_by_its_name`, `test_a_proxy_on_this_computer_is_still_used_for_a_host_elsewhere` | On `4f22489`: 2 failed, 864 passed ("DID NOT RAISE": the image and the redirect reached the stand-in server on 127.0.0.1) |
+| #695 | fixed | `2bfcf66`, then `643a818` (doubt 1) | `test_through_real_sockets_headers_a_byte_at_a_time_end_at_the_deadline_and_at_cancel`, `test_through_real_sockets_a_tls_handshake_a_byte_at_a_time_ends_at_the_deadline` (two contexts since `643a818`), a row of `REDIRECTED_TO` (`/headers-a-byte-at-a-time`), whose test now holds every row to ending within two seconds | On `8e3c7b2`: 3 failed, 866 passed (3.9, 3.9 and 10.5 seconds against a 0.4 or 0.3 second deadline; the handshake "timed out" and was asked for three times). `643a818`'s on `9105843`: 1 failed, 874 passed (the context that wraps through another: "The handshake operation timed out") |
+| #697 | fixed | `7433ff4` | `test_through_real_sockets_a_limit_answered_on_one_port_of_a_name_leaves_its_other_ports`, `test_r9_2_1_says_whose_a_rate_limit_is`; two tests that pinned the old key changed: `test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come` (`:3000` is answered now, `:443` is the one refused) and `test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_listening` | On `2bfcf66`: 4 failed, 867 passed (the limit under `127.0.0.1` refused the server on the name's other port) |
+| #705 | fixed | `9105843` | `test_through_real_sockets_a_limit_from_the_host_a_redirect_led_to_is_that_hosts` (429; 403 with Retry-After; 503 with Retry-After), two more lines of `test_r9_2_1_says_whose_a_rate_limit_is` | On `7433ff4`: 4 failed, 870 passed (the limit was the forge's: "127.0.0.1:<port> rate limit reached") |
+
+Runs at the batch's head (`643a818`), from the worktree's root:
+
+- `tests/test_forges.py` whole: 875 passed. The seven files that use `Http`, `tests/test_backend.py`,
+    `tests/test_requirements_trace.py` and the four document checks of the brief: 1040 passed. The
+    files touched and the four document checks before each commit.
+- The whole suite with the project's `.venv` (`pytest -q tests/`, no skip list): 3658 passed, 39
+    skipped, in 3 min 16 s.
+- The whole suite in the tier 1 image with no network and 3 GB (`docker run --network none
+    --memory=3g`, `APPKATA_SKIPS=tier1`, the main checkout's `build/python-3.14` and
+    `build/pyside-6.12.0-py3.14` mounted read-only outside `/src`, and its `.git` read-only at its
+    own path, as in batches 3 and 4): 3576 passed, 121 skipped, in 2 min 19 s.
+    `scripts/test-tier1.sh` itself was not run, as in the earlier batches.
+- The guard passed before each commit, naming only `docs/relay/`.
+
+How it fits together, for the pull request:
+
+- **Http's own connections** (`http._Connections`, the opener's handler of http and https): each
+    connection's socket comes from `Http._connect` (through http.client's `_create_connection`),
+    which looks the name up once with `Http._lookup`, refuses a local address unless the request is
+    made for that host (`req.whose`, as `_allowed` does) or goes through a proxy, and connects to
+    the addresses it looked up. `_allowed` still checks a first address and each redirect before
+    anything is sent.
+- **A request's clock** (`http._Clock`: the deadline, the thread's Cancel, the host the error is
+    said of) is set for the thread while its request runs (`http._reading`). `http._hold` holds one
+    step to it: connecting (`_connect`), the TLS handshake (`_HeldTLS`, the connections' context)
+    and each read of the answer (`_HeldAnswer`, the connections' `response_class`, reading through
+    `_HeldReads`), and `Http._read` holds the body as before.
+- **A limit** is kept under `_host()` of the address asked last (`req.asked["url"]`), and
+    `Http._unlimited` refuses a limited host before a request is sent and before a redirect is
+    followed.
+
+### Needs your eye
+
+- `8e3c7b2` (#682): what the user sees is R3.1.1's rule holding where it didn't: an image whose
+    host's name answers the connection with a local address is refused with the words a refused
+    image already had ("<host> is on this computer or its local network (<address>): not
+    fetched, since it isn't the Source's own host") and passed over. No requirement's text
+    changes. Every request of the application now goes through Http's own connections, not
+    urllib's: the TLS context is made as urllib made its own (the system's certificates, the name
+    checked, ALPN http/1.1).
+- `2bfcf66` and `643a818` (#695): a host that sends its headers, or its TLS handshake, slowly is
+    given up at R9.2.1's two minutes ("<host> hadn't finished its answer after 120 seconds"), and
+    Cancel stops it. No requirement's text changes: R9.2.1 already says "the whole of its answer".
+- `7433ff4` (#697), the text: R9.2.1 gains "A rate limit holds back the requests to the host that
+    gave it and to no other host: another port of its name is another host (R9.2.2)". What the
+    user sees: a limit's error names the host with its port where it is on one
+    ("git.example.org:3000 rate limit reached").
+- `9105843` (#705), the text: R9.2.1 goes on "and where a redirect led there, the host that gave
+    it is the one it led to, such as a forge's file storage, not the forge first asked. Until it
+    runs out, a redirect to that host isn't followed either." What the user sees: an install
+    whose file's storage host answers with a limit says so of that host, and the forge's own
+    Sources and installs go on.
+
+### Needs a run
+
+- The Windows suite, once, with the earlier batches': `scripts/test-windows-vm.sh --tests`. New for
+    it here: every test through real sockets now goes through Http's own connections; a stand-in
+    for the name server at `socket.getaddrinfo`; a stand-in proxy through the `http_proxy`
+    variable; a raw socket server that sends a TLS record a byte at a time; two `pair` servers
+    asked by one name and two ports. No test of this batch is skipped anywhere, and no skip list
+    changed.
+- **Http over real TLS on Windows, through truststore's context** (doubt 1): none of the tests
+    reaches a real https host, and the Windows suite doesn't call `use_system_certificates`. A
+    Windows build of this branch (`scripts/build-windows.sh`) and its `--e2e` run, which installs
+    real apps from GitHub through AppKata's own code: `scripts/test-windows-vm.sh --e2e`.
+
+### Guard
+
+Nothing: every file changed is in U07's files.
+
+### Doubts
+
+1. **#695's first commit held TLS through the socket's class, and that missed truststore.**
+    `2bfcf66` set the TLS context's `sslsocket_class`; truststore's context, which AppKata uses on
+    Windows and macOS (`platform.use_system_certificates`), wraps through an inner context of its
+    own, so the class never reached the socket there. Found by reading the commit again against
+    `platform.py`; `643a818` holds the reading and the handshake instead, whatever the context,
+    with a test of a context that wraps through another. I checked the real TLS path once by hand
+    (a scratch certificate made for the run, Python's own context): a whole answer, headers a byte
+    at a time ending at a 0.4 second deadline and at Cancel, and an unknown certificate still
+    refused. truststore itself isn't installed here and wasn't run; its own check of the
+    certificate (`_verify_peercerts`, after the handshake) is outside the clock.
+2. **Two private names of the standard library.** Http's connections get their socket through
+    http.client's `HTTPConnection._create_connection` (the attribute http.client itself calls), and
+    `_connect` reads `Request._tunnel_host` to tell a proxy's tunnel (urllib's `do_open` reads it
+    the same way). Subclassing the connections would have meant copying http.client's `connect`,
+    its proxy tunnel included. Python 3.14's names; a later Python that renames them fails the
+    tests through real sockets, not silently.
+3. **#682 behind a proxy is as it was.** The connection is then the proxy's, which may be on this
+    computer, so `_connect` checks nothing and `_allowed`'s lookup on this computer is the only
+    check (batch 1's fifth doubt). A proxy that resolves a name differently is the proxy's.
+4. **#682 adds no lookup.** A request made for its own host is looked up once, by its connection,
+    as before. One for another host is looked up twice, by `_allowed` and by `_connect`, as it was
+    by `_allowed` and urllib's connection; what changed is that the second answer is the one held
+    to the rule and connected to.
+5. **#695: what is held and what isn't.** Connecting (each address), the TLS handshake as one step
+    (CPython bounds a handshake as a whole by the socket's timeout), every read of the status line,
+    the headers, a proxy's CONNECT answer and the body. Sending the request isn't: a request is a
+    few hundred bytes, and a body is a search's JSON at most. Cancel is looked at before each step,
+    so a step already waiting still waits up to `timeout` (20 seconds), as #296's body did.
+6. **#705 goes a step past its remedy.** The remedy says to record the limit under the host that
+    answered. A limit kept under a storage host and never looked at when a redirect leads there
+    would let every app's install ask it again, so `_Redirects` refuses a redirect to a limited
+    host too, and R9.2.1 says so. A forge's file reached through a redirect to a limited host
+    reads "<storage host> rate limit reached".
+7. **The row's hint for a limit.** A 429 or a 403 limit shows "Rate limited until … · add a token
+    in Settings" (`backend._error_text`). From a storage host, which is never sent a token, the
+    hint doesn't fit. A Source's row meets it rarely (a Sync's images are passed over, and its
+    files are read from the forge's named hosts); an install's error names the host. Not changed:
+    `backend.py`'s wording is no finding of this batch.
+8. **The tests through real sockets whose server B stands for a host elsewhere** now say so with
+    `elsewhere()`: B's name is looked up as 127.0.0.1, and that address counts as public for that
+    test. Before, `names()` gave it 8.8.8.8 for the check and the connection went to 127.0.0.1 by
+    its own lookup: the very gap of #682, which those tests leaned on.
+9. Nothing outside the brief was run. Scratch files were under `/tmp/u07b5`, removed at the end;
+    the one container this batch started (`u07b5-tier1`) ended with its run. `.pytest_cache/` and
+    the `__pycache__` folders in the worktree are git's ignored ones.
