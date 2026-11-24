@@ -116,6 +116,18 @@ def _facts() -> dict:
     others -= set(sb.PORTAL_INTERFACES) | set(sb.NETWORK_PORTAL_INTERFACES) | {"Request", "Session"}
     said = {o for o in others if o.split(".")[-1] in _req("R17.5")}
     f["R17.5: nothing else on the portal's name"] = (said, others)
+    # ...and R17.5's list is the one list (CR1.11-86): the design had three more, in A1.2.3.6,
+    # A1.2.3.12 and A1.9, written out by hand, and two of them had lost ProxyResolver on the way.
+    # The facts above hold R17.5's to the code; a copy is held by nobody. So no sentence of the
+    # requirements or the design outside R17.5 names three of the interfaces: it says "the portals
+    # R17.5 lists".
+    listed = [i.lower() for i in (*sb.PORTAL_INTERFACES, *sb.NETWORK_PORTAL_INTERFACES)]
+
+    def lists(text):
+        """The sentences of a text that name three or more of the portal interfaces (open-URI is OpenURI)."""
+        sentences = re.split(r"(?<=[.;:])\s+", re.sub(r"\s+", " ", text))
+        return {s[:60] for s in sentences if sum(bool(re.search(rf"\b{i}\b", s.lower().replace("-", ""))) for i in listed) >= 3}
+    f["R17.5: the one list of the portal interfaces"] = ((lists(_read(REQ)) | lists(_read(A1))) - lists(_req("R17.5")), set())
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
     bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("R17.5.1"))}
     f["R17.5.1: the capabilities"] = ({caps17[b] for b in bold if b in caps17}, set(sb.CAP_PROXY_ARGS) - {"secrets-provide"})
