@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import threading
@@ -1415,3 +1416,153 @@ def test_through_real_sockets_a_byte_at_a_time_ends_at_the_deadline_and_at_cance
         with pytest.raises(http_.Cancelled):
             http.bytes(f"https://{a.at}/slow.png")
     assert time.monotonic() - started < 2.0 and len(a.seen) == 2
+
+
+# ---------------------------------------------------------------- a host that says when to come back, and one that says nothing (R9.2.1, R2.10)
+# CR1's #277: Retry-After was read on a 403 and a 429 alone. A forge that is overloaded or being
+# maintained answers 503 with it, and was asked again after 1.5 and 3 seconds, whatever it had asked
+# for, by every app on it and by each of four workers. And a host that gave no answer at all was
+# asked four times over by forges.detect, each probe with its retries, four minutes an app, to be
+# told at the end that AppKata couldn't tell which forge it runs. How it slipped past: the stand-in
+# opener sent one kind of error answer, a 403 with both rate-limit headers, and no stand-in host was
+# out of reach. The class is "what a host says about when to ask again is not heard", so the answers
+# here say it in each form on each failing status, and say nothing at all.
+def answering(status, headers, seen):
+    """An opener whose every answer is this error status with these headers."""
+    def open_(req, timeout=0):
+        seen.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+    return open_
+
+
+def in_two_minutes(clock):
+    return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(clock.now + 120))
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+@pytest.mark.parametrize("said", ["120", in_two_minutes], ids=["seconds", "a-date"])
+def test_a_retry_after_on_a_failing_answer_is_the_hosts_limit(clock, status, said):
+    seen = []
+    said = said if isinstance(said, str) else said(clock)
+    http = names(Http(opener=answering(status, {"Retry-After": said}, seen)))
+    with pytest.raises(RateLimited) as e:
+        http.json("https://git.example.org/api/v1/repos/o/r")
+    assert len(seen) == 1 and clock.waits == []               # not asked again after 1.5 seconds, whatever it asked for
+    assert abs(http.limited["git.example.org"] - (clock.now + 120)) <= 1 and e.value.reset == http.limited["git.example.org"]
+    for url in ("https://git.example.org/api/v1/repos/o/s", "https://git.example.org/o/s/raw/branch/main/README.md"):
+        with pytest.raises(RateLimited):                      # the next app on that host is refused at once
+            http.bytes(url)
+    assert len(seen) == 1
+    _ask(http, "https://codeberg.org/api/v1/version")         # another host is still asked
+    assert seen[1:] == ["https://codeberg.org/api/v1/version"]
+    clock.now += 121                                          # and the host itself, once the time it gave has passed
+    _ask(http, "https://git.example.org/api/v1/repos/o/s")
+    assert seen[2] == "https://git.example.org/api/v1/repos/o/s"
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_a_failing_answer_that_says_nothing_is_asked_for_again_as_before(clock, status):
+    seen = []
+    http = names(Http(opener=answering(status, {}, seen)))
+    with pytest.raises(Unreachable, match=f"git.example.org answered HTTP {status}") as e:
+        http.json("https://git.example.org/api/x")
+    assert e.value.extra["status"] == status and http.limited == {}
+    assert (len(seen), clock.waits) == ((1, []) if status == 500 else (3, [1.5, 3.0]))
+
+
+@pytest.mark.parametrize("said, waits", [("2", [2, 3.0]), ("3", [3, 3]), ("1", [1.5, 3.0]), ("0", [1.5, 3.0]),
+                                         ("Wed, 21 Oct 2015 07:28:00 GMT", [1.5, 3.0])])
+def test_a_retry_after_no_longer_than_the_retries_wait_is_waited_out(clock, said, waits):
+    seen = []
+    http = names(Http(opener=answering(503, {"Retry-After": said}, seen)))
+    with pytest.raises(Unreachable, match="answered HTTP 503"):
+        http.json("https://git.example.org/api/x")
+    assert len(seen) == 3 and clock.waits == waits and http.limited == {}
+
+
+@pytest.mark.parametrize("status, error, says", [(404, http_.NotFound, "not found"), (401, Unreachable, "rejected the API token"),
+                                                (410, Unreachable, "answered HTTP 410")])
+def test_a_retry_after_on_another_answer_is_remembered_and_the_answer_means_what_it_did(clock, status, error, says):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=answering(status, {"Retry-After": "120"}, seen)))
+    with pytest.raises(error, match=says) as e:
+        http.json("https://git.example.org/api/x")
+    assert type(e.value) is error and http.limited["git.example.org"] == clock.now + 120
+    with pytest.raises(RateLimited):
+        http.json("https://git.example.org/api/y")
+    assert len(seen) == 1 and clock.waits == []
+
+
+def test_a_sync_asks_a_host_that_said_when_to_come_back_once(tmp_path, monkeypatch, clock):
+    """A forge being maintained, with two Sources: one request, both rows say until when, no waiting."""
+    seen = []
+    sources = ["https://git.example.org/o/r", "https://git.example.org/o/s"]
+    db = catalog(tmp_path, monkeypatch, sources)
+    http = names(Http(opener=answering(503, {"Retry-After": "600"}, seen)))
+    sync.sync_all(db, http, root=str(tmp_path), workers=1)
+    apps = rows(db)
+    assert seen == ["https://git.example.org/api/v1/version"] and clock.waits == []
+    for url in sources:
+        assert apps[url]["error_code"] == "RateLimited" and json.loads(apps[url]["error_extra"])["reset"] == clock.now + 600
+
+
+NO_ANSWER = [TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out")),
+             urllib.error.URLError(OSError(-2, "Name or service not known")), ConnectionRefusedError(111, "Connection refused"),
+             ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")]
+
+
+@pytest.mark.parametrize("error", NO_ANSWER, ids=lambda e: type(getattr(e, "reason", e)).__name__)
+def test_a_host_that_gives_no_answer_is_unreachable_at_its_first_probe(tmp_path, monkeypatch, clock, error):
+    seen, source = [], "https://git.example.org/o/r"
+    http = names(Http(opener=ending_in(error, "opened", seen)))
+    with pytest.raises(Unreachable, match="couldn't reach git.example.org"):
+        forges.detect(http, "git.example.org")
+    assert set(seen) == {"https://git.example.org/api/v1/version"}        # the first probe, and none of the other three
+    assert (len(seen), clock.waits) == ((3, [1.5, 3.0]) if "timed out" in str(error) else (1, []))
+    db = catalog(tmp_path, monkeypatch, [source])
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[source]
+    assert app["error_code"] == "Unreachable" and "couldn't reach git.example.org" in app["error"]      # R2.10's kind for it
+
+
+@pytest.mark.parametrize("answer", [404, 500, 401, b"<html>a sign-in page</html>", {"message": "another shape"}, ["a", "list"]],
+                         ids=["404", "500", "401", "html", "an-object", "a-list"])
+def test_a_host_that_answers_but_not_as_a_forges_api_is_probed_to_the_end(clock, answer):
+    routes = {f"https://git.example.org/api/{p}": answer for p in ("v1/version", "v3/meta")}
+    routes["https://git.example.org/api/v4/projects"] = answer if answer != ["a", "list"] else {"an": "object"}
+    seen = []
+    plain = opener({**routes, "https://git.example.org/": b'<html><meta name="generator" content="Gitea - Git with a cup of tea">'})
+
+    def open_(req, timeout=0):
+        seen.append(req.full_url)
+        if isinstance(routes.get(req.full_url.split("?")[0]), int):
+            raise urllib.error.HTTPError(req.full_url, routes[req.full_url.split("?")[0]], "err", {}, None)
+        return plain(req, timeout)
+    assert forges.detect(names(Http(opener=open_)), "git.example.org") == "gitea"
+    assert list(dict.fromkeys(seen)) == ["https://git.example.org/api/v1/version", "https://git.example.org/api/v4/projects?per_page=1",
+                                         "https://git.example.org/api/v3/meta", "https://git.example.org/"]
+    seen.clear()
+    with pytest.raises(forges.Unsupported, match="couldn't tell which forge git.example.org runs"):      # and with no page that says
+        forges.detect(names(Http(opener=lambda req, timeout=0: open_(req, timeout) if "/api/" in req.full_url else opener({})(req))),
+                      "git.example.org")
+
+
+def maintenance(handler):
+    handler.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 120\r\nContent-Length: 0\r\n\r\n")
+
+
+def test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_listening(pair, clock):
+    a, b = pair
+    a.files = {"/api/v1/version": maintenance}
+    http = Http(timeout=5)
+    for _ in range(2):
+        with pytest.raises(RateLimited):
+            forges.detect(http, a.at)
+    assert [p for p, _ in a.seen] == ["/api/v1/version"] and clock.waits == []
+    assert http.limited == {"127.0.0.1": clock.now + 120}
+    with socket.socket() as nothing:                          # a port of this machine where nothing listens
+        nothing.bind(("127.0.0.1", 0))
+        closed = nothing.getsockname()[1]
+    with pytest.raises(Unreachable, match="couldn't reach 127.0.0.1"):
+        forges.detect(Http(timeout=5), f"127.0.0.1:{closed}")
+    assert clock.waits == []

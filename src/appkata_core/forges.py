@@ -8,7 +8,7 @@ import subprocess as _sp
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-from .http import Http, NotFound, RateLimited, Renamed, Unsupported
+from .http import Http, NotFound, RateLimited, Renamed, Unreachable, Unsupported
 from .urls import Repo
 from . import versions
 
@@ -441,36 +441,42 @@ LABELS = {"github": "GitHub", "gitlab": "GitLab", "forgejo": "Forgejo", "gitea":
 def detect(http: Http, host: str) -> str:
     """The forge type of a host (R2.4.2): known hosts first, then API probes. Each probe asks one
     forge type's API, so the host's token goes with it in that type's form (`forge`): a GitLab or a
-    GitHub Enterprise that answers nothing without a token is found too (CR1 #275)."""
+    GitHub Enterprise that answers nothing without a token is found too (CR1 #275).
+
+    A probe whose answer isn't that forge's is passed over for the next. One that got no answer at
+    all ends the probing with its own error, Unreachable (R2.10), and so does a host that said when
+    to come back, with RateLimited (CR1 #277): the other probes would only wait as long, four
+    probes with their retries for each app on a host that is down, to say at the end that AppKata
+    couldn't tell which forge it runs."""
     if host in KNOWN:
         return KNOWN[host]
-    try:
-        d = http.json(f"https://{host}/api/v1/version", forge="gitea")
-        if isinstance(d, dict) and "version" in d:
-            return "forgejo" if "forgejo" in str(d).lower() or "+gitea" in str(d.get("version", "")) else "gitea"
-    except Exception:
-        pass
-    try:
-        d = http.json(f"https://{host}/api/v4/projects?per_page=1", forge="gitlab")   # /version needs a token; this doesn't
-        if isinstance(d, list):
-            return "gitlab"
-    except Exception:
-        pass
-    try:
-        d = http.json(f"https://{host}/api/v3/meta", forge="ghe")
-        if isinstance(d, dict) and ("verifiable_password_authentication" in d or "installed_version" in d):
-            return "ghe"
-    except Exception:
-        pass
-    try:
-        page = http.text(f"https://{host}/")
-        low = page.lower()
-        for marker, kind in (('content="forgejo', "forgejo"), ('content="gitea', "gitea"), ("og:site_name\" content=\"gitlab", "gitlab"),
-                             ('content="gitlab', "gitlab")):
-            if marker in low:
-                return kind
-    except Exception:
-        pass
+
+    def ask(call, url: str, **kw):
+        try:
+            return call(url, **kw)
+        except RateLimited:
+            raise
+        except Unreachable as e:
+            if e.extra.get("no_answer"):
+                raise
+        except Exception:
+            pass
+        return None
+
+    d = ask(http.json, f"https://{host}/api/v1/version", forge="gitea")
+    if isinstance(d, dict) and "version" in d:
+        return "forgejo" if "forgejo" in str(d).lower() or "+gitea" in str(d.get("version", "")) else "gitea"
+    d = ask(http.json, f"https://{host}/api/v4/projects?per_page=1", forge="gitlab")   # /version needs a token; this doesn't
+    if isinstance(d, list):
+        return "gitlab"
+    d = ask(http.json, f"https://{host}/api/v3/meta", forge="ghe")
+    if isinstance(d, dict) and ("verifiable_password_authentication" in d or "installed_version" in d):
+        return "ghe"
+    low = (ask(http.text, f"https://{host}/") or "").lower()
+    for marker, kind in (('content="forgejo', "forgejo"), ('content="gitea', "gitea"), ("og:site_name\" content=\"gitlab", "gitlab"),
+                         ('content="gitlab', "gitlab")):
+        if marker in low:
+            return kind
     raise Unsupported(f"couldn't tell which forge {host} runs; set the forge type in Source settings")
 
 

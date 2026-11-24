@@ -208,6 +208,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
 
 
 PIECE = 64 << 10        # an answer is read this much at a time at most, with a look at the clock between
+WAITS = (1.5, 3.0)      # before a request is asked for again: after its first failure, after its second
 
 
 class Http:
@@ -299,16 +300,18 @@ class Http:
 
     def request(self, url: str, **kw) -> tuple[bytes, dict, str]:
         """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts, an
-        answer cut short). A request that met its deadline isn't asked for again: its host was
-        given the whole of it once, and three in a row would be three times the wait."""
-        for attempt in range(3):
+        answer cut short), after WAITS, or after what the host's Retry-After asked for where that
+        is longer (one longer than the last of WAITS is no retry: _request makes it the host's
+        limit). A request that met its deadline isn't asked for again: its host was given the
+        whole of it once, and three in a row would be three times the wait."""
+        for attempt in range(len(WAITS) + 1):
             try:
                 return self._request(url, **kw)
             except Unreachable as e:
                 again = e.extra.get("status") in (502, 503, 504) or e.extra.get("timeout") or e.extra.get("cut")
-                if attempt == 2 or not again or e.extra.get("deadline"):
+                if attempt == len(WAITS) or not again or e.extra.get("deadline"):
                     raise
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(max(WAITS[attempt], e.extra.get("retry_after") or 0))
 
     def _read(self, r, host: str, max_bytes: int, started: float) -> bytes:
         """An answer's body, a piece at a time, with a look at the clock and at Cancel before each
@@ -321,7 +324,8 @@ class Http:
         while True:
             self._stop()
             if time.monotonic() - started > self.deadline:
-                raise Unreachable(f"{host} hadn't finished its answer after {self.deadline:g} seconds", timeout=True, deadline=True)
+                raise Unreachable(f"{host} hadn't finished its answer after {self.deadline:g} seconds", timeout=True, deadline=True,
+                                  no_answer=True)
             piece = read(min(PIECE, max_bytes + 1 - size))
             if not piece:
                 return b"".join(pieces)
@@ -363,14 +367,29 @@ class Http:
                 reset = _reset_time(hdr)
                 self.limited[host] = reset
                 raise RateLimited(host, reset) from None
+            # Retry-After on any other failing answer (R9.2.1; CR1 #277): an overloaded forge, or one
+            # being maintained, answers 503 with it, and was asked again after 1.5 and 3 seconds
+            # whatever it had asked for, by every app on it. Longer than the retries wait, it is
+            # the host's limit like a 429's, and nothing is sent there until then; a 5xx with it is
+            # that limit and no more, and another answer still means what it says. Shorter, the
+            # retry waits it out (request).
+            wait = 0.0
+            if "retry-after" in hdr:
+                reset = _reset_time({"retry-after": hdr["retry-after"]})
+                wait = max(0.0, reset - time.time())
+                if wait > WAITS[-1]:
+                    self.limited[host] = reset
+                    if e.code >= 500:
+                        raise RateLimited(host, reset) from None
             if e.code == 404:
                 raise NotFound(f"{url} not found") from None
             if e.code == 401 and token:
                 raise Unreachable(f"{host} rejected the API token (HTTP 401)") from None
-            raise Unreachable(f"{host} answered HTTP {e.code}", status=e.code) from None
+            raise Unreachable(f"{host} answered HTTP {e.code}", status=e.code, **({"retry_after": wait} if wait else {})) from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             reason = getattr(e, "reason", e)
-            raise Unreachable(f"couldn't reach {host}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason)) from None
+            raise Unreachable(f"couldn't reach {host}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason),
+                              no_answer=True) from None
         except IncompleteRead:                     # a chunked answer that ended early: worth asking again
             raise Unreachable(f"{host} cut its answer short", cut=True) from None
         except (HTTPException, ValueError) as e:
