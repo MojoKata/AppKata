@@ -17,6 +17,7 @@ import logging
 from . import audit, channels, forges, gitsig, metadata, trustfile, urls
 from .db import DB, now
 from .http import Http, NotFound, RateLimited, SourceError, Unreachable
+from .install import one_line
 from .platform import data_dir
 
 MAX_IMAGE = 8 << 20
@@ -133,12 +134,17 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                 break
             except SourceError:
                 continue
-        summary = metadata.summary(readme, meta_info.get("summary") or info.description)
+        # The name and the summary are the project's own text, from its metainfo or its forge; the
+        # README's paragraph is already one line. Stored as one line each, since they are shown and
+        # written as one: in the lists, and in the app-menu entry (CR1.3-7).
+        summary = one_line(metadata.summary(readme, meta_info.get("summary") or info.description))
+        meta_name = one_line(meta_info.get("name") or "")
+        name = meta_name if meta_name and "@@" not in meta_name else one_line(info.name)
         with db.tx():
             db.x("""INSERT OR REPLACE INTO apps(url, name, description, summary, readme, raw_base, icon, hero, forge,
                     host, repo, releases, archived, fetched_at, error, error_code, error_extra)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'{}')""",
-                 (url, meta_info.get("name") if meta_info.get("name") and "@@" not in meta_info["name"] else info.name, info.description, summary, readme[:200000], raw_base,
+                 (url, name, info.description, summary, readme[:200000], raw_base,
                   rel_to_root(icon, root) if icon and os.path.isabs(icon) else icon,
                   rel_to_root(hero, root) if hero else "", kind, repo.host, repo.path, json.dumps([release_dict(r) for r in rels[:30]]),
                   int(info.archived), now()))

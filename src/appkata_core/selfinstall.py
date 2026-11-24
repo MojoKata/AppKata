@@ -10,6 +10,7 @@ import shutil
 import subprocess
 
 from . import APPKATA_REPO, __version__, audit, desktop
+from .install import desktop_exec
 from .db import DB, now
 from .platform import OS, arch
 
@@ -107,14 +108,25 @@ def write_icons() -> list[str]:
     return written
 
 
+def _exec_value(exec_path: str) -> str:
+    """`Exec=` for AppKata's own entry, escaped as every entry's is (:func:`install.desktop_exec`). A
+    path it refuses (a quote or a line break in the install folder's name) is an OSError, which
+    both callers of :func:`install_self` report."""
+    try:
+        return desktop_exec(exec_path)
+    except ValueError as e:
+        raise OSError(str(e)) from None
+
+
 def write_desktop_entry(exec_path: str) -> str:
     """appkata.desktop: its name matches the window's desktop file name (app.setDesktopFileName)."""
+    exec_value = _exec_value(exec_path)
     p = desktop_entry_path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
     mime = "MimeType=x-scheme-handler/appkata;\n" if desktop.scheme_registered() else ""
     with open(p, "w") as f:
         f.write("[Desktop Entry]\nType=Application\nName=AppKata\nComment=A FOSS app store built on git\n"
-                f"Exec=\"{exec_path}\" %U\nIcon=appkata\nCategories=System;PackageManager;\n{mime}"
+                f"Exec={exec_value}\nIcon=appkata\nCategories=System;PackageManager;\n{mime}"
                 "StartupWMClass=appkata\nTerminal=false\n")
     os.chmod(p, 0o755)
     if shutil.which("update-desktop-database"):
@@ -130,6 +142,7 @@ def install_self(db: DB, root: str, image: str | None = None, delete_download: b
     if not image:
         raise OSError("AppKata isn't running as an AppImage")
     t = target(root)
+    _exec_value(os.path.join(t, STABLE))        # refused before anything is copied, never half-way
     os.makedirs(t, exist_ok=True)
     name = f"AppKata-{version}-{arch()}.AppImage"
     dest = os.path.join(t, name)

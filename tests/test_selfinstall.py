@@ -83,6 +83,31 @@ def test_install_self_keeps_the_download_and_skips_off_options(env):
     assert not os.path.exists(desktop.autostart_path())
 
 
+def test_appkatas_own_menu_entry_escapes_its_path_and_a_folder_it_cannot_start_is_refused_first(env):
+    # CR1.3-7: AppKata's own entry wrote its path in quotes and escaped nothing, as the apps' did,
+    # so an install folder with a $, a %, a backtick or a backslash in its name gave AppKata a menu
+    # entry that started something else or nothing. Its Exec= is read back by the specification's
+    # rules; and a folder no entry can name (a quote, a line break) is refused before anything is
+    # copied or recorded, with the error both callers report.
+    from test_install_review import _exec_words
+    db, home = env["db"], env["home"]
+    root = str(home / "my apps" / "50% $ `id` back\\slash")
+    rec = selfinstall.install_self(db, root, version="0.1.0")
+    stable = os.path.join(root, "appkata", "AppKata.AppImage")
+    exec_line = next(l for l in open(selfinstall.desktop_entry_path()).read().splitlines() if l.startswith("Exec="))
+    assert rec["exec"] == stable and _exec_words(exec_line[len("Exec="):]) == [stable, "%U"], exec_line
+    os.remove(selfinstall.desktop_entry_path())
+    db.x("DELETE FROM installs")
+    for bad in ('quo"te', "line\nbreak"):
+        with pytest.raises(OSError, match="quote or a line break"):
+            selfinstall.install_self(db, str(home / bad / "apps"), version="0.1.0")
+        assert not (home / bad).exists()
+    assert not os.path.exists(selfinstall.desktop_entry_path()) and db.one("SELECT * FROM installs") is None
+    with pytest.raises(OSError, match="quote or a line break"):
+        selfinstall.write_desktop_entry('/opt/quo"te/AppKata.AppImage')
+    assert not os.path.exists(selfinstall.desktop_entry_path())
+
+
 def test_icon_falls_back_to_the_package(env, monkeypatch):
     monkeypatch.delenv("APPDIR")
     monkeypatch.setattr(selfinstall, "_render_png", lambda svg, dest: False)

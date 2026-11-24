@@ -211,17 +211,54 @@ def _elevate(cmd: list[str]) -> subprocess.CompletedProcess:
     return applog.run(cmd, timeout=1800)
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def one_line(text: str) -> str:
+    """Text someone else wrote (a project's name or summary, a review's), as one line: every control
+    character and line separator becomes a space, and each run of whitespace one space. A value
+    written into a line-based file, a menu entry above all, then can't end its line and start
+    another (CR1.3-7: a summary's line break put the project's own `Exec=` into the entry)."""
+    return " ".join(_CONTROL.sub(" ", text or "").split())
+
+
+def desktop_value(text: str) -> str:
+    """`text` as a string value of a desktop entry: one line, a backslash doubled (the Desktop Entry
+    Specification's escapes: `\\s`, `\\n`, `\\t`, `\\r`, `\\\\`)."""
+    return one_line(text).replace("\\", "\\\\")
+
+
+def desktop_exec(exec_path: str, *words: str) -> str:
+    """The value of `Exec=` that starts `exec_path` with AppKata's own `words` and the opened files
+    (`%U`), written as the Desktop Entry Specification asks: the path in double quotes with `\\`, `$`
+    and a backtick escaped, a `%` doubled, and then every backslash doubled again, as in any string
+    value. A path with a quote or a control character (a line break) is refused with ValueError:
+    no entry starts such a path, and nothing is written for it."""
+    if '"' in exec_path or _CONTROL.search(exec_path):
+        raise ValueError(f"{one_line(exec_path)!r} has a quote or a line break in it, which a menu entry can't start")
+    quoted = re.sub(r"([\\$`])", r"\\\1", exec_path).replace("%", "%%")
+    return " ".join([f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
+
+
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
     """The app-menu entry. For a sandbox launcher (`launcher=True`) Exec passes the word
     --appkata-menu first: started this way nothing shows stderr, so the launcher keeps its own in
-    logs/apps/<id>.log, where a refused launch is then found (R14.2.1, R17.4)."""
+    logs/apps/<id>.log, where a refused launch is then found (R14.2.1, R17.4).
+
+    The name and the summary are the project's own text (its metainfo, its README, a review), and
+    the path can hold a folder or a program the project named: each is written as one escaped line
+    (:func:`desktop_value`, :func:`desktop_exec`), so the entry holds AppKata's keys and no other."""
+    try:
+        exec_value = desktop_exec(exec_path, *(["--appkata-menu"] if launcher else []))
+    except ValueError as e:
+        raise InstallError(f"couldn't add the app-menu entry: {e}") from None
     path = os.path.join(desktop_dir(), f"appkata-{app_id}.desktop")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    word = " --appkata-menu" if launcher else ""
+    icon = "" if _CONTROL.search(icon) else icon
     with open(path, "w") as f:
         f.write("[Desktop Entry]\nType=Application\n"
-                f"Name={name}\nComment={summary[:120]}\nExec=\"{exec_path}\"{word} %U\n"
-                + (f"Icon={icon}\n" if icon else "") + "Categories=Utility;\nX-AppKata=true\n")
+                f"Name={desktop_value(name) or app_id}\nComment={desktop_value(one_line(summary)[:120])}\nExec={exec_value}\n"
+                + (f"Icon={desktop_value(icon)}\n" if icon else "") + "Categories=Utility;\nX-AppKata=true\n")
     os.chmod(path, 0o755)
     return path
 
