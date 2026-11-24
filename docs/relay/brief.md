@@ -8,7 +8,7 @@ then `docs/relay/progress.md`, then your batch file. Nothing else from earlier a
 AppKata is the owner's own project, and CR1 is its own code review. The review's findings are GitHub
 issues, and the owner approved a schedule of work units, one pull request each
 (`docs/remediation/CR1-schedule.json`). This relay is the unit **U07, "Tokens and requests: where they go and how they fail"**:
-16 findings, fixed in four batches by one agent at a time on the
+19 findings (16, and three found by batch 1), fixed in four batches by one agent at a time on the
 branch `cr1-u07-tokens-requests`. You fix your batch's findings in the owner's own code and prove
 each fix. You push nothing and write nothing on GitHub.
 
@@ -17,7 +17,7 @@ each fix. You push nothing and write nothing on GitHub.
 | 1 | #263, #264, #276, #266 | the High finding and the rules for where a token and a request may go |
 | 2 | #275, #297, #292, #434, #485 | how a token is formed, keyed and kept |
 | 3 | #269, #296, #277, #626 | how a Sync survives a failing or slow host |
-| 4 | #265, #298, #293 | a GitHub Enterprise file list, and the tests of the whole |
+| 4 | #265, #298, #293, #683, #681, #682 | a GitHub Enterprise file list, the tests of the whole, and three findings batch 1 found |
 
 Your batch is one file, `docs/relay/batch-N.txt`. Its first lines say where its items came from. The
 code at the head of `cr1-u07-tokens-requests` is the code you work on: earlier batches' commits are
@@ -42,7 +42,9 @@ Take the findings in your batch file's order. Each gets exactly one outcome:
 1. **fixed**: a test that fails on the code before your commit, then the fix, in one commit for the
     finding. Ask how the fault slipped past the tests; where a test of its whole class is small and
     natural, write that one. The requirement's text changes in the same commit when the record or
-    the decision says it does.
+    the decision says it does. A rule the user or a project can observe (which addresses are
+    refused, where a token goes) belongs in the requirement that covers it, in the same commit:
+    a rule that lives only in the code is a gap. Say each such sentence under **needs your eye**.
 2. **no defect**: the finding does not reproduce. One tests-only commit shows the behaviour is right.
     List it with the evidence; the coordinator puts it on the issue.
 3. **remedy changed**: the stated remedy is wrong, or an alternative fits better, and the choice is

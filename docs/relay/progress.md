@@ -106,3 +106,26 @@ Nothing: every file changed is in U07's files.
     first address carried a token, even if a redirect to another host, which got none, gave the 401.
 8. The #264 tests give urllib's https handler a plain connection (no certificate to make): the
     request, headers and redirect are handled as https, and only the encryption is left out.
+
+### The coordinator, after batch 1 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_forges.py` and the
+document tests, whole; the batch pushed.
+
+- **New findings filed**, and added to this unit and to batch 4: #681 (the GitHub page link rewrite,
+    batch 1's "New"), #682 (doubt 1: a name that changes its answer) and #683 (doubt 7: the 401
+    after a redirect).
+- **Doubt 3, for batch 2 to do first, in one commit of its own before its findings:** write into
+    the requirements what batch 1's fixes made true and no requirement says. In R9.2.2: a token is
+    sent over https only (#263), and a redirect carries it on only to the same scheme, host and
+    port (#264). In R3, where the icon, the screenshot and the README's images are fetched (R3.2,
+    R3.3 or R3.4, whichever covers all three): only http and https addresses are asked for, and
+    none on a loopback, private or link-local address unless it is the Source's own host, a
+    redirect included (#266, the owner's decision). `docs/requirements/R3-app-metadata.md` is in
+    this unit's files now. Keep R11.1.6 and Settings' help text as #276's record says.
+- **Doubt 2** (what counts as local is a little wider than the decision's three words) stands as
+    built: say it in the R3 sentence ("or another address that isn't public").
+- **Doubts 4, 5, 6 and 8** are noted; 6 is batch 3's to use.
+- **Needs a run** (the Windows VM tests): the coordinator runs it once, when the unit's last batch
+    is in.
+
