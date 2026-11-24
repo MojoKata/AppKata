@@ -35,6 +35,12 @@ For each finding of your batch, read:
 container. Load the `review-triage` skill and read its "What comes up mid-work": those standing
 rules are the unit's, and this brief says below how a relay agent follows them.
 
+**From 2026-11-24 4 PM the batches run on Opus 5.5** (the owner's word; the earlier batches ran on
+Fable 5.2, which reached its usage limit). An agent that finds the worktree holding uncommitted
+changes it didn't make: they are the stopped agent's work on this batch. Read them with `git diff`,
+keep what is right, finish it under the rules below, and say in the progress section what was taken
+over. Never discard them with `git checkout` or `git restore` without reading them first.
+
 ## The rule
 
 Take the findings in your batch file's order. Each gets exactly one outcome:
@@ -104,7 +110,7 @@ runs in the background and you wait for its own completion.
 
 1. Commit on `cr1-u03-portable-install` (never push, never another branch, never amend or rebase):
     one commit per finding, the fix explained in its message, with the finding's number in its
-    first line, ending with the line `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`.
+    first line, ending with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
     Never set `user.name` or `user.email` and never pass `--no-gpg-sign`: let git sign it; if
     signing fails, stop and report.
 2. Append to `docs/relay/progress.md`, under `## Batch N`, in a commit of its own at the end: the
