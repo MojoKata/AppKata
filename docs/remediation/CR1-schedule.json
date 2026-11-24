@@ -245,7 +245,9 @@
     626,
     681,
     682,
-    683
+    683,
+    695,
+    697
    ],
    "files": [
     "docs/requirements/R11-settings.md",
@@ -267,7 +269,8 @@
     "tests/test_forges.py",
     "tests/test_requirements_trace.py",
     "tests/test_sync.py"
-   ]
+   ],
+   "oversize": "21 findings: 16 from the review, and five more that the unit's own batches found in its own files (#681, #682, #683, #695, #697), which are cheapest fixed while the unit is in them."
   },
   {
    "id": "U08",
@@ -564,7 +567,8 @@
     462,
     493,
     494,
-    645
+    645,
+    696
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -10780,6 +10784,50 @@
    "size": "small",
    "proof": "tests/test_core.py: the four pairs of scheme and port (https with 443 and with 80, http with 80 and with 443) normalize to a URL that keeps a port that isn't its own scheme's default.",
    "note": "Found by U07's second batch (2026-11-24) while fixing #297, and filed by the coordinator. It is the same line as #280 (urls.py:64) and is decided with #280's rule for the scheme: one commit can settle both, each with its own test."
+  },
+  {
+   "finding": 695,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    296,
+    682
+   ],
+   "size": "medium",
+   "proof": "A test with a stand-in server that sends its status line and headers a byte at a time: the request ends at its deadline, and at Cancel.",
+   "note": "Found by U07's third batch (2026-11-24) after #296's fix, and filed by the coordinator. It needs the connection classes of Http's own that #682 builds: do it after #682, in the same classes."
+  },
+  {
+   "finding": 696,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_forges.py"
+   ],
+   "related": [
+    284
+   ],
+   "size": "small",
+   "proof": "A test that ends a Sync between the image's save and the row's write (an icon whose extension changed): the row's file is still there.",
+   "note": "Found by U07's third batch (2026-11-24), and filed by the coordinator. #284 changes the same lines of sync.py (_save_image and the row's write): one unit, and best one pass over those lines."
+  },
+  {
+   "finding": 697,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "related": [
+    297,
+    277
+   ],
+   "size": "small",
+   "proof": "A test with two stand-in servers on one name and two ports: a rate limit answered by one doesn't stop a request to the other.",
+   "note": "Found by U07's third batch (2026-11-24) after #277's fix, and filed by the coordinator: Http.limited takes the same key as a token (#297)."
   }
  ],
  "shared_files": [
