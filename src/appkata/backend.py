@@ -591,10 +591,6 @@ class Backend(QObject):
             self._ensure_own_trust()
             self.reload()
 
-    @Property("QVariant", notify=prefsChanged)
-    def tokens(self):
-        return self.db.get("tokens", {})
-
     @Slot(str, str)
     def setToken(self, host: str, token: str) -> None:
         """A token is kept for one address (R11.1.6): the host as a Source's is written, with its
@@ -1290,10 +1286,6 @@ class Backend(QObject):
             self.sourcePreview.emit(out)
         threading.Thread(target=work, daemon=True).start()
 
-    @Slot(str, bool)
-    def addSource(self, text: str, and_install: bool) -> None:
-        self.addSourceWith(text, and_install, {})
-
     @Slot(str, bool, "QVariant")
     def addSourceWith(self, text: str, and_install: bool, settings) -> None:
         """Add a Source, with the Source settings chosen in the Add source dialog (R7.2)."""
@@ -1442,10 +1434,6 @@ class Backend(QObject):
                                     "signers": [{**s, "shortFp": short_fp(s["fingerprint"]),
                                                  **catalog.avatar_for(s["name"] or s["email"], s["fingerprint"])} for s in p.signers]})
         threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str)
-    def addTrust(self, text: str) -> None:
-        self.addTrustScored(text, 3)
 
     @Slot(str, int)
     def addTrustScored(self, text: str, score: int) -> None:
