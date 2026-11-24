@@ -2767,3 +2767,48 @@ def test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written(tmp
     assert rows(db)[w.source]["error_code"] is None
     assert [url for url in asked if "demo" in url] == theirs[:2] + ["https://raw.githubusercontent.com/acme/widget/trunk/media/demo-3.png"]
     assert [url for url in asked if "notraw" in url or "u=raw." in url] == []
+
+
+def garbage(handler):
+    handler.wfile.write(b"\x16\x03\x01 this is no HTTP at all\r\n\r\n")
+
+
+REDIRECTED_TO = {       # what the host a redirect led to does: the error's kind, and its words about that host
+    "/not-found": (saying(404), http_.NotFound, "https://{b}/not-found not found"),
+    "/cut-short": (cut_off(b'{"half": ', 1000), Unreachable, "localhost cut its answer short (9 of 1000 bytes)"),
+    "/half-a-chunk": (half_a_chunk, Unreachable, "localhost cut its answer short"),
+    "/garbage": (garbage, Unreachable, "couldn't read localhost's answer (BadStatusLine: "),
+    "/not-json": (cut_off(b"<html>Sign in</html>", 20), Unreachable, "localhost didn't return JSON"),
+    "/too-large": (cut_off(b"x" * 2000, 2000), Unreachable, "response from localhost too large"),
+    "/a-byte-at-a-time": (a_byte_at_a_time, Unreachable, "localhost hadn't finished its answer after 0.3 seconds"),
+}
+
+
+@pytest.mark.parametrize("path", sorted(REDIRECTED_TO))
+def test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_said_of_the_host_it_led_to(pair, clock, monkeypatch, path):
+    """The class of #683, past a failing status: an answer that is cut short, too large, too slow,
+    no JSON or no HTTP at all. Each was said of the host asked first, which had only redirected."""
+    a, b = pair
+    answer, kind, says = REDIRECTED_TO[path]
+    a.redirects["/api/x"] = f"https://{b.at}{path}"
+    a.files, b.files = {path: answer}, {path: answer}
+    monkeypatch.setattr(http_.time, "monotonic", time.monotonic)        # the real clock for the deadline, and no waiting between retries
+    http = names(Http(timeout=10, deadline=0.3 if path == "/a-byte-at-a-time" else 120))
+    with pytest.raises(kind) as e:
+        http.json(f"https://{a.at}/api/x", max_bytes=1000)
+    assert type(e.value) is kind and str(e.value).startswith(says.format(b=b.at)), str(e.value)
+    assert [p for p, _ in a.seen] == ["/api/x"] * len(b.seen) and b.seen
+    with pytest.raises(kind) as e:                             # and the same answer from the host itself is said of it
+        http.json(f"https://{a.at}{path}", max_bytes=1000)
+    assert str(e.value).startswith(says.format(b=a.at).replace("localhost", "127.0.0.1")), str(e.value)
+
+
+def test_through_real_sockets_a_redirect_to_where_nothing_listens_is_that_hosts_failure(pair, clock):
+    a, b = pair
+    with socket.socket() as nothing:
+        nothing.bind(("127.0.0.1", 0))
+        closed = nothing.getsockname()[1]
+    a.redirects["/api/x"] = f"https://localhost:{closed}/elsewhere"
+    with pytest.raises(Unreachable, match="^couldn't reach localhost: ") as e:
+        names(Http(timeout=5)).json(f"https://{a.at}/api/x")
+    assert e.value.extra["no_answer"] is True and len(a.seen) == 1

@@ -194,8 +194,9 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     Where a redirect points is held to the rule for a first address (`allowed`, Http._allowed): http
     or https, and no local address but the host's the request was made for (`req.whose`).
 
-    It also keeps `req.asked` up to where the request has got to: the host asked last, and whether
-    the token went there. An error is that host's, and is the token's only if it was sent (CR1 #683)."""
+    It also keeps `req.asked` up to where the request has got to: the address and the host asked
+    last, and whether the token went there. An error is that host's, and is the token's only if it
+    was sent (CR1 #683)."""
 
     def __init__(self, allowed):
         self.allowed = allowed
@@ -221,7 +222,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
                     new.add_unredirected_header(k, v)
             new.asked = asked = getattr(req, "asked", None)
             if asked is not None:
-                asked.update(host=to.hostname.lower(), token=carried)
+                asked.update(url=newurl, host=to.hostname.lower(), token=carried)
         return new
 
 
@@ -372,23 +373,25 @@ class Http:
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
         req.whose = whose                          # for a redirect: _Redirects
-        # the host asked last and whether the token went there: _Redirects moves both on, since an
-        # answer after a redirect is another host's, which may have been sent no token (CR1 #683)
-        req.asked = asked = {"host": host, "token": bool(token)}
+        # the address and the host asked last, and whether the token went there: _Redirects moves
+        # them on, since what comes after a redirect is another host's answer, or its failure to
+        # give one, and that host may have been sent no token. Every error below is said of the
+        # host asked last (CR1 #683); `host`, the one asked first, is whose limit is kept.
+        req.asked = asked = {"url": url, "host": host, "token": bool(token)}
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1
         started = time.monotonic()
         try:
             with self._open(req, timeout=self.timeout) as r:
-                data = self._read(r, host, max_bytes, started)
+                data = self._read(r, asked["host"], max_bytes, started)
                 hdr = {k.lower(): v for k, v in r.headers.items()}
                 declared = _declared_length(hdr, method)
                 if declared is not None and len(data) < declared:
                     # http.client hands back a short body without an error when the connection ends
                     # before the Content-Length (CR1 #626): a cut-off image, README or file list was
                     # taken for the whole one. Worth asking again, like a chunked answer cut short.
-                    raise Unreachable(f"{host} cut its answer short ({len(data)} of {declared} bytes)", cut=True)
+                    raise Unreachable(f"{asked['host']} cut its answer short ({len(data)} of {declared} bytes)", cut=True)
                 return data, hdr, r.geturl()
         except urllib.error.HTTPError as e:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
@@ -411,7 +414,7 @@ class Http:
                     if e.code >= 500:
                         raise RateLimited(host, reset, e.code) from None
             if e.code == 404:
-                raise NotFound(f"{url} not found") from None
+                raise NotFound(f"{asked['url']} not found") from None
             # the answer is the host's that was asked last. A 401 is the token's only when the
             # token went there: a redirect to another host drops it (R9.2.2), and that host's 401
             # was said to be the first host rejecting a token it had never seen, which sent the
@@ -421,32 +424,32 @@ class Http:
             raise Unreachable(f"{asked['host']} answered HTTP {e.code}", status=e.code, **({"retry_after": wait} if wait else {})) from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             reason = getattr(e, "reason", e)
-            raise Unreachable(f"couldn't reach {host}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason),
+            raise Unreachable(f"couldn't reach {asked['host']}: {reason}", timeout=isinstance(reason, TimeoutError) or "timed out" in str(reason),
                               no_answer=True) from None
         except IncompleteRead:                     # a chunked answer that ended early: worth asking again
-            raise Unreachable(f"{host} cut its answer short", cut=True) from None
+            raise Unreachable(f"{asked['host']} cut its answer short", cut=True) from None
         except (HTTPException, ValueError) as e:
             # what urllib lets through as http.client raised it (CR1 #269): an address that can't be
             # sent (InvalidURL for a space or a control character in it, UnicodeEncodeError for a
             # letter outside ASCII, both before anything is sent) and an answer that can't be read (a
             # status line or a header that isn't one). Every error of a request is a SourceError.
             if isinstance(e, (InvalidURL, ValueError)):
-                raise Unreachable(f"couldn't ask {host}: the address {url[:200]!r} can't be sent ({type(e).__name__})") from None
-            raise Unreachable(f"couldn't read {host}'s answer ({type(e).__name__}: {str(e)[:200]})") from None
+                raise Unreachable(f"couldn't ask {asked['host']}: the address {asked['url'][:200]!r} can't be sent ({type(e).__name__})") from None
+            raise Unreachable(f"couldn't read {asked['host']}'s answer ({type(e).__name__}: {str(e)[:200]})") from None
 
     def json(self, url: str, **kw):
         data, hdr, final = self.request(url, **kw)
         try:
             return json.loads(data.decode("utf-8"))
         except ValueError:
-            raise Unreachable(f"{urlsplit(url).hostname} didn't return JSON") from None
+            raise Unreachable(f"{urlsplit(final).hostname} didn't return JSON") from None      # the host that answered: a redirect's
 
     def json_with_headers(self, url: str, **kw):
         data, hdr, final = self.request(url, **kw)
         try:
             return json.loads(data.decode("utf-8")), hdr, final
         except ValueError:
-            raise Unreachable(f"{urlsplit(url).hostname} didn't return JSON") from None
+            raise Unreachable(f"{urlsplit(final).hostname} didn't return JSON") from None
 
     def text(self, url: str, **kw) -> str:
         data, _, _ = self.request(url, accept="*/*", **kw)
