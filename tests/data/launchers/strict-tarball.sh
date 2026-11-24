@@ -104,7 +104,6 @@ bwrap \
   --unshare-all --die-with-parent --seccomp 3 \
   --clearenv --setenv HOME "$HOME" --setenv PATH /run/appkata:/usr/bin:/bin:/usr/sbin:/sbin \
   --setenv XDG_RUNTIME_DIR "$rt" \
-  --setenv APPKATA_NO_BUS strict \
   --setenv GDK_DEBUG no-portals \
   --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus" \
   --chdir "$HOME" \

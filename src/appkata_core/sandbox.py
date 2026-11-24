@@ -1810,11 +1810,10 @@ XDG_OPEN_SHIM = """#!/bin/sh
 set -u
 case "${1:-}" in ""|-*) exec /usr/bin/xdg-open "$@" ;; esac
 if [ ! -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then      # no bus: its address leads nowhere (R3-33)
-  case "${APPKATA_NO_BUS:-}" in                                 # and the launcher says why
-    strict) echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2 ;;
+  case "${APPKATA_NO_BUS:-}" in                                 # a Standard app has none only where the launcher says why
     no-filter) echo "AppKata: the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services and can't open $1 on this computer (install xdg-dbus-proxy to give it them)." >&2 ;;
     address) echo "AppKata: this session's bus is at an address AppKata's bus filter can't reach (the launcher named it when the app started), so this app has no desktop services and can't open $1 on this computer." >&2 ;;
-    *) echo "AppKata: this app has no desktop services here, so it can't open $1 on this computer." >&2 ;;
+    *) echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2 ;;
   esac
   exit 3
 fi
@@ -2429,12 +2428,11 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     path_in = (SHIMS_MOUNT + ":" if shims else "") + "/usr/bin:/bin:/usr/sbin:/sbin"
     parts.append(f'  --clearenv --setenv HOME "$HOME" --setenv PATH {path_in} \\')
     parts.append('  --setenv XDG_RUNTIME_DIR "$rt" \\')
-    # Why the app has no session bus, where it has none, for AppKata's xdg-open to say (R17.6.3): it
-    # took "no bus" for Strict, and a Standard app has none without xdg-dbus-proxy, or in a session
-    # whose bus the filter can't reach (the proxy's block says so at run time; PR #694's review, P1-B3)
-    if not standard:
-        parts.append('  --setenv APPKATA_NO_BUS strict \\')
-    elif not bus:
+    # Why a Standard app has no session bus, where it has none, for AppKata's xdg-open to say (R17.6.3):
+    # it took "no bus" for Strict, and a Standard app has none without xdg-dbus-proxy, or in a session
+    # whose bus the filter can't reach (the proxy's block says so at run time; PR #694's review, P1-B3).
+    # A Strict app is told nothing: no word and no bus is Strict.
+    if standard and not bus:
         parts.append('  --setenv APPKATA_NO_BUS no-filter \\')
     # GTK4 reads /.flatpak-info and takes the portal road for its file dialog; the proxy denies the
     # FileChooser portal (for a host caller it returns paths the sandbox can't open, R17.6.3). GTK 4.14

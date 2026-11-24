@@ -109,7 +109,7 @@ print("EXPOSURE " + json.dumps({"mounts": mounts, "env": sorted(os.environ), "id
 # What the shell running the probe sets for itself, not the launcher
 SHELL_VARS = {"PWD", "OLDPWD", "SHLVL", "_"}
 CONDITIONS = {"always", "bus", "network", "sound", "camera", "folder-ro", "folder-rw", "cli", "write_app",
-              "appimage", "wayland", "x11"}
+              "appimage", "wayland", "x11", "no-proxy"}
 
 
 def parse(stdout: str) -> dict:
@@ -151,7 +151,9 @@ def facts_for(gs: dict, session: str, cli_shared: bool, appimage: bool) -> dict:
     from appkata_core import sandbox as sb
     g = sb.normalize(gs)
     std = g["level"] == "standard"
-    return {"bus": std, "network": std and g["network"], "sound": std and bool(g["sound"]),
+    # no-proxy: a Standard app where xdg-dbus-proxy isn't installed (R17.10); a session whose bus the
+    # filter can't reach is the other such run, which these runs, on a bus of their own, never are
+    return {"bus": std, "no-proxy": std and not sb.have_bus_filter(), "network": std and g["network"], "sound": std and bool(g["sound"]),
             "camera": std and "camera" in g["devices"],
             "folder-ro": std and any(p != "$cwd" and m == "ro" for p, m in g["folders"].items()),
             "folder-rw": std and any(p != "$cwd" and m == "rw" for p, m in g["folders"].items()),

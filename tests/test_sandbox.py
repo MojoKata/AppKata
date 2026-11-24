@@ -510,20 +510,21 @@ def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no
 # and to change that in App Detail, where nothing would. How it slipped past: the shim was written
 # when Strict was the one way to have no bus, and the ways added since were tested on the launcher's
 # own line, never on what the app's xdg-open then said. The launcher now tells it, and it says that.
-@pytest.mark.parametrize("why,says", [("strict", "this app runs Strict, with no desktop services"),
+@pytest.mark.parametrize("why,says", [(None, "this app runs Strict, with no desktop services"),
                                       ("no-filter", "the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services"),
                                       ("address", "this session's bus is at an address AppKata's bus filter can't reach")])
 def test_xdg_open_says_why_the_app_has_no_bus(tmp_path, why, says):
     shim = tmp_path / "xdg-open"
     shim.write_text(sb.XDG_OPEN_SHIM)
-    r = subprocess.run(["sh", str(shim), "https://example.com/x"], env={"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": str(tmp_path),
-                                                                        "APPKATA_NO_BUS": why}, capture_output=True, text=True)
+    told = {"APPKATA_NO_BUS": why} if why else {}                          # a Strict app is told nothing: no word, no bus
+    r = subprocess.run(["sh", str(shim), "https://example.com/x"], env={"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": str(tmp_path), **told},
+                       capture_output=True, text=True)
     assert r.returncode == 3 and r.stderr.startswith("AppKata: " + says) and r.stderr.count("\n") == 1, r.stderr
 
 
 def test_each_launcher_tells_its_xdg_open_why_the_app_has_no_bus(tmp_path, monkeypatch):
     told = lambda gs, **kw: re.findall(r"--setenv APPKATA_NO_BUS (\S+)", sb.build_launcher("v", "V", "/apps/v/1", "bin/v", gs, **kw))  # noqa: E731
-    assert told(sb.resolve_template("strict")) == ["strict"]
+    assert told(sb.resolve_template("strict")) == []                    # no word and no bus is Strict
     assert told(sb.resolve_template("standard"), bus_filter=False) == ["no-filter"]
     assert told(sb.resolve_template("standard")) == ["address"]          # decided at run time, where no proxy starts
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, None)            # and where one does, nothing
@@ -1184,8 +1185,8 @@ def test_a_sandboxed_app_gets_an_xdg_open_that_asks_the_host(tmp_path, monkeypat
     # Review 3, R3-33: no bus, but an address all the same, with nothing behind it -- unset, GLib and
     # libdbus would autolaunch a bus inside the sandbox through dbus-launch
     assert '--setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus"' in strict and '--bind "$sock" "$rt/bus"' not in strict
-    assert "--setenv APPKATA_NO_BUS strict" in strict                   # the shim is told why (PR #694's review, P1-B3)
-    r = subprocess.run(["sh", shim, "https://example.com/x"], env={"PATH": os.environ["PATH"], "APPKATA_NO_BUS": "strict"}, capture_output=True, text=True)
+    assert "APPKATA_NO_BUS" not in strict                               # no word and no bus is Strict (PR #694's review, P1-B3)
+    r = subprocess.run(["sh", shim, "https://example.com/x"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
     assert r.returncode == 3 and "runs Strict" in r.stderr and "https://example.com/x" in r.stderr
 
 
