@@ -50,7 +50,8 @@
     329,
     331,
     388,
-    661
+    661,
+    688
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
@@ -61,6 +62,7 @@
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
     "src/appkata/backend.py",
+    "src/appkata/qml/InstallDialog.qml",
     "src/appkata_core/appkind.py",
     "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
@@ -73,11 +75,14 @@
     "tests/data/launchers/standard-writable-no-x11.sh",
     "tests/data/launchers/strict-tarball.sh",
     "tests/test_appkind.py",
+    "tests/test_dialog_contract.py",
     "tests/test_install_review.py",
     "tests/test_launch.py",
+    "tests/test_launcher_golden.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_adversarial.py",
     "tests/test_sandbox_run.py",
+    "tests/test_sandbox_state.py",
     "tests/test_sandbox_transitions.py",
     "tests/test_selfinstall.py",
     "tests/test_windows.py"
@@ -523,7 +528,9 @@
     369,
     374,
     603,
-    650
+    650,
+    686,
+    687
    ],
    "files": [
     "docs/build.md",
@@ -538,6 +545,7 @@
     "src/appkata_core/install.py",
     "src/appkata_core/windows.py",
     "tests/test_audit_log_explore.py",
+    "tests/test_install_review.py",
     "tests/test_windows.py"
    ]
   },
@@ -10714,6 +10722,60 @@
    "size": "small",
    "proof": "The project's document checks: tests/test_doccheck.py, tests/test_doc_links.py, tests/test_docs_facts.py and tests/test_public_text.py.",
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
+  },
+  {
+   "finding": 686,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/desktop.py",
+    "tests/test_audit_log_explore.py"
+   ],
+   "depends_on": [
+    305
+   ],
+   "related": [
+    376,
+    374
+   ],
+   "size": "small",
+   "proof": "tests/test_audit_log_explore.py::test_autostart_and_links, with AppKata started from a path that holds a space, a % and a backslash: both entries' Exec= is what install.desktop_exec gives, and Gio (where the test Python has it) reads the entry back to the same program.",
+   "note": "Found by U03's first batch (2026-11-24) after #305's fix, and filed by the coordinator; its remedy is the issue's: build both entries' Exec= with the function #305 added (install.desktop_exec). #376 and #374 change the same registration of the appkata:// handler."
+  },
+  {
+   "finding": 687,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "related": [
+    348,
+    360,
+    369
+   ],
+   "size": "medium",
+   "proof": "tests/test_windows.py in the Windows VM (scripts/test-windows-vm.sh --tests): an app named git or python3, and one with a reserved name, installs with no .cmd link and the notice says why; an app whose name is free gets its link.",
+   "note": "Found by U03's first batch (2026-11-24): #407's check is Linux's alone. The owner's decision on #407 (2026-11-24) names no platform, so the same rule holds on Windows: no command link for a reserved name or one that already resolves on PATH (with PATHEXT's endings), and the same notice."
+  },
+  {
+   "finding": 688,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/InstallDialog.qml",
+    "src/appkata/backend.py",
+    "tests/test_dialog_contract.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "A test that Backend.planFor carries install.command_link_refusal's answer for an app named after a command, and tests/test_dialog_contract.py that the install dialog's command checkbox is disabled with that reason as its hint when the plan carries one.",
+   "note": "Found by U03's first batch (2026-11-24) after #407's fix, and filed by the coordinator. A disabled state and a tooltip in a pattern the dialog has: list it under Needs your eye."
   }
  ],
  "shared_files": [
@@ -10815,5 +10877,11 @@
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
   "tests/test_windows.py"
+ ],
+ "set_aside": [
+  {
+   "finding": 685,
+   "why": "A new finding of U03's first batch (2026-11-24) whose remedy is the owner's to choose: refuse an install path that holds a %, or say that such an app has no menu entry on GLib desktops. It carries `refine` and joins a unit once decided."
+  }
  ]
 }
