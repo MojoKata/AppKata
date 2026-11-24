@@ -315,3 +315,23 @@ with 121 skipped, all listed. No launcher's text changed, so the launcher tier w
     another unit's worktree). Every command of mine began with a `cd` into this worktree, every
     commit was made from it, and `git status` in both of those checkouts showed nothing of mine
     afterwards.
+
+### The coordinator, after batch 2 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_install_review.py`,
+`tests/test_dialog_contract.py` and the document tests, whole; the batch pushed.
+
+- **New findings filed:** #698 (new 2, `rewrite_launcher`'s order of steps) joins this unit and
+    batch 3; #699 (new 3, a version named `current` or `run`) goes to U04, with #307 and #628; #700
+    (new 4, the junction's `FileExistsError`) goes to U19, with #358. New 1 (`remove_shim` deletes
+    whatever is at the `.cmd` path) is #369 already, in U14: nothing to file.
+- **Guard:** `tests/skips/windows.txt` is in U03's files now.
+- **The doubts on #313, #309 and `switch_to`** stand as built. #309 being stricter than its remedy,
+    and each requirement sentence of batches 1 and 2, go to the owner under Needs your eye.
+- **For batch 3 (#311):** as batch 2 says, the branch for an app that updates itself still deletes
+    its files before placing the new ones; #311 is where that is fixed.
+- **The working directory moved under batch 2's agent twice.** It began every command with a `cd`,
+    so nothing landed elsewhere. The brief now says to do so.
+- **Needs a run** (the Windows VM tests, the desktop VMs, the launcher VMs): the coordinator's,
+    when the last batch is in.
+
