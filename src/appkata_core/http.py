@@ -68,11 +68,46 @@ def _host_port(parts) -> str:
     return f"{host}:{port}" if port and port not in (80, 443) else host
 
 
+def _origin(parts) -> tuple:
+    """(scheme, host, port) of an address: what a redirect must keep for a token to go on with it."""
+    try:
+        port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+    except ValueError:
+        port = None
+    return parts.scheme, (parts.hostname or "").lower(), port
+
+
+TOKEN_HEADERS = ("authorization", "private-token")
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """A redirect under R9.2.2. urllib copies a request's headers to wherever a redirect points, so
+    Http sends the token as an unredirected header, which urllib never copies, and this hands it on
+    by its own rule: only to the same scheme, host and port (a renamed repository's API address
+    redirects on its own host). To any other host the request goes on without it, and a redirect to
+    plain http of a request that carried a token is refused, the same host's too."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        token = {k: v for k, v in req.unredirected_hdrs.items() if k.lower() in TOKEN_HEADERS}
+        if new is None or not token:
+            return new
+        was, to = urlsplit(req.full_url), urlsplit(newurl)
+        if to.scheme != "https":
+            fp.close()
+            raise Unreachable(f"{was.hostname} redirected a request that carried its API token to plain http; "
+                              "the redirect wasn't followed")
+        if _origin(to) == _origin(was):
+            for k, v in token.items():
+                new.add_unredirected_header(k, v)
+        return new
+
+
 class Http:
     def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None):
         self.tokens = {k.lower(): v for k, v in (tokens or {}).items() if v}
         self.timeout = timeout
-        self._open = opener or urllib.request.urlopen
+        self._open = opener or urllib.request.build_opener(_Redirects()).open
         self.limited: dict[str, float] = {}      # host -> reset time
         self.calls = 0
 
@@ -116,8 +151,11 @@ class Http:
         reset = self.limited.get(host)
         if reset and reset > time.time():
             raise RateLimited(host, reset)
-        h = {"User-Agent": UA, "Accept": accept, **self._token(parts, token_host), **(headers or {})}
+        token = self._token(parts, token_host)
+        h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
+        for k, v in token.items():
+            req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1
         try:
             with self._open(req, timeout=self.timeout) as r:
@@ -133,7 +171,7 @@ class Http:
                 raise RateLimited(host, reset) from None
             if e.code == 404:
                 raise NotFound(f"{url} not found") from None
-            if e.code == 401 and (h.get("Authorization") or h.get("PRIVATE-TOKEN")):
+            if e.code == 401 and token:
                 raise Unreachable(f"{host} rejected the API token (HTTP 401)") from None
             raise Unreachable(f"{host} answered HTTP {e.code}", status=e.code) from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:

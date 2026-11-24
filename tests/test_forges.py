@@ -2,14 +2,18 @@
 
 import io
 import json
+import threading
 import time
 import urllib.error
+import urllib.request
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from appkata_core import forges, sync, urls
 from appkata_core.db import DB
-from appkata_core.http import Http, RateLimited, SourceError
+from appkata_core.http import Http, RateLimited, SourceError, Unreachable
 
 
 class FakeResponse(io.BytesIO):
@@ -294,3 +298,93 @@ def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path)
     allowed = ("https://api.github.com/", "https://raw.githubusercontent.com/", "https://github.com/")
     assert [u for u in tokened(seen) if not u.startswith(allowed)] == []
     assert sorted(set(tokened(seen))) == sorted({u for u in asked if u.startswith(allowed)})
+
+
+# ---------------------------------------------------------------- a redirect (R9.2.2)
+# CR1's #264: urllib copies a request's headers to wherever a redirect points, the token with them,
+# and follows https to http. The fake openers above stand in for urlopen whole, so no test ever ran
+# a redirect: these go through Http's own opener and real sockets, to two servers on this machine.
+class _Recorder(BaseHTTPRequestHandler):
+    """Notes each request as (path, its headers by lower-case name), and redirects the paths it is told to."""
+
+    def do_GET(self):
+        self.server.seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
+        to = self.server.redirects.get(self.path)
+        body = b"" if to else b'{"ok": true}'
+        self.send_response(302 if to else 200)
+        if to:
+            self.send_header("Location", to)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def pair(monkeypatch):
+    """Servers A and B, reached as https://127.0.0.1:<port> and https://localhost:<port>: two host
+    names. A token is only ever sent over https, and a certificate for this machine would have to be
+    made first, so urllib's https handler is given a plain connection: the request, its headers and
+    the redirect are handled as https all the way, and only the encryption is left out."""
+    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", lambda self, req: self.do_open(HTTPConnection, req))
+    servers = []
+    for host in ("127.0.0.1", "localhost"):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
+        server.seen, server.redirects = [], {}
+        server.at = f"{host}:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        servers.append(server)
+    yield servers
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def _with_token(monkeypatch, header):
+    """An Http with a token for server A, sent in the named header."""
+    http = Http({"127.0.0.1": "SECRET-TOKEN"}, timeout=10)
+    if header == "private-token":            # the form a host named for GitLab gets
+        monkeypatch.setattr(http, "_auth", lambda *a, **k: {"PRIVATE-TOKEN": "SECRET-TOKEN"})
+    return http
+
+
+def _secrets(seen):
+    return [(path, k) for path, h in seen for k, v in h.items() if "SECRET-TOKEN" in v]
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+def test_a_redirect_to_another_host_arrives_without_the_token(pair, monkeypatch, header):
+    a, b = pair
+    a.redirects["/api/x"] = f"https://{b.at}/elsewhere"
+    assert _with_token(monkeypatch, header).json(f"https://{a.at}/api/x") == {"ok": True}
+    assert _secrets(a.seen) == [("/api/x", header)]
+    assert [path for path, _ in b.seen] == ["/elsewhere"] and _secrets(b.seen) == []
+    assert not {"authorization", "private-token"} & set(b.seen[0][1])
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+def test_a_redirect_on_the_same_host_keeps_the_token(pair, monkeypatch, header):
+    # a renamed repository's API address answers with a redirect on the same host
+    a, b = pair
+    a.redirects["/api/old"] = "/api/new"
+    assert _with_token(monkeypatch, header).json(f"https://{a.at}/api/old") == {"ok": True}
+    assert _secrets(a.seen) == [("/api/old", header), ("/api/new", header)]
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+@pytest.mark.parametrize("to", ["a", "b"])
+def test_a_redirect_from_https_to_http_of_a_request_with_a_token_is_refused(pair, monkeypatch, header, to):
+    a, b = pair
+    a.redirects["/api/x"] = f"http://{(a if to == 'a' else b).at}/plain"
+    with pytest.raises(Unreachable, match="http"):
+        _with_token(monkeypatch, header).json(f"https://{a.at}/api/x")
+    assert [path for path, _ in a.seen] == ["/api/x"] and b.seen == []      # /plain was never asked for
+
+
+def test_a_redirect_from_https_to_http_without_a_token_is_followed(pair):
+    a, b = pair
+    a.redirects["/x"] = f"http://{b.at}/plain"
+    assert Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10).json(f"https://{a.at}/x") == {"ok": True}
+    assert [path for path, _ in b.seen] == ["/plain"] and _secrets(a.seen + b.seen) == []
