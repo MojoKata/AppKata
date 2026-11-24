@@ -361,11 +361,14 @@ def test_proxy_args_map_capabilities():
 
 
 # The names a grant set opens whole (`--talk`: whatever the connection that owns the name serves),
-# each with what was seen of that connection: no wider than the name.
+# each with what was seen of that connection.
 OPENED_WHOLE = {
     "org.freedesktop.portal.IBus": "IBus 1.5.29's ibus-portal: a process and connection of its own, with the portal object alone",
     "org.freedesktop.portal.Fcitx": "Fcitx 5.1.7: a connection of its own, with the input-method objects alone",
-    "org.freedesktop.secrets": "the keyring, which has no per-app walls: every unlocked password (A1.2.3.14)",
+    # only the user gives it, and it is every unlocked password already (A1.2.3.14); wider than its
+    # name all the same: gnome-keyring 46.1's connection also owns org.gnome.keyring and serves its own
+    # daemon and master-password interfaces and the Secret portal's backend. Not narrowed yet.
+    "org.freedesktop.secrets": "the keyring, which has no per-app walls",
 }
 
 
