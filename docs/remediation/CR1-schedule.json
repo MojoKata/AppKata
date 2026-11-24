@@ -334,6 +334,8 @@
     "tests/data/launchers/messenger-camera.sh",
     "tests/data/launchers/online-app-appimage-with-folders.sh",
     "tests/data/launchers/standard-writable-no-x11.sh",
+    "tests/skips/launcher-vm-24.04.txt",
+    "tests/skips/launcher-vm-26.04.txt",
     "tests/skips/tier1.txt",
     "tests/test_dialog_contract.py",
     "tests/test_docs_facts.py",
@@ -10873,5 +10875,11 @@
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
   "tests/test_windows.py"
+ ],
+ "set_aside": [
+  {
+   "finding": 707,
+   "why": "A new finding of U09's fourth batch (2026-11-24) whose remedy is the owner's to choose: refuse the Password service's own while another provider holds the name, or state the limit. It carries `refine` and joins a unit once decided."
+  }
  ]
 }
