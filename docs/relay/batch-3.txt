@@ -5,3 +5,7 @@
 #404  small  CR1.5-29 An app with no network can still send data out by having the portal open a link or email, and neither the chip nor the limits say so.
 #202  small  CR1.11-86 The portals a sandboxed app may always use are listed four times, and two of the lists leave out ProxyResolver.
 #201  small  CR1.11-85 The architecture says GTK4 falls back cleanly when the file chooser portal is refused, which holds for GTK 4.14 only.
+# Added by the coordinator on 2026-11-24, found by batch 1 and filed since: take them after the three above.
+#692  small  CR1.9-32 The sandbox summary chip names two capabilities differently from the Sandbox dialog's switches: "Secrets" and "Keep screen awake".
+#693  medium  CR1.5-44 Keep the screen awake opens the whole ScreenSaver interface, so an app with it may be able to lock the screen or switch the screen saver on. (A check: see its record.)
+#691  medium  CR1.5-43 The Saved passwords capability opens the keyring's whole connection, its daemon and master-password interfaces included, not the Secret Service alone.

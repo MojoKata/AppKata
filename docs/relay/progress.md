@@ -221,3 +221,25 @@ sudo poweroff
 9. **#378 has two commits**: `2daf340` corrects what `d40a816`'s test comment and A1.2.3.14 said of the keyring,
    found after it was committed; no amend.
 10. No refusal and no model change on my side.
+
+### The coordinator, after batch 1 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; the touched fast tests and the
+document tests, whole; the batch pushed.
+
+- **New findings filed**, and added to this unit and to batch 3: #691 (new 1, Saved passwords
+    opens the keyring's whole connection), #692 (new 2, the chip's two names) and #693 (new 3,
+    the ScreenSaver interface: a check).
+- **Guard, and doubt 1:** `tests/test_dialog_contract.py`, `tests/test_docs_facts.py`,
+    `tests/test_launcher_golden.py` and `tests/skips/tier1.txt` are in U09's files now, so a new
+    test in `tests/test_sandbox_run.py` gets its own line in the skip list from here on.
+- **Doubt 6** (the line's name `Sandbox MPRIS name` and its full-bus-name form; two reviews
+    naming different players merge to no Media keys; a template pick or Reset drops the review's
+    name) goes to the owner under Needs your eye. Nothing for a later batch to change.
+- **Doubts 2 and 3** are for other units (U16's property tests don't know `mpris_name`; U36's
+    harnesses are where the real tray and notification runs belong): the coordinator carries them.
+- **Doubts 4, 5, 7 and 8** are noted. After U03 merges, the goldens are settled by
+    `UPDATE_GOLDEN=1 pytest tests/test_launcher_golden.py`, by the coordinator.
+- **Needs a run** (the Cinnamon run of #378 with the script in batch 1's section, and the usual
+    launcher and desktop VMs): the coordinator's, when the last batch is in.
+
