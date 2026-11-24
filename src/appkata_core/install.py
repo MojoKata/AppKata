@@ -448,13 +448,16 @@ def _link(target: str, link: str, own: tuple[str, ...] | None = None) -> str:
 # Names that never become a command link, whether or not this computer has such a command today
 # (R4.3.1.3): a command link is named after an app, and its publisher picks the name. They are the
 # commands a sandbox launcher runs by name (sandbox.HOST_COMMANDS), the ones AppKata itself runs by
-# name, the shells and interpreters, and the commands that take a password or hold credentials,
-# where a stand-in answering in the user's terminal does the most harm. One of them that isn't
-# installed today may be tomorrow, and the link would then be ahead of it. The list is short on
-# purpose: any other name is refused only while it is a command here (:func:`command_link_refusal`).
+# name (tests/test_install_review.py collects those from the code and holds them here: gio and
+# gtk-launch, which Open on a system package runs, came in without, #689's review, P1-2), the shells
+# and interpreters, and the commands that take a password or hold credentials, where a stand-in
+# answering in the user's terminal does the most harm. One of them that isn't installed today may
+# be tomorrow, and the link would then be ahead of it. The list is short on purpose: any other name
+# is refused only while it is a command here (:func:`command_link_refusal`).
 RESERVED_COMMANDS = frozenset(sandbox.HOST_COMMANDS) | frozenset((
-    "git", "gpg", "pkexec", "flatpak", "snap", "apt", "apt-get", "apt-cache", "apt-config", "dpkg", "dpkg-deb", "dpkg-query",
-    "dnf", "rpm", "systemctl", "unshare", "xdg-open", "xdg-mime", "update-desktop-database", "gnome-software",
+    "git", "gpg", "pkexec", "flatpak", "snap", "apt", "apt-get", "apt-cache", "apt-config", "apt-mark", "dpkg", "dpkg-deb",
+    "dpkg-query", "dnf", "rpm", "systemctl", "unshare", "xdg-open", "xdg-mime", "update-desktop-database", "gnome-software",
+    "gio", "gtk-launch", "gsettings",
     "sh", "bash", "dash", "env", "python", "python3",
     "sudo", "su", "doas", "passwd", "ssh", "scp", "sftp", "ssh-add", "ssh-agent", "gpg2"))
 

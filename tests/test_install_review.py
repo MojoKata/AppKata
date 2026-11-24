@@ -586,6 +586,76 @@ def test_no_command_link_is_ever_named_after_a_command_a_launcher_or_appkata_run
         assert why == f"{name} is a name kept for the system's own command", name
 
 
+# The programs AppKata's code runs by name only on another platform, which no Linux install reaches
+_OTHER_PLATFORMS = {"open": "macOS", "icacls": "Windows", "notepad.exe": "Windows", "powershell.exe": "Windows"}
+
+
+def _run_by_name():
+    """Every program AppKata's own code (src/) runs by name: {name: ["file:line", ...]}. A name is
+    the first word of a list given first to any call (subprocess's, applog.run, a helper such as
+    autoupdate._out that runs what it is given), or what `which("name")` looks for. A wrapper that
+    puts its own program before its caller's words (flatpak.run: ["flatpak", *args]) gives that
+    program, and its callers' first words are that program's, not programs."""
+    import ast
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    trees = {}
+    for d, _, names in os.walk(src):
+        for n in sorted(names):
+            if n.endswith(".py"):
+                with open(os.path.join(d, n), encoding="utf-8") as f:
+                    trees[os.path.join(d, n)] = ast.parse(f.read())
+
+    def first(node):
+        if isinstance(node, (ast.List, ast.Tuple)) and node.elts and isinstance(node.elts[0], ast.Constant) \
+                and isinstance(node.elts[0].value, str):
+            return node.elts[0].value
+        return None
+
+    def callee(call, module):
+        f = call.func
+        if isinstance(f, ast.Name):
+            return module, f.id
+        return (f.value.id, f.attr) if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else None
+
+    module = lambda p: os.path.splitext(os.path.basename(p))[0]       # noqa: E731
+    wrappers = set()
+    for p, tree in trees.items():
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef):
+                params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} | ({fn.args.vararg.arg} if fn.args.vararg else set())
+                for c in ast.walk(fn):
+                    if isinstance(c, ast.Call) and c.args and first(c.args[0]) and any(
+                            isinstance(e, ast.Starred) and isinstance(e.value, ast.Name) and e.value.id in params for e in c.args[0].elts):
+                        wrappers.add((module(p), fn.name))
+    found = {}
+    for p, tree in trees.items():
+        for c in ast.walk(tree):
+            if not isinstance(c, ast.Call) or not c.args or callee(c, module(p)) in wrappers:
+                continue
+            name = first(c.args[0])
+            if name is None and (callee(c, module(p)) or ("", ""))[1] == "which" and isinstance(c.args[0], ast.Constant):
+                name = c.args[0].value
+            if isinstance(name, str) and re.fullmatch(r"[a-z0-9]([a-z0-9._+-]*[a-z0-9])?", name):     # a program's name
+                found.setdefault(name, []).append(f"{os.path.relpath(p, src)}:{c.lineno}")
+    return found
+
+
+def test_every_program_appkata_runs_by_name_is_a_name_no_command_link_takes():
+    # #689's review, P1-2: R4.3.1.3 keeps "the commands AppKata and its sandbox launchers run by name"
+    # from ever becoming a command link, whatever this computer has installed, and the list held a
+    # launcher's (sandbox.HOST_COMMANDS, held to the launcher's text) and a hand-written few. Open on
+    # a system package began running gio and gtk-launch by name (#319) and neither was added, nor were
+    # gsettings and apt-mark, which AppKata ran by name before: on a computer without gio and
+    # gtk-launch an app named gtk-launch got ~/bin/gtk-launch, first on the PATH, and Open on any
+    # package ran it. Every program AppKata's code runs by name is collected from the code itself,
+    # so one added later is reserved with it or this fails.
+    found = _run_by_name()
+    assert {"gio", "gtk-launch", "gsettings", "apt-mark", "flatpak", "git", "dpkg-query", "pkexec"} <= set(found), sorted(found)
+    assert set(_OTHER_PLATFORMS) <= set(found), sorted(set(_OTHER_PLATFORMS) - set(found))      # none listed for nothing
+    unreserved = {n: where for n, where in found.items() if n not in install.RESERVED_COMMANDS and n not in _OTHER_PLATFORMS}
+    assert unreserved == {}, unreserved
+
+
 def _appkata_start(env, tmp_path, monkeypatch, app, portable, sandbox_here=False, grants=None):
     """AppKata's start as the backend makes it -- the pass its constructor starts on a thread
     (`Backend._heal_launchers_at_startup`) -- on the test's database, for the installed `app` with
