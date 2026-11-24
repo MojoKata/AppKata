@@ -694,3 +694,21 @@ Nothing: every file changed is in U07's files.
     under `/tmp/u07b4`, removed at the end; the one container this batch started
     (`u07b4-tier1`, three times, one after another) ended with its run. `.pytest_cache/` and the
     `__pycache__` folders in the worktree are git's ignored ones.
+
+### The coordinator, after batch 4 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_forges.py` and the
+document tests, whole; the batch pushed.
+
+- **New findings filed:** #705 (new 2, a limit kept against the host asked first) joins this unit
+    and batch 5, to be done with #697. #706 (new 3, the first-install worker catches `SourceError`
+    alone) goes to U31, with #483. New 1 (a prerelease's files never read by github.com's pages) is
+    #268 already, in U20: its record now carries the cause batch 4 found.
+- **The three small faults fixed though no finding's** (two `Retry-After` values, and an image
+    address with a space) are said in their commits and in the pull request.
+- **Doubt 2** (a forge being maintained reads "Rate limited until …", R2.10's own words; a truer
+    "Unavailable until …" would change R2.10's table) goes to the owner under Needs your eye, as a
+    wording they may want.
+- **Doubts 1, 3, 4, 5 and 6** stand as built; 1 and 6 are said in the pull request.
+- **Needs a run** (the Windows VM tests): the coordinator's, after batch 5.
+

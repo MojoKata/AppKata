@@ -8,7 +8,7 @@ then `docs/relay/progress.md`, then your batch file. Nothing else from earlier a
 AppKata is the owner's own project, and CR1 is its own code review. The review's findings are GitHub
 issues, and the owner approved a schedule of work units, one pull request each
 (`docs/remediation/CR1-schedule.json`). This relay is the unit **U07, "Tokens and requests: where they go and how they fail"**:
-21 findings (16, and five its own batches found), fixed in five batches by one agent at a time on the
+22 findings (16, and six its own batches found), fixed in five batches by one agent at a time on the
 branch `cr1-u07-tokens-requests`. You fix your batch's findings in the owner's own code and prove
 each fix. You push nothing and write nothing on GitHub.
 
@@ -18,7 +18,7 @@ each fix. You push nothing and write nothing on GitHub.
 | 2 | #275, #297, #292, #434, #485 | how a token is formed, keyed and kept |
 | 3 | #269, #296, #277, #626 | how a Sync survives a failing or slow host |
 | 4 | #265, #298, #293, #683, #681 | a GitHub Enterprise file list, the tests of the whole, and two findings batch 1 found |
-| 5 | #682, #695, #697 | Http's own connection: three findings the batches found |
+| 5 | #682, #695, #697, #705 | Http's own connection and its record of limits: four findings the batches found |
 
 Your batch is one file, `docs/relay/batch-N.txt`. Its first lines say where its items came from. The
 code at the head of `cr1-u07-tokens-requests` is the code you work on: earlier batches' commits are
@@ -62,6 +62,11 @@ file you are already changing for that finding, and say so in the commit. Otherw
 No fix carries logic for what an earlier AppKata version registered, stored or wrote: no one is
 using AppKata yet.
 
+**Begin every shell command with `cd` into this worktree** (`cd /home/dev/kata/AppKata/.claude/worktrees/cr1-u07 && ...`).
+The session's working directory can be moved under you between commands, and other checkouts of
+this repository are being worked in at the same time: a `git` command run from the wrong folder
+would land in another unit's branch.
+
 ## What you may change
 
 - **Only** the files your findings' records list, the tests that prove them, and
@@ -88,7 +93,10 @@ using AppKata yet.
 2. `/home/dev/kata/AppKata/.venv/bin/python -m pytest -q tests/test_public_text.py tests/test_doccheck.py tests/test_doc_links.py tests/test_areas.py`
 3. The guard, as above.
 
-Start no VM. A proof that needs the Windows VM or a desktop VM is listed under **needs a run**, with
+A container run from this worktree: make the same `docker run` as the project's script from a
+scratch script outside the repository, with the main checkout's `build/` Python and PySide6 and
+its `.git` mounted read-only and a 3 GB memory cap, as the earlier batches did. Never run one of
+the project's build scripts to read its usage: read the script. Start no VM. A proof that needs the Windows VM or a desktop VM is listed under **needs a run**, with
 the exact command; the coordinator runs it. This machine's limit is 10 GB of memory for all work
 together, and other units run beside this one: stay under 3 GB. A command that takes over a minute
 runs in the background and you wait for its own completion.

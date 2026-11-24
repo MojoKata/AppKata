@@ -5,3 +5,5 @@
 #682  medium  CR1.2-47 The check that keeps an image request away from local addresses looks the host's name up once, and the connection looks it up again, so a name that changes its answer gets past.
 #695  medium  CR1.2-50 A host that sends its status line and headers a byte at a time still holds a Sync worker past the request's deadline, and Cancel can't stop it.
 #697  small  CR1.2-52 The record of which hosts are rate limited is kept by host name without the port, so two forges on one name share one limit.
+# Added by the coordinator on 2026-11-24, found by batch 4 and filed since: take it with #697.
+#705  small  CR1.2-53 A rate limit answered by the host a redirect led to is kept against the host asked first, so a forge's storage host can lock out the forge's own API.
