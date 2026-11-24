@@ -1450,7 +1450,8 @@ CAP_PROXY_ARGS = {
 # the app's own dialog is used instead, showing exactly what the sandbox sees (R17.6.3). What
 # remains acts on the caller's behalf only, with the user in the loop where it matters, and is what
 # a Flatpak app gets too -- except Notification and Inhibit, which come with their capabilities
-# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep screen awake" chips are the truth.
+# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep screen awake" chips are the truth,
+# and NetworkMonitor and ProxyResolver, which come with the network grant (below).
 # Properties (version probes) are not allowed either. What keeps each toolkit on its own file
 # dialog, as shown with real apps behind generated launchers (scripts/test-sandbox.sh filedialogs,
 # round four R4-5): GTK3 and Qt up to 6.4 never ask -- they take $XDG_RUNTIME_DIR/flatpak-info or
@@ -1460,20 +1461,32 @@ CAP_PROXY_ARGS = {
 # so the launcher sets GDK_DEBUG=no-portals and GTK4 never asks.
 # Chromium/Electron reads `version` first and cancels its dialog when OpenFile then fails, so for it
 # the Properties denial is the one that matters -- keep both denied; nothing here needs `version`.
-PORTAL_INTERFACES = ("OpenURI", "Settings", "Print", "Email", "NetworkMonitor", "ProxyResolver", "MemoryMonitor")
+#
+# Two of them tell of the host's network, and come with the network grant alone (CR1.5-28):
+# NetworkMonitor says whether and how the host is connected, and ProxyResolver answers Lookup(uri)
+# with the desktop's proxy for it -- GIO's resolver writes the proxy's user name and password into
+# that answer where the desktop's setting has them. The launcher withholds the proxy variables from
+# an app without the grant for that reason (_PROXY_PASSTHROUGH; R17.4), and to such an app the
+# portal was the same settings by another road, with nothing else to gain from asking. GLib asks
+# all the same, before every connection: build_launcher points it at its own resolver instead.
+_PORTALS = ("OpenURI", "Settings", "Print", "Email", "NetworkMonitor", "ProxyResolver", "MemoryMonitor")    # as the filter lists them
+NETWORK_PORTAL_INTERFACES = ("NetworkMonitor", "ProxyResolver")
+PORTAL_INTERFACES = tuple(i for i in _PORTALS if i not in NETWORK_PORTAL_INTERFACES)                         # for every app on the bus
 # the broadcast signals those interfaces emit (replies and the Request/Session signals, which are
 # sent to the caller alone, always pass the proxy)
 PORTAL_SIGNALS = ("Settings.SettingChanged", "NetworkMonitor.changed", "MemoryMonitor.LowMemoryWarning")
 
 
-def portal_rules() -> list[str]:
+def portal_rules(network: bool = False) -> list[str]:
     """xdg-dbus-proxy `--call`/`--broadcast` rules for the Desktop portal: the interfaces above on
-    the portal object, plus Request and Session objects (cancel, close), nothing else on that name."""
-    rules = [_portal_call(i) for i in PORTAL_INTERFACES]
+    the portal object -- the two of the host's network only for an app with the network grant --
+    plus Request and Session objects (cancel, close), nothing else on that name."""
+    opened = [i for i in _PORTALS if network or i not in NETWORK_PORTAL_INTERFACES]
+    rules = [_portal_call(i) for i in opened]
     rules += [_portal_call("Request", f"{_PORTAL_PATH}/request/*"), _portal_call("Session", f"{_PORTAL_PATH}/session/*"),
               # the interface listing: `gdbus call` (xdg-open and the shim) types its arguments from it
               f"--call={_PORTAL}=org.freedesktop.DBus.Introspectable.*@{_PORTAL_PATH}"]
-    rules += [f"--broadcast={_PORTAL}=org.freedesktop.portal.{s}@{_PORTAL_PATH}" for s in PORTAL_SIGNALS]
+    rules += [f"--broadcast={_PORTAL}=org.freedesktop.portal.{s}@{_PORTAL_PATH}" for s in PORTAL_SIGNALS if s.split(".")[0] in opened]
     return rules
 
 
@@ -1484,10 +1497,11 @@ INPUT_METHOD_PORTALS = ("org.freedesktop.portal.IBus", "org.freedesktop.portal.F
 
 
 def proxy_args(gs: dict, app_id: str) -> list[str]:
-    """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal, the
-    input-method portals and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
+    """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal
+    (with the network grant, what it says of the host's network too), the input-method portals
+    and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
     gs = normalize(gs)
-    args = ["--filter", *portal_rules(), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
+    args = ["--filter", *portal_rules(gs["network"]), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
     for cap in sorted(gs["caps"]):
         # Media keys: to the proxy an own is a talk too, on every name the pattern covers, whoever
         # owns it. So the app's own MPRIS name alone where a review gave it; every player's name,
@@ -1823,7 +1837,8 @@ _ENV_PASSTHROUGH = (
     "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE",
 )
 # The proxy settings, passed only to an app with the network grant: they can carry the proxy's
-# credentials, and only an app that has the network uses them (review 2, F15)
+# credentials, and only an app that has the network uses them (review 2, F15). The ProxyResolver
+# portal is the same settings by another road, and follows the same grant (NETWORK_PORTAL_INTERFACES).
 _PROXY_PASSTHROUGH = ("http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy",
                       "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY")
 # DBUS_SESSION_BUS_ADDRESS is deliberately NOT passed through: the sandboxed app must reach the
@@ -2314,6 +2329,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # handler is in view, notifications) read the marker, not this, and are unchanged. The cost is
     # GTK4's other portal dialogs (print, colour) -- the in-sandbox versions instead.
     parts.append('  --setenv GDK_DEBUG no-portals \\')
+    # A Standard app without the network grant is refused the ProxyResolver portal (CR1.5-28), and
+    # GLib asks that portal for a proxy before every connection it makes -- one to a server of the
+    # app's own on its loopback too -- and fails the connection when the answer is a refusal (shown
+    # with GLib 2.80 and 2.84: Gio.SocketClient to 127.0.0.1 inside an offline-editor, AccessDenied).
+    # For a sandbox without the network GLib's answer is "direct://" whatever the portal said, so
+    # it is told to give that without asking: its built-in resolver, which knows no proxy.
+    if standard and not net:
+        parts.append('  --setenv GIO_USE_PROXY_RESOLVER dummy \\')
     # Point the app at the filtered proxy, set *after* --clearenv (and keepenv) so bwrap keeps it.
     # Emitted before --clearenv it was wiped; via the env passthrough it took the host bus address.
     # GTK_USE_PORTAL is deliberately not set either: the portal file chooser would answer a host

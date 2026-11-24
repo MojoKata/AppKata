@@ -267,8 +267,8 @@ ARGV_KINDS = ("mount", "env", "net")
 ARGV_DEVS = {"dev /dev/dri/*", "dev /dev/video*", "dev /dev/media*"}
 BWRAP_OWN = {"mount / tmpfs"}         # bwrap's own root, never a word
 # Variables the launcher sets itself (the rest it passes through only when set at launch)
-LAUNCHER_SET = {"HOME", "PATH", "XDG_RUNTIME_DIR", "GDK_DEBUG", "DBUS_SESSION_BUS_ADDRESS", "APPDIR", "APPIMAGE", "ARGV0",
-                "DISPLAY"}
+LAUNCHER_SET = {"HOME", "PATH", "XDG_RUNTIME_DIR", "GDK_DEBUG", "GIO_USE_PROXY_RESOLVER", "DBUS_SESSION_BUS_ADDRESS", "APPDIR",
+                "APPIMAGE", "ARGV0", "DISPLAY"}
 
 
 def argv_kind(item: str) -> bool:

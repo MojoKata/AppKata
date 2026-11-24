@@ -64,6 +64,7 @@ the sandbox), or `open:` and the finding that keeps it unstated.
 | `env LANG`, `env LANGUAGE`, `env LC_ALL`, `env LC_CTYPE`, `env LC_MESSAGES`, `env LC_NUMERIC`, `env LC_TIME`, `env TERM`, `env USER`, `env LOGNAME`, `env XDG_SESSION_TYPE`, `env XDG_CURRENT_DESKTOP`, `env DESKTOP_SESSION`, `env GTK_THEME`, `env QT_QPA_PLATFORMTHEME`, `env QT_STYLE_OVERRIDE`, `env XCURSOR_THEME`, `env XCURSOR_SIZE`, `env GDK_SCALE`, `env GDK_DPI_SCALE`, `env QT_SCALE_FACTOR`, `env LC_MONETARY`, `env LC_PAPER`, `env LC_MEASUREMENT`, `env LC_ADDRESS`, `env LC_TELEPHONE`, `env LC_NAME`, `env LC_COLLATE`, `env LC_IDENTIFICATION`, `env TZ`, `env QT_SCREEN_SCALE_FACTORS`, `env QT_AUTO_SCREEN_SCALE_FACTOR`, `env QT_ENABLE_HIGHDPI_SCALING`, `env GTK_IM_MODULE`, `env QT_IM_MODULE`, `env XMODIFIERS`, `env SDL_IM_MODULE` | always | 17.4 "clears the environment to an allow-list" |
 | `env http_proxy`, `env https_proxy`, `env ftp_proxy`, `env all_proxy`, `env no_proxy`, `env HTTP_PROXY`, `env HTTPS_PROXY`, `env FTP_PROXY`, `env ALL_PROXY`, `env NO_PROXY` | network | 17.4 "passing the proxy settings only to an app with the network grant" |
 | `env GDK_DEBUG` | always | 17.4 "sets GDK_DEBUG=no-portals" |
+| `env GIO_USE_PROXY_RESOLVER` | bus and not network | 17.5 "sets GIO_USE_PROXY_RESOLVER=dummy" |
 | `dev /dev/tty` | always | 17.4 "the terminal-injection seccomp filter" |
 | `dev /dev/dri/*` | always | 17.2 "Display, sound, GPU" |
 | `mount /var/cache/fontconfig ro` | always | 17.4 "binds the font cache (/var/cache/fontconfig) read-only" |

@@ -18,6 +18,8 @@ tests/test_sandbox_run.py::test_a_document_portal_that_never_answers_only_delays
 tests/test_sandbox_run.py::test_a_file_argument_is_handed_over_to_a_standard_app  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_file_exported_while_the_app_runs_is_readable_on_its_first_launch  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way[False]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way[True]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)

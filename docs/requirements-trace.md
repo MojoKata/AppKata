@@ -101,7 +101,7 @@ differ from its list (review 3, harness B).
 | R17.5 | Filtered session bus. | statement |
 | R17.5 | When the level uses the bus, the launcher | test_standard_launcher_has_proxy_and_private_home, test_a_standard_launch_leaves_no_proxy_running, test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus, harness:inputmethod |
 | R17.5 | An unfiltered bus lets an app reach org.freedesktop.systemd1 | test_the_portals_answer_a_sandboxed_app_as_a_host_caller |
-| R17.5 | The portals see the app as a host | test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy, test_the_portals_answer_a_sandboxed_app_as_a_host_caller |
+| R17.5 | The portals see the app as a host | test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy, test_the_portals_answer_a_sandboxed_app_as_a_host_caller, test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant, test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way |
 | R17.5 | GTK4 is held by the FileChooser denial itself | harness:filedialogs, harness:filedialogs-lmde7, claim |
 | R17.5 | The bus the proxy filters is the session's own | test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is, test_standard_apps_reach_the_session_bus_wherever_it_listens |
 | R17.5 | The launcher shows the proxy that bus wherever it listens | test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is, test_standard_apps_reach_the_session_bus_wherever_it_listens |

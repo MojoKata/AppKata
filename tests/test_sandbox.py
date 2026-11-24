@@ -560,6 +560,48 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     assert portal.format("Inhibit") not in web and not [a for a in web if "org.freedesktop.ScreenSaver" in a]
     chat = sb.proxy_args(sb.resolve_template("messenger"), "chat")           # both
     assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and direct.format("ScreenSaver") in chat
+    # CR1.5-28: so do the two portals that tell of the host's network, with the network grant. An
+    # offline-editor has no network: neither portal, nor the signal that says the network changed.
+    changed = "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop"
+    assert not [a for a in plain if "NetworkMonitor" in a or "ProxyResolver" in a], plain
+    assert portal.format("NetworkMonitor") in web and portal.format("ProxyResolver") in web and changed in web
+
+
+def _portals_opened(args: list) -> set:
+    """The Desktop portal's interfaces a filter opens, by a call or by a broadcast signal."""
+    return {a.split("Desktop=org.freedesktop.portal.", 1)[1].split(".")[0] for a in args
+            if a.startswith(("--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.", "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal."))}
+
+
+@pytest.mark.parametrize("template", [t for t in sb.TEMPLATE_ORDER if sb.resolve_template(t)["level"] == "standard"])
+@pytest.mark.parametrize("network", [True, False])
+def test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant(template, network):
+    # CR1.5-28: the launcher withholds the host's proxy variables from an app without the network
+    # grant, since they can carry the proxy's user name and password (R17.4; review 2, F15) -- and
+    # the filter opened the ProxyResolver portal to every app on the bus, which answers Lookup(uri)
+    # with those same settings (GIO's resolver builds http://user:password@host:port from the
+    # desktop's), and NetworkMonitor with the host's connection state. An app that may not use the
+    # network gains nothing from either call but the settings, so the withholding was undone for
+    # exactly the apps it protects. How it slipped past: each road had its own test (the variables,
+    # the marker) or none (the portals were checked against R17.5's own list, which said the same),
+    # and nothing put the roads side by side. This does, for every Standard template either way:
+    # the variables, the marker's [Context] and the two portals all follow the one grant -- and
+    # every portal interface the filter opens has a switch that accounts for it.
+    assert "GIO_USE_PROXY_RESOLVER" not in sb.build_launcher("vault", "Vault", "/apps/vault/1", "bin/vault", sb.resolve_template("strict"))   # no bus, nothing to ask
+    gs = sb.apply_overrides(sb.resolve_template(template), {"network": network})
+    text = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    passed = next(line for line in text.splitlines() if line.startswith("for v in ") and "LANG" in line).removesuffix("; do").split()
+    assert all((v in passed) is network for v in sb._PROXY_PASSTHROUGH), passed
+    assert ("shared=network;" in sb.flatpak_info_text("demo", sb._marker_network(gs))) is network
+    # ...and where the portal is closed GLib is told not to ask it: it asks before every connection
+    # it makes, the app's own loopback included, and a refusal fails the connection (tier 2)
+    assert ("  --setenv GIO_USE_PROXY_RESOLVER dummy \\\n" in text) is not network
+    args = sb.proxy_args(gs, "demo")
+    assert all((sb._portal_call(i) in args) is network for i in sb.NETWORK_PORTAL_INTERFACES), args
+    switched = {"Notification": "notifications" in gs["caps"], "Inhibit": "inhibit" in gs["caps"],
+                **{i: network for i in sb.NETWORK_PORTAL_INTERFACES}}
+    assert _portals_opened(args) == {*sb.PORTAL_INTERFACES, "Request", "Session", *[i for i, on in switched.items() if on]}
+    assert not set(sb.PORTAL_INTERFACES) & set(switched)          # and "every app" names none that has a switch
 
 
 # ---------------------------------------------------------------- the app's own MPRIS name (R17.5.1, CR1.5-36)

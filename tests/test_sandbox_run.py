@@ -999,7 +999,11 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
              "--method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.FileChooser version 2>&1; " +
              # Round six, R6-2: the Camera portal is denied whatever the camera grant says -- R17.8 and the
              # hint used to promise "the camera portal, which asks you first"; nothing asks
-             _CALL.format('Camera.AccessCamera "{}"') + "; " + _CALL.format("Camera.IsCameraPresent") + "; true")
+             _CALL.format('Camera.AccessCamera "{}"') + "; " + _CALL.format("Camera.IsCameraPresent") + "; " +
+             # CR1.5-28: what the host says of its network -- whether it is up, and the proxy a URL
+             # goes through, with the proxy's credentials where the desktop's setting has them --
+             # comes with the network grant, as the proxy variables do (R17.4)
+             _CALL.format('ProxyResolver.Lookup "http://example.org/"') + "; true")
     bus = _Bus(env)
     try:
         portal = _DesktopPortal(env, bus)
@@ -1012,21 +1016,79 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
     finally:
         bus.close()
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 9 and "Portal operation not allowed" not in r.stdout, (r.stdout, r.stderr)
+    assert len(lines) == 10 and "Portal operation not allowed" not in r.stdout, (r.stdout, r.stderr)
     assert lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied"), lines[7:]   # no camera portal
     assert lines[0] == "(true,)"                                           # answered, as a host app
+    assert lines[9].startswith("(['"), lines[9]                            # ...and the proxies for a URL: this app has the network
     assert lines[1].endswith("AccessDenied") and lines[2].endswith("AccessDenied")   # the proxy, not the portal
     assert "ServiceUnknown" in lines[3]
     assert "AccessDenied" not in lines[4], lines[4]                        # the Notification portal answered
     assert lines[5].endswith("AccessDenied"), lines[5]                     # Inhibit: not this app's capability
     assert lines[6].endswith("AccessDenied"), lines[6]                     # no version probe, so no portal chooser
-    lines = r2.stdout.strip().splitlines()
-    assert len(lines) == 9 and lines[0] == "(true,)", (r2.stdout, r2.stderr)
+    lines = r2.stdout.strip().splitlines()                                 # an offline-editor: no network grant
+    assert len(lines) == 10 and lines[0].endswith("AccessDenied") and lines[9].endswith("AccessDenied"), (r2.stdout, r2.stderr)
     assert lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")
     assert lines[4].endswith("AccessDenied") and lines[5].endswith("AccessDenied")   # no capability, no portal
     assert lines[6].endswith("AccessDenied")
     lines = r3.stdout.strip().splitlines()
-    assert len(lines) == 9 and lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")   # the grant binds devices, opens no portal
+    assert len(lines) == 10 and lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")   # the grant binds devices, opens no portal
+    assert lines[0] == "(true,)" and lines[9].startswith("(['"), lines     # a messenger has the network
+
+
+
+# A GLib program, as far as the network goes: its network monitor and its proxy resolver, which a
+# GLib app that sees /.flatpak-info takes from the portal (gnetworkmonitorportal.c,
+# gproxyresolverportal.c), and a connection to a server of its own on the loopback.
+_GLIB_NETWORK = """
+import socket, sys, threading, time
+from gi.repository import Gio, GLib
+server = socket.socket()
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+threading.Thread(target=lambda: server.accept()[0].send(b"hello"), daemon=True).start()
+monitor, context, end = Gio.NetworkMonitor.get_default(), GLib.MainContext.default(), time.time() + float(sys.argv[1])
+while time.time() < end and not monitor.get_network_available():      # the portal's answer comes on the main loop
+    context.iteration(False)
+    time.sleep(0.01)
+print("MONITOR", type(monitor).__name__, monitor.get_network_available())
+print("RESOLVER", type(Gio.ProxyResolver.get_default()).__name__, Gio.ProxyResolver.get_default().lookup("http://example.org/", None))
+try:
+    connection = Gio.SocketClient().connect_to_host("127.0.0.1", server.getsockname()[1], None)
+    print("LOOPBACK", connection.get_input_stream().read_bytes(5, None).get_data().decode())
+except GLib.Error as e:
+    print("LOOPBACK failed:", e.message)
+"""
+
+
+@needs_proxy
+@pytest.mark.parametrize("network", [True, False])
+def test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way(env, network):
+    # CR1.5-28: NetworkMonitor and ProxyResolver come with the network grant. GLib asks the
+    # ProxyResolver portal before every connection it makes, and with the portal refused and
+    # nothing else done, an app without the grant could no longer connect to a server of its own
+    # on the loopback (GLib 2.80 and 2.84: "LOOPBACK failed: …AccessDenied"), where it had been
+    # answered direct://, which is all GLib gives a sandbox without the network whatever the
+    # portal says. So such an app gets GIO_USE_PROXY_RESOLVER=dummy: GLib's own resolver, which
+    # says the same and asks nobody. Nothing reaches stderr either way.
+    app_id = "online" if network else "offline"
+    d = env.home / "apps" / app_id / "1.0" / "bin"
+    d.mkdir(parents=True)
+    (d / "network.py").write_text(_GLIB_NETWORK)
+    bus = _Bus(env)
+    try:
+        portal = _DesktopPortal(env, bus)
+        try:
+            r = env.run(env.app(app_id, sb.apply_overrides(sb.resolve_template("offline-editor"), {"network": network})),
+                        f'python3 "$(dirname "$0")/network.py" {10 if network else 1}; echo "ASKS ${{GIO_USE_PROXY_RESOLVER:-the portal}}"',
+                        env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        finally:
+            portal.close()
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    want = (["MONITOR GNetworkMonitorPortal True", "RESOLVER GProxyResolverPortal ['direct://']", "LOOPBACK hello", "ASKS the portal"] if network else
+            ["MONITOR GNetworkMonitorPortal False", "RESOLVER GDummyProxyResolver ['direct://']", "LOOPBACK hello", "ASKS dummy"])
+    assert r.stdout.splitlines() == want, r.stdout
 
 
 # ---------------------------------------------------------------- the session's bus, wherever it listens (R17.5, CR1.5-18)

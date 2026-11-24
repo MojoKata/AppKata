@@ -108,8 +108,12 @@ def _facts() -> dict:
 
     m = re.search(r"allow (.*?) \(and the Request", re.sub(r"\s+", " ", _req("R17.5")))
     f["R17.5: the portal interfaces every app may call"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.PORTAL_INTERFACES))
-    others = {re.search(r"=org\.freedesktop\.(?:portal\.)?([A-Za-z.]+)\.\*@", r).group(1) for r in sb.portal_rules() if r.startswith("--call=")}
-    others -= set(sb.PORTAL_INTERFACES) | {"Request", "Session"}
+    # ...and the two that come with the network grant alone (CR1.5-28: R17.5 listed them for every
+    # app, while R17.4 withholds the proxy settings they answer with from an app without it)
+    m = re.search(r"for every app on the bus, (.*?) only with the network grant", re.sub(r"\s+", " ", _req("R17.5")))
+    f["R17.5: the portal interfaces that come with the network grant"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.NETWORK_PORTAL_INTERFACES))
+    others = {re.search(r"=org\.freedesktop\.(?:portal\.)?([A-Za-z.]+)\.\*@", r).group(1) for r in sb.portal_rules(network=True) if r.startswith("--call=")}
+    others -= set(sb.PORTAL_INTERFACES) | set(sb.NETWORK_PORTAL_INTERFACES) | {"Request", "Session"}
     said = {o for o in others if o.split(".")[-1] in _req("R17.5")}
     f["R17.5: nothing else on the portal's name"] = (said, others)
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
