@@ -7,8 +7,9 @@ import urllib.error
 
 import pytest
 
-from appkata_core import forges, urls
-from appkata_core.http import Http, RateLimited
+from appkata_core import forges, sync, urls
+from appkata_core.db import DB
+from appkata_core.http import Http, RateLimited, SourceError
 
 
 class FakeResponse(io.BytesIO):
@@ -168,3 +169,128 @@ def test_without_the_releases_page_the_pages_keep_every_feed_entry():
     http._open = no_listing
     _, web = _read(http)
     assert list(web) == [t for t, *_ in REPO]
+
+
+# ---------------------------------------------------------------- where a token goes (R9.2.2)
+# CR1's #263: Http took the token from a host its caller named, whatever the address it then asked
+# for, and Sync named the Source's host for every image, the ones a project's README and metainfo
+# write themselves too. No test looked at what a request carried: every fake opener here answered by
+# the address alone. The class is "a request carries the token of a host it isn't for", so the
+# harness records each request with its headers, and the whole-Sync test holds every request a Sync
+# makes to the one rule, whichever line asked for it.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+
+
+def recording(routes, seen):
+    """opener(), noting each request as (address, its headers by lower-case name)."""
+    answer = opener(routes)
+
+    def open_(req, timeout=0):
+        seen.append((req.full_url, {k.lower(): v for k, v in req.header_items()}))
+        return answer(req, timeout)
+    return open_
+
+
+def tokened(seen):
+    """The addresses that were sent a token, in either header."""
+    return [url for url, h in seen if "authorization" in h or "private-token" in h]
+
+
+def _ask(http, url, **kw):
+    try:
+        http.bytes(url, **kw)
+    except SourceError:
+        pass
+
+
+@pytest.mark.parametrize("url, sent", [
+    ("https://github.com/o/r", True),
+    ("https://api.github.com/repos/o/r", True),
+    ("https://raw.githubusercontent.com/o/r/main/README.md", True),
+    ("https://avatars.githubusercontent.com/u/1", False),            # GitHub's, but not a named host
+    ("https://evil.example/screenshot.png", False),
+    ("https://notgithub.com/o/r", False),                            # ends in the same letters
+    ("https://api.github.com.evil.example/repos/o/r", False),        # starts with them
+    ("https://github.com@evil.example/o/r", False),                  # the host is evil.example
+    ("http://github.com/o/r", False),                                # plain http: never
+    ("http://api.github.com/repos/o/r", False),
+    ("http://raw.githubusercontent.com/o/r/main/icon.png", False),
+])
+def test_the_github_token_goes_to_its_named_hosts_over_https_and_nowhere_else(url, sent):
+    seen = []
+    http = Http({"github.com": "ghp_SECRET", "evil.example": ""}, opener=recording({}, seen))
+    _ask(http, url, token_host="github.com")
+    assert [u for u, _ in seen] == [url]
+    assert tokened(seen) == ([url] if sent else []), seen
+    if sent:
+        assert seen[0][1]["authorization"] == "Bearer ghp_SECRET"
+
+
+@pytest.mark.parametrize("host, header", [("gitlab.com", "private-token"), ("codeberg.org", "authorization")])
+def test_another_hosts_token_goes_to_that_host_alone(host, header):
+    seen = []
+    http = Http({host: "SECRET"}, opener=recording({}, seen))
+    for url in (f"https://{host}/api/x", f"https://api.{host}/x", f"https://raw.{host}/x", f"http://{host}/api/x",
+                "https://api.github.com/x", "https://raw.githubusercontent.com/x", "https://evil.example/x.png"):
+        _ask(http, url, token_host=host)
+    assert tokened(seen) == [f"https://{host}/api/x"]
+    assert "SECRET" in seen[0][1][header]
+
+
+def test_a_request_that_names_no_host_gets_its_own_hosts_token_and_no_other():
+    seen = []
+    http = Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({}, seen))
+    for url in ("https://github.com/o/r/releases.atom", "http://github.com/o/r/releases.atom",
+                "https://gitlab.com/o/r", "https://flathub.org/api/v2/x"):
+        _ask(http, url)
+    assert [(u, h.get("authorization") or h.get("private-token")) for u, h in seen if u in tokened(seen)] == [
+        ("https://github.com/o/r/releases.atom", "Bearer ghp_SECRET"), ("https://gitlab.com/o/r", "glpat_SECRET")]
+
+
+@pytest.mark.parametrize("url, sent", [
+    ("https://raw.githubusercontent.com/o/r/main/icon.png", True),   # the Source's own file
+    ("https://evil.example/screenshot.png", False),                  # what a README or a metainfo names
+    ("http://evil.example/screenshot.png", False),
+    ("https://gitlab.com/o/r/-/raw/main/shot.png", False),           # another forge the user has a token for
+])
+def test_an_image_on_another_host_is_fetched_without_the_sources_token(tmp_path, url, sent):
+    seen = []
+    http = Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({url: PNG}, seen))
+    assert sync._save_image(http, url, str(tmp_path / "hero"), token_host="github.com") == str(tmp_path / "hero.png")
+    assert tokened(seen) == ([url] if sent else []), seen
+
+
+METAINFO = """<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application"><id>org.example.r</id><name>R</name><summary>An app</summary>
+<icon type="remote">https://evil.example/icon.png</icon>
+<screenshots><screenshot type="default"><image>http://evil.example/shot.png</image></screenshot></screenshots>
+</component>"""
+
+
+def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path):
+    """Every request of a Sync, against the rule: a token only over https, only to the Source's host and
+    its named API and raw-file hosts. The project's metainfo and README name images elsewhere."""
+    api, raw = "https://api.github.com/repos/o/r", "https://raw.githubusercontent.com/o/r/main/"
+    seen = []
+    http = Http({"github.com": "ghp_SECRET"}, opener=recording({
+        api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+        api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in (
+            "README.md", "data/org.example.r.metainfo.xml", "data/icons/icon.png", "docs/window.png")]},
+        api: {"name": "r", "full_name": "o/r", "default_branch": "main",
+              "owner": {"avatar_url": "https://avatars.githubusercontent.com/u/1"}},
+        raw + "README.md": b"# R\n\n![shot](https://evil.example/screenshot.png)\n\n![window](docs/window.png)\n",
+        raw + "data/org.example.r.metainfo.xml": METAINFO.encode(),
+        raw + "docs/window.png": PNG,
+        "https://avatars.githubusercontent.com/u/1": PNG,
+    }, seen))
+    db = DB(str(tmp_path / "a.db"))
+    sync.sync_app(db, http, "https://github.com/o/r", root=str(tmp_path))
+    app = db.one("SELECT * FROM apps WHERE url=?", ("https://github.com/o/r",))
+    assert app["error_code"] is None and app["icon"].endswith("icon.png") and app["hero"].endswith("hero.png")
+    asked = [u for u, _ in seen]
+    for elsewhere in ("https://evil.example/icon.png", "http://evil.example/shot.png",
+                      "https://evil.example/screenshot.png", "https://avatars.githubusercontent.com/u/1"):
+        assert elsewhere in asked, asked               # the Sync did ask for each of them
+    allowed = ("https://api.github.com/", "https://raw.githubusercontent.com/", "https://github.com/")
+    assert [u for u in tokened(seen) if not u.startswith(allowed)] == []
+    assert sorted(set(tokened(seen))) == sorted({u for u in asked if u.startswith(allowed)})

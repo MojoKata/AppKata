@@ -47,6 +47,27 @@ class Renamed(SourceError):
         self.new_url = new_url
 
 
+# R9.2.2's list, in its one place: the other hosts a host's token is sent to, which are the forge's
+# own API and raw-file hosts. A host that isn't a key here has none, and its token goes to it alone.
+TOKEN_HOSTS = {"github.com": ("api.github.com", "raw.githubusercontent.com")}
+
+
+def token_hosts(host: str) -> tuple[str, ...]:
+    """Every host the token kept for `host` may be sent to (R9.2.2): itself and its named ones."""
+    return (host, *TOKEN_HOSTS.get(host, ()))
+
+
+def _host_port(parts) -> str:
+    """An address's host as a Source's host is written (urls.parse): with its port, unless that is
+    http's or https's own."""
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    host = (parts.hostname or "").lower()
+    return f"{host}:{port}" if port and port not in (80, 443) else host
+
+
 class Http:
     def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None):
         self.tokens = {k.lower(): v for k, v in (tokens or {}).items() if v}
@@ -65,6 +86,18 @@ class Http:
             return {"PRIVATE-TOKEN": tok}
         return {"Authorization": f"token {tok}"}      # Gitea / Forgejo
 
+    def _token(self, parts, token_host: str | None) -> dict:
+        """The token header a request to this address carries (R9.2.2), decided here for every caller
+        from the address itself. `token_host` only says whose token is meant (without it, the
+        address's own host's): it is sent over https alone, and only when the address's host is one
+        of that host's token_hosts(). A caller that names a host for an address elsewhere, as Sync
+        does for an image a project's README or metainfo names, sends no token."""
+        host = (parts.hostname or "").lower()
+        whose = (token_host or host).lower()
+        if parts.scheme != "https" or not {host, _host_port(parts)} & set(token_hosts(whose)):
+            return {}
+        return self._auth(whose)
+
     def request(self, url: str, **kw) -> tuple[bytes, dict, str]:
         """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts)."""
         for attempt in range(3):
@@ -78,11 +111,12 @@ class Http:
     def _request(self, url: str, *, token_host: str | None = None, accept: str = "application/json",
                  headers: dict | None = None, method: str = "GET", max_bytes: int = 64 << 20,
                  body: bytes | None = None) -> tuple[bytes, dict, str]:
-        host = (urlsplit(url).hostname or "").lower()
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
         reset = self.limited.get(host)
         if reset and reset > time.time():
             raise RateLimited(host, reset)
-        h = {"User-Agent": UA, "Accept": accept, **self._auth((token_host or host).lower()), **(headers or {})}
+        h = {"User-Agent": UA, "Accept": accept, **self._token(parts, token_host), **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
         self.calls += 1
         try:
