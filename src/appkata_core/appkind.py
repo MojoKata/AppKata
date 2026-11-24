@@ -34,50 +34,69 @@ DISPLAY_LIB = re.compile(r"^lib(X11|xcb|wayland-client|gtk-[34]|gtk-4|gdk-[34]|g
                          r"SDL2|SDL3|GL|GLX|EGL|OpenGL|vulkan)([.-]|$)")
 
 
+# what is read of a dynamic section, and of one library's name: far more than any real one holds
+_DYNAMIC_MAX, _SONAME_MAX = 1 << 20, 4096
+
+
 def elf_needed(path: str) -> list[str] | None:
     """The DT_NEEDED sonames of an ELF file, [] for a static one, or None when it isn't ELF or
-    can't be read. Reads the section headers (SHT_DYNAMIC and the string table it links to)."""
+    can't be read. Reads the section headers (SHT_DYNAMIC and the string table it links to), each
+    part where it is: a program's section headers are at its end, past any length read whole (a
+    first 64 MB was read, so a larger program was "can't tell", CR1.3-19)."""
     try:
         with open(path, "rb") as f:
-            data = f.read(64 << 20)
+            return _needed(f)
     except OSError:
         return None
-    if len(data) < 64 or data[:4] != b"\x7fELF":
+
+
+def _needed(f) -> list[str] | None:
+    def at(off: int, n: int) -> bytes:
+        f.seek(off)
+        data = f.read(n)
+        if len(data) < n:
+            raise ValueError("past the end of the file")
+        return data
+
+    head = f.read(64)
+    if len(head) < 52 or head[:4] != b"\x7fELF":
         return None
-    klass, order = data[4], data[5]
+    klass, order = head[4], head[5]
     if klass not in (1, 2) or order not in (1, 2):
         return None
     e = "<" if order == 1 else ">"
     try:
         if klass == 2:
-            shoff, = struct.unpack_from(e + "Q", data, 0x28)
-            shentsize, shnum = struct.unpack_from(e + "HH", data, 0x3A)
-            sh = lambda i: struct.unpack_from(e + "IIQQQQIIQQ", data, shoff + i * shentsize)     # noqa: E731
-            dyn_fmt, dyn_size = e + "qQ", 16
+            shoff, = struct.unpack_from(e + "Q", head, 0x28)
+            shentsize, shnum = struct.unpack_from(e + "HH", head, 0x3A)
+            sh_fmt, dyn_fmt = e + "IIQQQQIIQQ", e + "qQ"
         else:
-            shoff, = struct.unpack_from(e + "I", data, 0x20)
-            shentsize, shnum = struct.unpack_from(e + "HH", data, 0x2E)
-            sh = lambda i: struct.unpack_from(e + "IIIIIIIIII", data, shoff + i * shentsize)     # noqa: E731
-            dyn_fmt, dyn_size = e + "iI", 8
-        if not shoff or not shnum:
+            shoff, = struct.unpack_from(e + "I", head, 0x20)
+            shentsize, shnum = struct.unpack_from(e + "HH", head, 0x2E)
+            sh_fmt, dyn_fmt = e + "IIIIIIIIII", e + "iI"
+        if not shoff or not shnum or shentsize < struct.calcsize(sh_fmt):
             return None
+        sh = lambda i: struct.unpack(sh_fmt, at(shoff + i * shentsize, struct.calcsize(sh_fmt)))     # noqa: E731
+        dyn_size = struct.calcsize(dyn_fmt)
         for i in range(shnum):
             s = sh(i)
             if s[1] != 6:                     # SHT_DYNAMIC
                 continue
             off, size, link = s[4], s[5], s[6]
             stroff = sh(link)[4]
+            dyn = at(off, min(size, _DYNAMIC_MAX) // dyn_size * dyn_size)
             out = []
-            for j in range(0, size, dyn_size):
-                tag, val = struct.unpack_from(dyn_fmt, data, off + j)
+            for j in range(0, len(dyn), dyn_size):
+                tag, val = struct.unpack_from(dyn_fmt, dyn, j)
                 if tag == 0:
                     break
                 if tag == 1:                  # DT_NEEDED
-                    end = data.index(b"\0", stroff + val)
-                    out.append(data[stroff + val:end].decode("utf-8", "replace"))
+                    f.seek(stroff + val)
+                    name = f.read(_SONAME_MAX)
+                    out.append(name[:name.index(b"\0")].decode("utf-8", "replace"))
             return out
         return []                             # no dynamic section: static
-    except (struct.error, ValueError, IndexError):
+    except (struct.error, ValueError, IndexError, OverflowError):
         return None
 
 

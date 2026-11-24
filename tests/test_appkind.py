@@ -9,9 +9,10 @@ import pytest
 from appkata_core import appkind
 
 
-def make_elf(path, needed: list[str], bits: int = 64) -> None:
+def make_elf(path, needed: list[str], bits: int = 64, gap: int = 0, gap_before: str = "shdrs") -> None:
     """A minimal ELF with a .dynstr and a .dynamic naming `needed` -- enough for the section-header
-    reader, and no machine needed to produce it."""
+    reader, and no machine needed to produce it. `gap` bytes of nothing (a sparse file) go before
+    the section headers, or before the string table (and so before everything but the ELF header)."""
     strtab = b"\0"
     offs = []
     for n in needed:
@@ -23,9 +24,9 @@ def make_elf(path, needed: list[str], bits: int = 64) -> None:
     else:
         dyn = b"".join(struct.pack("<iI", 1, o) for o in offs) + struct.pack("<iI", 0, 0)
         ehsize, shentsize = 52, 40
-    stroff = ehsize
+    stroff = ehsize + (gap if gap_before == "strtab" else 0)
     dynoff = stroff + len(strtab)
-    shoff = dynoff + len(dyn)
+    shoff = dynoff + len(dyn) + (gap if gap_before == "shdrs" else 0)
     ident = b"\x7fELF" + bytes([2 if bits == 64 else 1, 1, 1]) + b"\0" * 9
     if bits == 64:
         hdr = ident + struct.pack("<HHIQQQIHHHHHH", 2, 62, 1, 0, 0, shoff, 0, ehsize, 0, 0, shentsize, 3, 0)
@@ -35,7 +36,11 @@ def make_elf(path, needed: list[str], bits: int = 64) -> None:
         sh = lambda typ, off, size, link: struct.pack("<IIIIIIIIII", 0, typ, 0, 0, off, size, link, 0, 1, 0)    # noqa: E731
     shdrs = sh(0, 0, 0, 0) + sh(3, stroff, len(strtab), 0) + sh(6, dynoff, len(dyn), 1)
     with open(path, "wb") as f:
-        f.write(hdr + strtab + dyn + shdrs)
+        f.write(hdr)
+        f.seek(stroff)
+        f.write(strtab + dyn)
+        f.seek(shoff)
+        f.write(shdrs)
     os.chmod(path, 0o755)
 
 
@@ -61,6 +66,23 @@ def test_a_program_is_an_app_when_it_links_a_display_library(tmp_path, needed, k
     make_elf(tmp_path / "prog", needed)
     assert appkind.kind_of_program(str(tmp_path / "prog")) == kind
 
+
+# ---------------------------------------------------------------- a program of any size (CR1.3-19)
+
+@pytest.mark.parametrize("where", ["the section headers", "the libraries' names and the section headers"])
+@pytest.mark.parametrize("bits", [64, 32])
+@pytest.mark.parametrize("needed,kind", [([], "cli"), (["libc.so.6", "libm.so.6"], "cli"), (["libgtk-3.so.0", "libc.so.6"], "gui")])
+def test_a_program_larger_than_any_length_read_whole_is_read_by_what_it_links(tmp_path, needed, kind, bits, where):
+    # CR1.3-19: the reader took the first 64 MB, and a program's section headers are at its end, so
+    # any larger program was "can't tell": a 70 MB static Go tool ran Strict as an app, and an
+    # Electron program was an app only because "can't tell" falls that way. Each part is read where
+    # it is now. The file is sparse: 80 MB on paper, nothing on the disk.
+    big, small = tmp_path / "big", tmp_path / "small"
+    make_elf(small, needed, bits)
+    make_elf(big, needed, bits, gap=80 << 20, gap_before="shdrs" if where == "the section headers" else "strtab")
+    assert os.path.getsize(big) > 80 << 20
+    assert appkind.elf_needed(str(big)) == appkind.elf_needed(str(small)) == needed
+    assert appkind.kind_of_program(str(big)) == appkind.kind_of_program(str(small)) == kind
 
 def test_a_real_system_program_is_read(tmp_path):
     true = "/usr/bin/true"
