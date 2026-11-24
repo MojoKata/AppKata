@@ -1505,6 +1505,36 @@ def test_a_sync_asks_a_host_that_said_when_to_come_back_once(tmp_path, monkeypat
     assert seen == ["https://git.example.org/api/v1/version"] and clock.waits == []
     for url in sources:
         assert apps[url]["error_code"] == "RateLimited" and json.loads(apps[url]["error_extra"])["reset"] == clock.now + 600
+        assert json.loads(apps[url]["error_extra"])["status"] == 503          # both rows: the one answered and the one refused
+
+
+@pytest.mark.parametrize("status, headers, a_limit", [
+    (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "4102444800"}, True), (403, {"Retry-After": "120"}, True),
+    (429, {}, True), (429, {"Retry-After": "120"}, True),
+    (500, {"Retry-After": "120"}, False), (502, {"Retry-After": "120"}, False), (503, {"Retry-After": "120"}, False),
+    (504, {"Retry-After": "120"}, False),
+])
+def test_what_said_when_to_come_back_is_kept_with_the_limit(clock, status, headers, a_limit):
+    """A forge's own rate limit and a forge being maintained are both RateLimited (R2.10), and a
+    token raises only the first: the answer's status goes with the error, for the row to tell them
+    apart, and with the host's limit, so the next app refused there says the same as the first."""
+    seen = []
+    http = names(Http(opener=answering(status, headers, seen)))
+    assert (status in http_.LIMIT_STATUSES) == a_limit
+    for path in ("o/r", "o/s"):                                # the app that was answered, and the next on that host
+        with pytest.raises(RateLimited) as e:
+            http.json(f"https://git.example.org/api/v1/repos/{path}")
+        assert e.value.extra == {"host": "git.example.org", "reset": http.limited["git.example.org"], "status": status}
+        assert ("rate limit reached" in str(e.value)) == a_limit and (f"answered HTTP {status}" in str(e.value)) == (not a_limit)
+    assert len(seen) == 1 and json.dumps(e.value.extra)
+
+
+def test_a_limit_nothing_gave_a_status_for_has_none(clock):
+    http = names(Http(opener=opener({})))
+    http.limited["git.example.org"] = clock.now + 60           # as a test sets one, and as nothing in the application does
+    with pytest.raises(RateLimited, match="rate limit reached") as e:
+        http.json("https://git.example.org/api/x")
+    assert e.value.extra == {"host": "git.example.org", "reset": clock.now + 60} and e.value.status is None
 
 
 NO_ANSWER = [TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out")),

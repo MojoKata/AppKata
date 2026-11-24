@@ -20,7 +20,7 @@ from appkata_core import versions as vcmp
 from appkata_core.catalog import authority_view, short_fp
 from appkata_core.db import DB, now
 from appkata_core.forges import Asset
-from appkata_core.http import Http, SourceError, token_key
+from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_key
 from appkata_core import APPKATA_REPO, __version__ as APPKATA_VERSION
 from appkata_core.platform import data_dir
 
@@ -435,7 +435,12 @@ class Backend(QObject):
         if code == "RateLimited":
             import datetime as dt
             t = dt.datetime.fromtimestamp(extra.get("reset", 0)).strftime("%H:%M")
-            return f"Rate limited until {t} · add a token in Settings"
+            # the hint is for a forge's own rate limit, which a token raises. A forge that is
+            # overloaded or being maintained says when to come back as well (a 503 with a
+            # Retry-After), and no token changes that: its row says until when, and no more
+            # (CR1 #277)
+            hint = " · add a token in Settings" if extra.get("status") in (None, *LIMIT_STATUSES) else ""
+            return f"Rate limited until {t}{hint}"
         if code == "Renamed":
             return f"Moved to {extra.get('new_url', '')}"
         return {"NoReleases": "No releases found", "NotFound": "Repository not found",

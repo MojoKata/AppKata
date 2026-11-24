@@ -26,7 +26,7 @@ import written
 
 pytest.importorskip("PySide6")
 
-from appkata_core import foreign, sandbox, sync      # noqa: E402
+from appkata_core import channels, foreign, sandbox, sync      # noqa: E402
 from appkata_core.db import now                      # noqa: E402
 
 URL = "https://github.com/example/demo"
@@ -528,3 +528,42 @@ def test_the_add_source_preview_answers_whatever_asking_the_forge_ends_in(be, mo
     be.previewSource("https://git.example.org/o/r")
     assert wait(lambda: got), "the preview never answered"
     assert got[0]["ok"] is False and says in got[0]["error"] and got[0]["host"] == "git.example.org", got
+
+
+# ---------------------------------------------------------------- a Source that is to be asked again later (R2.10; CR1, #277)
+def a_forge_that_says_come_back(status, headers, asked):
+    """Http's opener for hosts whose every answer is this failing status with these headers."""
+    import urllib.error
+
+    def open_(req, timeout=0):
+        asked.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+    return open_
+
+
+@pytest.mark.parametrize("status, headers, hint", [
+    (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(time.time()) + 600)}, True),    # a forge's own rate limit
+    (429, {"Retry-After": "600"}, True), (429, {}, True),
+    (503, {"Retry-After": "600"}, False),                              # a forge that is overloaded or being maintained
+    (502, {"Retry-After": "600"}, False), (500, {"Retry-After": "600"}, False),
+], ids=["403-limit", "429-retry-after", "429", "503-retry-after", "502-retry-after", "500-retry-after"])
+def test_a_rate_limit_hints_at_a_token_and_a_forge_being_maintained_says_only_until_when(be, monkeypatch, status, headers, hint):
+    """Since any failing answer's Retry-After is heard, a forge being maintained had "add a token in
+    Settings" on its rows, which no token helps. Two Sources on the host, through a whole Sync: the
+    one whose request was answered and the one refused after it read the same."""
+    import datetime
+    from appkata_core import http
+    monkeypatch.setattr(channels, "enabled", lambda: False)        # none of this machine's package channels
+    sources = ["https://git.example.org/o/r", "https://git.example.org/o/s"]
+    for url in sources:
+        be.db.x("INSERT INTO sources(url, settings, added_at) VALUES(?,?,?)", (url, json.dumps({"forge": "forgejo"}), now()))
+    asked = []
+    be.http = http.Http(opener=a_forge_that_says_come_back(status, headers, asked))
+    sync.sync_all(be.db, be.http, workers=1)
+    be.reload()
+    shown = {row["url"]: row["errorText"] for row in be.sourceItems}
+    assert set(sources) <= set(shown) and len([url for url in asked if "git.example.org" in url]) == 1
+    for url in sources:
+        extra = json.loads(be.db.one("SELECT error_extra FROM apps WHERE url=?", (url,))["error_extra"])
+        until = "Rate limited until " + datetime.datetime.fromtimestamp(extra["reset"]).strftime("%H:%M")
+        assert shown[url] == until + (" · add a token in Settings" if hint else ""), shown

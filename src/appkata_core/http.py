@@ -36,12 +36,22 @@ class NotFound(SourceError): code = "NotFound"
 class Unsupported(SourceError): code = "Unsupported"
 
 
+LIMIT_STATUSES = (403, 429)      # the answers that are a forge's rate limit, which a token raises
+
+
 class RateLimited(SourceError):
+    """A host that isn't to be asked again until `reset`. `status` is the HTTP status of the answer
+    that said so, where one did: a forge's own rate limit (LIMIT_STATUSES), or another failing
+    answer with a Retry-After, such as the 503 of a forge that is overloaded or being maintained
+    (CR1 #277). It is kept in `extra`, so what a Source's row says can tell the two apart: a token
+    raises the first and does nothing for the second."""
     code = "RateLimited"
 
-    def __init__(self, host: str, reset: float):
-        super().__init__(f"{host} rate limit reached", host=host, reset=reset)
-        self.host, self.reset = host, reset
+    def __init__(self, host: str, reset: float, status: int | None = None):
+        said = (f"{host} rate limit reached" if status in (None, *LIMIT_STATUSES)
+                else f"{host} answered HTTP {status} and said when to come back")
+        super().__init__(said, host=host, reset=reset, **({"status": status} if status else {}))
+        self.host, self.reset, self.status = host, reset, status
 
 
 class Renamed(SourceError):
@@ -223,6 +233,7 @@ class Http:
         self._lookup = _addresses                # host -> its addresses
         self.forges: dict[str, str] = {}         # host -> its forge type (set_forge)
         self.limited: dict[str, float] = {}      # host -> reset time
+        self.limit_status: dict[str, int] = {}   # host -> the status of the answer that set its reset time
         self.calls = 0
 
     def set_forge(self, host: str, forge: str) -> None:
@@ -348,7 +359,7 @@ class Http:
         whose = token_key(token_host) if token_host else _host(parts)      # the host this request is made for
         reset = self.limited.get(host)
         if reset and reset > time.time():
-            raise RateLimited(host, reset)
+            raise RateLimited(host, reset, self.limit_status.get(host))
         token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
@@ -372,8 +383,8 @@ class Http:
             hdr = {k.lower(): v for k, v in (e.headers or {}).items()}
             if e.code in (403, 429) and (hdr.get("x-ratelimit-remaining") == "0" or "retry-after" in hdr or e.code == 429):
                 reset = _reset_time(hdr)
-                self.limited[host] = reset
-                raise RateLimited(host, reset) from None
+                self.limited[host], self.limit_status[host] = reset, e.code
+                raise RateLimited(host, reset, e.code) from None
             # Retry-After on any other failing answer (R9.2.1; CR1 #277): an overloaded forge, or one
             # being maintained, answers 503 with it, and was asked again after 1.5 and 3 seconds
             # whatever it had asked for, by every app on it. Longer than the retries wait, it is
@@ -385,9 +396,9 @@ class Http:
                 reset = _reset_time({"retry-after": hdr["retry-after"]})
                 wait = max(0.0, reset - time.time())
                 if wait > WAITS[-1]:
-                    self.limited[host] = reset
+                    self.limited[host], self.limit_status[host] = reset, e.code
                     if e.code >= 500:
-                        raise RateLimited(host, reset) from None
+                        raise RateLimited(host, reset, e.code) from None
             if e.code == 404:
                 raise NotFound(f"{url} not found") from None
             if e.code == 401 and token:
