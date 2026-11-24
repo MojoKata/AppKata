@@ -112,6 +112,8 @@ class Backend(QObject):
     permsNeeded = Signal(str)                    # url: its update asks for more permissions (R16.6.3)
     sandboxSetupNeeded = Signal("QVariant")      # {url, name, version, choice, ...}: "Set up the sandbox?" (R17.10)
     _setupThenInstall = Signal("QVariant")
+    _planned = Signal("QVariant")                # {url, choice}: a first install with nothing to ask, from its plan's worker (R4.9.1)
+    _added = Signal(str)                         # url: "Add and install", once the new Source is synced (R7.2)
     _flathubNeeded = Signal("QVariant")
     _planConfirm = Signal("QVariant")
     _msvcrtNeeded = Signal("QVariant")
@@ -141,6 +143,8 @@ class Backend(QObject):
         self._flathubNeeded.connect(self.flathubNeeded)
         self._planConfirm.connect(self.planConfirm)
         self._setupThenInstall.connect(self._install_after_prompt)
+        self._planned.connect(self._install_planned)
+        self._added.connect(self.install)
         self.ch = Channels(self.db, os.path.dirname(os.path.abspath(db_path)) if db_path else self.root)
         self._ensure_own_trust()
         self._ensure_self()
@@ -693,10 +697,16 @@ class Backend(QObject):
             plan = self._plan(url, a["version"])
             if plan.get("error") or not plan["ask"]:
                 choice = plan["candidates"][plan["chosen"]] if plan.get("candidates") else None
-                QTimer.singleShot(0, lambda: self._install(url, "", choice))
+                # handed over by a signal, which Qt queues to the main thread: a timer made on this
+                # thread never fires, since the thread has no event loop (CR1, #463)
+                self._planned.emit({"url": url, "choice": choice})
             else:
                 self.installPlan.emit(plan)
         threading.Thread(target=work, daemon=True).start()
+
+    def _install_planned(self, info) -> None:
+        info = dict(_plain(info))
+        self._install(info["url"], "", info.get("choice") or None)
 
     @Slot(str, result="QVariant")
     def planFor(self, url: str):
@@ -1288,7 +1298,7 @@ class Backend(QObject):
             foreign.scan(self.db)
             self._refresh.emit()
             if and_install:
-                QTimer.singleShot(300, lambda: self.install(repo.url))
+                self._added.emit(repo.url)         # queued behind the reload: the new app is in the catalog by then
         self.reload()
         threading.Thread(target=work, daemon=True).start()
 
