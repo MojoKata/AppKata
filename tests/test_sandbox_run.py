@@ -2281,13 +2281,15 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
     # every other player, and whatever else that player's connection serves. Another player is on
     # the bus now: the app whose review names its MPRIS name owns that one, is driven on it, and
     # neither sees nor reaches the other; the app nobody named still does (R17.17 says so).
+    # PR #694's review, P1-3: an own is a talk on the named name too, so a named app reaches a
+    # player that holds that same name (another copy of the player, the host's own): the last run.
     bus = _Bus(env)
-    log, other_log = tmp_path / "keys.log", tmp_path / "other.log"
+    log, other_log, same_log = tmp_path / "keys.log", tmp_path / "other.log", tmp_path / "same.log"
     on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
     daemon = subprocess.Popen(["python3", "-c", _MEDIA_KEYS, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     other = subprocess.Popen(["python3", "-c", _OTHER_PLAYER, str(other_log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        for name in ("named", "player", "noplayer"):
+        for name in ("named", "player", "noplayer", "samename"):
             d = env.home / "apps" / name / "1.0" / "bin"
             d.mkdir(parents=True, exist_ok=True)
             (d / "mpris.py").write_text(_MPRIS_APP)
@@ -2298,6 +2300,20 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
         r2 = env.run(env.app("noplayer", sb.resolve_template("online-app")), 'python3 "$(dirname "$0")/mpris.py"',
                      env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        # the host's own copy of the player holds the name a review gives the sandboxed one
+        same = "org.mpris.MediaPlayer2.hostplayer"
+        host = subprocess.Popen(["python3", "-c", _OTHER_PLAYER.replace("org.mpris.MediaPlayer2.other", same), str(same_log)], env=on_bus,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(50):
+            if subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                               "org.freedesktop.DBus.NameHasOwner", same], env=on_bus, capture_output=True, text=True).stdout.strip() == "(true,)":
+                break
+            time.sleep(0.1)
+        (env.home / "apps" / "samename" / "1.0" / "bin" / "mpris.py").write_text(
+            _MPRIS_APP.replace("org.mpris.MediaPlayer2.appkataprobe", same).replace("org.mpris.MediaPlayer2.other", same))
+        rs = env.run(env.app("samename", sb.apply_overrides(sb.resolve_template("media-player"), {"mpris_name": same})),
+                     'python3 "$(dirname "$0")/mpris.py"', env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        host.terminate()
     finally:
         daemon.terminate()
         other.terminate()
@@ -2319,6 +2335,12 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
     reached = other_log.read_text()
     assert "OTHER Pause ()" in reached and "OTHER Open ('file:///etc/hostname',)" in reached, reached
     assert "OTHER-PLAYER REFUSED" in r2.stdout and "OTHER-OBJECT REFUSED" in r2.stdout, r2.stdout    # no capability: no player at all
+    # named, but another program holds that name: the app can't own it, and reaches that program,
+    # its player and what else its connection serves (R17.5.1, R17.17)
+    out = rs.stdout.splitlines()
+    assert "OWNED" not in out and "OTHER-PLAYER ANSWERED" in out and "OTHER-OBJECT ANSWERED" in out, (rs.stdout, rs.stderr)
+    reached = same_log.read_text()
+    assert "OTHER Pause ()" in reached and "OTHER Open ('file:///etc/hostname',)" in reached, reached
 
 
 # org.freedesktop.ScreenSaver as the desktops declare it: KDE's screen locker (kwin 6.3, ksmserver
