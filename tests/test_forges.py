@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -797,3 +798,168 @@ def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
     example = "git.example.org:3000"
     assert f"`{example}`" in r11 and f"({example})" in qml and http_.token_key(example) == example
     assert "a host alone means the default port" in qml
+
+
+# ---------------------------------------------------------------- R9.2.2, held whole (CR1 #292)
+# CR1's #292: no test built an Http with a token and looked at what was sent where, so #263, #264,
+# #275 and #297 all passed the suite, and so would a regression of any of their fixes. Each of those
+# has its own tests above, written against its own fault. These hold the requirement instead: the
+# rule is written once more here, from R9.2.2's and R11.1.6's words and apart from Http (no name of
+# Http's own is used below), and every request of three whole Syncs and three searches is held to it,
+# whichever line of the application asked. A redirect needs Http's own opener, so the last test goes
+# through real sockets.
+CARRIES = ("authorization", "private-token")
+NAMED = {"github.com": ("api.github.com", "raw.githubusercontent.com")}       # R9.2.2's list
+KEPT = {"github.com": ("github", "ghp_GITHUB"), "git.example.org": ("gitlab", "glpat_NEUTRAL"),
+        "code.example.net:3000": ("forgejo", "FORGEJO-ON-ITS-PORT"), "code.example.net": ("forgejo", "FORGEJO-DEFAULT-PORT"),
+        "gitlab.com": ("gitlab", "glpat_COM"), "codeberg.org": ("forgejo", "CODEBERG"), "evil.example": ("forgejo", "EVIL")}
+TAKES = {"github": "authorization: Bearer {}", "gitlab": "private-token: {}", "forgejo": "authorization: token {}"}
+
+
+def may_carry(url):
+    """R9.2.2: the hosts whose token a request to this address may carry. Over https only; a host is
+    one address, its name and its port, and a name alone is the default port; github.com's goes to
+    its two named hosts as well."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https":
+        return set()
+    host = parts.hostname if parts.port in (None, 443) else f"{parts.hostname}:{parts.port}"
+    return {host} | {kept for kept, named in NAMED.items() if host in named}
+
+
+def probe(url):
+    """An address forges.detect asks to find out what a host runs: the three APIs and the home page."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.path == "/" or url.endswith(("/api/v1/version", "/api/v4/projects?per_page=1", "/api/v3/meta"))
+
+
+def breaks_r9_2_2(seen):
+    """Each request that carried what R9.2.2 doesn't let it: a token of a host the address isn't,
+    one over plain http, two at once, or one in a form its forge doesn't take. A probe asks before
+    anything says what the host runs, so it may carry the host's token in any forge's form."""
+    out = []
+    for url, headers in seen:
+        sent = [f"{k}: {v}" for k, v in headers.items() if k in CARRIES]
+        allowed = [form.format(token) for host, (kind, token) in KEPT.items() if host in may_carry(url)
+                   for form in ([TAKES[kind]] if not probe(url) else TAKES.values())]
+        if sent and (len(sent) > 1 or sent[0] not in allowed):
+            out.append((url, sent))
+    return out
+
+
+def project(hostile):
+    """A project's files that name four addresses elsewhere, as its icon, its screenshot and two README
+    images, and one image of its own."""
+    metainfo = METAINFO.replace("https://evil.example/icon.png", hostile[0]).replace("http://evil.example/shot.png", hostile[1])
+    readme = f"# R\n\n![shot]({hostile[2]})\n\n![shot]({hostile[3]})\n\n![window](docs/shot-window.png)\n"
+    return {"README.md": readme.encode(), "data/org.example.r.metainfo.xml": metainfo.encode(), "docs/shot-window.png": PNG}
+
+
+ELSEWHERE = {
+    "https://github.com/o/r": ["https://evil.example/icon.png", "http://raw.githubusercontent.com/o/r/main/shot.png",
+                               "https://notgithub.com/o/r/shot.png", "https://raw.githubusercontent.com:8443/o/r/main/shot.png"],
+    "https://git.example.org/o/r": ["http://git.example.org/o/r/-/raw/main/icon.png", "https://git.example.org:8443/shot.png",
+                                    "https://git.example.org.evil.example/shot.png", "https://gitlab.com/o/r/-/raw/main/shot.png"],
+    "https://code.example.net:3000/o/r": ["https://code.example.net/shot-on-the-default-port.png", "https://code.example.net:9999/shot.png",
+                                          "http://code.example.net:3000/o/r/raw/branch/main/shot.png", "https://evil.example:3000/shot.png"],
+}
+OWN = {      # each Source's own addresses: every request to them carries its token
+    "https://github.com/o/r": ("https://api.github.com/", "https://raw.githubusercontent.com/"),
+    "https://git.example.org/o/r": ("https://git.example.org/",),
+    "https://code.example.net:3000/o/r": ("https://code.example.net:3000/",),
+}
+
+
+def three_forges():
+    """github.com, a GitLab whose name says nothing and a Forgejo on a port, each with a project that
+    names images elsewhere; and the three searches."""
+    release = {"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "released_at": "2026-05-02T00:00:00Z", "assets": []}
+    blobs = [{"path": p, "type": "blob"} for p in project([""] * 4)]
+    info = {"name": "r", "full_name": "o/r", "path_with_namespace": "o/r", "default_branch": "main"}
+    routes = {"https://gitlab.com/api/v4/projects?search=": [], "https://codeberg.org/api/v1/repos/search": {"data": []},
+              "https://api.github.com/search/": {"items": []}}
+    for api, raw, tree, listing, avatar in (
+            ("https://api.github.com/repos/o/r", "https://raw.githubusercontent.com/o/r/main/", "/git/trees/main", {"tree": blobs},
+             {"owner": {"avatar_url": "https://avatars.githubusercontent.com/u/1"}}),
+            ("https://git.example.org/api/v4/projects/o%2Fr", "https://git.example.org/o/r/-/raw/main/", "/repository/tree", blobs,
+             {"avatar_url": "https://git.example.org/uploads/avatar.png"}),
+            ("https://code.example.net:3000/api/v1/repos/o/r", "https://code.example.net:3000/o/r/raw/branch/main/", "/git/trees/main",
+             {"tree": blobs}, {"avatar_url": "https://code.example.net:3000/avatars/1"})):
+        source = next(s for s in ELSEWHERE if raw.startswith(OWN[s]))
+        routes.update({api: {**info, **avatar}, api + "/releases": [release], api + tree: listing,
+                       (avatar.get("owner") or avatar)["avatar_url"]: PNG})
+        routes.update({raw + path: body for path, body in project(ELSEWHERE[source]).items()})
+    routes["https://git.example.org/api/v4/projects?per_page=1"] = []                      # the probes that answer
+    routes["https://code.example.net:3000/api/v1/version"] = {"version": "11.0.1+gitea-1.22.0"}
+    return dict(sorted(routes.items(), key=lambda kv: -len(kv[0])))         # opener() takes the first prefix: the longest first
+
+
+def test_every_request_of_three_syncs_and_three_searches_keeps_r9_2_2(tmp_path):
+    seen = []
+    http = names(Http({host: token for host, (_, token) in KEPT.items()}, opener=recording(three_forges(), seen)))
+    db = DB(str(tmp_path / "a.db"))
+    for source, kind in zip(ELSEWHERE, ("github", "gitlab", "forgejo")):
+        sync.sync_app(db, http, source, root=str(tmp_path))
+        app = db.one("SELECT * FROM apps WHERE url=?", (source,))
+        assert app["error_code"] is None and app["forge"] == kind, (source, app["error"])
+        assert app["icon"].endswith("icon.png") and app["hero"].endswith("hero.png")
+    for service in ("gitlab", "codeberg", "github"):
+        assert explore.search(http, service, "q") == {"matches": [], "error": ""}
+    asked = [url for url, _ in seen]
+    assert [u for urls_ in ELSEWHERE.values() for u in urls_ if u not in asked] == []        # each was asked for
+    assert breaks_r9_2_2(seen) == []
+    # and the rule isn't kept by sending nothing: every request to a Source's own addresses, and every
+    # search, carried that host's token in its forge's form, and no request elsewhere carried any
+    for source, own in OWN.items():
+        kind, token = KEPT[urls.parse(source).host]
+        mine = [[f"{k}: {v}" for k, v in h.items() if k in CARRIES] for url, h in seen if url.startswith(own) and not probe(url)]
+        assert len(mine) >= 7 and all(sent == [TAKES[kind].format(token)] for sent in mine), (source, mine)
+        probes = [[v for k, v in h.items() if k in CARRIES] for url, h in seen if url.startswith(own) and probe(url)]
+        assert all(len(sent) == 1 and sent[0].endswith(token) for sent in probes), (source, probes)
+    for url, h in seen:
+        if "search" in url:
+            kind, token = KEPT[may_carry(url).intersection(KEPT).pop()]
+            assert [f"{k}: {v}" for k, v in h.items() if k in CARRIES] == [TAKES[kind].format(token)], url
+    assert [url for url, h in seen if set(h) & set(CARRIES) and url in sum(ELSEWHERE.values(), [])] == []
+
+
+def test_the_harness_itself_sees_each_way_r9_2_2_is_broken():
+    # the rule above, tried on requests that break it: a check that passes whatever it is shown holds nothing
+    wrong = [("https://evil.example/shot.png", {"authorization": "Bearer ghp_GITHUB"}),            # another host
+             ("https://notgithub.com/o/r", {"authorization": "Bearer ghp_GITHUB"}),                # ends in the same letters
+             ("http://api.github.com/repos/o/r", {"authorization": "Bearer ghp_GITHUB"}),          # plain http
+             ("https://api.github.com:8443/repos/o/r", {"authorization": "Bearer ghp_GITHUB"}),    # a named host, another port
+             ("https://code.example.net/x", {"authorization": "token FORGEJO-ON-ITS-PORT"}),       # another port of its own name
+             ("https://code.example.net:9999/x", {"authorization": "token FORGEJO-DEFAULT-PORT"}),
+             ("https://git.example.org/api/v4/x", {"authorization": "token glpat_NEUTRAL"}),       # a form GitLab doesn't take
+             ("https://evil.example/api/v1/version", {"authorization": "token glpat_NEUTRAL"}),    # a probe, with another host's
+             ("https://api.github.com/x", {"authorization": "Bearer ghp_GITHUB", "private-token": "ghp_GITHUB"})]
+    right = [("https://api.github.com/repos/o/r", {"authorization": "Bearer ghp_GITHUB", "accept": "x"}),
+             ("https://raw.githubusercontent.com:443/o/r/main/x", {"authorization": "Bearer ghp_GITHUB"}),
+             ("https://git.example.org/api/v4/x", {"private-token": "glpat_NEUTRAL"}),
+             ("https://code.example.net:3000/x", {"authorization": "token FORGEJO-ON-ITS-PORT"}),
+             ("https://code.example.net/x", {"authorization": "token FORGEJO-DEFAULT-PORT"}),
+             ("https://git.example.org/api/v1/version", {"authorization": "token glpat_NEUTRAL"}),     # a probe: any form
+             ("http://evil.example/shot.png", {"accept": "*/*"})]
+    assert [url for url, _ in breaks_r9_2_2(wrong + right)] == [url for url, _ in wrong]
+
+
+@pytest.mark.parametrize("kind", ["gitlab", "forgejo", "ghe"])
+def test_through_real_sockets_a_forges_token_reaches_its_own_address_alone(pair, kind):
+    """Http's own opener, a forge on a port, and its redirects: a file that is kept on another host, an
+    API address that moved on its own, and one that points at plain http."""
+    a, b = pair
+    repo = urls.parse(f"https://{a.at}/o/r")
+    http = names(Http({a.at: "SECRET-TOKEN", "127.0.0.1": "ITS-DEFAULT-PORT", b.at: "ANOTHER-HOSTS"}, timeout=10))
+    f = forges.forge_for(http, repo, kind)
+    raw, api = urllib.parse.urlsplit(f.raw_url("big.bin", "main")).path, urllib.parse.urlsplit(f.base).path
+    a.redirects[raw] = f"https://{b.at}/storage/big.bin"
+    a.redirects[api] = api + "-renamed"
+    a.redirects[api + "/releases"] = f"http://{a.at}{api}/releases"
+    assert f.raw("big.bin", "main") == b'{"ok": true}' and f._get(f.base) == {"ok": True}
+    with pytest.raises(Unreachable, match="plain http"):
+        f._get(f.base + "/releases")
+    form = TAKES["github" if kind == "ghe" else kind].format("SECRET-TOKEN")
+    assert [(path, [f"{k}: {v}" for k, v in h.items() if k in CARRIES]) for path, h in a.seen] == [
+        (raw, [form]), (api, [form]), (api + "-renamed", [form]), (api + "/releases", [form])]
+    assert [(path, [k for k in h if k in CARRIES]) for path, h in b.seen] == [("/storage/big.bin", [])]
