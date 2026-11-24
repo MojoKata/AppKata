@@ -312,16 +312,60 @@ class Portable:
         return os.path.abspath(os.path.expandvars(os.path.expanduser(self.folder))) if self.folder else apps_dir()
 
 
-def _link(target: str, link: str) -> str:
-    """Point `link` at `target` (relative when they share a folder); returns the link path."""
+def _points_into(link: str, roots: tuple[str, ...]) -> bool:
+    """Whether `link` is a symbolic link that leads into one of `roots`: a link AppKata made there
+    (R4.3.1.3). One whose target is gone still counts, by where it led."""
+    if not os.path.islink(link):
+        return False
+    dest = os.path.realpath(link) + os.sep
+    return any(dest.startswith(os.path.realpath(r) + os.sep) for r in roots if r)
+
+
+def _link(target: str, link: str, own: tuple[str, ...] | None = None) -> str:
+    """Point `link` at `target` (relative when they share a folder); returns the link path. What is
+    already there is replaced only when it is a link, and with `own` (the install folders: a
+    command link's case, R4.3.1.3) only one that leads into them: the user's own `~/bin/tool ->
+    /opt/tool` was replaced like any link (CR1.5-31)."""
     os.makedirs(os.path.dirname(link), exist_ok=True)
     if os.path.islink(link) or os.path.exists(link):
-        if not os.path.islink(link):
+        if not os.path.islink(link) or (own is not None and not _points_into(link, own)):
             raise InstallError(f"{link} exists and isn't a link AppKata made; not replacing it")
         os.remove(link)
     rel = os.path.relpath(target, os.path.dirname(link)) if os.path.dirname(target) == os.path.dirname(link) else target
     os.symlink(rel, link)
     return link
+
+
+# Names that never become a command link, whether or not this computer has such a command today
+# (R4.3.1.3): a command link is named after an app, and its publisher picks the name. They are the
+# commands a sandbox launcher runs by name (sandbox.HOST_COMMANDS), the ones AppKata itself runs by
+# name, the shells and interpreters, and the commands that take a password or hold credentials,
+# where a stand-in answering in the user's terminal does the most harm. One of them that isn't
+# installed today may be tomorrow, and the link would then be ahead of it. The list is short on
+# purpose: any other name is refused only while it is a command here (:func:`command_link_refusal`).
+RESERVED_COMMANDS = frozenset(sandbox.HOST_COMMANDS) | frozenset((
+    "git", "gpg", "pkexec", "flatpak", "snap", "apt", "apt-get", "apt-cache", "apt-config", "dpkg", "dpkg-deb", "dpkg-query",
+    "dnf", "rpm", "systemctl", "unshare", "xdg-open", "xdg-mime", "update-desktop-database", "gnome-software",
+    "sh", "bash", "dash", "env", "python", "python3",
+    "sudo", "su", "doas", "passwd", "ssh", "scp", "sftp", "ssh-add", "ssh-agent", "gpg2"))
+
+
+def command_link_refusal(name: str, link: str, own: tuple[str, ...]) -> str:
+    """Why AppKata makes no command link called `name` at `link` (R4.3.1.3), or "" when it may: the
+    name is kept for the system's own commands (:data:`RESERVED_COMMANDS`), or it already is a
+    command on this computer -- something on the PATH, or in the system's folders, answers to it. The
+    app is then installed with its app-menu entry and no command, and the install says why (the
+    owner's decision on CR1.5-31: the link put an app named python3, readlink or sudo first on the
+    PATH, ahead of the real one). A link of AppKata's own at `link` (one leading into `own`, the
+    install folders) doesn't count: that is this app's command from an earlier install."""
+    if name in RESERVED_COMMANDS:
+        return f"{name} is a name kept for the system's own command"
+    folders = [d for d in os.environ.get("PATH", "").split(os.pathsep) + (sandbox.HOST_PATH + ":/usr/sbin:/sbin").split(":") if d]
+    found = shutil.which(name, path=os.pathsep.join(folders))
+    if found and not (os.path.realpath(os.path.dirname(found)) == os.path.realpath(os.path.dirname(link))
+                      and os.path.basename(found) == os.path.basename(link) and _points_into(link, own)):
+        return f"{name} is already a command on this computer ({found})"
+    return ""
 
 
 def _safe(v: str) -> str:
@@ -464,8 +508,19 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     elif portable.app_menu:
         rec["files"].append(_desktop_entry(app_id, app["name"], launch_target, app.get("icon") or "", app.get("summary", ""),
                                            launcher=launch_target != run))
+    rec.pop("commandRefused", None)
     if portable.command_dir:
-        rec["links"].append(_link(launch_target, os.path.join(os.path.expanduser(portable.command_dir), app_id)))
+        # The command is named after the app, so its publisher picks the name: none is made for a name
+        # that is already a command here, or a reserved one, and the record says why (R4.3.1.3). The
+        # option stays as chosen, so the command comes once the name is free. Never an error: the
+        # app is installed either way, with its app-menu entry.
+        link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
+        own = (portable.root, os.path.dirname(target))
+        if why := command_link_refusal(app_id, link, own):
+            rec["commandRefused"] = why
+            log.info("no command link %s: %s", link, why)
+        else:
+            rec["links"].append(_link(launch_target, link, own))
     rec["options"] = {"appMenu": portable.app_menu, "commandLink": bool(portable.command_dir), "stableName": portable.stable_name}
 
 

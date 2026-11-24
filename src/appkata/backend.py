@@ -1053,6 +1053,7 @@ class Backend(QObject):
                     ek = exe_type(ch.asset.name, install.head_bytes(ch.asset.url), [x.name for x in assets])
                 port = self._app_options(url, choice)
                 sbx = self._sandbox_for_install(url, kind=ch.kind)    # the grant set to bake in (R17.4, R17.11)
+                refused = self._command_refused(url)      # before: a refusal is said when it is news (R4.3.1.3)
                 rec = {}
                 if pin and target in install.kept_versions(self.db, url):      # a kept version: no download (R4.3.1.5)
                     install.switch_to(self.db, {**a, "sandbox": sbx}, target, port, rel["date"])
@@ -1089,7 +1090,8 @@ class Backend(QObject):
                 if a.get("self"):
                     self._toast.emit("info", f"AppKata {target} installed. Restart AppKata to use it.")
                 else:
-                    self._toast.emit("info", f"{a['name']} {target} installed" + (" and pinned." if version else "."))
+                    self._toast.emit("info", f"{a['name']} {target} installed" + (" and pinned." if version else ".")
+                                     + self._command_note(self._command_refused(url), refused))
             except PackageNeedsConfirmation as e:          # a .deb/.rpm that changes other packages (R16.3.5)
                 self._planConfirm.emit({"url": url, "name": a["name"], "action": "install-release", "lines": list(e.lines)})
             except PackageRefused as e:
@@ -1693,6 +1695,18 @@ class Backend(QObject):
         p.scope = own.get("scope") or rec.get("scope") or p.scope
         p.motw = bool(own.get("motw", rec.get("motw", False)))
         return p
+
+    def _command_refused(self, url: str) -> str:
+        """Why the installed app at `url` got no command link though its option is on (R4.3.1.3: its
+        name is already a command here, or a reserved one), or "" when it has one or wants none."""
+        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
+        return (json.loads(row["record"] or "{}") if row else {}).get("commandRefused", "")
+
+    @staticmethod
+    def _command_note(why: str, before: str = "") -> str:
+        """What an install's notice adds when it made no command link (R4.3.1.3): the reason, said
+        when it is news -- a first install, or a reason that changed -- and not at every update."""
+        return f" No command was added: {why}." if why and why != before else ""
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:
         """Copy the options an app was installed with into its own settings (R4.3.1.6)."""

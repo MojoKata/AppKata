@@ -1,7 +1,7 @@
 """App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
 import os
-import shlex
+import re
 import shutil
 import subprocess
 import sys
@@ -262,14 +262,16 @@ def test_a_launcher_says_plainly_when_bwrap_is_missing(tmp_path, monkeypatch):
     for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
-    lp = sb.write_launcher("demo", "Demo App", str(home / "bin/apps"), str(home / "bin/apps/demo/1"), "bin/demo",
-                           sb.resolve_template("strict"))
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for tool in ("mkdir", "stat", "date", "mv", "id", "cat"):           # what the launcher's preamble uses
         if shutil.which(tool):
             (bindir / tool).symlink_to(shutil.which(tool))
-    env = {"PATH": str(bindir), "HOME": str(home), "XDG_RUNTIME_DIR": str(rt)}
+    # the machine's command folders, which the launcher takes as its PATH (CR1.5-31): no bwrap in them
+    monkeypatch.setattr(sb, "host_path", lambda apps_root=None: str(bindir))
+    lp = sb.write_launcher("demo", "Demo App", str(home / "bin/apps"), str(home / "bin/apps/demo/1"), "bin/demo",
+                           sb.resolve_template("strict"))
+    env = {"PATH": os.environ["PATH"], "HOME": str(home), "XDG_RUNTIME_DIR": str(rt)}
     r = subprocess.run(["/bin/sh", lp, "--version"], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 1
     assert r.stderr.strip() == ("AppKata: bubblewrap (bwrap) isn't installed, so Demo App can't run sandboxed here. "
@@ -1036,7 +1038,15 @@ def _forward(tmp_path, cwd, incwd, visible, args):
     r = subprocess.run([sys.executable, str(helper), "io.appkata.t", str(tmp_path / "run"), incwd, *map(str, visible), "--", *args],
                        cwd=str(cwd), capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    return shlex.split(r.stdout)
+    return forwarded_words(r.stdout)
+
+
+def forwarded_words(answer: str) -> list[str]:
+    """The file-argument helper's answer, read by its own rules: an argument a line, "=" first, a
+    backslash doubled and a line break as a backslash and n (CR1.5-31: it is data, no longer shell)."""
+    lines = answer.split("\n")
+    assert lines.pop() == "" and all(l.startswith("=") for l in lines), answer
+    return [re.sub(r"\\(.)", lambda m: "\n" if m[1] == "n" else m[1], l[1:]) for l in lines]
 
 
 def test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees(tmp_path):

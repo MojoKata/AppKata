@@ -519,3 +519,128 @@ def test_sync_stores_a_projects_name_and_summary_as_one_line_each(env, tmp_path,
     assert row["name"] == ("Foo MimeType=x-scheme-handler/https; Terminal=true" if metainfo else "tool Terminal=true")
     assert row["summary"] == ('A tool Exec=sh -c "touch /tmp/pwned" [X]' if metainfo else "A forge's description Exec=sh")
     assert all(len(v.splitlines()) == 1 for v in (row["name"], row["summary"]))
+
+
+# ---------------------------------------------------------------- the command link's name (CR1.5-31)
+
+def _appimage(server, name="t.AppImage", data=b"\x7fELF"):
+    root, base = server
+    (root / name).write_bytes(data)
+    return Asset(name, f"{base}/{name}")
+
+
+@pytest.fixture
+def debian_path(tmp_path, monkeypatch):
+    """A PATH as Ubuntu, Debian and Mint make it at login: the command links folder (~/bin) first,
+    then the system's. Returns that folder."""
+    cmd = tmp_path / "home-bin"
+    cmd.mkdir()
+    monkeypatch.setenv("PATH", f"{cmd}:{os.environ['PATH']}")
+    return cmd
+
+
+@linux_only
+@pytest.mark.parametrize("name", ["python3", "Readlink", "mktemp", "bwrap", "sudo", "git", "SSH", "ls", "My Own Tool"])
+def test_an_app_named_after_a_command_is_installed_without_a_command_link(env, server, tmp_path, debian_path, monkeypatch, name):
+    # CR1.5-31 (High), the owner's decision: an app's command link is named after the app, the
+    # publisher picks the name, and the link goes where the PATH looks first. An app named python3,
+    # readlink or mktemp then answered every sandbox launcher's own calls, outside any sandbox, and
+    # one named sudo, ssh or git answered the user's terminal; `_link` checked the name against
+    # nothing. No link is made for a name that is already a command here or is reserved: the app is
+    # installed, with its app-menu entry, and its record says why it has no command.
+    own = tmp_path / "opt"
+    own.mkdir()
+    (own / "my-own-tool").write_text("#!/bin/sh\necho mine\n")
+    (own / "my-own-tool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{own}")
+    slug = install.slug(name)
+    rec = install.install(env, {**APP, "name": name}, _appimage(server), "appimage", [_appimage(server)],
+                          portable=install.Portable(folder=str(tmp_path / "apps"), command_dir=str(debian_path)))
+    assert not os.path.lexists(debian_path / slug) and os.listdir(debian_path) == []
+    assert all(os.path.dirname(l) != str(debian_path) for l in rec["links"])
+    assert slug in rec["commandRefused"] and rec["options"]["commandLink"] is True         # the option stays as chosen
+    assert ("kept for the system's own command" in rec["commandRefused"]) is (slug in install.RESERVED_COMMANDS)
+    if slug not in install.RESERVED_COMMANDS:
+        assert rec["commandRefused"] == f"{slug} is already a command on this computer ({shutil.which(slug)})"
+    assert os.path.exists(tmp_path / "xdg" / "applications" / f"appkata-{slug}.desktop") and os.access(rec["exec"], os.X_OK)
+    assert json.loads(env.one("SELECT record FROM installs")["record"])["commandRefused"] == rec["commandRefused"]
+    install.uninstall(env, APP["url"])
+    assert not (tmp_path / "apps" / slug).exists()
+
+
+def test_no_command_link_is_ever_named_after_a_command_a_launcher_or_appkata_runs():
+    # The reserved names hold whatever this computer has installed: a launcher's own commands
+    # (sandbox.HOST_COMMANDS, which tests/test_sandbox_adversarial.py holds to the launcher's text),
+    # and a name that is no command today may be one tomorrow, with the link then ahead of it.
+    from appkata_core import sandbox
+    assert set(sandbox.HOST_COMMANDS) <= install.RESERVED_COMMANDS
+    assert {"python3", "bwrap", "xdg-dbus-proxy", "readlink", "mktemp", "sudo", "ssh", "git", "gpg", "pkexec", "sh"} <= install.RESERVED_COMMANDS
+    for name in sorted(install.RESERVED_COMMANDS):
+        why = install.command_link_refusal(name, "/nonexistent/bin/" + name, ("/nonexistent/apps",))
+        assert why == f"{name} is a name kept for the system's own command", name
+
+
+@linux_only
+def test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes(env, server, tmp_path, debian_path, monkeypatch):
+    # The other side of the name check: the link AppKata made for this app is on the PATH too, and
+    # an update must not take it for someone else's command. And a name that becomes a command
+    # later (the system installs a `demo-tool`) loses its link at the next update or start, since
+    # the link would be ahead of it.
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(debian_path))
+    for v in ("1.0", "1.1"):
+        a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
+        rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=p)
+        assert "commandRefused" not in rec and open(debian_path / "demo-tool", "rb").read() == v.encode()
+    # a link of AppKata's own that no record names (a reinstall after a lost record) is still its own
+    env.x("DELETE FROM installs")
+    rec = install.install(env, {**APP, "installVersion": "1.1"}, a, "appimage", [a], portable=p)
+    assert "commandRefused" not in rec and str(debian_path / "demo-tool") in rec["links"]
+    system = tmp_path / "usr-bin"
+    system.mkdir()
+    (system / "demo-tool").write_text("#!/bin/sh\n")
+    (system / "demo-tool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{system}")
+    rec = install.rewrite_launcher(env, dict(APP), p)                     # what AppKata's start does
+    assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({system / 'demo-tool'})"
+    assert not os.path.lexists(debian_path / "demo-tool")
+    (system / "demo-tool").unlink()
+    rec = install.rewrite_launcher(env, dict(APP), p)                     # the name is free again: the option stood
+    assert "commandRefused" not in rec and os.path.islink(debian_path / "demo-tool")
+
+
+@linux_only
+@pytest.mark.parametrize("on_path", [False, True])
+def test_a_link_that_is_not_appkatas_is_never_replaced_by_a_command_link(env, server, tmp_path, monkeypatch, on_path):
+    # CR1.5-31, R4.3.1.3: "AppKata never replaces a file there that isn't a link it made", and
+    # `_link` took any symbolic link for one it made: the user's own ~/bin/demo-tool -> /opt/... was
+    # replaced. Only a link that leads into the install folder is AppKata's. On the PATH, the
+    # user's link is a command already, so the app is installed without one; off it, the install
+    # stops as it does for a file.
+    cmd, theirs = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
+    cmd.mkdir()
+    theirs.parent.mkdir()
+    theirs.write_text("#!/bin/sh\necho theirs\n")
+    theirs.chmod(0o755)
+    (cmd / "demo-tool").symlink_to(theirs)
+    if on_path:
+        monkeypatch.setenv("PATH", f"{cmd}:{os.environ['PATH']}")
+    a = _appimage(server)
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    if on_path:
+        rec = install.install(env, APP, a, "appimage", [a], portable=p)
+        assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({cmd / 'demo-tool'})"
+    else:
+        with pytest.raises(install.InstallError, match="isn't a link AppKata made"):
+            install.install(env, APP, a, "appimage", [a], portable=p)
+    assert os.readlink(cmd / "demo-tool") == str(theirs)
+
+
+def test_the_install_notice_says_why_no_command_was_added_and_says_it_once():
+    # The owner's decision on CR1.5-31: "the app installs with its menu entry and no command, and the
+    # install says why". The notice is the install's own toast; an update whose reason hasn't
+    # changed doesn't repeat it.
+    from appkata.backend import Backend
+    why = "python3 is a name kept for the system's own command"
+    assert Backend._command_note(why) == " No command was added: python3 is a name kept for the system's own command."
+    assert Backend._command_note(why, before=why) == "" and Backend._command_note("") == "" and Backend._command_note("", before=why) == ""
+    assert Backend._command_note("x is already a command on this computer (/usr/bin/x)", before=why).startswith(" No command was added: x is")

@@ -41,10 +41,11 @@ CASES = {
 def fixed_host(monkeypatch):
     """The same host for every run: the launcher embeds the home, the runtime dir, the log path and
     the helper paths, the seccomp filter exists only on some machines, and whether an app's own
-    sandbox can run inside, and whether xdg-dbus-proxy is here, are facts of the host too (R17.10.2,
-    R17.10; pinned to the common case)."""
+    sandbox can run inside, whether xdg-dbus-proxy is here, and where bwrap is, are facts of the host
+    too (R17.10.2, R17.10, sandbox.host_path; pinned to the common case)."""
     monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
     monkeypatch.setattr(sb, "have_bus_filter", lambda: True)          # xdg-dbus-proxy is here (R17.10)
+    monkeypatch.setattr(sb, "host_path", lambda apps_root=None: sb.HOST_PATH)     # bwrap is in the system's folders
     monkeypatch.setenv("HOME", HOME)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):

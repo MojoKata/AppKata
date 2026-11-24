@@ -7,12 +7,19 @@ grant sets; these feed hostile ones -- spaces, quotes, newlines, globs, `--`, op
 percent escapes, shell metacharacters -- and hold four invariants: the launcher stays valid shell,
 it binds exactly the folders the grant set names and nothing else, `parse_folders` keeps every path
 whole, and the file-argument helper hands every argument back unchanged when it has nothing to
-export, through the same `eval "set -- $fwd"` the launcher uses.
+export, through the launcher's own lines that read its answer.
+
+A fourth kind is the names of commands (CR1.5-31). A launcher runs a dozen host commands before and
+around bwrap, as the user, outside every sandbox, and an app's command link is a command named by
+the app's publisher: the launcher took whatever the PATH it was started with gave it for `python3`,
+`readlink` or `mktemp`, and evaluated what the first of them printed. Two more invariants: nothing on
+the caller's PATH is ever run, and what the helper prints is only ever read as arguments.
 """
 
 import os
 import re
 import shlex
+import shutil
 import subprocess
 
 import sys
@@ -109,27 +116,55 @@ def test_parse_folders_keeps_every_hostile_path_whole():
     assert sb.parse_folders("~/a:RO,~/b:Rw, ,,") == {"~/a": "ro", "~/b": "rw"}
 
 
-def test_every_argument_survives_the_forward_helper_and_the_launchers_eval(tmp_path):
+def _through_the_launchers_own_lines(helper, args, tmp_path, visible=()):
+    """The launcher's own file-argument lines (sb._FORWARD_BLOCK, as build_launcher fills them in),
+    run by sh over `args` with `helper` as the helper; returns the arguments the app would get."""
+    block = sb._FORWARD_BLOCK.format(helper=shlex.quote(str(helper)), incwd='""', visible=" ".join(shlex.quote(str(v)) for v in visible))
+    script = f"id=io.appkata.app; rt={shlex.quote(str(tmp_path / 'rt'))}\n{block}" + 'for a; do printf "%s\\0" "$a"; done\n'
+    r = subprocess.run(["sh", "-euc", script, "sh", *args], capture_output=True, timeout=30,
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert r.returncode == 0, r.stderr
+    return r.stdout.decode().split("\0")[:-1], r.stderr.decode()
+
+
+def test_every_argument_survives_the_forward_helper_and_the_launchers_reading_of_it(tmp_path):
     # The helper rewrites only an existing file outside the visible folders; everything else must
-    # come back byte-for-byte through `eval "set -- $fwd"`, which is what the launcher runs on it.
+    # come back byte for byte through the lines the launcher reads its answer with. An argument
+    # with a line break in it comes back too, which `eval "set -- $(...)"` never managed at the end
+    # of the last one.
     helper = tmp_path / "forward.py"
     helper.write_text(sb.FORWARD_HELPER)
-    args = [w for w in WORDS if "\n" not in w]            # argv can carry a newline; $(...) strips a trailing one
-    r = subprocess.run(["python3", str(helper), "io.appkata.app", str(tmp_path / "rt"), str(tmp_path), "--", *args],
-                       capture_output=True, text=True, timeout=30)
-    assert r.returncode == 0, r.stderr
-    fwd = r.stdout.rstrip("\n")
-    back = subprocess.run(["sh", "-c", 'eval "set -- $1"; for a; do printf "%s\\0" "$a"; done', "sh", fwd],
-                          capture_output=True, timeout=10)
-    assert back.returncode == 0, back.stderr
-    assert back.stdout.decode().split("\0")[:-1] == args
+    args = WORDS + ["trailing\n", "\n", "\\n", "back\\slash\\\\", "=", "=x", "\\c", "a\\0101b", "%s", "x; echo ESCAPED >&2"]
+    back, err = _through_the_launchers_own_lines(helper, args, tmp_path, visible=[tmp_path])
+    assert back == args and err == ""
     # a word that is a real file in a visible folder keeps its path; an option-like file name too
-    for name in ("--ro-bind", "-x", "it's a file", "glob*"):
+    for name in ("--ro-bind", "-x", "it's a file", "glob*", "new\nline"):
         (tmp_path / name).write_text("x")
-    r = subprocess.run(["python3", str(helper), "io.appkata.app", str(tmp_path / "rt"), str(tmp_path), "--",
-                        *(str(tmp_path / n) for n in ("--ro-bind", "-x", "it's a file", "glob*"))],
-                       capture_output=True, text=True, timeout=30)
-    assert r.returncode == 0 and shlex.split(r.stdout) == [str(tmp_path / n) for n in ("--ro-bind", "-x", "it's a file", "glob*")]
+    files = [str(tmp_path / n) for n in ("--ro-bind", "-x", "it's a file", "glob*", "new\nline")]
+    assert _through_the_launchers_own_lines(helper, files, tmp_path, visible=[tmp_path]) == (files, "")
+
+
+HOSTILE_ANSWERS = [
+    "x; echo ESCAPED >&2",                                         # the finding's own: evaluated, it ran
+    "=$(echo ESCAPED >&2)\n=`echo ESCAPED >&2`",                   # the right shape, shell inside
+    "='; echo ESCAPED >&2; '\n=\"; echo ESCAPED >&2; \"",
+    "=a\nEOF\necho ESCAPED >&2\n=b",                              # the end of the here-document it is read from
+    "=\\c\n=\\0101\\x41%s%n",                                     # printf's own escapes
+    "", "=", "=one", "=one\n=two\n=three", "\x00=one\n=two",
+]
+
+
+@pytest.mark.parametrize("answer", HOSTILE_ANSWERS, ids=[repr(a)[:24] for a in HOSTILE_ANSWERS])
+def test_whatever_the_helper_prints_is_read_as_arguments_and_never_run(answer, tmp_path):
+    # CR1.5-31: `eval "set -- $fwd"` ran the helper's answer as shell, on the host, as the user. The
+    # helper is AppKata's own file, but whatever answered to `python3` wrote the answer, and nothing
+    # held the launcher to reading it. The class is every answer, so the helper here is hostile: its
+    # answer may become arguments (when it holds as many as were given) and nothing else.
+    helper = tmp_path / "hostile.py"
+    helper.write_text(f"import sys\nsys.stdout.buffer.write({answer.encode()!r})\n")
+    back, err = _through_the_launchers_own_lines(helper, ["one", "two"], tmp_path)
+    assert "ESCAPED" not in err and len(back) == 2, (back, err)
+    assert back == ["one", "two"] or answer.count("\n=") == 1 and answer.startswith("="), back
 
 
 @pytest.mark.parametrize("name", ["My App", "it's", 'say "hi"', "a;b", "a&b", "$HOME", "`id`", "glob*", "--help", "-", "",
@@ -149,18 +184,28 @@ def test_a_hostile_app_name_gives_a_valid_launcher_and_identity(name, tmp_path, 
     assert (shlex.quote(name) if name else "''") in text          # the name is quoted where the launcher prints it
 
 
-def _run_launcher_with_a_stub_bwrap(text: str, tmp_path) -> subprocess.CompletedProcess:
-    """Run a launcher's own shell -- the guard, the comments, the run-time words -- against a bwrap
-    that only reports it was reached, so what the generated text does on the host is visible."""
+def _stub_bwrap(tmp_path) -> str:
+    """A folder whose bwrap only reports it was reached (and, asked to unpack an AppImage, leaves
+    the folder the launcher expects), so what the generated text does on the host is visible. It is
+    given to build_launcher as the first of the machine's command folders (`path`): a launcher takes
+    its commands from there and nowhere else (CR1.5-31)."""
     bindir = tmp_path / "stub"
     bindir.mkdir(exist_ok=True)
-    (bindir / "bwrap").write_text("#!/bin/sh\necho BWRAP-REACHED\nexit 0\n")
+    (bindir / "bwrap").write_text('#!/bin/sh\necho BWRAP-REACHED\nprev=\n'
+                                  'case " $* " in *" --appimage-extract "*)\n'
+                                  '  for a; do if [ "$prev" = --chdir ]; then mkdir "$a/squashfs-root"; fi; prev=$a; done ;;\nesac\nexit 0\n')
     (bindir / "bwrap").chmod(0o755)
+    return str(bindir)
+
+
+def _run_launcher(text: str, tmp_path, *args, path: str | None = None) -> subprocess.CompletedProcess:
+    """Run a launcher's own shell -- the guard, the comments, the run-time words -- started with
+    `path` as its caller's PATH."""
     lp = tmp_path / "run"
     lp.write_text(text)
     lp.chmod(0o755)
-    return subprocess.run([str(lp)], env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path / "home"),
-                                          "XDG_RUNTIME_DIR": str(tmp_path / "run.d")}, capture_output=True, text=True, timeout=30)
+    return subprocess.run([str(lp), *args], env={"PATH": path or "/usr/bin:/bin", "HOME": str(tmp_path / "home"),
+                                                 "XDG_RUNTIME_DIR": str(tmp_path / "run.d")}, capture_output=True, text=True, timeout=30)
 
 
 @pytest.mark.parametrize("hostile", ["name", "refused-path"])
@@ -184,7 +229,87 @@ def test_text_from_outside_never_becomes_a_line_of_the_launcher(hostile, tmp_pat
         gs["level"] = "strict"                                         # no proxy to start: the stub bwrap is all it needs
         gs = sb.normalize(gs); gs["folders"] = {"~/.ssh/keys\necho INJECTED-BY-PATH\n#": "ro"}
     text = sb.build_launcher("demo", name, str(tmp_path / "home/bin/apps/demo/1"), "bin/demo", gs,
-                             apps_root=str(tmp_path / "home/bin/apps"))
-    r = _run_launcher_with_a_stub_bwrap(text, tmp_path)
+                             apps_root=str(tmp_path / "home/bin/apps"), path=f"{_stub_bwrap(tmp_path)}:{sb.HOST_PATH}")
+    r = _run_launcher(text, tmp_path)
     assert "INJECTED" not in r.stdout + r.stderr, (r.stdout, r.stderr)
     assert "BWRAP-REACHED" in r.stdout, (r.stdout, r.stderr)
+
+
+# The launchers the next two tests run: one for each stretch of host-side shell a grant set can add.
+# Standard ones are built for a host without xdg-dbus-proxy, so no proxy has to answer.
+def _launchers(tmp_path, monkeypatch, path: str) -> dict:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run.d"))
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
+    (tmp_path / "run.d").mkdir()
+    apps = home / "bin/apps"
+    (apps / "demo").mkdir(parents=True)
+    img = apps / "demo" / "Demo-1.AppImage"
+    img.write_bytes(b"\x7fELF")
+    helper = sb.write_forward_helper()
+    common = dict(apps_root=str(apps), forward=helper, shims=sb.shims_dir(), bus_filter=False, path=path)
+    build = lambda gs, **kw: sb.build_launcher("demo", "Demo", str(apps / "demo/1"), "bin/demo", gs, **common, **kw)   # noqa: E731
+    return {
+        "strict": build(sb.resolve_template("strict")),
+        "standard-network": build(sb.resolve_template("online-app")),
+        "cli-tool": build(sb.resolve_template("cli-tool")),
+        "no-inner-sandbox": build(sb.resolve_template("standard"), inner_sandbox=False),
+        "appimage": sb.build_launcher("demo", "Demo", str(apps / "demo/1.extracted"), "AppRun", sb.resolve_template("online-app"),
+                                      str(img), **common),
+    }
+
+
+LAUNCHERS = ["strict", "standard-network", "cli-tool", "no-inner-sandbox", "appimage"]
+
+
+@pytest.mark.parametrize("which", LAUNCHERS)
+@pytest.mark.parametrize("menu", [False, True], ids=["command", "menu"])
+def test_nothing_on_the_callers_path_is_ever_run_by_a_launcher(which, menu, tmp_path, monkeypatch):
+    # CR1.5-31 (High): the launcher set no PATH, so each host command it runs by name -- python3,
+    # readlink, mktemp, stat, bwrap itself -- was whatever came first on the PATH of whoever started
+    # it. On Ubuntu, Debian and Mint ~/bin comes first once it exists, and that is where AppKata
+    # puts a command link named after each app: an app named python3 answered the helper's call, and
+    # its output was evaluated; one named readlink chose a file to bind into another app; one named
+    # mktemp chose the folder a launcher then removes. How it slipped past: every test that ran a
+    # launcher gave it a PATH of its own choosing, with a stand-in bwrap first, so "the caller's
+    # PATH decides" was the harness itself. The class, then: a stand-in first on the caller's PATH
+    # for every command name this machine has, and none of them may run.
+    farm, ran = tmp_path / "callers-bin", tmp_path / "ran.log"
+    farm.mkdir()
+    (tmp_path / "standin").write_text(f'#!/bin/sh\necho "$0" >> {shlex.quote(str(ran))}\necho "x; echo ESCAPED >&2"\nexit 0\n')
+    (tmp_path / "standin").chmod(0o755)
+    names = set(sb.HOST_COMMANDS) | {"sh", "env"}
+    for d in sb.HOST_PATH.split(":"):
+        names.update(os.listdir(d) if os.path.isdir(d) else ())
+    for n in names:
+        os.symlink(tmp_path / "standin", farm / n)
+    text = _launchers(tmp_path, monkeypatch, f"{_stub_bwrap(tmp_path)}:{sb.HOST_PATH}")[which]
+    assert text.splitlines()[2] == "set -eu" and text.splitlines()[5].startswith("PATH=")      # before its first command
+    r = _run_launcher(text, tmp_path, *(["--appkata-menu"] if menu else []), "an argument", str(tmp_path / "standin"),
+                      path=f"{farm}:/usr/bin:/bin")
+    assert not ran.exists(), ran.read_text()
+    assert "ESCAPED" not in r.stdout + r.stderr and "BWRAP-REACHED" in r.stdout and r.returncode == 0, (r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("which", LAUNCHERS)
+@pytest.mark.parametrize("menu", [False, True], ids=["command", "menu"])
+def test_a_launcher_runs_no_host_command_but_the_listed_ones(which, menu, tmp_path, monkeypatch):
+    # sandbox.HOST_COMMANDS is the list no command link may be named after (install.RESERVED_COMMANDS),
+    # so it has to be whole: on a machine whose command folders hold those names and no other, every
+    # stretch of the launcher's shell still gets to bwrap. A command added to the launcher and not to
+    # the list stops here with "not found".
+    only = tmp_path / "only"
+    only.mkdir()
+    for n in sb.HOST_COMMANDS:
+        real = shutil.which(n, path=sb.HOST_PATH)
+        if real and n != "bwrap":
+            os.symlink(real, only / n)
+    os.symlink(os.path.join(_stub_bwrap(tmp_path), "bwrap"), only / "bwrap")
+    text = _launchers(tmp_path, monkeypatch, str(only))[which]
+    r = _run_launcher(text, tmp_path, *(["--appkata-menu"] if menu else []), "an argument", str(tmp_path / "only"))
+    log = tmp_path / "home/.local/state/appkata/apps/demo.log"
+    said = r.stderr + (log.read_text() if log.exists() else "")
+    assert r.returncode == 0 and "BWRAP-REACHED" in r.stdout and "not found" not in said, (r.stdout, said)
