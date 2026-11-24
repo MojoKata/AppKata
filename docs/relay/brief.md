@@ -8,7 +8,7 @@ then `docs/relay/progress.md`, then your batch file. Nothing else from earlier a
 AppKata is the owner's own project, and CR1 is its own code review. The review's findings are GitHub
 issues, and the owner approved a schedule of work units, one pull request each
 (`docs/remediation/CR1-schedule.json`). This relay is the unit **U07, "Tokens and requests: where they go and how they fail"**:
-19 findings (16, and three found by batch 1), fixed in four batches by one agent at a time on the
+21 findings (16, and five its own batches found), fixed in five batches by one agent at a time on the
 branch `cr1-u07-tokens-requests`. You fix your batch's findings in the owner's own code and prove
 each fix. You push nothing and write nothing on GitHub.
 
@@ -17,7 +17,8 @@ each fix. You push nothing and write nothing on GitHub.
 | 1 | #263, #264, #276, #266 | the High finding and the rules for where a token and a request may go |
 | 2 | #275, #297, #292, #434, #485 | how a token is formed, keyed and kept |
 | 3 | #269, #296, #277, #626 | how a Sync survives a failing or slow host |
-| 4 | #265, #298, #293, #683, #681, #682 | a GitHub Enterprise file list, the tests of the whole, and three findings batch 1 found |
+| 4 | #265, #298, #293, #683, #681 | a GitHub Enterprise file list, the tests of the whole, and two findings batch 1 found |
+| 5 | #682, #695, #697 | Http's own connection: three findings the batches found |
 
 Your batch is one file, `docs/relay/batch-N.txt`. Its first lines say where its items came from. The
 code at the head of `cr1-u07-tokens-requests` is the code you work on: earlier batches' commits are

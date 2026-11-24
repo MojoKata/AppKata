@@ -477,3 +477,23 @@ Nothing: every file changed is in U07's files.
     running. `.pytest_cache/` and the `__pycache__` folders in the worktree are git's ignored
     ones, from the brief's own `pytest` commands.
 
+### The coordinator, after batch 3 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_forges.py` and the
+document tests, whole; the batch pushed.
+
+- **New findings filed:** #695 (the headers escape the deadline and Cancel) and #697
+    (`Http.limited`'s key) join this unit as a new batch 5, with #682, since all three are in Http's
+    own connection and records. #696 (the image file removed before the row is written) goes to
+    U15, which holds #284 and those lines.
+- **Batch 4** is now #265, #298, #293, #683 and #681. **One more thing for batch 4**, as a
+    follow-up commit to #277 (doubt 12 of batch 3): a 5xx answered with Retry-After shows "Rate
+    limited until … · add a token in Settings", and the second half doesn't fit a forge that is
+    being maintained. The text is in this unit's files: say only when to try again for a 5xx, keep
+    the token hint for a real rate limit, with a test, and list the new text under needs your eye.
+- **The doubts on #296, #269 and #277** (the 120 seconds, now in R9.2.1; Cancel stops the apps'
+    requests only; `Cancelled` and `Http.stopping`; no row error for the README-image case;
+    `detect` stopping at the first probe with no answer) stand as built and go to the owner under
+    Needs your eye in the pull request.
+- **Needs a run** (the Windows VM tests): the coordinator's, when the last batch is in.
+
