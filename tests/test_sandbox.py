@@ -499,7 +499,7 @@ def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no
 def test_proxy_args_map_capabilities():
     args = sb.proxy_args(sb.resolve_template("media-player"), "vlc")
     assert "--own=org.mpris.MediaPlayer2.*" in args      # media keys
-    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.*@/org/freedesktop/ScreenSaver" in args  # inhibit
+    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.Inhibit@/org/freedesktop/ScreenSaver" in args  # inhibit
 
 
 # The names a grant set opens whole (`--talk`: whatever the connection that owns the name serves),
@@ -529,21 +529,25 @@ def test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_l
             name, rule = a.split("=", 2)[1:]
             member, at, path = rule.partition("@")
             assert member.startswith(("org.", "com.")) and at and path.startswith("/") and path != "/*", a
-    services = {"notifications": ("org.freedesktop.Notifications", ["/org/freedesktop/Notifications"]),
-                "inhibit": ("org.freedesktop.ScreenSaver", ["/org/freedesktop/ScreenSaver", "/ScreenSaver"]),
-                "tray": ("org.kde.StatusNotifierWatcher", ["/StatusNotifierWatcher"])}
-    for cap, (name, paths) in services.items():
+    # CR1.5-44: and of a service's interface, what its capability means. The ScreenSaver interface
+    # also locks the screen, switches the screen saver on and tells how long the user has been idle
+    # (KDE's screen locker serves all of it; GNOME's and Cinnamon's declare it), so Keep the screen
+    # awake opens its inhibit pair alone, and hears none of its signals.
+    services = {"notifications": ("org.freedesktop.Notifications", ["/org/freedesktop/Notifications"], ["*"], True),
+                "inhibit": ("org.freedesktop.ScreenSaver", ["/org/freedesktop/ScreenSaver", "/ScreenSaver"], ["Inhibit", "UnInhibit"], False),
+                "tray": ("org.kde.StatusNotifierWatcher", ["/StatusNotifierWatcher"], ["*"], True)}
+    for cap, (name, paths, members, signals) in services.items():
         rules = [a for a in sb.CAP_PROXY_ARGS[cap] if a.split("=", 2)[1] == name]
         want = set()
         for path in paths:
-            want |= {f"--call={name}={name}.*@{path}", f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}",
-                     f"--broadcast={name}={name}.*@{path}"}
+            want |= {f"--call={name}={name}.{m}@{path}" for m in members} | {f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}"}
+            want |= {f"--broadcast={name}={name}.*@{path}"} if signals else set()
         if cap == "tray":       # what Qt's tray icon reads before it registers (IsStatusNotifierHostRegistered)
             want |= {f"--call={name}=org.freedesktop.DBus.Properties.{m}@/StatusNotifierWatcher" for m in ("Get", "GetAll")}
         assert set(rules) == want, cap
     # an app without a capability has none of its rules, on either road
     plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")
-    assert not [a for a in plain for name, _ in services.values() if name in a]
+    assert not [a for a in plain for name, *_ in services.values() if name in a]
 
 
 def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
@@ -561,7 +565,8 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     assert portal.format("Notification") in web and direct.format("Notifications") in web
     assert portal.format("Inhibit") not in web and not [a for a in web if "org.freedesktop.ScreenSaver" in a]
     chat = sb.proxy_args(sb.resolve_template("messenger"), "chat")           # both
-    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and direct.format("ScreenSaver") in chat
+    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat
+    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.Inhibit@/org/freedesktop/ScreenSaver" in chat
     # CR1.5-28: so do the two portals that tell of the host's network, with the network grant. An
     # offline-editor has no network: neither portal, nor the signal that says the network changed.
     changed = "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop"

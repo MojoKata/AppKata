@@ -413,9 +413,10 @@ loop.run()
 print("HEARD", *sorted(h for h in heard if not h.startswith("org.freedesktop.DBus.")), flush=True)
 """
 
-# capability: its direct name, the objects its service is on, the signal the stand-in sends from it
+# capability: its direct name, the objects its service is on, the signal the stand-in sends from it,
+# and whether the app hears it (Keep the screen awake hears nothing of the screen saver: CR1.5-44)
 _DIRECT_NAMES = {"notifications": ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "NotificationClosed"),
-                 "inhibit": ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver,/ScreenSaver", "ActiveChanged"),
+                 "inhibit": ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver,/ScreenSaver", "ActiveChanged", False),
                  "tray": ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "StatusNotifierHostRegistered")}
 
 
@@ -427,7 +428,7 @@ def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bu
     sandbox (shown on the Mint 22.3 desktop). Every stand-in until then owned one name and served
     one object, so nothing showed it. This one is a shell: the app's own service answers, on each
     of its objects, and the shell's Eval is refused by every road, and never arrives."""
-    name, paths, signal = _DIRECT_NAMES[cap]
+    name, paths, signal, *heard = _DIRECT_NAMES[cap]
     log = tmp_path / f"shell-{cap}.log"
     on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
     shell = subprocess.Popen(["python3", "-c", _SHELL, name, paths, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -460,7 +461,8 @@ def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bu
     assert "EVAL" not in served and served.count("SERVED") == len(paths.split(",")), served   # nothing but the service's own calls arrived
     # the Properties calls a tray library makes (Qt: IsStatusNotifierHostRegistered) pass; the other services have none
     assert ("PROPERTY ANSWERED" if cap == "tray" else "PROPERTY REFUSED org.freedesktop.DBus.Error.AccessDenied") in out, r.stdout
-    assert f"HEARD {name}.{signal}" in out, r.stdout                                    # the service's own signal, and not the shell's
+    hears = [l for l in out if l.startswith("HEARD")]
+    assert hears == [f"HEARD {name}.{signal}" if heard != [False] else "HEARD"], r.stdout     # the service's own signal, and not the shell's
     out2 = r2.stdout.splitlines()                                                       # and without the capability, not even the service
     assert not [l for l in out2 if "ANSWERED" in l] and "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.stdout, r2.stderr)
     assert "HEARD" in out2, r2.stdout
@@ -2286,16 +2288,25 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
     assert "OTHER-PLAYER REFUSED" in r2.stdout and "OTHER-OBJECT REFUSED" in r2.stdout, r2.stdout    # no capability: no player at all
 
 
+# org.freedesktop.ScreenSaver as the desktops declare it: KDE's screen locker (kwin 6.3, ksmserver
+# 5.27) serves every member, and Lock locks the screen; GNOME's and Cinnamon's screensaver proxies
+# declare the same and answer all but the inhibit pair with NotSupported. The stand-in answers all.
 _SCREENSAVER = """
 import sys
 from gi.repository import Gio, GLib
-XML = '''<node><interface name="org.freedesktop.ScreenSaver">
+XML = '''<node><interface name="org.freedesktop.ScreenSaver"><method name="Lock"/><method name="SimulateUserActivity"/>
+<method name="GetActive"><arg type="b" direction="out"/></method><method name="GetActiveTime"><arg type="u" direction="out"/></method>
+<method name="GetSessionIdleTime"><arg type="u" direction="out"/></method><method name="SetActive"><arg type="b" direction="out"/><arg type="b" direction="in"/></method>
 <method name="Inhibit"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
-<method name="UnInhibit"><arg type="u" direction="in"/></method></interface></node>'''
+<method name="UnInhibit"><arg type="u" direction="in"/></method>
+<method name="Throttle"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
+<method name="UnThrottle"><arg type="u" direction="in"/></method><signal name="ActiveChanged"><arg type="b"/></signal></interface></node>'''
+ANSWERS = {"Inhibit": "(u)", "Throttle": "(u)", "GetActive": "(b)", "SetActive": "(b)", "GetActiveTime": "(u)", "GetSessionIdleTime": "(u)"}
 log = open(sys.argv[1], "a")
 def call(conn, sender, path, iface, method, params, inv):
     log.write(f"{method} {params.unpack()}\\n"); log.flush()
-    inv.return_value(GLib.Variant("(u)", (42,)) if method == "Inhibit" else None)
+    t = ANSWERS.get(method)
+    inv.return_value(GLib.Variant(t, (42 if "u" in t else True,)) if t else None)
 bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 for path in ("/ScreenSaver", "/org/freedesktop/ScreenSaver"):
     bus.register_object(path, Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0], call, None, None)
@@ -2303,17 +2314,28 @@ Gio.bus_own_name_on_connection(bus, "org.freedesktop.ScreenSaver", Gio.BusNameOw
 GLib.MainLoop().run()
 """
 
+# the members besides the inhibit pair, each with its arguments for `gdbus call`
+_SCREENSAVER_OTHERS = {"Lock": "", "SetActive": "true", "SimulateUserActivity": "", "GetActive": "", "GetActiveTime": "",
+                       "GetSessionIdleTime": "", "Throttle": 'appkata "a call"', "UnThrottle": "42"}
+
 
 @needs_proxy
 def test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability(env, tmp_path):
     # "Keep the screen awake": the portal road is in the host-caller test; this is the direct
     # org.freedesktop.ScreenSaver name the non-GLib apps (Electron's powerSaveBlocker, Qt, mpv) use.
+    # CR1.5-44: the stand-in served the inhibit pair alone, so the test could not see that the
+    # capability opened the whole interface: an app with it locked the screen under KDE's locker.
+    # It serves what the desktops declare now, and the app gets the pair, on both objects, alone.
     bus = _Bus(env)
     log = tmp_path / "ss.log"
     ss = subprocess.Popen(["python3", "-c", _SCREENSAVER, str(log)], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    call = ('gdbus call --session --dest org.freedesktop.ScreenSaver --object-path /org/freedesktop/ScreenSaver '
-            '--method org.freedesktop.ScreenSaver.Inhibit appkata "a call" 2>&1')
+    call = ('gdbus call --session --dest org.freedesktop.ScreenSaver --object-path {} '
+            '--method org.freedesktop.ScreenSaver.{} {} 2>&1')
+    asked = "appkata 'a call'"
+    calls = [f'echo "{path} Inhibit: $({call.format(path, "Inhibit", asked)})"; '
+             f'echo "{path} UnInhibit: $({call.format(path, "UnInhibit", "42")})"' for path in ("/org/freedesktop/ScreenSaver", "/ScreenSaver")]
+    calls += [f'echo "{m}: $({call.format("/ScreenSaver", m, a)})"' for m, a in _SCREENSAVER_OTHERS.items()]
     try:
         for _ in range(50):
             r = subprocess.run(["sh", "-c", "gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus "
@@ -2322,13 +2344,19 @@ def test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability(e
             if r.stdout.strip() == "(true,)":
                 break
             subprocess.run(["sleep", "0.1"])
-        r = env.run(env.app("awake", sb.resolve_template("messenger")), call, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
-        r2 = env.run(env.app("sleepy", sb.resolve_template("online-app")), call, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r = env.run(env.app("awake", sb.resolve_template("messenger")), "; ".join(calls), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r2 = env.run(env.app("sleepy", sb.resolve_template("online-app")), calls[0], env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
     finally:
         ss.terminate()
         bus.close()
-    assert r.stdout.strip() == "(uint32 42,)", (r.stdout, r.stderr)                       # inhibited, cookie back
-    assert "Inhibit ('appkata', 'a call')" in log.read_text()
+    out = r.stdout.splitlines()
+    for path in ("/org/freedesktop/ScreenSaver", "/ScreenSaver"):
+        assert f"{path} Inhibit: (uint32 42,)" in out and f"{path} UnInhibit: ()" in out, (r.stdout, r.stderr)    # inhibited, cookie back
+    served = log.read_text()
+    assert served.count("Inhibit ('appkata', 'a call')") == 2 and served.count("UnInhibit (42,)") == 2, served
+    for m in _SCREENSAVER_OTHERS:
+        assert any(l.startswith(f"{m}: Error: GDBus.Error:org.freedesktop.DBus.Error.AccessDenied") for l in out), (m, r.stdout)
+        assert not [l for l in served.splitlines() if l.split()[0] == m], (m, served)       # and it never arrived
     assert "AccessDenied" in r2.stdout or "ServiceUnknown" in r2.stdout, r2.stdout        # no capability: no name
 
 

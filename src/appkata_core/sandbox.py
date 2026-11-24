@@ -1394,7 +1394,8 @@ def _portal_call(interface: str, obj: str = _PORTAL_PATH) -> str:
     return f"--call={_PORTAL}=org.freedesktop.portal.{interface}.*@{obj}"
 
 
-def _service_rules(name: str, *paths: str, also: tuple[str, ...] = ()) -> list[str]:
+def _service_rules(name: str, *paths: str, members: tuple[str, ...] = ("*",), also: tuple[str, ...] = (),
+                   signals: bool = True) -> list[str]:
     """xdg-dbus-proxy rules that open a desktop service by its direct name the way the portal is
     opened: the service's own interface (named as its bus name is) on its own objects, and nothing
     else on that name. Never `--talk=NAME`, which is no grant of one service: the proxy gives it to
@@ -1408,12 +1409,16 @@ def _service_rules(name: str, *paths: str, also: tuple[str, ...] = ()) -> list[s
     type a call's arguments from (without it neither got a Notify to dunst: an int32 guessed for
     its uint32, no guess for its empty list) and Qt's QDBusInterface reads before it gives a
     property; the `also` calls; and the service's own broadcast signals (NotificationClosed,
-    ActionInvoked), where `--talk` let every broadcast of the owner in."""
+    ActionInvoked), where `--talk` let every broadcast of the owner in.
+
+    `members` narrows the interface to the calls a capability means, and `signals=False` leaves
+    its broadcasts out, where the interface does more than that (the ScreenSaver's, below)."""
     rules = []
     for path in paths:
-        rules += [f"--call={name}={name}.*@{path}", f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}"]
+        rules += [f"--call={name}={name}.{member}@{path}" for member in members]
+        rules.append(f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}")
         rules += [f"--call={name}={method}@{path}" for method in also]
-        rules.append(f"--broadcast={name}={name}.*@{path}")
+        rules += [f"--broadcast={name}={name}.*@{path}"] if signals else []
     return rules
 
 
@@ -1432,10 +1437,18 @@ _WATCHER_PROPERTIES = ("org.freedesktop.DBus.Properties.Get", "org.freedesktop.D
 # notified through GLib). A direct name is opened for its service alone (_service_rules).
 # Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix). Media keys' is what an
 # app nobody named gets; a named one owns its own name alone (proxy_args).
+#
+# Keep the screen awake opens the ScreenSaver interface's inhibit pair alone, on both of the objects
+# it is on, and none of its signals (CR1.5-44). The same interface has Lock, SetActive,
+# SimulateUserActivity, GetActive, GetActiveTime, GetSessionIdleTime, Throttle and ActiveChanged:
+# KDE's screen locker serves them (kwin 6.3, where Lock from a sandboxed app with the capability
+# locked the screen), and GNOME's and Cinnamon's screensaver proxies declare them and answer
+# NotSupported to all but the pair. An app keeping the screen awake makes those two calls alone.
+_INHIBIT_MEMBERS = ("Inhibit", "UnInhibit")
 CAP_PROXY_ARGS = {
     "notifications": [_portal_call("Notification"), *_service_rules("org.freedesktop.Notifications", "/org/freedesktop/Notifications")],
-    # the direct name's service is on two objects
-    "inhibit": [_portal_call("Inhibit"), *_service_rules("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "/ScreenSaver")],
+    "inhibit": [_portal_call("Inhibit"), *_service_rules("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "/ScreenSaver",
+                                                         members=_INHIBIT_MEMBERS, signals=False)],
     "tray": [*_service_rules("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", also=_WATCHER_PROPERTIES), *_TRAY_OWNS],
     "mpris": ["--own=org.mpris.MediaPlayer2.*"],
     "secrets": ["--talk=org.freedesktop.secrets"],
