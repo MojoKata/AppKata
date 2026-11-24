@@ -781,8 +781,9 @@ DEFAULT_BWRAP = "/usr/bin/bwrap"
 
 
 def bwrap_path() -> str:
-    """The bwrap the profile must name: the one on PATH, with symlinks resolved."""
-    found = shutil.which("bwrap")
+    """The bwrap the profile must name: the one every launcher runs (:func:`host_which`), with
+    symlinks resolved."""
+    found = host_which("bwrap")
     return os.path.realpath(found) if found else DEFAULT_BWRAP
 
 
@@ -809,8 +810,9 @@ _nested_cache: bool | None = None
 def have_tools() -> bool:
     """Whether this system can sandbox at all: bwrap is all a launcher needs. xdg-dbus-proxy only gives
     a Standard app its filtered session bus, and without it the app still runs sandboxed, with no bus
-    (:func:`have_bus_filter`; review 2, F12: a missing proxy left every app, Strict too, unsandboxed)."""
-    return bool(shutil.which("bwrap"))
+    (:func:`have_bus_filter`; review 2, F12: a missing proxy left every app, Strict too, unsandboxed).
+    The bwrap a launcher can run (:func:`host_which`), not just any on AppKata's own PATH."""
+    return bool(host_which("bwrap"))
 
 
 def have_bus_filter() -> bool:
@@ -823,8 +825,9 @@ TOOL_PACKAGES = {"bwrap": "bubblewrap", "xdg-dbus-proxy": "xdg-dbus-proxy"}
 
 
 def missing_tools() -> list[str]:
-    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order."""
-    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not shutil.which(exe)]
+    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order, as
+    :func:`have_tools` and :func:`have_bus_filter` say."""
+    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not (have_tools() if exe == "bwrap" else have_bus_filter())]
 
 
 def tools_hints(missing: list[str]) -> dict:
@@ -867,12 +870,13 @@ def userns_works(refresh: bool = False) -> bool:
     global _userns_cache, _userns_failed_at
     if _userns_cache is not None and not refresh and (_userns_cache or time.monotonic() - _userns_failed_at < PROBE_RETRY_S):
         return _userns_cache
-    if OS != "linux" or not shutil.which("bwrap"):
+    bwrap = host_which("bwrap") if OS == "linux" else None      # the one the launchers run, and no other
+    if not bwrap:
         _userns_cache, _userns_failed_at = False, time.monotonic()
         return False
     try:
         p = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
+            [bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
              "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
              "--unshare-user", "--die-with-parent", "--", "/usr/bin/true"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
@@ -899,7 +903,7 @@ def nested_userns_works(refresh: bool = False) -> bool:
         return True
     try:
         p = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+            [host_which("bwrap") or "bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
              "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-user", "--die-with-parent",
              "--", unshare, "--user", "--map-root-user", "/usr/bin/true"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
@@ -1780,6 +1784,21 @@ def host_path(apps_root: str | None = None) -> str:
         if (real + os.sep).startswith(os.path.realpath(root) + os.sep):
             return HOST_PATH
     return HOST_PATH if ":" in folder else f"{HOST_PATH}:{folder}"
+
+
+def host_which(name: str, apps_root: str | None = None) -> str | None:
+    """The host command `name` a launcher written now runs (R17.4), as its PATH (:func:`host_path`)
+    finds it, or None; `apps_root` is the install folder, the default one when not given. Everything
+    AppKata decides about bwrap asks this -- whether it is here, the bwrap the AppArmor profile names
+    (R17.10), the probes that say the sandbox works and whether an app's own sandbox can run inside,
+    the AppImage kind probe -- so each answer is about the very file the launchers run. They asked
+    AppKata's own PATH, where a login's ~/.local/bin comes first: with a newer bwrap of the user's
+    there, the setup profiled and the probe passed on that one while every launcher ran the
+    system's, which no profile covered (#689's review, P1-4)."""
+    if apps_root is None:
+        from .platform import apps_dir
+        apps_root = apps_dir()
+    return shutil.which(name, path=host_path(apps_root))
 
 
 _LAUNCHER_HEADER = """#!/bin/sh

@@ -318,8 +318,9 @@ def test_a_launcher_runs_no_host_command_but_the_listed_ones(which, menu, tmp_pa
 
 
 # A bwrap the system's folders lack (sandbox.host_path): the launcher takes its commands from those
-# folders alone, and AppKata takes bwrap from its own PATH (sandbox.have_tools), so a bwrap the user
-# built or installed with a package manager of their own has its folder added after them.
+# folders alone, and AppKata finds a bwrap on its own PATH too, so a bwrap the user built or
+# installed with a package manager of their own has its folder added after them. What AppKata says
+# of bwrap is said of that one (sandbox.host_which).
 def _system_without_bwrap(tmp_path, monkeypatch) -> str:
     """A machine whose command folders (sandbox.HOST_PATH, here one folder) hold every command a
     launcher runs but bwrap, with a home; returns that folder."""
@@ -382,10 +383,10 @@ def test_a_launchers_path_gains_the_folder_of_a_bwrap_the_system_lacks_unless_th
     monkeypatch.chdir(tmp)
     monkeypatch.setenv("PATH", f"{entry.format(tmp=tmp)}:{system}")    # AppKata's own, a login's: the user's folder first
     apps = str(tmp / "home/bin/apps")
-    assert sb.have_tools()                                             # AppKata says the sandbox works here
     assert sb.host_path(apps) == (f"{system}:{tmp / gains}" if gains else system)
+    assert sb.have_tools() is bool(gains)          # AppKata says bwrap is here exactly where a launcher reaches one
     _program(tmp / "system/bwrap")
-    assert sb.host_path(apps) == system
+    assert sb.host_path(apps) == system and sb.have_tools()
 
 
 def test_a_folder_whose_name_holds_a_colon_never_joins_a_launchers_path(tmp_path, monkeypatch):
@@ -393,14 +394,15 @@ def test_a_folder_whose_name_holds_a_colon_never_joins_a_launchers_path(tmp_path
     # launcher's PATH line it would be read as two folders, neither of them the one AppKata found, the
     # second relative to wherever the launcher is started. AppKata finds a bwrap there only through
     # a relative entry of its own PATH, from inside it; the launcher keeps the system's folders alone,
-    # and says bwrap isn't installed (test_sandbox.py, test_a_launcher_says_plainly_when_bwrap_is_missing).
+    # and says bwrap isn't installed (test_sandbox.py, test_a_launcher_says_plainly_when_bwrap_is_missing),
+    # as AppKata does.
     tmp = tmp_path.resolve()
     system = _system_without_bwrap(tmp, monkeypatch)
     _program(tmp / "a:b/bwrap")
     monkeypatch.chdir(tmp / "a:b")
     monkeypatch.setenv("PATH", f".:{system}")
-    assert sb.have_tools()
     assert sb.host_path(str(tmp / "home/bin/apps")) == system
+    assert not sb.have_tools() and "bubblewrap" in sb.missing_tools()
 
 
 @pytest.mark.parametrize("menu", [False, True], ids=["command", "menu"])
@@ -424,3 +426,46 @@ def test_a_launcher_reaches_the_bwrap_appkata_found_outside_the_systems_folders(
     log = tmp / "home/.local/state/appkata/apps/demo.log"
     said = r.stderr + (log.read_text() if log.exists() else "")
     assert r.returncode == 0 and "BWRAP-REACHED" in r.stdout and "not found" not in said, (r.stdout, said)
+
+
+@pytest.mark.parametrize("found", ["the system's and the user's", "the user's alone"])
+def test_appkata_asks_about_the_very_bwrap_a_launcher_runs(found, tmp_path, monkeypatch):
+    # #689's review, P1-4: a launcher runs the bwrap of the system's folders whenever they hold one
+    # (host_path), and everything AppKata decides about bwrap asked its own PATH, where a login's
+    # ~/.local/bin comes first: the AppArmor profile's attachment (R17.10), the probe that says the
+    # sandbox works, the one that decides an app's own sandbox gets --no-sandbox, and whether bwrap
+    # is here at all. With a newer bwrap of the user's there on Ubuntu 24.04 the setup profiled it,
+    # the probe passed on it, and every launcher ran /usr/bin/bwrap, which no profile covered: no
+    # sandboxed app started. The AppImage kind probe ran it too. Here each stand-in says where it
+    # ran from, and every answer has to be about the bwrap a launcher runs.
+    tmp = tmp_path.resolve()
+    system = _system_without_bwrap(tmp, monkeypatch)
+    own, ran = tmp / "home/.local/bin", tmp / "ran.log"
+
+    def standin(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'#!/bin/sh\necho "$0 $*" >> {shlex.quote(str(ran))}\nexit 0\n')
+        path.chmod(0o755)
+    standin(own / "bwrap")
+    both = found == "the system's and the user's"
+    if both:
+        standin(tmp / "system" / "bwrap")
+    # AppKata's own PATH, a login's: the user's folder first; /usr/bin after, for unshare, which the
+    # inner-sandbox probe runs inside bwrap by its path
+    monkeypatch.setenv("PATH", f"{own}:{system}:/usr/bin")
+    monkeypatch.setattr(sb, "_userns_cache", None)
+    monkeypatch.setattr(sb, "_nested_cache", None)
+    runs = str(tmp / "system" / "bwrap") if both else str(own / "bwrap")
+    launchers = sb.host_path(str(tmp / "home/bin/apps"))
+    assert shutil.which("bwrap", path=launchers) == runs                    # what every launcher runs
+    assert sb.bwrap_path() == runs and f"profile appkata-sandbox {runs} flags=" in sb.profile_text()     # the profile names it
+    assert f"{shlex.quote(runs)} --ro-bind" in sb.setup_script()             # and the setup probes it, as the user
+    assert sb.have_tools() and "bubblewrap" not in sb.missing_tools()
+    assert sb.userns_works(refresh=True) and sb.nested_userns_works(refresh=True)
+    from appkata_core import appkind
+    (tmp / "Demo.AppImage").write_text("x")
+    assert appkind.kind_of_appimage(str(tmp / "Demo.AppImage")) is None        # what an AppImage is: its runtime, run in bwrap
+    probed = ran.read_text().splitlines()
+    assert {line.split()[0] for line in probed} == {runs}, probed                  # every probe ran it, and no other
+    assert any("--unshare-user" in line for line in probed) and any("--appimage-extract" in line for line in probed)
+    assert any("--map-root-user" in line for line in probed) is bool(shutil.which("unshare", path="/usr/bin")), probed

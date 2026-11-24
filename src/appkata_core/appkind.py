@@ -24,7 +24,6 @@ from __future__ import annotations
 import configparser
 import os
 import re
-import shutil
 import struct
 import subprocess
 import tempfile
@@ -160,11 +159,14 @@ def _ships_a_display_library(folder: str) -> bool:
 def kind_of_appimage(img: str, timeout: float = 60) -> str | None:
     """An AppImage's kind from the Terminal key of the .desktop at its root, read by its own runtime
     inside a bwrap that can write only a staging folder and has no network (the launcher's unpacking,
-    R17.7). None where bwrap can't run or the runtime gives no .desktop."""
-    if not shutil.which("bwrap") or not os.path.isfile(img):
+    R17.7). None where bwrap can't run or the runtime gives no .desktop. The bwrap is the one the
+    launchers run (sandbox.host_which), which the AppArmor profile names (R17.10)."""
+    from .sandbox import host_which
+    bwrap = host_which("bwrap")
+    if not bwrap or not os.path.isfile(img):
         return None
     with tempfile.TemporaryDirectory(prefix="appkata-kind-") as stg:
-        cmd = ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+        cmd = [bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
                "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin", "--ro-bind", "/etc", "/etc",
                "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--ro-bind", img, img, "--bind", stg, stg,
                "--chdir", stg, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",

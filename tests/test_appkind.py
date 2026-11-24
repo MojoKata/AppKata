@@ -138,7 +138,8 @@ def test_a_tarballs_program_is_an_app_when_it_or_a_library_beside_it_links_a_dis
     assert appkind.kind_of_folder(str(tmp_path / "v"), program) == kind
 
 def test_an_appimage_without_bwrap_is_unknown(tmp_path, monkeypatch):
-    monkeypatch.setattr(appkind.shutil, "which", lambda name: None)
+    from appkata_core import sandbox
+    monkeypatch.setattr(sandbox, "host_which", lambda name, apps_root=None: None)        # no bwrap a launcher can run
     img = tmp_path / "X.AppImage"
     img.write_text("#!/bin/sh\n")
     assert appkind.kind_of_appimage(str(img)) is None
@@ -156,13 +157,14 @@ def test_the_appimage_runtime_runs_sandboxed_and_its_desktop_decides(tmp_path, m
         with open(os.path.join(stg, "squashfs-root", "nvim.desktop"), "w") as f:
             f.write("[Desktop Entry]\nName=Neovim\nExec=nvim %F\nTerminal=true\n")
         return subprocess.CompletedProcess(cmd, 0)
-    monkeypatch.setattr(appkind.shutil, "which", lambda name: "/usr/bin/bwrap")
+    from appkata_core import sandbox
+    monkeypatch.setattr(sandbox, "host_which", lambda name, apps_root=None: f"/usr/bin/{name}")    # the launchers' bwrap
     monkeypatch.setattr(appkind.subprocess, "run", fake_run)
     img = tmp_path / "nvim.AppImage"
     img.write_text("x")
     assert appkind.kind_of_appimage(str(img)) == "cli"
     cmd = seen[0]
-    assert cmd[0] == "bwrap" and "--unshare-all" in cmd and "--share-net" not in cmd
+    assert cmd[0] == "/usr/bin/bwrap" and "--unshare-all" in cmd and "--share-net" not in cmd
     assert cmd[-3:] == [str(img), "--appimage-extract", "*.desktop"]
     i = cmd.index("--ro-bind", cmd.index("/etc"))                    # the image read-only, the staging dir the only rw bind
     assert cmd[i:i + 3] == ["--ro-bind", str(img), str(img)]

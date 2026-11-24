@@ -881,13 +881,17 @@ def test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder(fake_
 
 def test_profile_names_the_bwrap_actually_installed(monkeypatch, tmp_path):
     # Regression: the profile hard-coded /usr/bin/bwrap, so with bwrap elsewhere it attached to nothing.
+    # It names the bwrap the launchers run, the system's folders' (R17.4), through its links (a
+    # stand-in system folder here; tests/test_sandbox_adversarial.py has the user's bwrap beside it).
     real = tmp_path / "opt" / "bwrap"
     real.parent.mkdir()
-    real.write_text("")
+    real.write_text("#!/bin/sh\n")
+    real.chmod(0o755)
     link = tmp_path / "bin" / "bwrap"
     link.parent.mkdir()
     link.symlink_to(real)
-    monkeypatch.setattr(sb.shutil, "which", lambda name: str(link) if name == "bwrap" else None)
+    monkeypatch.setattr(sb, "HOST_PATH", str(tmp_path / "bin"))
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     assert f"profile appkata-sandbox {real} flags=(unconfined)" in sb.profile_text()
     assert "profile appkata-sandbox /usr/bin/bwrap flags=(unconfined)" in sb.PROFILE_TEXT      # the documented shape
 
@@ -897,7 +901,7 @@ def test_setup_counts_only_when_bwrap_then_works(monkeypatch, works):
     # Regression: install_profile returned True whatever the probe said afterwards, and the UI then
     # told the user sandbox support was set up while every app kept running Off.
     monkeypatch.setattr(sb, "OS", "linux")
-    monkeypatch.setattr(sb.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(sb.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
     ran = []
     monkeypatch.setattr(sb.subprocess, "run", lambda cmd, **kw: (ran.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
     monkeypatch.setattr(sb, "userns_works", lambda refresh=False: works)
