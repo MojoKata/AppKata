@@ -243,3 +243,192 @@ document tests, whole; the batch pushed.
 - **Needs a run** (the Cinnamon run of #378 with the script in batch 1's section, and the usual
     launcher and desktop VMs): the coordinator's, when the last batch is in.
 
+## Batch 2
+
+Agent: Fable 5.2, high effort. Head after the batch: the commit that adds this section; the code is at `715070b`.
+
+### Files touched
+
+`src/appkata_core/sandbox.py`; `tests/test_sandbox.py`, `tests/test_sandbox_run.py`, `tests/skips/tier1.txt`;
+`tests/data/launchers/cli-tool.sh`, `developer-every-capability.sh`, `messenger-camera.sh`,
+`online-app-appimage-with-folders.sh`, `standard-writable-no-x11.sh` (the proxy's block alone, by
+`UPDATE_GOLDEN=1 pytest tests/test_launcher_golden.py`, in each of the two commits; `strict-tarball.sh` is unchanged);
+`docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md`, `R17.17-limits.md`;
+`docs/architecture/A1-app-sandboxing/A1.2-approach.md`, `A1.9-limits.md`; `docs/requirements-trace.md`; this file.
+
+### Counts
+
+fixed 2 · no defect 0 · remedy changed 0 · set aside 0 · still left 1 · new 0
+
+### The findings
+
+The containers, by hand as the brief says (the images and commands of `scripts/test-sandbox.sh launcher` and
+`launcher-lmde7` and of `scripts/test-tier1.sh`, a 3 GB cap): Mint 22.3 has bwrap 0.9.0, xdg-desktop-portal 1.20.0,
+GLib 2.80.0, dbus 1.14.10, xdg-dbus-proxy 0.1.5; LMDE 7 has bwrap 0.12.0, portal 1.20.3, GLib 2.84.4, dbus 1.16.2,
+xdg-dbus-proxy 0.1.6.
+
+**#393 (CR1.5-18), fixed: `a71b180`.** The launcher reads the session's address: unset or empty it is
+`unix:path=$XDG_RUNTIME_DIR/bus`; a `unix:path=` socket is bound into the proxy's bwrap at its own path (the file
+alone, read-only); `unix:abstract=` needs nothing bound; any other address gets no proxy, a line on stderr, and the
+app runs with no session bus. Reproduced first in the Mint container: `dbus-run-session` prints
+`unix:path=/tmp/dbus-…,guid=…`, and the proxy in the old bwrap answers every connection with "Failed to connect to
+bus: Could not connect: No such file or directory".
+
+- Tier 1 (`tests/test_sandbox.py`), the class: the generated launcher run against a bwrap that records its words,
+  for each kind of address (`test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is`, 6 cases) and for those
+  it can't read (`test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus`, 9 cases). On an
+  export of `f075bcd` with the new test files: 15 failed (14 of those cases and the changed
+  `test_proxy_startup_is_set_u_safe_and_bails_if_proxy_dies`); the abstract address passes there, as it should.
+- Tier 2 (`tests/test_sandbox_run.py`): `test_standard_apps_reach_the_session_bus_wherever_it_listens` (a real
+  `dbus-run-session`, and a bus in the runtime folder that no variable names: the app owns its name, the real
+  xdg-desktop-portal answers, FileChooser is refused) and
+  `test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one` (3 cases). On the export, in
+  the Mint container: 5 failed ("Error connecting: Error receiving data: Connection reset by peer" for each call;
+  a bus socket inside and nothing on stderr for the three addresses).
+- On the fix: tier 1 2712 passed, 126 skipped; the launcher tier 135 passed, 5 skipped in the Mint 22.3 container
+  and the same in the LMDE 7 one.
+
+**#399 (CR1.5-24), fixed: `715070b`.** The owner's decision. The proxy's bwrap binds `/usr` and `/etc` read-only,
+`$XDG_RUNTIME_DIR/appkata` read-write and the bus socket read-only; it has its own pid, IPC, UTS and cgroup
+namespaces and, where the bus is a socket file, its own network (`--unshare-net`); it takes the terminal-injection
+seccomp filter (`--seccomp 3` on a descriptor opened for that command alone), or `--new-session` where the
+machine has no filter. R17.17 and A1.9 say what is left.
+
+- The remedy's condition (the proxy reaches nothing else in the runtime folder): every bus test of the launcher
+  tier passes with the narrowed sandbox, on xdg-dbus-proxy 0.1.5 and 0.1.6.
+- Tier 1: `test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alone` (every word of the proxy's
+  bwrap, 5 addresses) and `test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own`. On an export of
+  `a71b180` with the new test files: 6 failed.
+- Tier 2: `test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone`, on a socket file and
+  on an abstract bus: a bwrap wrapper runs the launcher's own words with a look inside before the proxy starts
+  (what `find /` sees, the namespaces, `Seccomp:` in `/proc/self/status`), and the app still owns its name
+  through it. On the export, Mint container: both cases failed (the keyring, gnupg, doc, pipewire and wayland
+  entries of the runtime folder in sight).
+- The dbus 1.12 case: no image here has dbus 1.12, so the abstract case is a dbus-daemon told
+  `--address=unix:abstract=…` (1.14 and 1.16 still listen on one). The proxy stays in the host's network
+  namespace there and has its own everywhere else.
+- **A fault of the tests fixed in the same commit** (in `tests/test_sandbox_run.py`):
+  `test_a_standard_launch_leaves_no_proxy_running` looked for the app's id in the proxy's command line, and the
+  socket is named by a hash of the id since R3-12, so it found no proxy while the app ran either and could not
+  fail. It now sees the proxy first, then wants it gone. It passes before and after.
+- **First try, undone before the commit**: `--unshare-all` with `--share-net` for the abstract case failed 49 cases
+  of `tests/test_sandbox_properties.py` (U16's), which read `--share-net` in a launcher's text as the network
+  grant, as `scripts/sandbox/exposure.py` and others do. The namespaces are named one by one, and a tier 1 test
+  holds that the proxy's bwrap never says `--share…`.
+- On the fix: tier 1 2718 passed, 128 skipped (on the committed tree); the launcher tier 137 passed, 5 skipped in
+  each container (on a snapshot that differs only in the wording of A1.9's bullet and R17.17's second sentence).
+- The harnesses with real programs, on an export of `715070b` (their own images and commands): `inputmethod`,
+  `wayland`, `filedialogs` and `consumers` each end `EXPECTED: ok`.
+
+**#403 (CR1.5-28), still left: no commit.** The fix is written and proven, and one word of it is in a file U46
+claims.
+
+- **What the decided remedy does when taken alone.** With ProxyResolver refused, a GLib program without the network
+  grant can no longer make any connection through GIO, one to a server of its own on the loopback included: GLib
+  asks that portal for a proxy before every connection (`gproxyresolverportal.c`) and fails the connection when
+  the answer is a refusal. Run with GLib 2.80 and 2.84, a `Gio.SocketClient` to `127.0.0.1` inside an
+  `offline-editor`: "LOOPBACK failed: GDBus.Error:org.freedesktop.DBus.Error.AccessDenied", where the same
+  program connected before. The record's proof ("still starts, GLib's network monitor falls back without an
+  error the user sees") holds for the monitor (it says "no network" and prints nothing) and missed this.
+- **The fix as written**: the two interfaces and `NetworkMonitor.changed` are in the filter only with the network
+  grant (`portal_rules(network)`), and for a Standard app without it the launcher adds
+  `--setenv GIO_USE_PROXY_RESOLVER dummy`: GLib's built-in resolver, which answers `direct://` and asks nobody,
+  and `direct://` is all GLib gives a sandbox without the network whatever the portal says. R17.5 says both;
+  A1.2.3.12 and A2's inventory follow (`env GIO_USE_PROXY_RESOLVER`, when `bus and not network`).
+- **Why it is not committed**: A2's inventory tests (`tests/test_sandbox_exposure.py`, tier 1 too) expect a
+  variable only when the host sets it at launch or `LAUNCHER_SET` in `scripts/sandbox/exposure.py` names it, and
+  that file is U46's alone. Without the name they fail ("seen, not listed for this run: env
+  GIO_USE_PROXY_RESOLVER"). `docs/architecture/A2-sandbox-exposure.md` is a shared file and would be added.
+- **Proven whole**, as a patch outside the repository: `/tmp/cr1-u09-b2/403.patch` (sha256 `0bf3a19fe16e013b…`,
+  11 files, applies to `715070b`). With it: tier 1 2732 passed, 130 skipped; the launcher tier 139 passed, 5
+  skipped in each container. Its tests: `test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant`
+  (tier 1, every Standard template with the grant and without: the proxy variables, the marker, the two portals
+  and the GLib setting follow the one grant, and every portal interface the filter opens has a switch),
+  the extended `test_the_notification_and_inhibit_portals_come_with_their_capabilities` and R17.5's two lists in
+  `tests/test_docs_facts.py`; tier 2, the extended `test_the_portals_answer_a_sandboxed_app_as_a_host_caller`
+  (ProxyResolver.Lookup and NetworkMonitor refused to an `offline-editor`, answered to an `online-app`) and
+  `test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way`. On `715070b` with
+  the new test files: 19 failed in tier 1's two files, and in the Mint container the portal test and the GLib
+  test without the grant.
+- **What it needs**: `scripts/sandbox/exposure.py` in U09's files (or the one word there by U46 first), then
+  `git apply /tmp/cr1-u09-b2/403.patch` and a commit. If the patch is gone, the code is three edits of
+  `sandbox.py`: `NETWORK_PORTAL_INTERFACES = ("NetworkMonitor", "ProxyResolver")` taken out of `PORTAL_INTERFACES`,
+  `portal_rules(network)` called with `gs["network"]` from `proxy_args`, and in `build_launcher`, after the
+  `GDK_DEBUG` word, `if standard and not net: parts.append('  --setenv GIO_USE_PROXY_RESOLVER dummy \\')`.
+
+### Listed items
+
+**new**: none filed. (The proxy-leak test that could not fail is fixed in `715070b`, above.)
+
+**needs your eye**
+
+- `a71b180`: R17.5 gains three sentences: which bus is filtered (the address, or the runtime folder's when none is
+  set), that the proxy is shown it wherever it listens, and that an address that names neither a socket file nor
+  an abstract socket is not filtered. What the user sees, on stderr or in the app's log, in a session with such
+  an address: "AppKata: the session bus here (<address>) is not one the bus filter can reach, so <App> runs
+  without a session bus and gets no desktop services." And in a `dbus-run-session` session a Standard app now
+  has its bus. A1.2.3.12 gains a bullet.
+- `715070b`: R17.17 gains two sentences (what a fault in the bus filter would still give the app, and what its
+  sandbox holds); A1.9 a bullet; A1.2.3.12's first bullet is rewritten. R17.17 opens "stated plainly in the UI and
+  docs": this limit is in the documents only, no dialog says it.
+- #403, when it lands: R17.5 moves NetworkMonitor and ProxyResolver to the network grant, and says the launcher
+  sets `GIO_USE_PROXY_RESOLVER=dummy` for a Standard app without it. That variable is a rule no decision named:
+  it is what keeps the decided remedy from breaking GLib programs.
+
+**needs a run**
+
+1. `scripts/test-sandbox.sh launcher-vm` and `launcher-vm26`: the Ubuntu VMs. The proxy's bwrap has new words
+   (`--unshare-ipc --unshare-uts --unshare-cgroup-try --unshare-net --seccomp 3`), all of which the app's own
+   bwrap already uses there through `--unshare-all`, and the look-inside test runs `find`, `readlink` and `sed`
+   under Ubuntu 26.04's `unpriv_bwrap` profile: neither is shown outside the containers.
+2. `scripts/test-desktop-vm.sh run mint22.3` and `run lmde7`: the launcher tests in the real Cinnamon session,
+   whose bus is systemd's at `$XDG_RUNTIME_DIR/bus`.
+3. The project's own commands, which I did not run as such (the worktree has no `build/`): `scripts/test-tier1.sh`,
+   `scripts/test-sandbox.sh launcher`, `launcher-lmde7`, `consumers`, `inputmethod`, `wayland`, `filedialogs`. I ran
+   their container commands by hand, with the main checkout's `build/` Python, PySide6 and fetched AppImages
+   mounted read-only.
+
+**guard**: exit 0 after each commit, and no file to add. #403's patch would add
+`docs/architecture/A2-sandbox-exposure.md` (shared) and stops on `scripts/sandbox/exposure.py` (U46).
+
+### Doubts for the coordinator
+
+1. **#403 is one word short of a commit**, and it carries something for the owner: the decision, taken as
+   written, breaks GLib's connections in apps without the network. I would keep the decision and add the GLib
+   setting (the patch). The other roads: gate NetworkMonitor alone and leave ProxyResolver to R17.4's wording
+   (the finding's alternative), or take the decision as written and list the breakage as a limit. I made no
+   partial commit, so R17.5 still lists the two portals for every app.
+2. **What #393's rule leaves out, by choice.** A list of addresses, a path with an escaped byte (`%20`) and every
+   transport but `unix:path=` and `unix:abstract=` get no proxy and the line on stderr; the launcher does not
+   decode escapes. dbus escapes every byte outside `[-0-9A-Za-z_/.\*]`, so a runtime folder or `/tmp` socket
+   never has one, and a home with a space or an accent under it would. `tcp:` did not work before either (run:
+   "The connection is closed"; its cookie authentication has no home in the proxy's root).
+3. **A bus socket that isn't there stays silent**, as before: the proxy starts, the app runs, its calls fail
+   (`test_standard_apps_run_without_a_session_bus`). A command-line tool under cron or ssh would otherwise print
+   a line on every run.
+4. **The app's bind of the proxy socket moved** from the baked bwrap words to `"$@"`, since it is now decided at
+   run time. It still lands after every baked bind and before a command-line tool's folder. The teardown is one
+   line now (`if [ -n "$proxy" ]; then …; fi`).
+5. **The seccomp filter is the terminal-injection one**, the first of the remedy's two ("reuse … or a tighter
+   one"). R17.17's "the only seccomp filter is the terminal-injection one" stays true. A filter of the proxy's
+   own syscalls would be tighter and would have to hold across four systems' GLib builds.
+6. **The socket folder is shared**: `$XDG_RUNTIME_DIR/appkata` holds every running app's proxy socket, so a
+   faulty proxy could reach the other apps' filtered buses. R17.17 says so. A folder per launch would close it,
+   and changes the socket's path, which other units' tests and harnesses read.
+7. **`/etc` stays whole** in the proxy's root, as in the app's own: the decision did not name it.
+8. **`A1.2-approach.md` is at 496 of its 500 lines** (`tests/test_doccheck.py`), 499 with #403's patch. Batch 3's
+   text there has no room without a split of the file.
+9. **Other units' files I read and did not change**: `scripts/sandbox/consumers.py` and `filedialogs.py` replace
+   the literal `xdg-dbus-proxy "$upstream" "$sock" ` in a launcher, which I kept; `scripts/sandbox/lib.sh`,
+   `validate-launcher.sh` and `validate2.sh` start a proxy by hand in the old shape; A2's inventory and
+   `tests/test_sandbox_exposure.py` look at the app's bwrap alone, so the proxy's sandbox is held only by this
+   batch's tests.
+10. **For batch 3 (#202, #404)**: A1.9's list "(open-URI, settings, print, email, the monitors; …)" and the other
+    lists of the always-open portals depend on what becomes of #403.
+11. **The coordinator's rule of 2:24 PM** (every command starts with `cd` into the worktree, and the checkout
+    and branch are checked before a commit) is followed from there on. `a71b180` was made before it, from this
+    worktree: `git log` shows it on `cr1-u09-session-bus`.
+12. Scratch (outside the repository): `/tmp/cr1-u09-b2/`, the container scripts, the logs of every run named
+    here, and `403.patch`. No container or process of mine is left running.
+13. No refusal and no model change on my side.
+
