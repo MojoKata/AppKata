@@ -13,17 +13,19 @@ does. The checks read every workflow for it:
 
 - a download names what it takes (`name` or `pattern`), never the whole run;
 - what it names is kept by a job it waits for (its `needs`, and theirs), so it is there by then;
-- only the release job makes or changes a release, and what it gives `gh release create` is the five
-  files `scripts/publish.sh verify` wants (its `expect`), each by name, from the three artifacts
-  that hold them.
+- only the release job makes or changes a release: no other job's steps name one (`gh release`, the
+  releases' API, a release action), and no other job may write the repository's contents;
+- what it gives `gh release create` is the five files `scripts/publish.sh verify` wants (its
+  `expect`), each by name, from the three artifacts that hold them.
 
 What no test here shows is the job running: that takes a tag (docs/github-workflows.md, "The draft,
 and publishing it").
 
 The reader below reads the workflows as this repository writes them (two-space YAML: a job's
 `needs`, its steps, a step's values, its `with` and `env`, its `|` blocks) and refuses a shape it
-doesn't know. A check of a workflow's triggers, permissions, environments or secrets belongs in this
-file too, on `jobs()` and `steps()` or on a YAML reader in their place."""
+doesn't know. A check of a workflow's triggers, its other permissions, its environments or its
+secrets (CR1, #609) belongs in this file too, on `jobs()` and `steps()` or on a YAML reader in their
+place."""
 
 import fnmatch
 import glob
@@ -197,10 +199,55 @@ def out_of_reach(text):
     return found
 
 
+RELEASE_WORDS = re.compile(r"\bgh\b[^\n;|&]*\brelease\s+(create|upload|edit|delete)\b"       # gh, its own options first or not
+                           r"|\b(gh\s+api|curl|wget)\b[^\n]*/releases\b")                    # the releases' API
+
+
 def release_changers(text):
-    """The jobs that make or change a release."""
-    return [job for job, lines in jobs(text).items()
-            if any(re.search(r"\bgh\s+release\s+(create|upload|edit|delete)\b", s.get("run", "")) for s in steps(lines))]
+    """The jobs with a step whose words make or change a release: a `gh release` command, a call of
+    the releases' API (any, a read too: say so here), or an action with `release` in its name. Words
+    are all it reads, and a script a step runs isn't read, so contents_writers holds the same line by
+    what a job may do."""
+    def changes(step):
+        return RELEASE_WORDS.search(step.get("run", "")) or "release" in step.get("uses", "").split("@")[0].lower()
+
+    return [job for job, lines in jobs(text).items() if any(changes(s) for s in steps(lines))]
+
+
+def _permissions(lines, depth):
+    """The `permissions` written at this depth of these lines: {scope: level}, {"*": level} when it
+    is one word for every scope, None when there is none."""
+    pad = " " * depth
+    for at, line in enumerate(lines):
+        m = re.fullmatch(pad + r"permissions:\s*(.*)", line)
+        if not m:
+            continue
+        if _scalar(m.group(1)):
+            return {"*": _scalar(m.group(1))}
+        found = {}
+        for below in lines[at + 1:]:
+            m = re.fullmatch(pad + r"  ([\w-]+):\s*(.*)", below)
+            if m:
+                found[m.group(1)] = _scalar(m.group(2))
+            elif below.strip() and not below.lstrip().startswith("#"):
+                break
+        return found
+    return None
+
+
+def contents_writers(text):
+    """The jobs that may write the repository's contents, which making or changing a release takes:
+    `contents: write`, or every scope's, in the job's own permissions, or in the workflow's when the
+    job has none of its own; and every such job of a workflow that sets none, where the repository's
+    setting decides. (The workflows' other permissions are CR1's #609.)"""
+    lines = text.splitlines()
+    top, found = _permissions(lines[:lines.index("jobs:")], 0), []
+    for job, own in jobs(text).items():
+        may = _permissions(own, 4)
+        may = top if may is None else may
+        if may is None or may.get("contents", may.get("*")) in ("write", "write-all"):
+            found.append(job)
+    return found
 
 
 def _command(run, *start):
@@ -300,6 +347,7 @@ def test_the_release_job_attaches_the_five_files_publish_verifies_from_the_three
     assert release_faults(found["ci.yml"], _read("scripts/publish.sh")) == []
     for name, text in found.items():
         assert release_changers(text) == (["release"] if name == "ci.yml" else []), name
+        assert contents_writers(text) == (["release"] if name == "ci.yml" else []), name
 
 
 # the release job as it was until CR1's #592: every artifact of the run, and every file of the folder
@@ -394,7 +442,22 @@ def test_the_checks_find_each_fault():
     assert faults(_changed(ci, "          path: releases/AppKata-*-x86_64.AppImage*\n",
                            "          path: releases/AppKata-*-x86_64.AppImage\n")) == "appimage doesn't hold AppKata-1.2.3-x86_64.AppImage.sha256"
 
-    # a release changed by another job
-    upload = _changed(ci, "          f=$(echo AppKata-*-x86_64.AppImage)\n",
-                      "          f=$(echo AppKata-*-x86_64.AppImage)\n          gh release upload \"$GITHUB_REF_NAME\" \"$f\"\n")
-    assert release_changers(upload) == ["sign", "release"]
+    # a release changed by another job: by gh however it is spelt, by the releases' API, by a release action
+    echo = "          f=$(echo AppKata-*-x86_64.AppImage)\n"
+    for line in ('gh release upload "$GITHUB_REF_NAME" "$f"', 'gh -R "$GITHUB_REPOSITORY" release create v1 "$f"',
+                 'gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name=v1',
+                 'curl -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases"'):
+        assert release_changers(_changed(ci, echo, echo + f"          {line}\n")) == ["sign", "release"], line
+    step = "      - working-directory: out\n        env:\n          SIGNING_KEY:"
+    action = _changed(ci, step, f"      - uses: example/upload-release-asset@{'0' * 40}\n" + step)
+    assert release_changers(action) == ["sign", "release"]
+    # and, since a script that a step runs is never read here, by its permission to: contents: write
+    # on another job, every permission on one, or the workflow giving it to the jobs that ask for none
+    reads = "      contents: read        # the releases, for their tours\n"
+    assert contents_writers(_changed(ci, reads, "      contents: write\n")) == ["site", "release"]
+    assert contents_writers(_changed(ci, "    environment: release\n", "    environment: release\n    permissions: write-all\n")) == [
+        "sign", "release"]
+    for top in ("permissions:\n  contents: write\n", "permissions: write-all\n", ""):
+        loose = contents_writers(_changed(ci, "permissions:\n  contents: read\n", top))
+        assert "tier1" in loose and "release" in loose and "site" not in loose and "pages" not in loose, top
+    assert contents_writers(_changed(ci, "    permissions:\n      contents: write\n", "")) == []

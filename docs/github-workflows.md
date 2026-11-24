@@ -264,9 +264,10 @@ and the tour are its artifacts too. So the `release` job takes the three artifac
 release's files (`appimage`, `windows`, `signature`), each by its name, and names the five files to
 `gh release create`; a download that names nothing takes every artifact the run holds, and `./*`
 would attach them all. `tests/test_workflows.py`, in tier 1, reads the workflows for it: the
-`release` job's downloads and its five files against the five `publish.sh verify` expects, and of
-every job, that a download names what it takes and that a job it waits for keeps it. The job itself
-runs only on a tag.
+`release` job's downloads and its five files against the five `publish.sh verify` expects; of
+every job, that a download names what it takes and that a job it waits for keeps it; and that no
+other job makes or changes a release, by its steps' words or by its permissions (`contents: write`
+is the `release` job's alone). The job itself runs only on a tag.
 
 With **immutable releases** on (GENESIS.md, step 8), a published release's files and tag can't be
 changed, and GitHub adds a release attestation (`gh release verify v<version>`). A bad release is
