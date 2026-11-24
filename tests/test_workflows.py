@@ -257,29 +257,31 @@ def _command(run, *start):
 
 
 def release_command(run):
-    """The tag and the files a script gives `gh release create`, as written."""
+    """The tag, the files and the options a script gives `gh release create`, as written: an option
+    with its value, or True."""
     (words,) = _command(run, "gh", "release", "create")
-    tag, files = None, []
+    tag, files, options = None, [], {}
     while words:
         word = words.pop(0)
         if word in RELEASE_VALUED:
-            words.pop(0)
+            options[word] = words.pop(0)
         elif word in RELEASE_FLAGS:
-            pass
+            options[word] = True
         elif word.startswith("-"):
             raise AssertionError(f"gh release create {word}: say here whether a value follows it")
         elif tag is None:
             tag = word
         else:
             files.append(word)
-    return tag, files
+    return tag, files, options
 
 
 def release_faults(text, publish):
     """What is wrong with a workflow's release job, by publish.sh's text. Nothing, when it takes the
     three artifacts by name into one folder, checks there each file that has a .sha256 against it,
-    and gives `gh release create` the five files `publish.sh verify` expects, each by its name; and
-    each artifact holds its own files of the five (RELEASED), by what its job keeps."""
+    and gives `gh release create`, as a draft of the tag in this repository, the five files
+    `publish.sh verify` expects, each by its name; and each artifact holds its own files of the five
+    (RELEASED), by what its job keeps."""
     version, faults = "1.2.3", []
     expect = re.search(r'^\s*expect="([^"\n]*)"', publish, re.M).group(1).replace("$V", version).split()
     carried = {artifact: [f"AppKata-{version}-{end}" for end in ends] for artifact, ends in RELEASED.items()}
@@ -300,9 +302,14 @@ def release_faults(text, publish):
         faults.extend(f"{w} isn't a file's name" for w, n in zip(words, out) if re.search(r"[]$*?\[{}~`]", n))
         return sorted(out)
 
-    tag, files = release_command(run)
+    tag, files, options = release_command(run)
     if tag != "$GITHUB_REF_NAME":
         faults.append(f"the release is of {tag}")
+    # a draft, since publishing is the owner's and can't be taken back; of a tag that is there; and
+    # in this repository by name, since the job checks nothing out for gh to tell it from
+    for option, value in (("--draft", True), ("--verify-tag", True), ("--repo", "$GITHUB_REPOSITORY")):
+        if options.get(option) != value:
+            faults.append(f"it isn't made with {option}" + ("" if value is True else f" {value}"))
     if names(files) != sorted(expect):
         faults.append(f"it attaches {files}; publish.sh verify wants {expect}")
     for artifact, held in carried.items():      # each against its own artifact: one's glob can take another's name
@@ -434,6 +441,13 @@ def test_the_checks_find_each_fault():
     assert "windows doesn't hold AppKata-1.2.3-setup.exe" in faults(moved)
     unchecked = _changed(ci, ' "AppKata-$v-setup.exe.sha256"\n          gh release create', "\n          gh release create")
     assert "before the release it checks ['AppKata-$v-x86_64.AppImage.sha256']" in faults(unchecked)
+    # without what makes it a draft, of a tag that is there, in this repository (the job checks nothing out)
+    create = 'gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \\\n'
+    assert faults(_changed(ci, create, create.replace(" --draft", ""))) == "it isn't made with --draft"
+    assert faults(_changed(ci, create, create.replace(" --verify-tag", ""))) == "it isn't made with --verify-tag"
+    for repo in ("", " --repo owner/name"):
+        other = _changed(ci, create, create.replace(' --repo "$GITHUB_REPOSITORY"', repo))
+        assert faults(other) == "it isn't made with --repo $GITHUB_REPOSITORY"
     # the signature's artifact without the .asc, whose name the appimage's glob takes too: the sign job
     # still ends well on the second, and the release job would be the one to fail, after the signing
     for path in ("out/signature.sig", "out/AppKata-*-x86_64.AppImage"):
