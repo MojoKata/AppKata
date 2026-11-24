@@ -277,3 +277,24 @@ How the design fits together, for batches 3 and 4:
     PyPI into the worktree's `build/` (169 MB, ignored by git). I removed that folder; nothing of
     it is in a commit.
 
+### The coordinator, after batch 2 (2026-11-24)
+
+Checked: every answer of the agent on its named model; the guard; `tests/test_forges.py`,
+`tests/test_backend.py`, `tests/test_requirements_trace.py` and the document tests, whole; the batch
+pushed.
+
+- **New:** the port lost by `urls.py:64` is filed as #690 and goes to U20, the unit that holds
+    #280 and that line. The answer that is no image and is saved as one (`sync.py:44`) is #284's
+    first part already, in U15: nothing to file.
+- **Guard:** `tests/test_backend.py`, `tests/test_requirements_trace.py` and
+    `tests/skips/windows.txt` are in U07's files now.
+- **Doubt 2** (the local-address exception is the Source's own name and port) stands as built: it
+    is the narrower reading and agrees with #297's key. It goes to the owner under Needs your eye.
+- **Doubts 1, 3, 4, 6, 7 and 8** stand as built and are said in the pull request where the owner
+    sees them (R3.1.1 as a new item; the token's form remembered per host; the probes; #434's
+    sentence in R11.1.6). **Doubt 5** (#275 not run against a real forge) is said there too.
+- **Doubt 9:** `scripts/python-standalone.sh` takes no `--help` and runs: don't call the project's
+    build scripts to read their usage, read the script. Nothing was left behind.
+- **Needs a run** (the Windows VM tests; the screenshot tour, which CI makes): the coordinator's,
+    when the last batch is in.
+
