@@ -2080,12 +2080,14 @@ class Backend(QObject):
                 # raises it again. Without that, a user who deliberately chose otherwise had it forever.
                 # With "Follow reviewers' suggestions" off there is nothing to act on, so no badge; the
                 # dialog still shows what they suggest, and "Use theirs" stays an explicit choice (R17.15).
+                # Both are decided on what runs, not on the chips: no chip shows the MPRIS name, and a
+                # review that named only that was never offered (the review of PR #694, P1-1).
                 "reviewBadge": bool(self._prefs.get("sandboxReviewBadge", True)
                                     and self._prefs.get("followReviewerSandbox", True) and suggested is not None
-                                    and sandbox.summary(suggested, root) != sandbox.summary(gs, root)
-                                    and sandbox.summary(suggested, root) != self._install_settings(url).get("sandboxReviewSeen")),
+                                    and sandbox.differs(gs, suggested)
+                                    and sandbox.grant_terms(suggested) != self._install_settings(url).get("sandboxReviewSeen")),
                 # a suggestion that differs from what's in force: the dialog offers to adopt it
-                "hasSuggestion": suggested is not None and sandbox.summary(suggested, root) != sandbox.summary(gs, root),
+                "hasSuggestion": suggested is not None and sandbox.differs(gs, suggested),
                 "reviewBy": self._sandbox_reviewer(url),
                 # the badge's words: what the suggestion adds and removes, and what that means (R17.11)
                 "reviewBadgeText": sandbox.suggestion_text(gs, suggested, self._sandbox_reviewer(url) or "A reviewer")
@@ -2193,9 +2195,10 @@ class Backend(QObject):
         self.reload()
 
     def _review_suggestion_summary(self, url: str) -> list | None:
-        """The merged reviews' suggestion as summary labels, or None when no review says anything."""
+        """The merged reviews' suggestion in the terms the badge compares (sandbox.grant_terms), or None
+        when no review says anything."""
         suggested, _ = self._suggestion(url)
-        return sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else None
+        return sandbox.grant_terms(suggested) if suggested is not None else None
 
     @Slot(str)
     def useSuggestion(self, url: str) -> None:
@@ -2216,8 +2219,9 @@ class Backend(QObject):
         saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)
         self._set_install_settings(url, saved)
         a = self._app(url)
+        suggested, _ = self._suggestion(url)
         self._audit("you", "app", "kept the sandbox of", a["name"] if a else url, url,
-                    {"suggested": ", ".join(saved["sandboxReviewSeen"] or [])})
+                    {"suggested": ", ".join(sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else [])})
         self.reload()
 
     def _regenerate_launcher(self, url: str) -> None:

@@ -161,7 +161,8 @@ def test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog(ui, be, 
     _call(dlg, "openFor", URL)                                   # reopened: the same
     assert _prop(dlg, "gs")["mpris_name"] == name
     # the bare template is the user's own set, with no name: the hint says what that reaches, and
-    # the review badge offers the reviewer's narrower one
+    # the dialog offers the reviewer's narrower one, "Use theirs" (the review of PR #694, P1-1: it
+    # never showed); the badge stays down, as this was chosen knowing it (R17.11)
     _pick(dlg, "templateSelect", "media-player")
     assert not _prop(dlg, "gs").get("mpris_name")
     assert _hint(dlg, "Media keys") == ("Play/pause and track info on the keyboard and lock screen (MPRIS). It has no player name of its own here "
@@ -169,7 +170,10 @@ def test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog(ui, be, 
     _press(dlg, "save")
     info = be.sandboxInfo(URL)
     assert "--own=org.mpris.MediaPlayer2.*" in sb.proxy_args(be._resolved_sandbox(URL)["grants"], "demo")
-    assert f"removing media-player names other than {name}" in json.dumps(info), info
+    assert f"removing media-player names other than {name}" in info["reviewBadgeText"], info
+    assert info["hasSuggestion"] is True and info["reviewBadge"] is False, info
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "info")["hasSuggestion"] is True
 
 
 def test_the_network_hint_says_what_an_app_without_the_network_can_still_send_out(ui, be, monkeypatch):

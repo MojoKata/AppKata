@@ -255,6 +255,22 @@ def changes(before: dict, after: dict) -> tuple[list[str], list[str]]:
     return added, removed
 
 
+def differs(a: dict, b: dict) -> bool:
+    """Whether grant set `b` runs differently from `a`: another level, or anything :func:`changes`
+    says, the MPRIS name included. What the review badge and "Use theirs" are offered on (R17.11):
+    they compared the chips, and no chip shows the MPRIS name (it is the capability's, CR1.9-32), so a
+    review that named or changed only that was never offered (the review of PR #694, P1-1)."""
+    return level_of(a) != level_of(b) or changes(a, b) != ([], [])
+
+
+def grant_terms(gs: dict) -> list[str]:
+    """A grant set in :func:`changes`' words: its level, everything it grants as against nothing, and
+    its MPRIS name. Two sets have the same terms exactly where :func:`differs` says they don't: what
+    the review badge remembers of a suggestion the user acted on (R17.11)."""
+    n = normalize(gs)
+    return [n["level"], *changes(blank_grants(n["level"]), n)[0]] + ([f"the media-player name {n['mpris_name']}"] if n["mpris_name"] else [])
+
+
 def _and(xs: list[str]) -> str:
     return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
 
