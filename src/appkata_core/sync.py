@@ -429,7 +429,9 @@ def catalog_urls(db: DB) -> list[str]:
 
 def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | None = None, workers: int = 4,
              on_item=None) -> None:
-    """Trusts first (they add Catalog apps), then every app, four hosts at a time (R9.2.1)."""
+    """Trusts first (they add Catalog apps), then every app, four hosts at a time (R9.2.1), then the
+    package channels. Cancel stops the requests of each step where they are (R9.2.1): a Trust's key
+    lookup, an app's sync, a link check (the review's pass 1, P1-B5: it reached only the apps)."""
     progress = progress or Progress()
     trusts = [t["id"] for t in db.all("SELECT id FROM trusts WHERE enabled=1")]
     progress.total = len(trusts)
@@ -437,7 +439,13 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
         if progress.cancelled:
             return
         progress.current = db.one("SELECT name FROM trusts WHERE id=?", (tid,))["name"]
-        sync_trust(db, http, tid, root)
+        try:
+            # a Trust whose sync it stops keeps what the last Sync stored: nothing of it is stored
+            # before its key lookup, the one request Http makes for it
+            with http.stopping(lambda: progress.cancelled):
+                sync_trust(db, http, tid, root)
+        except Cancelled:
+            return
         progress.done += 1
         on_item and on_item()
     apps = catalog_urls(db)
@@ -465,15 +473,20 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, apps))
     if not progress.cancelled:
-        sync_channels(db, http)
+        try:
+            with http.stopping(lambda: progress.cancelled):
+                sync_channels(db, http, progress)
+        except Cancelled:
+            pass
     db.put("last_sync", now())
 
 
 # ---------------------------------------------------------------- package channels (R16)
-def sync_channels(db: DB, http: Http) -> None:
+def sync_channels(db: DB, http: Http, progress: Progress | None = None) -> None:
     """Every sync: who updates what (R16.5.2), channel installs still there or changed elsewhere
     (R16.4.1, R16.5.4), pending updates (R16.5.5) and the link checks (R16.1.5). Skipped off Linux and
-    inside a Flatpak sandbox (R16.10). Never fails the sync."""
+    inside a Flatpak sandbox (R16.10). Never fails the sync. The Sync's Cancel (`progress`) stops it
+    between its steps and between two apps' link checks; sync_all stops a request under way."""
     if not channels.enabled():
         return
     from . import autoupdate
@@ -482,9 +495,11 @@ def sync_channels(db: DB, http: Http) -> None:
         db.put("autoupdate", det.as_dict())
     except Exception:
         log.exception("couldn't read the system's update settings")
-    for step in (track_channel_installs, check_links):
+    for step, args in ((track_channel_installs, ()), (check_links, (progress,))):
+        if progress and progress.cancelled:
+            return
         try:
-            step(db, http)
+            step(db, http, *args)
         except Exception:
             log.exception("channels: %s failed", step.__name__)
 
@@ -562,8 +577,9 @@ def _changed_elsewhere(db: DB, row: dict, rec: dict, raw: str, version: str, who
     db.x("UPDATE installs SET version=? WHERE url=?", (version or raw, row["url"]))
 
 
-def check_links(db: DB, http: Http) -> None:
-    """The link checks, each when its answer can change (R16.1.5)."""
+def check_links(db: DB, http: Http, progress: Progress | None = None) -> None:
+    """The link checks, each when its answer can change (R16.1.5). A Sync's Cancel (`progress`)
+    stops them before the next app's."""
     from . import appstream, flatpak, pkgbackend
     try:
         cat = appstream.load_cached()
@@ -572,6 +588,8 @@ def check_links(db: DB, http: Http) -> None:
     mgr = channels.manager()
     has_fp = flatpak.available()
     for url in catalog_urls(db):
+        if progress and progress.cancelled:
+            return
         found = channels.links(db, url, cat, mgr)
         meta = db.one("SELECT appstream_id FROM app_meta WHERE url=?", (url,)) or {}
         fl, pk = found.get("flatpak"), found.get("package")

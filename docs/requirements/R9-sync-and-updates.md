@@ -18,8 +18,9 @@ requests to the host that gave it and to no other host: another port of its name
 forge's file storage, not the forge first asked. Until it runs out, a redirect to that host isn't
 followed either. A request is given two minutes for the whole of its answer, however steadily the answer keeps coming: one that takes longer is
 given up, as an `Unreachable` error (R2.10) or, for an image, passed over for the next one.
-**Cancel** stops the requests under way as well, an answer that is still being read included: an
-app whose sync it stops keeps what the last Sync stored.
+**Cancel** stops the requests under way as well, an answer that is still being read included, in
+each step of the Sync: a Trust's key lookup, an app's sync and the link checks (R16.1.5). A Trust
+or an app whose sync it stops keeps what the last Sync stored, and no link check starts after it.
 
 R9.2.2. API tokens are kept per host (R11.1.6). A host is one address: its name, and its port
 when the forge is on one; a name alone means the default port. A host's token is sent only to that

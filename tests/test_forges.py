@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from appkata_core import channels, explore, forges, metadata, sync, urls
+from appkata_core import channels, explore, forges, gitsig, metadata, sync, urls
 from appkata_core import http as http_
 from appkata_core.db import DB, now
 from appkata_core.http import Http, RateLimited, SourceError, Unreachable
@@ -2810,7 +2810,7 @@ def test_at_most_four_apps_are_fetched_at_the_same_time(tmp_path, monkeypatch, w
 
 def test_a_sync_cancelled_before_it_starts_asks_for_nothing(tmp_path, monkeypatch):
     w, seen, after = widget("forgejo"), [], []
-    monkeypatch.setattr(sync, "sync_channels", lambda db, http: after.append("channels"))
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http, progress=None: after.append("channels"))
     for with_a_trust in (False, True):
         folder = tmp_path / ("with-a-trust" if with_a_trust else "without")
         folder.mkdir()
@@ -2826,7 +2826,7 @@ def test_a_sync_cancelled_before_it_starts_asks_for_nothing(tmp_path, monkeypatc
 def test_a_sync_cancelled_between_two_apps_leaves_the_rest_as_they_were(tmp_path, monkeypatch):
     widgets = [widget("github"), widget("gitlab"), widget("forgejo")]
     seen, after = [], []
-    monkeypatch.setattr(sync, "sync_channels", lambda db, http: after.append("channels"))
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http, progress=None: after.append("channels"))
     db = catalog(tmp_path, monkeypatch, [w.source for w in widgets] + ["nostr://naddr1widget"])     # one whose sync asks for nothing
     progress = sync.Progress()
     http = names(Http({}, opener=recording(longest_first({k: v for w in widgets for k, v in w.routes.items()}), seen)))
@@ -2837,15 +2837,80 @@ def test_a_sync_cancelled_between_two_apps_leaves_the_rest_as_they_were(tmp_path
     assert [url for url, _ in seen if url.startswith(tuple(w.api for w in widgets if w.source != done["url"]))] == []
 
 
+# The review's pass 1, P1-B5: R9.2.1 says Cancel stops the requests under way, and #296's Cancel
+# reached only each app's sync. A Trust's key lookup (keys.openpgp.org) and the link checks of the
+# package channels (R16.1.5), a request or more for each app of the Catalog, ran to their end: a
+# Cancel in the channels step, with the ring still showing, waited for every check. How it slipped
+# past: every Cancel test cancelled an app's sync. The class is "a step of a Sync that Cancel doesn't
+# reach", so a Cancel here comes in each step that asks a host for something.
+def cancelling(clock, progress, answers):
+    """An opener whose answers drip in, and the user pressing Cancel at the fifth read of the first."""
+    return dripping(clock, 4.0, answers=answers, then=lambda reads: reads == 5 and setattr(progress, "cancelled", True))
+
+
+def test_cancel_stops_a_trusts_key_lookup_and_the_trust_keeps_what_the_last_sync_stored(tmp_path, monkeypatch, clock):
+    """A Trust whose new change is signed by an OpenPGP key it doesn't publish: its sync looks the
+    key up (R10.8). Git stands in, and the Trust's repository is never read."""
+    db = catalog(tmp_path, monkeypatch, [widget("forgejo").source])          # an app after it, which the Sync doesn't reach
+    tid = db.x("INSERT INTO trusts(url, name, path, verified_commit, verified_at, synced_at, added_at) VALUES(?,?,?,?,?,?,?)",
+               ("https://git.example.org/o/reviews", "Reviews", "AppKata.md", "a" * 40, "before", "before", now())).lastrowid
+    stopped = gitsig.Check("b" * 40, "nokey", gitsig.Signer("gpg", "C" * 40))
+    monkeypatch.setattr(gitsig, "fetch", lambda loc, dest: "b" * 40)
+    monkeypatch.setattr(gitsig, "advance", lambda *a: gitsig.Advance("a" * 40, [stopped], stopped, "unknown-signer"))
+    monkeypatch.setattr(gitsig, "repo_gpg_keys", lambda repo, commit: [])
+    progress, answers = sync.Progress(), []
+    sync.sync_all(db, names(Http({}, opener=cancelling(clock, progress, answers))), progress, root=str(tmp_path))
+    assert [(a.geturl(), a.reads) for a in answers] == [("https://keys.openpgp.org/vks/v1/by-fingerprint/" + "C" * 40, 5)]
+    assert clock.waits == [] and progress.done == 0 and rows(db) == {}
+    trust = db.one("SELECT * FROM trusts WHERE id=?", (tid,))
+    assert (trust["verified_commit"], trust["synced_at"], trust["problem"]) == ("a" * 40, "before", "")
+    assert "in each step of the Sync: a Trust's key lookup, an app's sync and the link checks" in " ".join(
+        reqdocs.item("R9.2.1").split())
+
+
+def link_checks(monkeypatch, check):
+    """The machine's package channels, standing in: apt, no Flatpak, each app of the Catalog linked
+    to a package, and `check` as its link check (channels.check_package, R16.1.5)."""
+    from appkata_core import appstream, autoupdate, flatpak, pkgbackend
+    monkeypatch.setattr(channels, "enabled", lambda: True)
+    monkeypatch.setattr(autoupdate, "detect", lambda: types.SimpleNamespace(as_dict=lambda: {}))
+    monkeypatch.setattr(sync, "track_channel_installs", lambda db, http=None: None)
+    monkeypatch.setattr(appstream, "load_cached", lambda: None)
+    monkeypatch.setattr(channels, "manager", lambda: "apt")
+    monkeypatch.setattr(flatpak, "available", lambda: False)
+    monkeypatch.setattr(pkgbackend, "package_version_available", lambda name, mgr=None: "1.0")
+    monkeypatch.setattr(channels, "links", lambda db, url, cat=None, mgr=None: {"package": channels.Link("package", "widget")})
+    monkeypatch.setattr(channels, "check_package", check)
+
+
+@pytest.mark.parametrize("when", ["while a check's answer is read", "between two apps' checks"])
+def test_cancel_stops_the_link_checks_of_a_sync(tmp_path, monkeypatch, clock, when):
+    apps = ["nostr://naddr1one", "nostr://naddr1two"]                       # apps whose own sync asks for nothing
+    db = catalog(tmp_path, monkeypatch, apps)
+    progress, answers, checked = sync.Progress(), [], []
+
+    def check(db_, http, url, *a):
+        checked.append(url)
+        if when == "between two apps' checks":
+            progress.cancelled = True                                      # once this one's check is done
+        else:
+            http.text("https://sources.debian.org/api/src/widget/")         # as the Debian check asks
+    link_checks(monkeypatch, check)
+    sync.sync_all(db, names(Http({}, opener=cancelling(clock, progress, answers))), progress, root=str(tmp_path))
+    assert checked == apps[:1] and clock.waits == []
+    assert [a.reads for a in answers] == ([5] if when == "while a check's answer is read" else [])
+    assert progress.done == 2
+
+
 def test_the_package_channels_are_read_once_after_the_apps_and_never_end_a_sync(tmp_path, monkeypatch):
     w, after = widget("forgejo"), []
     db = catalog(tmp_path, monkeypatch, [w.source])
-    monkeypatch.setattr(sync, "sync_channels", lambda db_, http_: after.append(sorted(rows(db_))))
+    monkeypatch.setattr(sync, "sync_channels", lambda db_, http_, progress=None: after.append(sorted(rows(db_))))
     sync_of(tmp_path, monkeypatch, w, db=db)
     assert after == [[w.source]]                               # the apps were stored by then
     monkeypatch.undo()
 
-    def fails(db_, http_=None):
+    def fails(db_, http_=None, progress=None):
         raise RuntimeError("the package manager isn't answering")
     monkeypatch.setattr(channels, "enabled", lambda: True)
     monkeypatch.setattr(sync, "track_channel_installs", fails)
