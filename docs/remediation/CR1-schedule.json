@@ -52,18 +52,22 @@
     388,
     661,
     688,
-    698
+    698,
+    702,
+    704
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
     "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
     "docs/requirements-trace.md",
+    "docs/requirements/R11-settings.md",
     "docs/requirements/R17-app-sandboxing/R17.12-self-update.md",
     "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
     "src/appkata/backend.py",
     "src/appkata/qml/InstallDialog.qml",
+    "src/appkata/qml/SettingsDialog.qml",
     "src/appkata_core/appkind.py",
     "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
@@ -159,7 +163,8 @@
     395,
     400,
     401,
-    666
+    666,
+    701
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -653,7 +658,8 @@
     389,
     500,
     501,
-    617
+    617,
+    703
    ],
    "files": [
     "docs/requirements-trace.md",
@@ -667,12 +673,15 @@
     "src/appkata/qml/SelfInstallDialog.qml",
     "src/appkata/qml/SettingsDialog.qml",
     "src/appkata/qml/Theme.qml",
+    "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
     "tests/test_dialog_contract.py",
+    "tests/test_install_review.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_backend.py",
-    "tests/test_sandbox_lifecycle.py"
+    "tests/test_sandbox_lifecycle.py",
+    "tests/test_sandbox_transitions.py"
    ]
   },
   {
@@ -10827,6 +10836,77 @@
    "size": "medium",
    "proof": "tests/test_windows.py in the Windows VM (scripts/test-windows-vm.sh --tests): with something already at the junction's path the install ends in an install error that names it, and is taken back.",
    "note": "Found by U03's second batch (2026-11-24), and filed by the coordinator. #358 changes the same step (the junction's move to a new version)."
+  },
+  {
+   "finding": 701,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "tests/test_sandbox_adversarial.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md"
+   ],
+   "depends_on": [
+    310
+   ],
+   "related": [
+    632,
+    380,
+    384
+   ],
+   "size": "small",
+   "proof": "tests/test_sandbox.py: with apps recorded in two install folders, a grant of either folder (and of a folder inside it) to an app in the other is refused, for a review's grant and for the user's.",
+   "note": "Found by U03's third batch (2026-11-24) and rated Med by the coordinator: sandbox._protected_roots holds only the app's own install folder, and since #310 apps stay in an earlier install folder for good. #632 is the same function's other gap (the command links folder when the install folder isn't the default): one pass over _protected_roots for both."
+  },
+  {
+   "finding": 702,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    310
+   ],
+   "size": "small",
+   "proof": "A test of the backend's plan for an installed app on Windows after the install folder setting changed: the \"Installs to\" folders are the app's own.",
+   "note": "Found by U03's third batch (2026-11-24) after #310's fix, and filed by the coordinator. Windows' side of what #310 did for Linux's line; proven off Windows by the plan's values, and in the Windows VM run at the unit's end."
+  },
+  {
+   "finding": 703,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata/backend.py",
+    "tests/test_install_review.py",
+    "tests/test_sandbox_transitions.py"
+   ],
+   "depends_on": [
+    698
+   ],
+   "related": [
+    468,
+    382,
+    156
+   ],
+   "size": "medium",
+   "proof": "tests/test_install_review.py and tests/test_sandbox_transitions.py: the rewrite is made to fail at each of its steps in turn, and afterwards the launcher, the links and the record agree, and the failure is reported.",
+   "note": "Found by U03's third batch (2026-11-24), and filed by the coordinator. One change with #468 (the backend saves, shows and audits the new sandbox though the rewrite failed) and #382 (>#468): what is in force after a failed rewrite is decided once for all three, by the issue's remedy (take it back)."
+  },
+  {
+   "finding": 704,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/SettingsDialog.qml",
+    "docs/requirements/R11-settings.md",
+    "tests/test_dialog_contract.py"
+   ],
+   "depends_on": [
+    310
+   ],
+   "size": "small",
+   "proof": "tests/test_dialog_contract.py holds the hint's text to R11.1.4's; the document checks.",
+   "note": "Found by U03's third batch (2026-11-24) after #310's fix, and filed by the coordinator: the hint says which settings apply at an update, and that the install folder applies to new installs. A hint's wording: list it under Needs your eye."
   }
  ],
  "shared_files": [
