@@ -453,3 +453,145 @@ Checked: every answer of the agent on its named model; the guard; `tests/test_sa
 - **Needs a run** (the Ubuntu launcher VMs, the desktop VMs, #378's Cinnamon script): the
     coordinator's, when the last batch is in.
 
+## Batch 3
+
+Agents: Fable 5.2, high effort, made the first four commits (`0583283`, `2e05a9b`, `0d659f9`, `5b22d69`, 3:00 to
+3:14 PM) and stopped at a usage limit in the middle of #692; Opus 5.5, high effort, took the batch over at 4:06 PM,
+finished #692 from the uncommitted change it found (`99b7bd2`) and wrote this section. Of the four commits it did
+not make, the outcome, the test and how it was shown failing are taken from their commit messages and `git show`,
+the stopped agent's logs in `/tmp/cr1-u09-b3/`, and a run of each commit's test files on its parent, below. Head
+after the batch: the commit that adds this section; the code is at `99b7bd2`.
+
+### Files touched
+
+`src/appkata_core/sandbox.py`, `src/appkata/qml/SandboxDialog.qml`, `scripts/sandbox/exposure.py`;
+`tests/test_sandbox.py`, `tests/test_sandbox_run.py`, `tests/test_dialog_contract.py`, `tests/test_docs_facts.py`,
+`tests/skips/tier1.txt`; `tests/data/launchers/cli-tool.sh` (the proxy's block, by
+`UPDATE_GOLDEN=1 pytest tests/test_launcher_golden.py`; the other goldens are unchanged);
+`docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md`, `R17.17-limits.md`;
+`docs/architecture/A1-app-sandboxing/A1.2-approach.md` (497 of its 500 lines), `A1.9-limits.md`, `A1.10-ui-text.md`;
+`docs/architecture/A2-sandbox-exposure.md`; `docs/requirements-trace.md`; this file.
+
+### Counts
+
+fixed 5 · no defect 0 · remedy changed 0 · set aside 0 · still left 0 · new 0
+
+### The findings
+
+**#403 (CR1.5-28), fixed: `0583283`** (Fable 5.2). Batch 2's patch as the coordinator said: applied to a scratch
+export of `0583283^`, `/tmp/cr1-u09-b2/403.patch` gives every one of the commit's 11 files byte for byte, so the
+commit is the patch unchanged. NetworkMonitor, ProxyResolver and `NetworkMonitor.changed` are in the filter only
+with the network grant; a Standard app without it gets `--setenv GIO_USE_PROXY_RESOLVER dummy`, named in
+`LAUNCHER_SET` and in A2's inventory.
+
+- Tests, tier 1: `test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant` (new), the
+  extended `test_the_notification_and_inhibit_portals_come_with_their_capabilities`, R17.5's two lists in
+  `tests/test_docs_facts.py`. Tier 2: the extended `test_the_portals_answer_a_sandboxed_app_as_a_host_caller` and
+  `test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way` (new, two lines in
+  `tests/skips/tier1.txt`).
+- Shown failing on `0583283^` with the new test files (the stopped agent's logs): 19 failed in `tests/test_sandbox.py`
+  and `tests/test_docs_facts.py` (`pre403-fast.log`); in the Mint 22.3 launcher container the portal test and the GLib
+  test's `[False]` case (`pre403-launcher.log`: 2 failed, 1 passed).
+- On the fix: tier 1 2732 passed, 130 skipped; the launcher tier 139 passed, 5 skipped in Mint 22.3 and in LMDE 7.
+
+**#404 (CR1.5-29), fixed: `2e05a9b`** (Fable 5.2). The owner's decision: R17.17 and the Network hint say that an
+app without the network can still have the desktop open a link that carries what it knows. A Strict app (no bus)
+keeps the one-sentence hint. A1.9 gains a bullet, A1.10 the hint's row, the trace R17.17's row. No behaviour changes.
+
+- Tests: tier 1 `test_the_network_hint_says_what_an_app_without_the_network_can_still_send_out`
+  (`tests/test_dialog_contract.py`) and two facts in `tests/test_docs_facts.py` (R17.17's sentence, A1.9's bullet);
+  tier 2 `test_links_and_files_an_app_opens_go_to_the_host_through_the_portal` now also runs an offline-editor
+  (the hint row's evidence; it passes before and after, as the message says).
+- Shown failing, run again by me (an export of `2e05a9b^` with the commit's three test files): the hint test
+  (`'Let it reach…ocal network.' == 'Let it reach…he app knows.'`) and the facts (`A1.9: the s… desktop for`);
+  2 failed, 47 passed. The message says `tests/test_requirements_trace.py` fails too "until its row is there": on
+  the parent, which has neither the sentence nor the row, it passes; it is a check of the commit's own state.
+- On the fix (stopped agent's logs): tier 1 2733 passed, 130 skipped; the launcher tier 139 passed, 5 skipped in
+  each container.
+
+**#202 (CR1.11-86), fixed: `0d659f9`** (Fable 5.2). One list of the portals, R17.5's: A1.2.3.6 and A1.9 point to it,
+A1.2.3.12 says what kinds the list has and keeps the GLib note, A1.2.3.14's "(always)" row points to R17.5. No
+requirement and no code changes; A1.2-approach.md three lines shorter, the room batch 2's doubt 8 asked for.
+
+- Test: the fact "R17.5: the one list of the portal interfaces" (`tests/test_docs_facts.py`): no sentence outside
+  R17.5 names three or more of the interfaces.
+- Shown failing, run again by me (export of `0d659f9^`, the commit's test file): the facts test, on that fact;
+  1 failed, 6 passed. On the fix, tier 1 2733 passed, 130 skipped (stopped agent's log).
+
+**#201 (CR1.11-85), fixed: `5b22d69`** (Fable 5.2). A1.2.3.6 says what R17.6.3 says: refused the file chooser,
+GTK 4.14 fell back and GTK 4.18 showed nothing, hence `GDK_DEBUG=no-portals`. No requirement and no code changes.
+
+- Test: the fact "R17.6.3: which GTK4 falls back to its own dialog" (`tests/test_docs_facts.py`).
+- Shown failing, run again by me (export of `5b22d69^`, the commit's test file): the facts test, on that fact;
+  1 failed, 6 passed. On the fix, tier 1 2733 passed, 130 skipped (stopped agent's log).
+
+**#692 (CR1.9-32), fixed: `99b7bd2`** (begun by Fable 5.2, finished by Opus 5.5). Taken over: the uncommitted change
+in `sandbox.py` (`_CAP_CHIP` says "Keep the screen awake" and "Saved passwords", and the comment above the portal
+interfaces quotes the new chip), A1.2.3.14 (the "(chip: …)" spellings gone, its paragraph says a chip says what its
+switch says), `tests/test_docs_facts.py` (the chips' fact held to the table's dialog names) and the new test in
+`tests/test_sandbox.py`. I read it whole and kept all of it unchanged: no other place in the code, the QML or the
+documents names the old chip words, and no requirement names the chips' words.
+
+- Test, the class: `test_a_chip_names_a_capability_as_its_switch_in_the_sandbox_dialog_does` reads the switches from
+  `SandboxDialog.qml` and holds to their labels the chip each capability and the camera add to a bare Standard set,
+  and the names `SECRET_CAPS` gives a keyring capability refused to a review.
+- Shown failing (export of `1d56bd3`, the code before, with the two test files): `AssertionError: inhibit` (`['Keep
+  screen awake'] == ['Keep the screen awake']`) and the facts test; 2 failed, 247 passed.
+- On the fix: the touched files with `tests/test_sandbox_properties.py` (which reads `_CAP_CHIP`) and the four
+  document checks, 2034 passed; tier 1 in its container 2734 passed, 130 skipped. The stopped agent also ran the
+  launcher tier on a snapshot it named 692 (139 passed, 5 skipped in each container); the change touches no launcher.
+
+### Listed items
+
+**new**: none.
+
+**needs your eye**
+
+- `0583283` (#403): R17.5 moves NetworkMonitor and ProxyResolver from every app on the bus to the network grant and
+  says the launcher sets `GIO_USE_PROXY_RESOLVER=dummy` for a Standard app without it; A1.2.3.12 and A2's inventory
+  follow. The variable is no decision's own word: it is what keeps the decided remedy from failing every GLib
+  connection, the loopback included, in an app without the network.
+- `2e05a9b` (#404): what the user sees, the Network switch's hint for a Standard app: "Let it reach the internet and
+  the local network. Without it the app can still ask the desktop to open a link, which may carry what the app
+  knows." (Strict keeps the first sentence alone.) R17.17 gains the sentence "No network is not no way out: …"; A1.9
+  a bullet, A1.10 a row.
+- `0d659f9` (#202): A1.2.3.6, A1.2.3.12, A1.2.3.14 and A1.9 point to R17.5's list instead of copying it. No requirement.
+- `5b22d69` (#201): A1.2.3.6's sentence on GTK4's fallback. No requirement.
+- `99b7bd2` (#692): what the user sees, the summary's chips on the install card, App Detail and the Sandbox dialog:
+  "Keep the screen awake" for "Keep screen awake", "Saved passwords" for "Secrets". A1.2.3.14's paragraph and table.
+  The rule "a chip says what its switch says" is in the design and the test, not in a requirement: no requirement
+  names the chips' words.
+
+**needs a run**
+
+1. `scripts/test-sandbox.sh launcher-vm` and `launcher-vm26`, `scripts/test-desktop-vm.sh run mint22.3` and
+   `run lmde7`: #403 changes the filter's portal rules and the launcher's environment for an app without the
+   network, and its GLib test and #404's offline-editor case are new in the launcher tier; neither is shown
+   outside the containers. With batches 1 and 2's runs, when the last batch is in.
+2. The screenshot tour (CI's `tour` job): "Keep the screen awake" is a longer chip than the one it replaces; I did
+   not look at it on screen.
+3. The project's own commands, which neither agent ran as such (the worktree has no `build/`): `scripts/test-tier1.sh`,
+   `scripts/test-sandbox.sh launcher`, `launcher-lmde7`. Their container commands were run by hand, on the same images,
+   with the main checkout's `build/` Python and PySide6 mounted read-only and a 3 GB cap.
+
+**guard**: exit 0 after `99b7bd2`, with no file to add but those of `docs/relay/`. The four earlier commits'
+files are all in U09's files.
+
+### Doubts for the coordinator
+
+1. **The two agents shared one scratch folder.** `/tmp/cr1-u09-b3/` was the stopped agent's, and my first run there
+   overwrote its `tier1.sh` (with batch 2's, the same command), its draft `msg-692.txt`, `snap-692/` and
+   `tier1-692.log`. Its other logs and exports are as it left them; the numbers above for its commits come from them.
+   My own exports are the `mine-*` folders there.
+2. **What the stopped agent ran for #692 before it stopped** is not known from its files: its launcher logs for "692"
+   are from a snapshot taken at 3:14 PM, which my copy replaced. The launcher tier does not read the chips.
+3. **A chip's words are stored**: `sandboxReviewSeen` (`src/appkata/backend.py`) keeps the summary's labels to tell
+   a new review suggestion from one seen. A suggestion seen under the old words would show as new once; no one uses
+   AppKata yet, so nothing is carried over, as the brief says.
+4. **#404's message** says `tests/test_requirements_trace.py` fails on the commit before; run on the parent it passes
+   (see #404 above). The other tests it names fail there as it says.
+5. **The four earlier commits carry `Co-Authored-By: Claude Fable 5.2`**, the model they ran on, made before 4 PM.
+   `99b7bd2` carries Opus 5.5.
+6. `A1.2-approach.md` is at 497 of its 500 lines: batch 4's text there has three lines of room.
+7. No refusal and no model change on my side.
+
