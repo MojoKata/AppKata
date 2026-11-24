@@ -45,6 +45,10 @@ def _ext(name: str, data: bytes) -> str:
 
 
 def _save_image(http: Http, url: str, dest_base: str, token_host: str | None = None) -> str:
+    """Fetch an image and keep it. The address may be one the project wrote (its metainfo, its
+    README) or the forge gave (an avatar), so `token_host` is always the Source's host: Http sends
+    that host's token to no other (R9.2.2), opens only http and https, and refuses an address on
+    this computer or its local network unless it is that host's."""
     data = http.bytes(url, token_host=token_host, max_bytes=MAX_IMAGE)
     ext = _ext(url, data)
     if ext not in (".png", ".jpg", ".svg", ".webp", ".gif"):

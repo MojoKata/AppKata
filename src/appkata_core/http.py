@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -77,6 +79,50 @@ def _origin(parts) -> tuple:
     return parts.scheme, (parts.hostname or "").lower(), port
 
 
+def _is_for(parts, whose: str) -> bool:
+    """Whether an address is on the host `whose`, or on one of its named hosts (token_hosts)."""
+    return bool({(parts.hostname or "").lower(), _host_port(parts)} & set(token_hosts(whose)))
+
+
+def _http_address(url: str):
+    """An address in its parts, or Unreachable when it isn't an http or https one with a host: the
+    only addresses Http opens, whoever asks (CR1 #266). A project's icon address can say file:, which
+    on Windows can name a host to log in to over SMB, or ftp: or data:."""
+    try:
+        parts = urlsplit(url)
+        parts.port
+    except ValueError:
+        parts = None
+    if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+        raise Unreachable(f"{url[:200]!r} isn't an http or https address")
+    return parts
+
+
+def _addresses(host: str) -> list[str]:
+    """The addresses a host's name stands for, as a connection to it would look them up."""
+    return [info[4][0] for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
+
+
+def _local(address: str) -> bool:
+    """A loopback, private or link-local address, or any other that isn't a public one (0.0.0.0, a
+    carrier's shared range)."""
+    ip = ipaddress.ip_address(address.split("%")[0])          # fe80::1%eth0
+    ip = getattr(ip, "ipv4_mapped", None) or ip                 # ::ffff:127.0.0.1
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified or not ip.is_global
+
+
+def _opener(redirects) -> urllib.request.OpenerDirector:
+    """Http's own opener: urllib's default one without its file:, ftp: and data: handlers (CR1 #266),
+    and with Http's rules for a redirect."""
+    proxies = {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler(proxies), urllib.request.UnknownHandler(), urllib.request.HTTPHandler(),
+                    urllib.request.HTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(), redirects,
+                    urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
 TOKEN_HEADERS = ("authorization", "private-token")
 
 
@@ -85,21 +131,32 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     Http sends the token as an unredirected header, which urllib never copies, and this hands it on
     by its own rule: only to the same scheme, host and port (a renamed repository's API address
     redirects on its own host). To any other host the request goes on without it, and a redirect to
-    plain http of a request that carried a token is refused, the same host's too."""
+    plain http of a request that carried a token is refused, the same host's too.
+
+    Where a redirect points is held to the rule for a first address (`allowed`, Http._allowed): http
+    or https, and no local address but the host's the request was made for (`req.whose`)."""
+
+    def __init__(self, allowed):
+        self.allowed = allowed
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        was = urlsplit(req.full_url)
+        whose = getattr(req, "whose", (was.hostname or "").lower())
         token = {k: v for k, v in req.unredirected_hdrs.items() if k.lower() in TOKEN_HEADERS}
-        if new is None or not token:
-            return new
-        was, to = urlsplit(req.full_url), urlsplit(newurl)
-        if to.scheme != "https":
+        try:
+            to = self.allowed(newurl, whose)
+            if token and to.scheme != "https":
+                raise Unreachable(f"{was.hostname} redirected a request that carried its API token to plain http; "
+                                  "the redirect wasn't followed")
+        except Unreachable:
             fp.close()
-            raise Unreachable(f"{was.hostname} redirected a request that carried its API token to plain http; "
-                              "the redirect wasn't followed")
-        if _origin(to) == _origin(was):
-            for k, v in token.items():
-                new.add_unredirected_header(k, v)
+            raise
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.whose = whose
+            if _origin(to) == _origin(was):
+                for k, v in token.items():
+                    new.add_unredirected_header(k, v)
         return new
 
 
@@ -107,7 +164,8 @@ class Http:
     def __init__(self, tokens: dict[str, str] | None = None, timeout: float = 20.0, opener=None):
         self.tokens = {k.lower(): v for k, v in (tokens or {}).items() if v}
         self.timeout = timeout
-        self._open = opener or urllib.request.build_opener(_Redirects()).open
+        self._open = opener or _opener(_Redirects(self._allowed)).open
+        self._lookup = _addresses                # host -> its addresses
         self.limited: dict[str, float] = {}      # host -> reset time
         self.calls = 0
 
@@ -121,17 +179,36 @@ class Http:
             return {"PRIVATE-TOKEN": tok}
         return {"Authorization": f"token {tok}"}      # Gitea / Forgejo
 
-    def _token(self, parts, token_host: str | None) -> dict:
+    def _token(self, parts, whose: str) -> dict:
         """The token header a request to this address carries (R9.2.2), decided here for every caller
-        from the address itself. `token_host` only says whose token is meant (without it, the
-        address's own host's): it is sent over https alone, and only when the address's host is one
-        of that host's token_hosts(). A caller that names a host for an address elsewhere, as Sync
-        does for an image a project's README or metainfo names, sends no token."""
-        host = (parts.hostname or "").lower()
-        whose = (token_host or host).lower()
-        if parts.scheme != "https" or not {host, _host_port(parts)} & set(token_hosts(whose)):
+        from the address itself. `whose` only says whose token is meant (a caller's `token_host`, or
+        without one the address's own host): it is sent over https alone, and only when the address's
+        host is one of that host's token_hosts(). A caller that names a host for an address
+        elsewhere, as Sync does for an image a project's README or metainfo names, sends no token."""
+        if parts.scheme != "https" or not _is_for(parts, whose):
             return {}
         return self._auth(whose)
+
+    def _allowed(self, url: str, whose: str | None = None):
+        """The parts of an address Http may open, or Unreachable (CR1 #266). It is an http or https
+        address, and its host doesn't stand for a loopback, private or link-local address: a project
+        names its images' addresses, and a forge its avatars' and its redirects', and none of them
+        gets a request sent into this computer or its network. The one host that may be local is
+        `whose`, the host the request is made for (a forge on the user's own network), with its
+        named hosts; without one, that is the address's own host. A first address and every
+        redirect of it are held to this."""
+        parts = _http_address(url)
+        host = parts.hostname.lower()
+        if whose is None or _is_for(parts, whose.lower()):
+            return parts
+        try:
+            local = [a for a in self._lookup(host) if _local(a)]
+        except (OSError, ValueError) as e:        # no such name: what the connection would have found
+            raise Unreachable(f"couldn't reach {host}: {e}") from None
+        if local:
+            raise Unreachable(f"{host} is on this computer or its local network ({local[0]}): not fetched, "
+                              "since it isn't the Source's own host")
+        return parts
 
     def request(self, url: str, **kw) -> tuple[bytes, dict, str]:
         """With up to two retries for a forge's temporary errors (HTTP 502, 503, 504, timeouts)."""
@@ -146,14 +223,19 @@ class Http:
     def _request(self, url: str, *, token_host: str | None = None, accept: str = "application/json",
                  headers: dict | None = None, method: str = "GET", max_bytes: int = 64 << 20,
                  body: bytes | None = None) -> tuple[bytes, dict, str]:
-        parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
+        """`token_host` is the host the request is made for, a Source's: its token is the one that may
+        be sent (_token), and it is the one host that may be on the local network (_allowed). An
+        address that a project, or a forge's answer, names is always asked with it."""
+        parts = self._allowed(url, token_host)
+        host = parts.hostname.lower()
+        whose = (token_host or host).lower()       # the host this request is made for
         reset = self.limited.get(host)
         if reset and reset > time.time():
             raise RateLimited(host, reset)
-        token = self._token(parts, token_host)
+        token = self._token(parts, whose)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
         req = urllib.request.Request(url, data=body, headers=h, method=method)
+        req.whose = whose                          # for a redirect: _Redirects
         for k, v in token.items():
             req.add_unredirected_header(k, v)      # so a redirect doesn't carry it on: _Redirects decides
         self.calls += 1

@@ -1,6 +1,7 @@
 """Forge API parsing against recorded responses, so no forge needs to be reachable."""
 
 import io
+import ipaddress
 import json
 import re
 import threading
@@ -76,7 +77,7 @@ def test_forgejo_detection_and_releases():
 
 
 def test_rate_limit_is_typed_and_remembered():
-    http = Http(opener=opener({"https://api.github.com/repos/a/b": 403}))
+    http = names(Http(opener=opener({"https://api.github.com/repos/a/b": 403})))
     f = forges.GitHub(http, urls.parse("https://github.enterprise.example/a/b"), api="https://api.github.com")
     with pytest.raises(RateLimited):
         f._info_api()
@@ -198,6 +199,23 @@ def recording(routes, seen):
     return open_
 
 
+PUBLIC = "8.8.8.8"
+
+
+def names(http, table=None):
+    """Stands in for the name lookup, so no test asks a name server: a host in `table` gets its
+    addresses there, an address is itself, and every other name gets a public address."""
+    def lookup(host):
+        if host in (table or {}):
+            return table[host]
+        try:
+            return [str(ipaddress.ip_address(host))]
+        except ValueError:
+            return [PUBLIC]
+    http._lookup = lookup
+    return http
+
+
 def tokened(seen):
     """The addresses that were sent a token, in either header."""
     return [url for url, h in seen if "authorization" in h or "private-token" in h]
@@ -225,7 +243,7 @@ def _ask(http, url, **kw):
 ])
 def test_the_github_token_goes_to_its_named_hosts_over_https_and_nowhere_else(url, sent):
     seen = []
-    http = Http({"github.com": "ghp_SECRET", "evil.example": ""}, opener=recording({}, seen))
+    http = names(Http({"github.com": "ghp_SECRET", "evil.example": ""}, opener=recording({}, seen)))
     _ask(http, url, token_host="github.com")
     assert [u for u, _ in seen] == [url]
     assert tokened(seen) == ([url] if sent else []), seen
@@ -236,7 +254,7 @@ def test_the_github_token_goes_to_its_named_hosts_over_https_and_nowhere_else(ur
 @pytest.mark.parametrize("host, header", [("gitlab.com", "private-token"), ("codeberg.org", "authorization")])
 def test_another_hosts_token_goes_to_that_host_alone(host, header):
     seen = []
-    http = Http({host: "SECRET"}, opener=recording({}, seen))
+    http = names(Http({host: "SECRET"}, opener=recording({}, seen)))
     for url in (f"https://{host}/api/x", f"https://api.{host}/x", f"https://raw.{host}/x", f"http://{host}/api/x",
                 "https://api.github.com/x", "https://raw.githubusercontent.com/x", "https://evil.example/x.png"):
         _ask(http, url, token_host=host)
@@ -262,7 +280,7 @@ def test_a_request_that_names_no_host_gets_its_own_hosts_token_and_no_other():
 ])
 def test_an_image_on_another_host_is_fetched_without_the_sources_token(tmp_path, url, sent):
     seen = []
-    http = Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({url: PNG}, seen))
+    http = names(Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({url: PNG}, seen)))
     assert sync._save_image(http, url, str(tmp_path / "hero"), token_host="github.com") == str(tmp_path / "hero.png")
     assert tokened(seen) == ([url] if sent else []), seen
 
@@ -279,7 +297,7 @@ def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path)
     its named API and raw-file hosts. The project's metainfo and README name images elsewhere."""
     api, raw = "https://api.github.com/repos/o/r", "https://raw.githubusercontent.com/o/r/main/"
     seen = []
-    http = Http({"github.com": "ghp_SECRET"}, opener=recording({
+    http = names(Http({"github.com": "ghp_SECRET"}, opener=recording({
         api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
         api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in (
             "README.md", "data/org.example.r.metainfo.xml", "data/icons/icon.png", "docs/window.png")]},
@@ -289,7 +307,7 @@ def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path)
         raw + "data/org.example.r.metainfo.xml": METAINFO.encode(),
         raw + "docs/window.png": PNG,
         "https://avatars.githubusercontent.com/u/1": PNG,
-    }, seen))
+    }, seen)))
     db = DB(str(tmp_path / "a.db"))
     sync.sync_app(db, http, "https://github.com/o/r", root=str(tmp_path))
     app = db.one("SELECT * FROM apps WHERE url=?", ("https://github.com/o/r",))
@@ -357,8 +375,9 @@ def pair(monkeypatch):
 
 
 def _with_token(monkeypatch, header):
-    """An Http with a token for server A, sent in the named header."""
-    http = Http({"127.0.0.1": "SECRET-TOKEN"}, timeout=10)
+    """An Http with a token for server A, sent in the named header. Server B's name counts as a public
+    host's here: a redirect to an address on this computer is refused (further down)."""
+    http = names(Http({"127.0.0.1": "SECRET-TOKEN"}, timeout=10))
     if header == "private-token":            # the form a host named for GitLab gets
         monkeypatch.setattr(http, "_auth", lambda *a, **k: {"PRIVATE-TOKEN": "SECRET-TOKEN"})
     return http
@@ -400,5 +419,143 @@ def test_a_redirect_from_https_to_http_of_a_request_with_a_token_is_refused(pair
 def test_a_redirect_from_https_to_http_without_a_token_is_followed(pair):
     a, b = pair
     a.redirects["/x"] = f"http://{b.at}/plain"
-    assert Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10).json(f"https://{a.at}/x") == {"ok": True}
+    assert names(Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10)).json(f"https://{a.at}/x") == {"ok": True}
     assert [path for path, _ in b.seen] == ["/plain"] and _secrets(a.seen + b.seen) == []
+
+
+# ---------------------------------------------------------------- which addresses are opened at all
+# CR1's #266: Http opened whatever urllib can, so a project's icon address could be a file on this
+# computer, or on Windows a file: address that makes it log in to a host over SMB; and any image
+# address could be on this computer or its local network. Only the hero loop looked at an address,
+# and only for "http" at its start. The class is "an address a project wrote is opened as it stands",
+# so the rule is Http's, for every caller: http and https alone, and no host that stands for a local
+# address unless it is the Source's own.
+NOT_HTTP = ["file:///etc/hostname", "file://attacker.example/share/icon.png", "file:////attacker.example/share/icon.png",
+            "ftp://attacker.example/icon.png", "data:image/png;base64,iVBORw0KGgo=", "FILE:///etc/hostname",
+            "gopher://attacker.example/", "icon.png", ""]
+
+
+@pytest.mark.parametrize("url", NOT_HTTP)
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_only_http_and_https_addresses_are_opened_whoever_asks(url, call):
+    seen = []
+    http = names(Http(opener=recording({url or "x": PNG}, seen)))
+    with pytest.raises(Unreachable):
+        getattr(http, call)(url)
+    assert seen == [] and http.calls == 0
+
+
+def test_https_own_opener_has_no_way_to_open_anything_but_http_and_https(tmp_path):
+    (tmp_path / "private.png").write_bytes(PNG)
+    http = Http(timeout=5)
+    for url in ((tmp_path / "private.png").as_uri(), "ftp://127.0.0.1:1/icon.png", "data:text/plain,hi"):
+        with pytest.raises(urllib.error.URLError, match="unknown url type"):
+            http._open(urllib.request.Request(url), timeout=5).close()
+
+
+def test_a_file_address_is_not_saved_as_an_icon(tmp_path):
+    # with Http's own opener: the review saved a local file's bytes as icon.png this way
+    (tmp_path / "private.png").write_bytes(PNG)
+    with pytest.raises(Unreachable):
+        sync._save_image(Http(timeout=5), (tmp_path / "private.png").as_uri(), str(tmp_path / "icon"), token_host="github.com")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["private.png"]
+
+
+LOCAL = ["127.0.0.1", "127.8.9.1", "192.168.1.1", "10.0.0.5", "172.16.0.9", "169.254.1.1", "169.254.169.254", "0.0.0.0",
+         "100.64.0.1", "::1", "fe80::1", "fe80::1%eth0", "fd00::1", "::ffff:127.0.0.1", "::ffff:192.168.1.1", "::"]
+
+
+@pytest.mark.parametrize("address", LOCAL)
+def test_an_image_whose_host_stands_for_a_local_address_is_refused(tmp_path, address):
+    url, seen = "https://img.example/shot.png", []
+    for addresses in ([address], [PUBLIC, address]):          # one local address among a host's is enough
+        http = names(Http(opener=recording({url: PNG}, seen)), {"img.example": addresses})
+        with pytest.raises(Unreachable, match="img.example"):
+            sync._save_image(http, url, str(tmp_path / "hero"), token_host="github.com")
+    assert seen == [] and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8080/shot.png", "http://192.168.1.1/shot.png", "https://169.254.1.1/shot.png",
+                                 "http://[::1]:8080/shot.png", "http://localhost:631/shot.png"])
+def test_an_image_at_a_local_address_is_refused_by_the_real_lookup(tmp_path, url):
+    # no stand-in: an address needs no name server, and neither does localhost
+    seen = []
+    with pytest.raises(Unreachable):
+        sync._save_image(Http(opener=recording({url: PNG}, seen)), url, str(tmp_path / "hero"), token_host="github.com")
+    assert seen == [] and list(tmp_path.iterdir()) == []
+
+
+def test_a_host_whose_name_cant_be_looked_up_is_refused_too(tmp_path):
+    def fails(host):
+        raise OSError("Name or service not known")
+    seen = []
+    http = Http(opener=recording({"https://img.example/shot.png": PNG}, seen))
+    http._lookup = fails
+    with pytest.raises(Unreachable, match="img.example"):
+        sync._save_image(http, "https://img.example/shot.png", str(tmp_path / "hero"), token_host="github.com")
+    assert seen == []
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "192.168.1.1", "169.254.1.1"])
+def test_the_sources_own_host_may_stand_for_a_local_address(tmp_path, address):
+    # a forge on the user's own network: its files, its API and what names no other host
+    url, seen = "https://git.lan.example/o/r/raw/branch/main/shot.png", []
+    http = names(Http({"git.lan.example": "SECRET"}, opener=recording({"https://git.lan.example/": PNG}, seen)),
+                 {"git.lan.example": [address]})
+    assert sync._save_image(http, url, str(tmp_path / "hero"), token_host="git.lan.example").endswith("hero.png")
+    assert http.bytes("https://git.lan.example/api/v1/version") == PNG
+    assert [u for u, _ in seen] == [url, "https://git.lan.example/api/v1/version"]
+
+
+def test_a_whole_sync_opens_only_http_and_https_and_no_local_address_but_the_sources(tmp_path):
+    """A forge on the local network, whose project names a file, an ftp address, and images on this
+    computer and on other hosts of the network: the Sync fetches the forge's own, and none of those."""
+    (tmp_path / "private.png").write_bytes(PNG)
+    private = (tmp_path / "private.png").as_uri()
+    web, api = "https://git.lan.example/", "https://git.lan.example/api/v1/repos/o/r"
+    raw = web + "o/r/raw/branch/main/"
+    metainfo = METAINFO.replace("https://evil.example/icon.png", private).replace(
+        "http://evil.example/shot.png", "http://nas.lan.example/shot.png")
+    readme = ("# R\n\n![shot](http://192.168.1.7/screenshot.png)\n\n![shot](http://localhost:631/screenshot2.png)\n\n"
+              "![window](docs/window.png)\n")
+    seen = []
+    http = names(Http({"git.lan.example": "SECRET"}, opener=recording({
+        web + "api/v1/version": {"version": "1.22.0"},
+        api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+        api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in (
+            "README.md", "data/org.example.r.metainfo.xml", "docs/window.png")]},
+        api: {"name": "r", "full_name": "o/r", "default_branch": "main", "avatar_url": "ftp://nas.lan.example/avatar.png"},
+        raw + "README.md": readme.encode(),
+        raw + "data/org.example.r.metainfo.xml": metainfo.encode(),
+        raw + "docs/window.png": PNG,
+        private: PNG, "ftp://": PNG, "http://": PNG,            # each would answer, if it were asked
+    }, seen)), {"git.lan.example": ["192.168.1.5"], "nas.lan.example": ["192.168.1.9"], "localhost": ["127.0.0.1"]})
+    db = DB(str(tmp_path / "a.db"))
+    sync.sync_app(db, http, "https://git.lan.example/o/r", root=str(tmp_path / "data"))
+    app = db.one("SELECT * FROM apps WHERE url=?", ("https://git.lan.example/o/r",))
+    assert app["error_code"] is None and app["forge"] == "gitea" and app["readme"].startswith("# R")
+    assert app["icon"] == "" and app["hero"].endswith("hero.png")      # no icon: each one it names is refused
+    assert [u for u, _ in seen if not u.startswith(web)] == []
+    assert raw + "docs/window.png" in [u for u, _ in seen]
+
+
+def test_a_redirect_to_a_local_address_is_refused(pair):
+    # server A is the host asked, so it may be local; B is another name for this computer
+    a, b = pair
+    a.redirects["/x"] = f"http://{b.at}/admin"
+    a.redirects["/y"] = f"https://{b.at}/admin"
+    for path in ("/x", "/y"):
+        with pytest.raises(Unreachable, match="localhost"):
+            Http(timeout=10).json(f"https://{a.at}{path}")
+    assert b.seen == []
+    a.redirects["/z"] = "/elsewhere"                 # on the host itself, as before
+    assert Http(timeout=10).json(f"https://{a.at}/z") == {"ok": True}
+
+
+@pytest.mark.parametrize("to, says", [("ftp://127.0.0.1:1/x", "isn't an http or https address"),    # urllib would follow it
+                                      ("file:///etc/hostname", "HTTP 302")])                      # urllib's own refusal
+def test_a_redirect_to_anything_but_http_and_https_is_refused(pair, to, says):
+    a, b = pair
+    a.redirects["/x"] = to
+    with pytest.raises(Unreachable, match=says):
+        Http(timeout=10).json(f"https://{a.at}/x")
