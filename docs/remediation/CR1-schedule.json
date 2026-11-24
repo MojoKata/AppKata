@@ -261,8 +261,11 @@
     "src/appkata_core/http.py",
     "src/appkata_core/metadata.py",
     "src/appkata_core/sync.py",
+    "tests/skips/windows.txt",
     "tests/test_audit_log_explore.py",
+    "tests/test_backend.py",
     "tests/test_forges.py",
+    "tests/test_requirements_trace.py",
     "tests/test_sync.py"
    ]
   },
@@ -751,7 +754,8 @@
     286,
     294,
     299,
-    419
+    419,
+    690
    ],
    "files": [
     "docs/requirements/R2-apps-and-sources.md",
@@ -10761,6 +10765,21 @@
    "size": "small",
    "proof": "A test with a stand-in server that redirects a request carrying a token to a second host, which answers 401: the error names that host and doesn't say the token was rejected; a 401 from the token's own host still does.",
    "note": "Found by U07's first batch (2026-11-24) after #264's fix, and filed by the coordinator; its remedy is the issue's."
+  },
+  {
+   "finding": 690,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/urls.py",
+    "tests/test_core.py"
+   ],
+   "related": [
+    280,
+    297
+   ],
+   "size": "small",
+   "proof": "tests/test_core.py: the four pairs of scheme and port (https with 443 and with 80, http with 80 and with 443) normalize to a URL that keeps a port that isn't its own scheme's default.",
+   "note": "Found by U07's second batch (2026-11-24) while fixing #297, and filed by the coordinator. It is the same line as #280 (urls.py:64) and is decided with #280's rule for the scheme: one commit can settle both, each with its own test."
   }
  ],
  "shared_files": [
