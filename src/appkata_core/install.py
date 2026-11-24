@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
+from functools import partial
 
 import logging
 import threading
@@ -240,6 +241,18 @@ def desktop_exec(exec_path: str, *words: str) -> str:
     return " ".join([f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
 
 
+def _menu_exec(exec_path: str, *words: str) -> str:
+    """:func:`desktop_exec`, as an install's step: a path no menu entry can start stops the install."""
+    try:
+        return desktop_exec(exec_path, *words)
+    except ValueError as e:
+        raise InstallError(f"couldn't add the app-menu entry: {e}") from None
+
+
+def _menu_entry_path(app_id: str) -> str:
+    return os.path.join(desktop_dir(), f"appkata-{app_id}.desktop")
+
+
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
     """The app-menu entry. For a sandbox launcher (`launcher=True`) Exec passes the word
     --appkata-menu first: started this way nothing shows stderr, so the launcher keeps its own in
@@ -248,11 +261,8 @@ def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: s
     The name and the summary are the project's own text (its metainfo, its README, a review), and
     the path can hold a folder or a program the project named: each is written as one escaped line
     (:func:`desktop_value`, :func:`desktop_exec`), so the entry holds AppKata's keys and no other."""
-    try:
-        exec_value = desktop_exec(exec_path, *(["--appkata-menu"] if launcher else []))
-    except ValueError as e:
-        raise InstallError(f"couldn't add the app-menu entry: {e}") from None
-    path = os.path.join(desktop_dir(), f"appkata-{app_id}.desktop")
+    exec_value = _menu_exec(exec_path, *(["--appkata-menu"] if launcher else []))
+    path = _menu_entry_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     icon = "" if _CONTROL.search(icon) else icon
     with open(path, "w") as f:
@@ -321,15 +331,23 @@ def _points_into(link: str, roots: tuple[str, ...]) -> bool:
     return any(dest.startswith(os.path.realpath(r) + os.sep) for r in roots if r)
 
 
+def _link_refusal(link: str, own: tuple[str, ...] | None = None) -> str:
+    """Why :func:`_link` makes no link at `link`, or "": what is already there is replaced only when
+    it is a link, and with `own` (the install folders: a command link's case, R4.3.1.3) only one
+    that leads into them: the user's own `~/bin/tool -> /opt/tool` was replaced like any link
+    (CR1.5-31)."""
+    if os.path.lexists(link) and (not os.path.islink(link) or (own is not None and not _points_into(link, own))):
+        return f"{link} exists and isn't a link AppKata made; not replacing it"
+    return ""
+
+
 def _link(target: str, link: str, own: tuple[str, ...] | None = None) -> str:
-    """Point `link` at `target` (relative when they share a folder); returns the link path. What is
-    already there is replaced only when it is a link, and with `own` (the install folders: a
-    command link's case, R4.3.1.3) only one that leads into them: the user's own `~/bin/tool ->
-    /opt/tool` was replaced like any link (CR1.5-31)."""
+    """Point `link` at `target` (relative when they share a folder); returns the link path. Refused
+    with an InstallError where :func:`_link_refusal` says why."""
     os.makedirs(os.path.dirname(link), exist_ok=True)
-    if os.path.islink(link) or os.path.exists(link):
-        if not os.path.islink(link) or (own is not None and not _points_into(link, own)):
-            raise InstallError(f"{link} exists and isn't a link AppKata made; not replacing it")
+    if why := _link_refusal(link, own):
+        raise InstallError(why)
+    if os.path.islink(link):
         os.remove(link)
     rel = os.path.relpath(target, os.path.dirname(link)) if os.path.dirname(target) == os.path.dirname(link) else target
     os.symlink(rel, link)
@@ -413,13 +431,17 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     vdir = os.path.join(target, "app" if fixed else _safe(version))
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
-    if kind == "exe":                      # a portable Windows program
-        os.makedirs(staging)
-        shutil.move(file, os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe"))
-        exe = os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe")
-    else:
-        _extract(kind, file, staging)
-        exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
+    try:
+        if kind == "exe":                      # a portable Windows program
+            os.makedirs(staging)
+            shutil.move(file, os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe"))
+            exe = os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe")
+        else:
+            _extract(kind, file, staging)
+            exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
+    except BaseException:                  # an archive that can't be unpacked, or has no program: nothing of it stays (CR1.3-15)
+        _remove_tree(staging)
+        raise
     shutil.rmtree(vdir, ignore_errors=True)
     os.replace(staging, vdir)
     return {"version": version, "path": vdir, "exec": os.path.relpath(exe.replace(staging, vdir, 1), target)}
@@ -701,6 +723,121 @@ def _remove_path(path: str) -> None:
         os.remove(path)
 
 
+def _remove_tree(path: str) -> None:
+    """Remove a folder AppKata made, with whatever is in it (a deep archive's paths too, R15.16)."""
+    if OS == "windows":
+        from .windows import long_path
+        path = long_path(path)
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: str, target: str, kind: str = "") -> None:
+    """Refuse now, before anything is placed or changed, the install :func:`_activate` would refuse
+    after: a command link's place that holds something AppKata didn't make (R4.3.1.3, R15.6), and an
+    app-menu entry that can't start the app's folder. The files, the stable link and the menu entry
+    were in place by the time the last step refused, with no record of them (CR1.3-15). What only
+    shows later (a program's own path in its archive, a Start-menu shortcut Windows won't make) is
+    taken back by :func:`_undo_portable`.
+
+    Nothing is refused here that `_activate` would do: an app's kind is known once it is placed, and
+    a command-line tool gets no menu entry when that option was Settings' default (`_apply_kind`),
+    so the entry is checked only when it is sure to be written, and only where it is sure to start
+    something in the app's folder (the program, or the sandbox launcher beside it)."""
+    if OS == "windows":
+        from . import windows
+        shim = os.path.join(os.path.expandvars(os.path.expanduser(portable.command_dir)), app_id + ".cmd") if portable.command_dir else ""
+        if shim and os.path.exists(shim):
+            with open(shim, encoding="utf-8", errors="replace") as f:
+                if not f.read().startswith(windows.SHIM_MARK):
+                    raise InstallError(f"{shim} exists and isn't a command link AppKata made; not replacing it")
+        return
+    tool_maybe = bool(app.get("menuFromDefault")) and OS == "linux" and kind in ("appimage", "tarball")
+    if portable.app_menu and not prev.get("selfInstalled") and not tool_maybe \
+            and os.path.dirname(sandbox.launcher_path(app_id, portable.root)) == target:
+        _menu_exec(target)
+    if portable.command_dir:
+        link = os.path.join(os.path.expanduser(portable.command_dir), app_id)
+        own = (portable.root, os.path.dirname(target))
+        replaced = link in prev.get("links", []) and os.path.islink(link)        # _activate removes the record's links first
+        if not replaced and not command_link_refusal(app_id, link, own) and (why := _link_refusal(link, own)):
+            raise InstallError(why)
+
+
+def _options_of(rec: dict, portable: "Portable") -> "Portable":
+    """The options an installed app's record was activated with, as a Portable (the rest is
+    `portable`'s): its install folder, its three options (R4.3.1.6) and the folder its command link
+    is in."""
+    opts, target = rec.get("options") or {}, rec.get("target", "")
+    folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) != target] + \
+              [os.path.dirname(x) for x in rec.get("shims", [])]
+    root = rec.get("root") or portable.root
+    return replace(portable, folder=root, folder_everyone=root, scope=rec.get("scope") or portable.scope,
+                   app_menu=bool(opts.get("appMenu")), stable_name=bool(opts.get("stableName")),
+                   command_dir=(folders[0] if folders else portable.command_dir) if opts.get("commandLink") else "")
+
+
+def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable", target: str, was: dict) -> None:
+    """Take back a portable install, or a switch to a kept version, that failed after it began
+    changing things, so what is on the disk is what the records say (R4.1, R4.6; CR1.3-15: the record
+    is stored last, and a refusal at the command link left the files, the stable link, the launcher
+    and the menu entry of an app AppKata had no record of, or the new version's under the previous
+    version's record).
+
+    `rec` is the record as far as the failed attempt wrote it, `prev` the stored one ({} for a first
+    install), `was` what was there before (:func:`_was_there`). A first install: its links, its menu
+    entry, its launcher and marker and its folder go (a folder or a private home that was there
+    before stays). An update: the new version's files go, and the previous version's stable link,
+    launcher, menu entry and command link are made again as its record has them (`_activate`, with
+    the record's own options). Never raises: the install's own error is the one to report."""
+    try:
+        with _ACTIVATE_LOCK:
+            app_id, new = app_id_of(rec, app), rec.get("current") or {}
+            old = {k.get("path") for k in [prev.get("current") or {}] + prev.get("kept", [])}
+            if OS == "windows":
+                from . import windows
+                for x in rec.get("shortcuts", []):
+                    if x not in prev.get("shortcuts", []):
+                        windows.remove_shortcut(x["path"], x.get("elevated", False))
+                for x in rec.get("shims", []):
+                    if x not in prev.get("shims", []):
+                        windows.remove_shim(x)
+                for l in rec.get("links", []):
+                    windows.remove_link(l)
+            else:
+                for l in rec.get("links", []):
+                    if os.path.islink(l):
+                        os.remove(l)
+                if not prev.get("selfInstalled") and _menu_entry_path(app_id) not in prev.get("files", []):
+                    _remove_path(_menu_entry_path(app_id))
+                if rec.get("launcher") and rec["launcher"] != prev.get("launcher"):
+                    _remove_path(rec["launcher"])
+            if new.get("path") and new["path"] not in old:
+                _remove_path(new["path"])
+                _remove_extracted(new)
+            if not prev.get("current"):
+                if OS == "linux":
+                    sandbox.remove_identity(app_id)
+                    if not was["home"]:
+                        sandbox.remove_sandbox_home(app_id)
+                if not was["target"] and os.path.realpath(target).startswith(os.path.realpath(portable.root) + os.sep):
+                    _remove_tree(target)
+                return
+            for moved, back in was.get("renamed", []):      # _leave_fixed_layout's rename
+                if os.path.lexists(moved) and not os.path.lexists(back):
+                    os.replace(moved, back)
+            again = json.loads(json.dumps(prev))
+            _activate(again, {**app, "sandbox": prev.get("sandbox")}, _options_of(prev, portable), target)
+            db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(again), app["url"]))
+    except Exception:       # noqa: BLE001
+        log.exception("couldn't take back all of %s's failed install in %s", app.get("name"), target)
+
+
+def _was_there(app_id: str, target: str) -> dict:
+    """What a first install must leave when it fails (:func:`_undo_portable`): whether the app's
+    folder was there before it, and a private home an earlier uninstall kept (R17.14)."""
+    return {"target": os.path.lexists(target), "home": OS == "linux" and os.path.isdir(sandbox.sandbox_home(app_id))}
+
+
 def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], progress=None, cancel=None,
             portable: Portable | None = None, phase=None) -> dict:
     """Install one app's chosen asset. Returns the install record (also stored). `phase(name)` is
@@ -723,6 +860,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     check_not_running(prev.get("target", ""), app["name"])
     ok = keep = False
     signer = ""
+    undo = None             # takes a portable install back, from its first change until its record is stored
     try:
         file = os.path.join(tmpdir, asset.name)
         log.info("downloading %s", asset.url)
@@ -777,6 +915,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             # it replaces its own files, so no version folders, kept versions or current link (R4.10.2)
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)
             check_not_running(target, app["name"])
+            _check_before_placing(prev, app, portable, app_id, target, kind)
+            undo = partial(_undo_portable, db, app, rec, prev, portable, target, _was_there(app_id, target))
             _secure_target(portable, target)
             for old in [prev.get("current")] + prev.get("kept", []) if prev.get("current") else []:
                 if old and not old.get("external"):
@@ -793,9 +933,14 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             # a portable app keeps its versions side by side in its own folder (R4.3.1)
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)
             check_not_running(target, app["name"])
+            _check_before_placing(prev, app, portable, app_id, target, kind)
+            was = _was_there(app_id, target)
+            undo = partial(_undo_portable, db, app, rec, prev, portable, target, was)
             _secure_target(portable, target)
             if prev.get("selfUpdating") and prev.get("current"):
-                prev = {**prev, "current": _leave_fixed_layout(prev["current"], target)}
+                left = _leave_fixed_layout(prev["current"], target)
+                was["renamed"] = [(left["path"], prev["current"]["path"])] if left["path"] != prev["current"]["path"] else []
+                prev = {**prev, "current": left}
             rec.update(target=target, links=prev.get("links", []), files=prev.get("files", []),
                        shortcuts=prev.get("shortcuts", []), shims=prev.get("shims", []),
                        kept=([prev["current"]] if prev.get("current") else []) + prev.get("kept", []))
@@ -841,6 +986,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
                 VALUES(?,?,?,?,?,?,?,?)""",
              (app["url"], app["name"], rel_version, app.get("date", ""), asset.name, kind, json.dumps(rec), now()))
+        undo = None
         ok = True
         return rec
     except Cancelled:
@@ -850,6 +996,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         keep = True                             # the user is asked; Install again uses the same file
         raise
     finally:
+        if undo:
+            undo()                              # it failed before its record was stored (R4.6)
         if ok:
             shutil.rmtree(tmpdir, ignore_errors=True)
         elif keep:
@@ -872,12 +1020,18 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
     if not k or not os.path.lexists(k["path"]):
         raise InstallError(f"{version} isn't kept")
     check_not_running(rec.get("target", ""), app["name"])
+    stored = json.loads(row["record"] or "{}")
+    _check_before_placing(stored, app, portable, app_id_of(rec, app), rec["target"])
     rec["kept"] = [rec["current"]] + [x for x in rec["kept"] if x is not k]
     rec["current"] = k
-    _activate(rec, app, portable, rec["target"])
-    _retain(rec, max(portable.keep, len(rec["kept"])))
-    db.x("UPDATE installs SET version=?, date=?, record=?, installed_at=? WHERE url=?",
-         (version, date or row["date"], json.dumps(rec), now(), app["url"]))
+    try:
+        _activate(rec, app, portable, rec["target"])
+        _retain(rec, max(portable.keep, len(rec["kept"])))
+        db.x("UPDATE installs SET version=?, date=?, record=?, installed_at=? WHERE url=?",
+             (version, date or row["date"], json.dumps(rec), now(), app["url"]))
+    except BaseException:           # the version that was current is current again, as its record says (CR1.3-15)
+        _undo_portable(db, app, rec, stored, portable, rec["target"], {})
+        raise
     return rec
 
 

@@ -644,3 +644,176 @@ def test_the_install_notice_says_why_no_command_was_added_and_says_it_once():
     assert Backend._command_note(why) == " No command was added: python3 is a name kept for the system's own command."
     assert Backend._command_note(why, before=why) == "" and Backend._command_note("") == "" and Backend._command_note("", before=why) == ""
     assert Backend._command_note("x is already a command on this computer (/usr/bin/x)", before=why).startswith(" No command was added: x is")
+
+
+# ---------------------------------------------------------------- an install that fails part-way (CR1.3-15)
+
+def _left(tmp_path, db):
+    """Everything an install can leave behind: every file and link under the test's folder, the
+    folders in the install folder and the sandbox homes, and the installs table. The web server's
+    files, the database's own and the helpers AppKata keeps for every sandboxed app are no app's."""
+    out = {}
+    shared = os.path.join("data", "sandboxes", ".identity")
+    for d, dirs, names in os.walk(tmp_path):
+        if d == str(tmp_path):
+            dirs[:] = [n for n in dirs if n != "www"]
+        for n in dirs + names:
+            p = os.path.join(d, n)
+            rel = os.path.relpath(p, tmp_path)
+            if n.startswith("appkata.db") or (rel.startswith(shared + os.sep) and not rel.startswith(os.path.join(shared, "apps") + os.sep)):
+                continue
+            if os.path.islink(p) or getattr(os.path, "isjunction", os.path.islink)(p):     # Windows' `current` is a junction
+                out[rel] = "-> " + os.readlink(p)
+            elif os.path.isfile(p):
+                with open(p, "rb") as f:
+                    out[rel] = hashlib.sha256(f.read()).hexdigest()[:16]
+            elif rel.startswith("apps" + os.sep) or (os.path.dirname(rel) == os.path.join("data", "sandboxes") and not n.startswith(".")):
+                out[rel] = "a folder"                      # an app's folder and what is in it, and its private home
+    out["<installs>"] = json.dumps([{**dict(r), "record": json.loads(r["record"])} for r in db.all("SELECT * FROM installs ORDER BY url")],
+                                   sort_keys=True)
+    return out
+
+
+def _changed(before, after):
+    return {k: (before.get(k), after.get(k)) for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)}
+
+
+def _tarball(server, name, files):
+    """An archive of `files`, {path: mode}, on the test's web server."""
+    root, base = server
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for path, mode in files.items():
+            body = f"#!/bin/sh\necho {path}\n".encode()
+            info = tarfile.TarInfo(path)
+            info.size, info.mode = len(body), mode
+            tf.addfile(info, io.BytesIO(body))
+    (root / name).write_bytes(buf.getvalue())
+    return Asset(name, f"{base}/{name}")
+
+
+_REFUSALS = {"the command link": "isn't a link AppKata made", "the menu entry": "couldn't add the app-menu entry",
+             "an archive with no program": "couldn't find the program"}
+
+
+@linux_only
+@pytest.mark.parametrize("update", [False, True], ids=["a first install", "an update"])
+@pytest.mark.parametrize("refused", list(_REFUSALS))
+def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, refused, update):
+    # CR1.3-15: the record is stored last, and nothing took back what a refused install had made by
+    # then. A first install refused at its command link (a file of the user's is there) left the
+    # app's folder, its stable link and its menu entry with no record: in the desktop's menu, not in
+    # AppKata, and nothing to uninstall it with. Refused as an update, `current` and the menu entry
+    # were the new version's and the record the old one's, and an archive with no program left its
+    # <version>.new folder. Each refusal here is a real one: a file where the command link goes, a
+    # program whose path in the archive holds a quote (no menu entry can start it, and that is known
+    # only once it is unpacked), an archive with no program.
+    apps, cmd, mine = tmp_path / "apps", tmp_path / "cmd", tmp_path / "their-bin"
+    mine.mkdir()
+    (mine / "tool").write_text("mine")
+    app = {**APP, "name": "tool"}
+    good = install.Portable(folder=str(apps), command_dir=str(cmd))
+    if update:
+        a1 = _tarball(server, "tool-1.0.tar.gz", {"tool-1.0/tool": 0o755})
+        install.install(env, {**app, "installVersion": "1.0"}, a1, "tarball", [a1], portable=good)
+        assert os.readlink(apps / "tool" / "current") == "1.0" and os.path.islink(cmd / "tool")
+    files = {"the menu entry": {'tool-2.0/a "quoted" folder/tool': 0o755}, "an archive with no program": {"tool-2.0/README": 0o644}}
+    a2 = _tarball(server, "tool-2.0.tar.gz", files.get(refused, {"tool-2.0/tool": 0o755}))
+    p = install.Portable(folder=str(apps), command_dir=str(mine)) if refused == "the command link" else good
+    before = _left(tmp_path, env)
+    with pytest.raises(install.InstallError, match=_REFUSALS[refused]):
+        install.install(env, {**app, "installVersion": "2.0"}, a2, "tarball", [a2], portable=p)
+    assert _changed(before, _left(tmp_path, env)) == {}
+    assert (mine / "tool").read_text() == "mine" and os.path.lexists(apps / "tool") is update
+    if update:                                                  # and the app is whole: it updates, and uninstalls
+        a3 = _tarball(server, "tool-3.0.tar.gz", {"tool-3.0/tool": 0o755})
+        rec = install.install(env, {**app, "installVersion": "3.0"}, a3, "tarball", [a3], portable=good)
+        assert os.readlink(apps / "tool" / "current") == "3.0" and [k["version"] for k in rec["kept"]] == ["1.0"]
+        install.uninstall(env, APP["url"])
+        assert not os.path.lexists(apps / "tool") and not os.path.lexists(cmd / "tool")
+        assert not os.path.lexists(tmp_path / "xdg" / "applications" / "appkata-tool.desktop")
+
+
+_STEPS = ["the stable link", "the launcher", "the menu entry", "the command link", "the record"]
+
+
+@linux_only
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+@pytest.mark.parametrize("update", ["a first install", "an update", "an update out of the fixed layout", "a kept version"])
+@pytest.mark.parametrize("step", _STEPS)
+def test_whichever_step_of_an_install_fails_nothing_of_it_is_left(env, server, tmp_path, monkeypatch, step, update, sandboxed):
+    # The class of CR1.3-15: an install changes the disk in steps (the version's files, the stable
+    # link, the launcher, the menu entry, the command link) and stores its record last, so a failure
+    # at any step left the steps before it with no record, or with the previous version's. Each
+    # step is made to fail here, whatever would make it fail on a user's computer (a full disk, a
+    # folder that can't be written), for a first install, an update, the update that moves an app
+    # which updated itself into version folders (R17.12: its file is renamed first) and a switch to a
+    # kept version, of an app that has a sandbox launcher and one that has none: afterwards every
+    # file, link and folder and the installs table are what they were, so the next step that changes
+    # the disk before the record is stored fails this test too.
+    from appkata_core import sandbox
+    cmd = tmp_path / "cmd"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    app = {**APP, **({"sandbox": sandbox.resolve_template("standard")} if sandboxed else {})}
+    fixed = update == "an update out of the fixed layout"
+    for v in () if update == "a first install" else ("1.0",) if fixed else ("1.0", "1.1"):
+        a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
+        install.install(env, {**app, "installVersion": v, "autoUpdate": fixed}, a, "appimage", [a], portable=p)
+    a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
+    before = _left(tmp_path, env)
+    if sandboxed and update != "a first install":
+        assert before[os.path.join("apps", "demo-tool", "run")] and before[os.path.join("data", "sandboxes", ".identity", "apps", "demo-tool")]
+    if fixed:
+        assert before[os.path.join("apps", "demo-tool", "DemoTool.AppImage")] == hashlib.sha256(b"1.0").hexdigest()[:16]
+
+    def failing(real, when=lambda *a, **k: True):
+        """`real`, failing the first time it is asked for what `when` names: the step fails for the
+        new version, and making it again for the previous one is what takes the install back."""
+        failed = []
+
+        def call(*args, **kw):
+            if when(*args, **kw) and not failed:
+                failed.append(1)
+                raise OSError(28, "No space left on device")
+            return real(*args, **kw)
+        return call
+
+    with monkeypatch.context() as m:
+        if step == "the stable link":
+            m.setattr(install, "_link", failing(install._link, lambda target, link, own=None: os.path.basename(link) == "DemoTool.AppImage"))
+        elif step == "the command link":
+            m.setattr(install, "_link", failing(install._link, lambda target, link, own=None: os.path.dirname(link) == str(cmd)))
+        elif step == "the launcher":
+            m.setattr(install, "_sandbox_launcher", failing(install._sandbox_launcher))
+        elif step == "the menu entry":
+            m.setattr(install, "_desktop_entry", failing(install._desktop_entry))
+        else:
+            m.setattr(env, "x", failing(env.x, lambda sql, *a: sql.startswith(("INSERT OR REPLACE INTO installs", "UPDATE installs"))))
+        with pytest.raises(OSError, match="No space left"):
+            if update == "a kept version":
+                install.switch_to(env, dict(app), "1.0", p)
+            else:
+                install.install(env, {**app, "installVersion": "2.0"}, a, "appimage", [a], portable=p)
+    assert _changed(before, _left(tmp_path, env)) == {}
+
+
+@linux_only
+def test_a_failed_first_install_takes_nothing_that_was_there_before_it(env, server, tmp_path, monkeypatch):
+    # What takes a failed install back removes only what the install made: a folder of the user's
+    # where the app's goes, and the private home an earlier uninstall kept for this app (R17.14),
+    # with what is in them, are there afterwards.
+    from appkata_core import sandbox
+    (tmp_path / "apps" / "demo-tool").mkdir(parents=True)
+    (tmp_path / "apps" / "demo-tool" / "notes.txt").write_text("mine")
+    home = tmp_path / "data" / "sandboxes" / "demo-tool"
+    home.mkdir(parents=True)
+    (home / "settings.ini").write_text("kept")
+    sandbox.record_home_owner("demo-tool", APP["url"])
+    a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
+    before = _left(tmp_path, env)
+    monkeypatch.setattr(install, "_desktop_entry", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left on device")))
+    with pytest.raises(OSError, match="No space left"):
+        install.install(env, {**APP, "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a],
+                        portable=install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd")))
+    assert _changed(before, _left(tmp_path, env)) == {}
+    assert (home / "settings.ini").read_text() == "kept" and (tmp_path / "apps" / "demo-tool" / "notes.txt").read_text() == "mine"

@@ -147,7 +147,10 @@ R4.5.4. Adding a Source for a foreign-installed app is allowed, and the row is f
 (R7.1.1).
 
 R4.6. **Updating** installs the new version using the same install type, and keeps the
-previous version's files until the update succeeds.
+previous version's files until the update succeeds. A portable install that fails leaves nothing
+of itself behind: after a first install there is no app folder, link, launcher or app-menu entry;
+after an update, or a switch to a kept version, the version that was current still is, with its
+links, its launcher and its app-menu entry.
 
 R4.7. **Uninstalling** reverses what AppKata recorded at install (R4.1), after a confirmation.
 User data in the home folder is kept.
