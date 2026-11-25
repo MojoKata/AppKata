@@ -1761,6 +1761,32 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
 
 # ---------------------------------------------------------------- file arguments (R17.6.2, R7)
 
+def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
+    """CR1.5-4 (#379), with the real document portal, by the finding's own road: the app, given
+    ~/Projects read-write, puts a link to a file of the user's where its own file was, and a link
+    to a folder beside it; the user then opens both (a path, a file:// URI, a file through the
+    linked folder). Each was handed over, read-write, by where it leads. Now each reaches the app as
+    its own path in ~/Projects, where the link dangles, and nothing new is under
+    $XDG_RUNTIME_DIR/doc. The other direction (R3-17: the user's link on the desktop to a file in
+    ~/Projects) still reaches its file. A part of the test below, which tests/skips/tier1.txt names."""
+    docs, proj, desk = env.home / "Documents", env.home / "Projects", env.home / "Desktop"
+    (docs / "taxes.txt").write_text("TAXES\n")
+    desk.mkdir()
+    (desk / "mine").symlink_to(proj / "mine.txt.was")
+    r = subprocess.run([lp, 'cd "$HOME/Projects" && mv mine.txt mine.txt.was && ln -s "$HOME/Documents/taxes.txt" mine.txt && '
+                            'ln -s "$HOME/Documents" Photos && echo PLANTED'], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert "PLANTED" in r.stdout and os.readlink(proj / "mine.txt") == str(docs / "taxes.txt"), (r.stdout, r.stderr)   # on the host, as the app meant
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    args = [str(proj / "mine.txt"), "file://" + str(proj / "mine.txt"), str(proj / "Photos"), str(proj / "Photos" / "taxes.txt")]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$4" "$XDG_RUNTIME_DIR"/doc/*/taxes.txt "$XDG_RUNTIME_DIR"/doc/*/*/taxes.txt 2>&1; '
+               '(echo EDITED >> "$1") 2>/dev/null; ls "$3" 2>&1; cat "$5"; true')
+    r = subprocess.run([lp, snippet, *args, str(desk / "mine")], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args + [str(proj / "mine.txt.was")], (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stdout)
+    assert "TAXES" not in r.stdout and (docs / "taxes.txt").read_text() == "TAXES\n" and "MINE" in r.stdout, (r.stdout, r.stderr)
+
+
 @needs_proxy
 def test_a_file_argument_is_handed_over_to_a_standard_app(env):
     # Regression (round two, R7): the desktop entry's %U, "Open with", a drop on the entry and
@@ -1798,6 +1824,7 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert "PICKED" in r.stdout and "MINE" in r.stdout and "RO" in r.stdout and "no write" in r.stdout
             assert (docs / "picked.txt").read_text() == "PICKED\nEDITED\n"          # the app's edit reached the real file
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
+            _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()
     finally:

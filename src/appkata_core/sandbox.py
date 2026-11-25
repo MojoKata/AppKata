@@ -1852,6 +1852,14 @@ def write_seccomp_filter() -> str | None:
 # file kept elsewhere, is in `~/.ssh`). The system's own places are not in the list: a file under
 # /tmp is handed over like any other (R17.3.3). Each refusal is a line of the answer, "!" first and
 # then what the launcher says after the app's name, on stderr.
+# A link in a folder the app is shown is the app's to make, so it is never followed out of that
+# folder (CR1.5-4): an app with ~/Documents read-write put a link to ~/.bashrc where report.md was,
+# and the user's opening report.md handed the app ~/.bashrc, read-write (a link to a folder, the
+# folder whole). An argument was judged by where it leads alone; now the first link on its way that
+# lies in a visible folder ends the way, unless the whole of it leads back into one: the argument
+# becomes its own path in that folder, the link included, where the app finds it dangling, and
+# nothing is handed over. The other direction is as it was (R3-17): a link outside the visible
+# folders to a file inside one is the user's, and becomes the file's path.
 # argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
 #       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
@@ -1871,7 +1879,8 @@ def within(path, folder):
 
 
 def follow(path):
-    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there
+    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there:
+    # where the link is, and the path from there on, the link not followed
     todo = os.path.join(os.getcwd(), path).split(os.sep)[::-1]
     at, links = os.sep, []
     while todo:
@@ -1887,7 +1896,7 @@ def follow(path):
         except OSError:
             at = step
             continue
-        links.append(step)
+        links.append((step, os.path.join(step, *todo[::-1])))
         if len(links) > 40:
             raise OSError("too many links")
         if target.startswith(os.sep):
@@ -1896,10 +1905,10 @@ def follow(path):
     return at, links
 
 
-def never_shared(path):
-    # why the file or folder at `path` is handed to no app, or None (R17.3.1): the home folder or
-    # a folder above it, or a never-shared folder, what is in one and what is above one
-    real, links = follow(path)
+def never_shared(real, links):
+    # why the file or folder at `real`, reached through `links`, is handed to no app, or None
+    # (R17.3.1): the home folder or a folder above it, or a never-shared folder, what is in one and
+    # what is above one
     home = os.path.realpath(os.path.expanduser("~"))
     if real == home:
         return "your whole home folder is never shared with a sandboxed app"
@@ -1907,15 +1916,14 @@ def never_shared(path):
         return "it holds your whole home folder, which is never shared with a sandboxed app"
     for root in never:              # where it leads now, and by its own name where it is a link
         for spot in (os.path.realpath(root), os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root))):
-            if any(within(p, spot) for p in [real] + links):
+            if any(within(p, spot) for p in [real] + [step for step, _ in links]):
                 return root + " is never shared with a sandboxed app"
             if within(spot, real):
                 return "it holds " + root + ", which is never shared with a sandboxed app"
     return None
 
 
-def inside(path):
-    real = os.path.realpath(path)
+def inside(real):
     for seen, host in pairs:
         if real == host or real.startswith(host + os.sep):
             return seen + real[len(host):]
@@ -1971,14 +1979,20 @@ def export_dir(path):
 def hand(path, uri):
     if not os.path.exists(path) or (in_place and not uri and not os.path.isabs(path)):
         return None
-    seen = inside(path)
+    try:
+        real, links = follow(path)
+    except OSError:
+        return None
+    seen = inside(real)
+    if seen is None:                    # a link in a visible folder that leads out of them all: the path as far as it
+        seen = next((inside(rest) for step, rest in links if inside(step) is not None), None)
     if seen is not None:
         if os.path.isabs(path) and os.path.normpath(path) == seen:
             return None                 # already the path the app sees
         new = seen
     else:
         try:
-            why = never_shared(path)
+            why = never_shared(real, links)
             if why:
                 line = "runs sandboxed and isn't handed " + path + ": " + why + "."
                 if line not in said:

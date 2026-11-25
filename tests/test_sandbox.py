@@ -2710,6 +2710,57 @@ def test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees(tmp_pat
     assert _forward(tmp_path, home, "", [docs], same) == same
 
 
+def test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_over(tmp_path):
+    # CR1.5-4: an app with ~/Docs read-write put a link to a file of the user's where report.md was;
+    # the user opened report.md, and the helper, which judged an argument by where it leads alone,
+    # handed the app the link's target through the document portal, read-write (a link to a folder,
+    # the folder whole). A link in a folder the app is shown is the app's to make: the argument is
+    # passed as its own path there, where the link dangles, and the portal is asked nothing. How it
+    # slipped past: the tests had the other direction alone (R3-17, a link outside to a file inside).
+    home = tmp_path / "home"
+    docs, media, private, desk = home / "Docs", home / "Media", home / "private", home / "Desktop"
+    for d in (docs / "sub", media, private / "deep", desk):
+        d.mkdir(parents=True)
+    for f in (private / "taxes.txt", private / "deep" / "file", media / "song.ogg", docs / "in.txt"):
+        f.write_text("x")
+    (docs / "report.md").symlink_to(private / "taxes.txt")                 # where the app's own file was
+    (docs / "rel.md").symlink_to("../private/taxes.txt")
+    (docs / "Photos").symlink_to(private)                                  # a folder, whole
+    (docs / "sub" / "up").symlink_to("../../private")
+    (docs / "chain").symlink_to(docs / "report.md")                        # a link to a link
+    (docs / "song").symlink_to(media / "song.ogg")                         # into another granted folder
+    (docs / "self").symlink_to("in.txt")
+    (desk / "shortcut").symlink_to(docs / "report.md")                     # the user's own link, to the planted one
+    (desk / "good").symlink_to(docs / "in.txt")
+    (home / "docs-link").symlink_to(docs)
+    as_typed = [str(docs / "report.md"), "file://" + str(docs / "report.md"), str(docs / "rel.md"), str(docs / "Photos"), str(docs / "Photos") + "/",
+                str(docs / "Photos" / "taxes.txt"), str(docs / "Photos" / "deep" / "file"), str(docs / "sub" / "up" / "taxes.txt"),
+                str(docs / "chain"), "--file=" + str(docs / "report.md"), "-o" + str(docs / "Photos" / "taxes.txt"),
+                str(docs / "Photos" / ".." / "private" / "taxes.txt")]
+    words, said, calls = _handed(tmp_path, home, as_typed, visible=[docs, media], home=home)
+    assert words == as_typed and calls == [] and said == [], (words, calls, said)
+    # named another way, it becomes its own path in the granted folder, the link not followed
+    words, said, calls = _handed(tmp_path, home, ["Docs/report.md", str(home / "docs-link" / "Photos" / "taxes.txt"), str(desk / "shortcut")],
+                                 visible=[docs, media], home=home)
+    assert words == [str(docs / "report.md"), str(docs / "Photos" / "taxes.txt"), str(docs / "report.md")] and calls == [], (words, calls)
+    # ...in a command-line tool's shared folder too, where a relative path stays as typed
+    typed = ["report.md", "./rel.md", "Photos/taxes.txt", "Photos"]
+    words, said, calls = _handed(tmp_path, docs, typed + [str(docs / "report.md")], visible=[docs], incwd=str(docs), home=home)
+    assert words == typed + [str(docs / "report.md")] and calls == [], (words, calls)
+    # ...and where the folder is granted through a link (/home on Silverblue), by the grant's own path
+    (tmp_path / "homes").symlink_to(tmp_path)
+    written = tmp_path / "homes" / "home" / "Docs"
+    words, said, calls = _handed(tmp_path, home, [str(docs / "report.md"), str(written / "Photos")], visible=[written], home=home)
+    assert words == [str(written / "report.md"), str(written / "Photos")] and calls == [], (words, calls)
+    # As before: a link that stays in the granted folders is the file's path there, whichever folder
+    # the link is in (R3-17), and with no grant of the folder the link is the user's own, followed
+    words, said, calls = _handed(tmp_path, home, [str(docs / "song"), str(docs / "self"), str(desk / "good")], visible=[docs, media], home=home)
+    assert words == [str(media / "song.ogg"), str(docs / "in.txt"), str(docs / "in.txt")] and calls == [], (words, calls)
+    words, said, calls = _handed(tmp_path, home, [str(docs / "report.md"), str(docs / "Photos")], visible=[media], home=home)
+    doc = str(tmp_path / "run" / "doc" / "DOC") + "/"
+    assert all(w.startswith(doc) for w in words) and [c[2] for c in calls if c[2]] == [[str(private / "taxes.txt")], [str(private)]], (words, calls)
+
+
 def test_a_grant_reached_through_a_linked_home_maps_to_where_the_launcher_mounts_it(tmp_path):
     # Fedora Silverblue: /home links to /var/home. The grant is mounted at the path as written, so a
     # file named by its real path becomes that path, never the other way round
