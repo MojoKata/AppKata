@@ -504,22 +504,36 @@ def _proxies() -> dict[str, str]:
     return {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
 
 
+def _in_its_script(host: str) -> str:
+    """A host part as it is sent (_host_part_as_sent) with its name in its script, as a person
+    writes it: each of its parts in their IDNA form (`xn--`) read back by Python's idna codec, and
+    its port as it is. `xn--bung-zra.lan:3000` is `übung.lan:3000`. An IPv6 address, a name with
+    no such part, and one whose parts the codec can't read back are as they are sent."""
+    name = _HOST_PART.fullmatch(host)
+    if name is None or name[1].startswith("["):
+        return host
+    try:
+        return name[1].encode("ascii").decode("idna") + host[len(name[1]):]
+    except UnicodeError:
+        return host
+
+
 def _bypassed(host: str) -> bool:
     """Whether the system says to reach a host directly, `host` being its host part as it is sent
     (_host_part_as_sent): as urllib decides it (urllib.request.proxy_bypass: by the environment's
     no_proxy where the environment names a proxy, else by the bypass list of the system's own
-    settings), and by each of no_proxy's entries in the form it is sent, as every rule compares
-    hosts. urllib compares an entry as it is written with the host as it is sent, its IDNA form, so
-    an entry in a name's script named no host: with `no_proxy=übung.lan`, every request to the
-    Source `übung.lan` went through the proxy, its token inside the tunnel (the review's pass 8,
-    P8-2). An entry with no IDNA form is compared as it is written alone."""
-    if urllib.request.proxy_bypass(host):
-        return True
-    entries = []
-    for entry in urllib.request.getproxies_environment().get("no", "").split(","):
-        with contextlib.suppress(UnicodeError):
-            entries.append(_sent(entry.strip().lstrip(".").lower()))      # as urllib reads one, then as it is sent
-    return urllib.request.proxy_bypass_environment(host, {"no": ",".join(entries)})
+    settings, Windows' or macOS'), asked of the host part as it is sent, its name in its IDNA form,
+    and with its name in its script (_in_its_script). urllib compares each entry of a list, as it
+    is written, with the host it is given, and Http sends a name in its IDNA form, so an entry in
+    a name's script, `übung.lan` or `*.übung.lan`, named no host: every request to the Source
+    `übung.lan` went through the proxy, its token inside the tunnel (the review's passes 8 and 9,
+    P8-2 and P9-1). Each list is read as urllib reads it, and in no other way: no_proxy's entries
+    were read again, trimmed and in their IDNA form, and joined back into a list, and `" *"`,
+    `".*"` or `"*,a..b"`, which urllib reads as an entry that names no host, became `*`, which
+    names every host, so every request was sent directly where urllib sent it through the proxy
+    (P9-B1)."""
+    script = _in_its_script(host)
+    return bool(urllib.request.proxy_bypass(host) or (script != host and urllib.request.proxy_bypass(script)))
 
 
 class _Proxies(urllib.request.ProxyHandler):

@@ -1457,17 +1457,33 @@ NO_PROXY = [                     # a no_proxy entry, and whether it names übung
     pytest.param(".übung.example", True, id="with-a-leading-dot"),          # it, and the names under it
     pytest.param("other.example, übung.example:{port}", True, id="with-its-port-in-a-list"),
     pytest.param("bücher.example", False, id="another-name"),
+    # values urllib reads as an entry `*`, which names no host, and not as the `*` that names every
+    # one: no_proxy's entries read again and joined back into a list made them that (review pass 9, P9-B1)
+    pytest.param("*", True, id="every-host"),
+    pytest.param(" *", False, id="a-star-after-a-space"),
+    pytest.param("* ", False, id="a-star-before-a-space"),
+    pytest.param(".*", False, id="a-star-after-a-dot"),
+    pytest.param("*,a..b", False, id="a-star-beside-a-name-with-no-idna-form"),
 ]
 
 
 def _routed_by_no_proxy(monkeypatch, serving, scheme, entry, direct, written, tls=None):
+    _routed(monkeypatch, serving, scheme, direct, written, tls,
+            lambda proxy, port: behind_a_proxy(monkeypatch, proxy, https=True, no_proxy=entry.format(port=port)))
+
+
+def _routed(monkeypatch, serving, scheme, direct, written, tls, settings):
+    """A Source on übung.example, written `written`, asked for with its token, then an image there
+    asked for by another Source's request, through Http's own opener, to a real server on this
+    computer, with a proxy before it that `settings(proxy, port)` makes the system's: each is
+    reached directly if `direct`, else through the proxy, and Http's rule (_proxied) says the same."""
     origin = serving(tls=tls)
     origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
     port = origin.server_address[1]
     at_this_computer(monkeypatch)
     proxy = serving(_Forwarding, _ForwardingServer)
     proxy.to = port
-    behind_a_proxy(monkeypatch, proxy, https=True, no_proxy=entry.format(port=port))
+    settings(proxy, port)
     source = f"{written}:{port}"
     http = Http({source: "SECRET"}, timeout=5)
     assert http.json(f"{scheme}://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
@@ -1493,6 +1509,57 @@ def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_t
 @pytest.mark.parametrize("entry, direct", NO_PROXY)
 def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_plain_http(monkeypatch, serving, entry, direct, written):
     _routed_by_no_proxy(monkeypatch, serving, "http", entry, direct, written)
+
+
+# The review's pass 9, P9-1: with no proxy in the environment, urllib reads the system's own proxy
+# and its bypass list, Windows' ProxyOverride or macOS' exceptions, and compares each entry, as it is
+# written, with the host it is given, which Http sends in its IDNA form (round 6). Round 8 read
+# no_proxy's entries again in their IDNA form and left the system's lists as urllib reads them, so
+# an entry in a name's script, übung.example or übung.*, named no host there, and every request to
+# the Source übung.example went through the proxy. How it slipped past: every proxy in the tests was
+# the environment's, which Linux, where they run, reads alone. The class is "Http's reading of a
+# bypass list isn't urllib's", so the system's lists are stood in for by CPython's own reading of
+# each, on every platform, and the host is asked of them in its script and its IDNA form, as
+# no_proxy's values above, which urllib reads its own way too.
+SYSTEMS = {                      # the system's bypass list, holding `entry`, as CPython's urllib reads it there
+    "windows": lambda entry: lambda host: urllib.request._proxy_bypass_winreg_override(host, entry),       # the port left out
+    "macos": lambda entry: lambda host: urllib.request._proxy_bypass_macosx_sysconf(                       # the port compared too
+        host, {"exclude_simple": False, "exceptions": [entry]}),
+}
+SYSTEM_LISTS = [                 # a system, an entry of its bypass list, and whether it names übung.example on the server's port
+    pytest.param("windows", "übung.example", True, id="windows-its-script"),
+    pytest.param("windows", "xn--bung-zra.example", True, id="windows-its-idna-form"),
+    pytest.param("windows", "übung.*", True, id="windows-a-pattern-in-its-script"),
+    pytest.param("windows", "bücher.example", False, id="windows-another-name"),
+    pytest.param("macos", "übung.example:{port}", True, id="macos-its-script"),
+    pytest.param("macos", "xn--bung-zra.example:{port}", True, id="macos-its-idna-form"),
+    pytest.param("macos", "übung.*", True, id="macos-a-pattern-in-its-script"),
+    pytest.param("macos", "bücher.example:{port}", False, id="macos-another-name"),
+]
+
+
+def behind_the_systems_proxy(monkeypatch, proxy, bypass):
+    """The system's own settings name server `proxy` for http and https, and `bypass(host)` is their
+    bypass list's answer, and the environment names no proxy: as urllib reads Windows' and macOS'
+    settings there."""
+    for name in PROXIES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"http": f"http://{proxy.at}", "https": f"http://{proxy.at}"})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", bypass)
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example"])
+@pytest.mark.parametrize("system, entry, direct", SYSTEM_LISTS)
+def test_through_real_sockets_the_systems_bypass_list_in_any_form_names_its_host_over_tls(monkeypatch, serving, trusting, system, entry, direct, written):
+    _routed(monkeypatch, serving, "https", direct, written, trusting,
+            lambda proxy, port: behind_the_systems_proxy(monkeypatch, proxy, SYSTEMS[system](entry.format(port=port))))
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example"])
+@pytest.mark.parametrize("system, entry, direct", SYSTEM_LISTS)
+def test_through_real_sockets_the_systems_bypass_list_in_any_form_names_its_host_over_plain_http(monkeypatch, serving, system, entry, direct, written):
+    _routed(monkeypatch, serving, "http", direct, written, None,
+            lambda proxy, port: behind_the_systems_proxy(monkeypatch, proxy, SYSTEMS[system](entry.format(port=port))))
 
 
 def test_through_real_sockets_a_redirect_on_a_sources_own_host_in_any_script_is_that_host(pair, monkeypatch):
