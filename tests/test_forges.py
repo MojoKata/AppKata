@@ -852,6 +852,7 @@ USER_PARTS = [
     "127.0.0.1%23@images.example.com",                   # 127.0.0.1#@images.example.com
     "%5b::1%5d%2f@images.example.com",                   # [::1]/@images.example.com: an IPv6 address, bracketed
     "user:pw@images.example.com",                        # a plain user part: no address Http asks for has one
+    ":10.0.0.5%2f@images.example.com",                   # an empty user name, the address in its password (review pass 4, P4-B2)
 ]
 
 
@@ -863,9 +864,12 @@ def test_behind_a_proxy_an_address_with_a_user_part_is_refused(pair, monkeypatch
     a.files = {"/shot.png": PNG}
     behind_a_proxy(monkeypatch, a, https=scheme == "https")
     http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
-    with pytest.raises(Unreachable, match="user part"):
+    with pytest.raises(Unreachable, match="user part") as refused:
         sync._save_image(http, f"{scheme}://{user_part}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
     assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+    # the refusal names the host after the last `@` and nothing before it: no part of the user
+    # part, which may be a password (review pass 4, P4-B2)
+    assert str(refused.value) == "an address with a user part before its host (images.example.com) isn't asked for"
 
 
 @pytest.mark.parametrize("scheme", ["http", "https"])
