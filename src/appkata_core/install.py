@@ -26,7 +26,7 @@ import threading
 
 from . import applog, appkind, flatpak, pkgbackend, sandbox
 from .pkgbackend import NeedsConfirmation, PackageError
-from .assets import checksum_for
+from .assets import checksums_for
 from .db import DB, now
 from .forges import Asset
 from .http import UA
@@ -195,24 +195,33 @@ def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
 
 
 def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
-    """(hex, source) of the checksum to compare with: the forge digest, or a checksum file (R4.4)."""
+    """(hex, source) of the checksum to compare with: the forge digest, or the first of the
+    release's checksum files that lists this file (R4.4). Each one is tried (assets.checksums_for):
+    the first found was the only one read, so a list for another platform's files, or one of
+    another kind of digest, left a file Unverified that the next list covered (CR1.3-6)."""
     if asset.digest.startswith("sha256:"):
         return asset.digest.split(":", 1)[1].lower(), "forge digest"
-    sums = checksum_for(asset, assets)
-    if not sums:
-        return "", ""
-    try:
-        req = urllib.request.Request(sums.url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            text = r.read(1 << 20).decode("utf-8", "replace")
-    except OSError:
-        return "", ""
+    for sums in checksums_for(asset, assets):
+        try:
+            req = urllib.request.Request(sums.url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                text = r.read(1 << 20).decode("utf-8", "replace")
+        except OSError:
+            continue
+        if found := _sha256_in(text, asset.name):
+            return found, sums.name
+    return "", ""
+
+
+def _sha256_in(text: str, name: str) -> str:
+    """The SHA-256 a checksum file's text gives for the file `name`: its line's, or the file's one
+    value when it holds nothing else (a `<file>.sha256` of the digest alone). "" when it has none."""
     for line in text.splitlines():
         m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$", line.strip())
-        if m and os.path.basename(m.group(2)) == asset.name:
-            return m.group(1).lower(), sums.name
+        if m and os.path.basename(m.group(2)) == name:
+            return m.group(1).lower()
     m = re.fullmatch(r"\s*([0-9a-fA-F]{64})\s*", text)
-    return (m.group(1).lower(), sums.name) if m else ("", "")
+    return m.group(1).lower() if m else ""
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")

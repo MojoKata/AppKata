@@ -15,7 +15,7 @@ import threading
 
 import pytest
 
-from appkata_core import devtools, forges, install, review
+from appkata_core import assets, devtools, forges, install, review
 from appkata_core.db import DB
 from appkata_core.forges import Asset
 
@@ -80,6 +80,88 @@ def test_checksum_mismatch_installs_nothing(env, server, tmp_path):
         install.install(env, APP, a, "appimage", [a, sums])
     assert not (tmp_path / "apps").exists() or not os.listdir(tmp_path / "apps")
     assert _downloads() == []                   # R4.8.2: the complete file that failed its checksum is deleted
+
+
+_FILE = b"\x7fELF the program"
+_SHA = hashlib.sha256(_FILE).hexdigest()
+_OTHER = hashlib.sha256(b"another file").hexdigest()
+_SHA512 = hashlib.sha512(_FILE).hexdigest()
+# A release's other files, in the release's order, each with what it holds -> the one whose SHA-256 is used
+_CHECKSUM_FILES = {
+    "a .sha512 beside the file, and SHA256SUMS":                    # the finding's case
+        ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a .sha512 beside the file, of the digest alone, and SHA256SUMS":
+        ([("App.AppImage.sha512", _SHA512 + "\n"), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n{_SHA} *App.AppImage\n")], "SHA256SUMS"),
+    "a list for another platform's files first":
+        ([("arm64-SHA256SUMS.txt", f"{_OTHER}  App-arm64.AppImage\n"), ("x86_64-SHA256SUMS.txt", f"{_SHA}  App.AppImage\n")],
+         "x86_64-SHA256SUMS.txt"),
+    "a list of SHA-512 digests first":
+        ([("checksums.txt", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list of MD5 digests first":
+        ([("checksums", f"{hashlib.md5(_FILE).hexdigest()}  App.AppImage\n"), ("checksums.txt", f"{_SHA}  ./dist/App.AppImage\n")],
+         "checksums.txt"),
+    "the file's own .sha256 before any list":
+        ([("SHA256SUMS", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256", _SHA + "\n")], "App.AppImage.sha256"),
+    "the file's own .sha256sum before any list":
+        ([("sha256sums.txt", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256sum", f"{_SHA}  App.AppImage\n")], "App.AppImage.sha256sum"),
+    "the file's own .sha256 names another file":
+        ([("App.AppImage.sha256", f"{_OTHER}  Other.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list that is missing, then one that is there":
+        ([("SHA256SUMS", None), ("checksums.txt", f"{_SHA}  App.AppImage\n")], "checksums.txt"),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], ""),
+    "only a .sha512 and a signature": ([("App.AppImage.sha512", _SHA512), ("App.AppImage.asc", "-----BEGIN PGP SIGNATURE-----")], ""),
+    "no list names the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n"), ("checksums.txt", f"{_SHA512}  App.AppImage\n")], ""),
+    "nothing else in the release": ([], ""),
+}
+
+
+def _release_with(server, others, data=_FILE):
+    """A release on the test's server: App.AppImage and its other files (a file whose text is None
+    is listed and isn't there). -> (the file, the release's files)."""
+    root, base = server
+    (root / "App.AppImage").write_bytes(data)
+    for name, text in others:
+        if text is not None:
+            (root / name).write_text(text)
+    a = Asset("App.AppImage", base + "/App.AppImage")
+    return a, [a] + [Asset(name, f"{base}/{name}") for name, _ in others]
+
+
+@pytest.mark.parametrize("release", list(_CHECKSUM_FILES))
+def test_a_file_is_checked_against_the_first_of_its_releases_checksum_files_that_lists_it(env, server, release):
+    """R4.4 (CR1.3-6): "Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest,
+    when one exists". One checksum file was picked by its name, a `<file>.sha512` before any
+    `SHA256SUMS`, and only that one was read, for 64 digits: a release with both was installed
+    Unverified, and a file that didn't match its `SHA256SUMS` wasn't stopped. No test had a release
+    with two such files. Here each of them, in each order, as a release publishes them."""
+    others, used = _CHECKSUM_FILES[release]
+    a, files = _release_with(server, others)
+    assert install.expected_sha256(a, files) == ((_SHA, used) if used else ("", ""))
+    # the same release with another file under that name: stopped wherever a SHA-256 of it is published
+    a, files = _release_with(server, others, data=b"tampered")
+    if used:
+        with pytest.raises(install.InstallError, match=re.escape(f"doesn't match its checksum ({used})")):
+            install.install(env, APP, a, "appimage", files)
+        assert _downloads() == [] and env.one("SELECT * FROM installs") is None
+
+
+@linux_only
+def test_a_release_with_a_sha512_and_sha256sums_is_installed_as_checked(env, server, tmp_path):
+    a, files = _release_with(server, _CHECKSUM_FILES["a .sha512 beside the file, and SHA256SUMS"][0])
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert (rec["verified"], rec["checksum_source"]) == ("checksum", "SHA256SUMS")
+
+
+def test_the_checksum_files_of_a_release_are_the_files_own_then_its_lists_and_never_another_digests():
+    A = lambda *names: [Asset(n, "https://example.org/" + n) for n in names]      # noqa: E731
+    rel = A("App.AppImage", "SHA256SUMS", "App.AppImage.sha512", "App.AppImage.SHA256", "checksums.txt", "App.AppImage.sha256sum",
+            "App.AppImage.md5", "Other.AppImage.sha256", "linux-sha256sums.txt", "App.AppImage.asc", "SHA512SUMS", "notes.txt")
+    assert [x.name for x in assets.checksums_for(rel[0], rel)] == ["App.AppImage.SHA256", "App.AppImage.sha256sum", "SHA256SUMS",
+                                                                   "checksums.txt", "linux-sha256sums.txt"]
+    assert assets.checksum_for(rel[0], rel).name == "App.AppImage.SHA256"
+    for only in ("App.AppImage.sha512", "SHA512SUMS", "Other.AppImage.sha256", "App.AppImage.asc"):
+        rel = A("App.AppImage", only)
+        assert assets.checksums_for(rel[0], rel) == [] and assets.checksum_for(rel[0], rel) is None
 
 
 @linux_only

@@ -158,6 +158,12 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
    exists.
 2. On Windows, reads the file's code-signing status, Authenticode (R15.11).
 
+The checksum is a SHA-256: the forge's own digest of the file when it gives one, else the one a
+checksum file of the release lists for it. A release can have several, and each is read until one
+lists the file: the file's own first (`<file>.sha256`, `<file>.sha256sum`), then the release's
+lists (`SHA256SUMS`, `checksums.txt`) in the release's order. A checksum of another kind
+(`<file>.sha512`, `SHA512SUMS`) is not read.
+
 A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
 `.minisig`, a sigstore bundle) is not checked.
 
