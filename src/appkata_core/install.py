@@ -29,7 +29,7 @@ from .assets import checksum_for
 from .db import DB, now
 from .forges import Asset
 from .http import UA
-from .platform import OS, apps_dir, desktop_dir
+from .platform import OS, apps_dir, data_dir, desktop_dir
 
 
 log = logging.getLogger("appkata.install")
@@ -245,14 +245,31 @@ def _menu_entry_path(app_id: str) -> str:
     return os.path.join(desktop_dir(), f"appkata-{app_id}.desktop")
 
 
+def _menu_links_dir() -> str:
+    """Where the links an app-menu entry starts are kept: AppKata's own folder (R4.3.1.1)."""
+    return os.path.join(data_dir(), "menu")
+
+
+def _menu_link_path(app_id: str) -> str:
+    """The link an app's menu entry starts, to what the app runs (its stable name, program or sandbox
+    launcher), named after the app's id (R4.3.1.1). The entry's `Exec=` holds this path, never one in
+    the install folder: a `%` there, written `%%` as the Desktop Entry Specification asks, made GLib
+    take the app for one that isn't installed -- it looks for the program before it reads `%%` as
+    `%` -- and the app had no entry in the menus of Cinnamon, GNOME, MATE or Xfce (#685, the owner's
+    decision: the entry starts the app through a link in AppKata's own folder, and nothing is
+    refused). An id has no `%` (:func:`slug`)."""
+    return os.path.join(_menu_links_dir(), app_id)
+
+
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
-    """The app-menu entry. For a sandbox launcher (`launcher=True`) Exec passes the word
-    --appkata-menu first: started this way nothing shows stderr, so the launcher keeps its own in
-    logs/apps/<id>.log, where a refused launch is then found (R14.2.1, R17.4).
+    """The app-menu entry, starting `exec_path` (an app's own: :func:`_menu_link_path`). For a sandbox
+    launcher (`launcher=True`) Exec passes the word --appkata-menu first: started this way nothing
+    shows stderr, so the launcher keeps its own in logs/apps/<id>.log, where a refused launch is then
+    found (R14.2.1, R17.4).
 
     The name and the summary are the project's own text (its metainfo, its README, a review), and
-    the path can hold a folder or a program the project named: each is written as one escaped line
-    (:func:`desktop_value`, :func:`desktop_exec`), so the entry holds AppKata's keys and no other."""
+    the path is AppKata's: each is written as one escaped line (:func:`desktop_value`,
+    :func:`desktop_exec`), so the entry holds AppKata's keys and no other."""
     exec_value = _menu_exec(exec_path, *(["--appkata-menu"] if launcher else []))
     path = _menu_entry_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -711,9 +728,10 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         rec["files"].insert(0, target)
     if rec.get("selfInstalled"):          # AppKata's own appkata.desktop points at the stable link (R2.11.3.1)
         pass
-    elif portable.app_menu:
-        rec["files"].append(_desktop_entry(app_id, app["name"], launch_target, app.get("icon") or "", app.get("summary", ""),
-                                           launcher=launch_target != run))
+    elif portable.app_menu:               # the entry starts the app through a link in AppKata's own folder (#685)
+        rec["links"].append(_link(launch_target, _menu_link_path(app_id)))
+        rec["files"].append(_desktop_entry(app_id, app["name"], _menu_link_path(app_id), app.get("icon") or "",
+                                           app.get("summary", ""), launcher=launch_target != run))
     for old in entries:
         if old not in rec["files"]:
             _remove_path(old)
@@ -950,15 +968,16 @@ def _remove_tree(path: str) -> None:
 def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: str, target: str, kind: str = "") -> None:
     """Refuse now, before anything is placed or changed, the install :func:`_activate` would refuse
     after: a command link's place that holds something AppKata didn't make (R4.3.1.3, R15.6), and an
-    app-menu entry that can't start the app's folder. The files, the stable link and the menu entry
-    were in place by the time the last step refused, with no record of them (CR1.3-15). What only
-    shows later (a program's own path in its archive, a Start-menu shortcut Windows won't make) is
-    taken back by :func:`_undo_portable`.
+    app-menu entry that can't start the link it starts the app through. The files, the stable link
+    and the menu entry were in place by the time the last step refused, with no record of them
+    (CR1.3-15). What only shows later (a Start-menu shortcut Windows won't make) is taken back by
+    :func:`_undo_portable`.
 
     Nothing is refused here that `_activate` would do: an app's kind is known once it is placed, and
     a command-line tool gets no menu entry when that option was Settings' default (`_apply_kind`),
-    so the entry is checked only when it is sure to be written, and only where it is sure to start
-    something in the app's folder (the program, or the sandbox launcher beside it)."""
+    so the entry is checked only when it is sure to be written. The entry holds the path of the
+    app's link in AppKata's own folder (:func:`_menu_link_path`), never the install folder's, so
+    no install folder is refused for it (#685)."""
     if OS == "windows":
         from . import windows
         shim = os.path.join(portable.command_folder, app_id + ".cmd") if portable.command_dir else ""
@@ -968,9 +987,8 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
                     raise InstallError(f"{shim} exists and isn't a command link AppKata made; not replacing it")
         return
     tool_maybe = bool(app.get("menuFromDefault")) and OS == "linux" and kind in ("appimage", "tarball")
-    if portable.app_menu and not prev.get("selfInstalled") and not tool_maybe \
-            and os.path.dirname(sandbox.launcher_path(app_id, portable.root)) == target:
-        _menu_exec(target)
+    if portable.app_menu and not prev.get("selfInstalled") and not tool_maybe:
+        _menu_exec(_menu_link_path(app_id))
     if portable.command_dir:
         link = os.path.join(portable.command_folder, app_id)
         own = (portable.root, os.path.dirname(target))
@@ -983,7 +1001,7 @@ def _options_of(rec: dict, portable: "Portable") -> "Portable":
     `portable`'s): its install folder, its three options (R4.3.1.6) and the folder its command link
     is in."""
     opts, target = rec.get("options") or {}, rec.get("target", "")
-    folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) != target] + \
+    folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) not in (target, _menu_links_dir())] + \
               [os.path.dirname(x) for x in rec.get("shims", [])]
     return replace(_where_it_is(rec, portable), scope=rec.get("scope") or portable.scope,
                    app_menu=bool(opts.get("appMenu")), stable_name=bool(opts.get("stableName")),

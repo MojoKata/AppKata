@@ -420,6 +420,7 @@ def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monke
     monkeypatch.setattr(sb, "have_tools", lambda: True)          # pretend bwrap/proxy are present
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(tmp_path / "data"))      # where the link the menu entry starts goes
     root = tmp_path / "apps"
     target = root / "demo"
     vdir = target / "1.0" / "bin"
@@ -435,9 +436,9 @@ def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monke
     launcher = str(target / "run")
     assert rec["exec"] == launcher and os.path.exists(launcher) and os.access(launcher, os.X_OK)
     assert rec["sandbox"]["level"] == "standard"
-    # the .desktop entry and the command link point at the launcher, not the program
-    desktop = next(f for f in rec["files"] if f.endswith(".desktop"))
-    assert launcher in open(desktop).read()
+    # the .desktop entry (through its link, R4.3.1.1) and the command link point at the launcher, not the program
+    desktop, menu = next(f for f in rec["files"] if f.endswith(".desktop")), str(tmp_path / "data" / "menu" / "demo")
+    assert f'Exec="{menu}" --appkata-menu %U' in open(desktop).read() and os.readlink(menu) == launcher
     cmd_link = os.path.join(str(tmp_path / "cmd"), "demo")
     assert os.path.realpath(cmd_link) == os.path.realpath(launcher)
     # the identity marker was written outside the private home (the app can't touch it)
@@ -450,6 +451,7 @@ def test_off_uses_the_program_directly_no_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(sb, "have_tools", lambda: True)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(tmp_path / "data"))
     target = tmp_path / "apps" / "demo"
     (target / "1.0" / "bin").mkdir(parents=True)
     exe = target / "1.0" / "bin" / "demo"

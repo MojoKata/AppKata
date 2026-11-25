@@ -140,10 +140,11 @@ def test_portable_options(env, server, tmp_path):
     assert os.path.islink(stable) and os.readlink(stable) == "Demo.Tool-2.0-x86_64.AppImage" and rec["exec"] == str(stable)
     cmd = tmp_path / "cmd" / "demo-tool"
     assert os.path.islink(cmd) and open(cmd, "rb").read() == data
-    desktop = tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"
-    assert str(stable) in desktop.read_text()                                 # launchers use the stable name
+    desktop, menu = tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop", tmp_path / "data" / "menu" / "demo-tool"
+    assert f'Exec="{menu}" %U' in desktop.read_text() and os.readlink(menu) == str(stable)     # launchers use the stable name
     install.uninstall(env, APP["url"])
     assert not os.path.lexists(cmd) and not (tmp_path / "bin-apps" / "demo-tool").exists() and not desktop.exists()
+    assert not os.path.lexists(menu)
     # without the options: no menu entry, no links
     rec = install.install(env, APP, a, "appimage", [a], portable=install.Portable(folder=str(tmp_path / "plain"), app_menu=False,
                                                                                     stable_name=False))
@@ -437,7 +438,9 @@ def test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry(env, se
     lines = text.splitlines()
     assert lines[0] == "[Desktop Entry]" and [l.split("=", 1)[0] for l in lines[1:]] == _ENTRY_KEYS, lines
     assert "\x00" not in text and text.endswith("\n")
-    want = f'"{rec["exec"]}" %U'
+    link = str(tmp_path / "data" / "menu" / rec["id"])                    # what the entry starts (#685)
+    assert os.readlink(link) == rec["exec"]
+    want = f'"{link}" %U'
     entry = _entry(path)
     assert list(entry) == ["Desktop Entry"] and list(entry["Desktop Entry"]) == _ENTRY_KEYS, entry
     assert entry["Desktop Entry"]["Exec"] == want
@@ -445,40 +448,47 @@ def test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry(env, se
     assert entry["Desktop Entry"]["Name"] == "Demo MimeType=x-scheme-handler/https;text/html; Terminal=true"
     assert entry["Desktop Entry"]["Comment"] == 'A tool Exec=sh -c "touch /tmp/pwned" [X] NoDisplay=true'
     if (glib := _glib_reads(path)) is not None:
-        assert glib == [["Desktop Entry"], _ENTRY_KEYS, [rec["exec"], "%U"]], glib
+        assert glib == [["Desktop Entry"], _ENTRY_KEYS, [link, "%U"]], glib
 
 
 @linux_only
-def test_the_menu_entry_escapes_the_path_it_starts_and_refuses_one_it_cannot_write(env, server, tmp_path):
+def test_the_menu_entry_starts_the_app_through_its_link_whatever_the_install_folder_holds(env, server, tmp_path):
     # CR1.3-7's other half: Exec= held the path in quotes and escaped nothing in it, so an install
     # folder with a %, a $, a backtick or a backslash in its name made an entry that started something
-    # else or nothing. The words are read back by the specification's rules, and by GLib where it is.
+    # else or nothing. Escaped, a % (written %%) made GLib take the app for one that isn't installed:
+    # it looks for the program before it reads %% as % (seen with GLib 2.80), so the app had no entry
+    # in the menus of Cinnamon, GNOME, MATE or Xfce, and a folder with a quote or a line break was
+    # refused (#685). The owner's decision: the entry starts the app through a link AppKata keeps in
+    # its own folder, at a path with no %, so its Exec= never holds the install folder's path, and no
+    # folder is refused. Each such folder installs, with an entry the specification and GLib (where it
+    # is) read as that link, which leads to what the app runs, and goes with the app.
     root, base = server
     (root / "t.AppImage").write_bytes(b"\x7fELF")
     a = Asset("t.AppImage", base + "/t.AppImage")
-    # GLib looks for the program before it reads `%%` as `%`, so it takes an entry whose program's
-    # path holds a % for an app that isn't installed, written either way (seen with GLib 2.80); it
-    # reads the second folder, which has every other character.
-    for folder, glib_too in ((tmp_path / "My Apps" / "50% off %U" / "a $ and `id`" / "back\\slash\\\\two", False),
-                             (tmp_path / "My Apps" / "a $ and `id`" / "back\\slash\\\\two", True)):
-        app = {**APP, "url": f"{APP['url']}-{'glib' if glib_too else 'spec'}"}
+    for i, folder in enumerate((tmp_path / "My Apps" / "50% off %U" / "a $ and `id`" / "back\\slash\\\\two",
+                                tmp_path / "100%", tmp_path / 'quo"te', tmp_path / "line\nbreak", tmp_path / "tab\there",
+                                tmp_path / "nul\x7f")):
+        app = {**APP, "url": f"{APP['url']}-{i}", "name": f"Demo {i}"}
         rec = install.install(env, app, a, "appimage", [a], portable=install.Portable(folder=str(folder)))
         assert rec["exec"].startswith(str(folder))
         path = next(f for f in rec["files"] if f.endswith(".desktop"))
+        link = str(tmp_path / "data" / "menu" / f"demo-{i}")
         entry = _entry(path)["Desktop Entry"]
-        assert _exec_words(entry["Exec"]) == [rec["exec"], "%U"], entry["Exec"]
-        if glib_too and (glib := _glib_reads(path)) is not None:
-            assert glib[2] == [rec["exec"], "%U"], glib
-    # a sandbox launcher's own word stays a word of its own, outside the quotes
+        assert _exec_words(entry["Exec"]) == [link, "%U"] and "%%" not in entry["Exec"], entry["Exec"]
+        assert os.readlink(link) == rec["exec"] and link in rec["links"]
+        if (glib := _glib_reads(path)) is not None:
+            assert glib[2] == [link, "%U"], glib                           # GLib loads it: the app is in the menu
+        assert install.uninstall(env, app["url"]) == [] and not os.path.lexists(link) and not os.path.exists(path)
+    # the escaping, for a path that has these characters: a sandbox launcher's own word stays a word
+    # of its own, outside the quotes, and a path no entry can start is refused
     assert _exec_words(install.desktop_exec("/a b/run", "--appkata-menu")) == ["/a b/run", "--appkata-menu", "%U"]
+    assert _exec_words(install.desktop_exec("/50% off/a $ and `id`/back\\slash")) == ["/50% off/a $ and `id`/back\\slash", "%U"]
+    for bad in ('quo"te', "line\nbreak", "tab\there", "nul\x7f"):
+        with pytest.raises(ValueError, match="quote or a line break"):
+            install.desktop_exec(f"/x/{bad}")
     # a backslash in the name is a backslash, not the start of an escape (`\n` would be a line break)
     rec = install.install(env, {**APP, "name": "Demo\\nTool"}, a, "appimage", [a], portable=install.Portable(folder=str(tmp_path / "f")))
     assert "Name=Demo\\\\nTool\n" in open(next(f for f in rec["files"] if f.endswith(".desktop"))).read()
-    for bad in ('quo"te', "line\nbreak", "tab\there", "nul\x7f"):
-        with pytest.raises(install.InstallError, match="quote or a line break"):
-            install.install(env, {**APP, "url": APP["url"] + "-other", "name": "Other"}, a, "appimage", [a],
-                            portable=install.Portable(folder=str(tmp_path / bad)))
-    assert not (tmp_path / "xdg" / "applications" / "appkata-other.desktop").exists()
 
 
 class _HostileForge:
@@ -868,8 +878,8 @@ def _tarball(server, name, files):
     return Asset(name, f"{base}/{name}")
 
 
-_REFUSALS = {"the command link": "isn't a link AppKata made", "the menu entry": "couldn't add the app-menu entry",
-             "an archive with no program": "couldn't find the program", "a folder that can't be put in place": "Not a directory"}
+_REFUSALS = {"the command link": "isn't a link AppKata made", "an archive with no program": "couldn't find the program",
+             "a folder that can't be put in place": "Not a directory"}
 
 
 @linux_only
@@ -881,10 +891,11 @@ def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, mo
     # app's folder, its stable link and its menu entry with no record: in the desktop's menu, not in
     # AppKata, and nothing to uninstall it with. Refused as an update, `current` and the menu entry
     # were the new version's and the record the old one's, and an archive with no program left its
-    # <version>.new folder. Each refusal here is a real one: a file where the command link goes, a
-    # program whose path in the archive holds a quote (no menu entry can start it, and that is known
-    # only once it is unpacked), an archive with no program. The fourth is the one made to happen:
-    # the unpacked version can't be renamed into place, as when what is at its name isn't a folder.
+    # <version>.new folder. Each refusal here is a real one: a file where the command link goes, an
+    # archive with no program. The third is the one made to happen: the unpacked version can't be
+    # renamed into place, as when what is at its name isn't a folder. (A program whose path in the
+    # archive held a quote was refused too, at its menu entry, until #685: the entry starts the app's
+    # link in AppKata's own folder now, whatever the path holds.)
     apps, cmd, mine = tmp_path / "apps", tmp_path / "cmd", tmp_path / "their-bin"
     mine.mkdir()
     (mine / "tool").write_text("mine")
@@ -894,7 +905,7 @@ def test_a_refused_install_leaves_everything_as_it_was(env, server, tmp_path, mo
         a1 = _tarball(server, "tool-1.0.tar.gz", {"tool-1.0/tool": 0o755})
         install.install(env, {**app, "installVersion": "1.0"}, a1, "tarball", [a1], portable=good)
         assert os.readlink(apps / "tool" / "current") == "1.0" and os.path.islink(cmd / "tool")
-    files = {"the menu entry": {'tool-2.0/a "quoted" folder/tool': 0o755}, "an archive with no program": {"tool-2.0/README": 0o644}}
+    files = {"an archive with no program": {"tool-2.0/README": 0o644}}
     a2 = _tarball(server, "tool-2.0.tar.gz", files.get(refused, {"tool-2.0/tool": 0o755}))
     p = install.Portable(folder=str(apps), command_dir=str(mine)) if refused == "the command link" else good
     before = _left(tmp_path, env)
@@ -1089,7 +1100,8 @@ def test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_c
     p = install.Portable(folder=f"{typed}/apps", command_dir=f"{typed}/bin")
     a = _appimage(server)
     rec = install.install(env, APP, a, "appimage", [a], portable=p)
-    assert rec["links"] == [str(base / "apps" / "demo-tool" / "DemoTool.AppImage"), str(base / "bin" / "demo-tool")]
+    assert rec["links"] == [str(base / "apps" / "demo-tool" / "DemoTool.AppImage"), str(tmp_path / "data" / "menu" / "demo-tool"),
+                            str(base / "bin" / "demo-tool")]
     assert (p.root, p.command_folder) == (str(base / "apps"), str(base / "bin"))
     assert os.path.realpath(base / "bin" / "demo-tool") == str(base / "apps" / "demo-tool" / "t-1.2.0.AppImage")
     assert rec["root"] == str(base / "apps") and os.listdir(cwd) == []
@@ -1124,18 +1136,20 @@ def test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uni
     for v in ("1.0", "1.1"):
         a = _appimage(server, f"Tool-{v}-x86_64.AppImage", v.encode())
         rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=on)
-    made = {"the app menu": str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"),
-            "the stable name": str(tmp_path / "apps" / "demo-tool" / "DemoTool.AppImage"),
-            "the command link": str(tmp_path / "cmd" / "demo-tool")}
-    assert all(os.path.lexists(path) and path in rec["files"] + rec["links"] for path in made.values())    # made, and in the record
+    made = {"the app menu": [str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"),
+                             str(tmp_path / "data" / "menu" / "demo-tool")],               # the entry, and the link it starts (#685)
+            "the stable name": [str(tmp_path / "apps" / "demo-tool" / "DemoTool.AppImage")],
+            "the command link": [str(tmp_path / "cmd" / "demo-tool")]}
+    assert all(os.path.lexists(path) and path in rec["files"] + rec["links"] for paths in made.values() for path in paths)    # made, and in the record
     p = replace(on, **_OPTIONS[off])
     a = _appimage(server, "Tool-2.0-x86_64.AppImage", b"2.0")
     rec = {"an update": lambda: install.install(env, {**APP, "installVersion": "2.0"}, a, "appimage", [a], portable=p),
            "a launcher rewrite": lambda: install.rewrite_launcher(env, dict(APP), p),
            "a kept version": lambda: install.switch_to(env, dict(APP), "1.0", p)}[road]()
-    for what, path in made.items():
-        assert os.path.lexists(path) is (what != off), what
-        assert (path in rec["files"] + rec["links"]) is (what != off), what
+    for what, paths in made.items():
+        for path in paths:
+            assert os.path.lexists(path) is (what != off), (what, path)
+            assert (path in rec["files"] + rec["links"]) is (what != off), (what, path)
     assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
     install.uninstall(env, APP["url"])
     assert _changed(nothing, _left(tmp_path, env)) == {}
@@ -1552,7 +1566,7 @@ def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_link
         assert not os.path.lexists(launcher) and "launcher" not in rec and "sandbox" not in rec
         assert rec["exec"] == str(home / "DemoTool.AppImage") and _runs(rec["exec"]) == "1.0"
     assert os.access(rec["exec"], os.X_OK)                                                  # what AppKata's Open starts
-    assert _exec_words(_entry(entry)["Desktop Entry"]["Exec"])[0] == rec["exec"]            # and what the menu starts
+    assert os.readlink(_exec_words(_entry(entry)["Desktop Entry"]["Exec"])[0]) == rec["exec"]     # and what the menu starts
     assert (os.readlink(link) if link.is_symlink() else link.read_text()) == kept_as and str(link) not in rec["links"]
     assert rec["options"]["commandLink"] is True and rec["commandRefused"] == (
         f"demo-tool is already a command on this computer ({link})" if on_path and theirs == "a link to their own program"
