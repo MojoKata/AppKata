@@ -2272,6 +2272,43 @@ def test_a_failed_sandbox_change_puts_back_the_links_it_removed_or_moved(env, se
 
 
 @linux_only
+def test_a_failed_sandbox_change_removes_the_command_link_it_made(env, server, tmp_path, monkeypatch):
+    # #689's review, P7-T3: a failed change puts back the links it removed or moved (P6-B3's test),
+    # and removes a link it made where the stored record had none; with that removal taken out
+    # every test still passed. Here the app's name was a command at its install, so it got no
+    # command link (R4.3.1.3); that command is uninstalled since, so the sandbox change makes the
+    # link, and then its record can't be stored. The link it made goes, as R17.4 has the app left
+    # as it was: under a record that doesn't name it, nothing would remove it, at uninstall either.
+    from appkata_core import sandbox
+    system = tmp_path / "usr-bin"
+    system.mkdir()
+    (system / "demo-tool").write_text("#!/bin/sh\n")
+    (system / "demo-tool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{system}")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    was = install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    cmd = tmp_path / "cmd" / "demo-tool"
+    assert was["commandRefused"] and not os.path.lexists(cmd)
+    (system / "demo-tool").unlink()                                     # the name is free now
+    kept, made, real = _left(tmp_path, env), [], env.x
+
+    def store(sql, *a, **k):
+        if sql.startswith("UPDATE installs") and not made:
+            made.append(os.path.islink(cmd))                            # the change has made its link by now
+            raise OSError(28, "No space left on device")
+        return real(sql, *a, **k)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(env, "x", store)
+        with pytest.raises(OSError, match="No space left on device") as e:
+            install.rewrite_launcher(env, {**APP, "sandbox": sandbox.resolve_template("strict")}, p)
+    assert made == [True] and not isinstance(e.value, install.NotPutBack)
+    assert _changed(kept, _left(tmp_path, env)) == {}                    # the link it made gone, and all else as it was
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": sandbox.resolve_template("strict")}, p)    # then it is made, link and all
+    assert os.readlink(cmd) == rec["exec"] == rec["launcher"] and "commandRefused" not in rec
+
+
+@linux_only
 @pytest.mark.parametrize("kind", ["appimage", "tarball"])
 def test_a_failed_move_back_to_the_fixed_name_that_cant_be_undone_is_named(env, server, tmp_path, monkeypatch, kind):
     # #689's review, P6-B3: turning the sandbox Off for an app that updates itself moves its current
