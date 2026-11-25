@@ -123,8 +123,9 @@ def test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_list
 @needs_proxy
 def test_the_harness_catches_round_twos_arguments_never_handed_over(env, monkeypatch):
     # R7 (round two): the launcher passed host paths through, and the app found nothing at them
-    monkeypatch.setattr(sb, "FORWARD_HELPER", "import shlex, sys\nr = sys.argv[sys.argv.index('--') + 1:]\n"
-                                              "print(' '.join(shlex.quote(a) for a in r))\n")
+    # (the helper's arguments are after the second "--": the visible folders, then the never-shared ones)
+    monkeypatch.setattr(sb, "FORWARD_HELPER", "import sys\nr = sys.argv[sys.argv.index('--') + 1:]\nr = r[r.index('--') + 1:]\n"
+                                              "print(''.join('=' + a + chr(10) for a in r), end='')\n")
     bus = _Bus(env)
     try:
         portal = _DocPortal(env, bus)

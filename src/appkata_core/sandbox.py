@@ -1841,13 +1841,77 @@ def write_seccomp_filter() -> str | None:
 # and the launcher ran `eval "set -- $fwd"` on them, so whatever answered to the name python3 wrote a
 # line of the launcher's shell). An argument that can't be handed over passes unchanged, and any
 # failure of the whole leaves the launcher passing them all unchanged.
-# argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...] -- <arguments...>
+# The never-shared list wins over an argument (R17.3.1, R17.6.2; CR1.5-38, the owner's decision of
+# 2026-11-23): the helper had no such list, so `tool .` from the home folder, `tool ~/.ssh` or the
+# home dropped on a menu entry was exported whole, read-write, right after the launcher said the
+# tool couldn't see it. The launcher gives it the list now: the folders of _protected_roots() and
+# the private homes, as they are written (resolved here, at each launch), the runtime folder and
+# the session bus's socket files as the launcher read them ($bussocks); the home folder is the
+# helper's own to find. A file or folder that is one of them, inside one or above one is not handed
+# over, judged by where it leads and by each link on the way there (`~/.ssh/config`, a link to a
+# file kept elsewhere, is in `~/.ssh`). The system's own places are not in the list: a file under
+# /tmp is handed over like any other (R17.3.3). Each refusal is a line of the answer, "!" first and
+# then what the launcher says after the app's name, on stderr.
+# argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
+#       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
 ident, rt, incwd, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 sep = rest.index("--")
 pairs = [(d, os.path.realpath(d)) for d in rest[:sep]]        # (where the app sees it, where the host has it)
+rest = rest[sep + 1:]
+sep = rest.index("--")
+never = [os.path.normpath(n) for n in rest[1:sep] + [rt] + rest[0].split(chr(10)) if n]
 args = rest[sep + 1:]
 in_place = bool(incwd) and os.path.realpath(incwd) == os.path.realpath(os.getcwd())
+said = []
+
+
+def within(path, folder):
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def follow(path):
+    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there
+    todo = os.path.join(os.getcwd(), path).split(os.sep)[::-1]
+    at, links = os.sep, []
+    while todo:
+        name = todo.pop()
+        if name in ("", "."):
+            continue
+        if name == "..":
+            at = os.path.dirname(at)
+            continue
+        step = os.path.join(at, name)
+        try:
+            target = os.readlink(step)
+        except OSError:
+            at = step
+            continue
+        links.append(step)
+        if len(links) > 40:
+            raise OSError("too many links")
+        if target.startswith(os.sep):
+            at = os.sep
+        todo.extend(target.split(os.sep)[::-1])
+    return at, links
+
+
+def never_shared(path):
+    # why the file or folder at `path` is handed to no app, or None (R17.3.1): the home folder or
+    # a folder above it, or a never-shared folder, what is in one and what is above one
+    real, links = follow(path)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real == home:
+        return "your whole home folder is never shared with a sandboxed app"
+    if within(home, real):
+        return "it holds your whole home folder, which is never shared with a sandboxed app"
+    for root in never:              # where it leads now, and by its own name where it is a link
+        for spot in (os.path.realpath(root), os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root))):
+            if any(within(p, spot) for p in [real] + links):
+                return root + " is never shared with a sandboxed app"
+            if within(spot, real):
+                return "it holds " + root + ", which is never shared with a sandboxed app"
+    return None
 
 
 def inside(path):
@@ -1914,6 +1978,12 @@ def hand(path, uri):
         new = seen
     else:
         try:
+            why = never_shared(path)
+            if why:
+                line = "runs sandboxed and isn't handed " + path + ": " + why + "."
+                if line not in said:
+                    said.append(line)
+                return None
             new = export(path) if os.path.isfile(path) else export_dir(path) if os.path.isdir(path) else None
         except Exception:
             return None
@@ -1940,7 +2010,8 @@ for a in args:
         new = a[:2] + one(a[2:])
     out.append(new)
 BS, NL = chr(92), chr(10)
-sys.stdout.buffer.write(os.fsencode("".join("=" + a.replace(BS, BS + BS).replace(NL, BS + "n") + NL for a in out)))
+lines = ["!" + line for line in said] + ["=" + a for a in out]
+sys.stdout.buffer.write(os.fsencode("".join(line.replace(BS, BS + BS).replace(NL, BS + "n") + NL for line in lines)))
 """
 
 
@@ -2306,15 +2377,20 @@ esac
 # below; PR #694's review, P3-B4), so a file there is handed over instead. build_launcher puts the
 # line that decides that ($folders) between the note and the lines that run; _FORWARD_BLOCK is the
 # two without it, as tests/test_sandbox_adversarial.py runs them, its folders named outright.
+# {never}: the never-shared folders (R17.3.1), which win over an argument: the helper hands over
+# nothing that is one, in one or above one, and its answer says why, a line with "!" first for each,
+# which is printed after the app's name ({name}) on stderr and is no argument (CR1.5-38).
 _FORWARD_NOTE = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
+# A file or folder that is a never-shared one (R17.3.1), in one or above one is not handed over,
+# whoever names it: the helper is given the list, and a line of its answer with "!" first says why.
 """
 _FORWARD_RUN = """if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
-  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then
+  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "${{bussocks:-}}" {never} -- "$@" 2>/dev/null); then
     n=0
     while IFS= read -r w; do
       case "$w" in =*) n=$((n + 1)) ;; esac
@@ -2323,7 +2399,7 @@ $fwd
 EOF
     if [ "$n" -eq $# ]; then
       while IFS= read -r w; do
-        case "$w" in =*) w=${{w#=}} ;; *) continue ;; esac
+        case "$w" in =*) w=${{w#=}} ;; "!"*) printf '%s %s\\n' {name} "${{w#!}}" >&2; continue ;; *) continue ;; esac
         case "$w" in *\\\\*) w=$(printf '%bx' "$w"); w=${{w%x}} ;; esac
         set -- "$@" "$w"
       done <<EOF
@@ -2590,9 +2666,9 @@ else
       1) printf "%s runs sandboxed and isn't given %s to work in: it is one of the system's own folders ({places}), or in or above one, and those are never shared.\\n" {name} "$here" >&2 ;;
       *) printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2 ;;
     esac
-    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home (your keys, your startup files, AppKata's own)." >&2
   else
-    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\\n" {name} "$here" "$upstream" >&2
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same, unless it is in a never-shared folder of your home.\\n" {name} "$here" "$upstream" >&2
   fi
 fi
 """
@@ -2652,7 +2728,10 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
-        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
+        # what no argument hands over (R17.3.1): as written, for the helper to resolve at each launch
+        never = " ".join(q(r) for r in dict.fromkeys([sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]))
+        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible),
+                                                          never=never, name=q(name))
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731

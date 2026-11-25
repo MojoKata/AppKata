@@ -193,7 +193,8 @@ def _a_tool_run_in_a_system_place_has_the_sandboxes_own(env):
             r = env.run(lp, f'pwd; [ -e {cwd}/{mark} ] && echo THEIRS; (echo x > {cwd}/{mark}-mine) 2>/dev/null; cat /proc/1/comm; true', cwd=cwd)
             assert r.returncode == 0 and r.stdout.split() == [str(env.home), "bwrap"], (cwd, r.stdout, r.stderr)   # in its private home, with its own /proc
             assert f"Tool runs sandboxed and isn't given {cwd} to work in: it is one of the system's own folders" in r.stderr, (cwd, r.stderr)
-            assert "A file you name on the command line is handed over either way." in r.stderr and "bwrap" not in r.stderr, (cwd, r.stderr)
+            assert "A file you name on the command line is handed over either way, unless it is in a never-shared folder" in r.stderr, (cwd, r.stderr)
+            assert "bwrap" not in r.stderr, (cwd, r.stderr)
             assert not [m for m in mine if os.path.exists(m)], (cwd, mine)                                        # and nothing it wrote landed outside
     finally:
         for left in theirs + mine:
@@ -1828,6 +1829,30 @@ def test_file_arguments_pass_through_when_they_cannot_be_handed_over(env):
     assert r.returncode == 0 and f"ARG {docs}/a.txt" in r.stdout, (r.stdout, r.stderr)
 
 
+def _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e):
+    """CR1.5-38 (#651), with the real document portal: `tool .` from the home folder, the home by
+    its path and as a URI, a key and a startup file leave nothing under $XDG_RUNTIME_DIR/doc, reach
+    the tool as they were typed, and each has its line on stderr. The tool's own line said it
+    couldn't see the home, and the helper then exported the home, read-write. A part of the test
+    below, which tests/skips/tier1.txt names (that file is another unit's)."""
+    key, rc = env.home / ".ssh" / "id_ed25519", env.home / ".bashrc"
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; ls -A "$XDG_RUNTIME_DIR"/doc/* 2>&1; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/id_ed25519 "$XDG_RUNTIME_DIR"/doc/*/*/.ssh/id_ed25519 "$2" 2>&1; echo x >> "$3"; true')
+    args = [".", str(key), str(rc), str(env.home), "file://" + str(env.home), "--key=" + str(key)]
+    r = subprocess.run([lp, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)             # the portal was given nothing of them
+    assert "SECRET-KEY" not in r.stdout and rc.read_text() == "# real bashrc\n", r.stdout
+    said = [l for l in r.stderr.splitlines() if "isn't handed" in l]
+    assert said == [f"Tool runs sandboxed and isn't handed .: your whole home folder is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {key}: {env.home}/.ssh is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {rc}: {rc} is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {env.home}: your whole home folder is never shared with a sandboxed app."], r.stderr
+    assert f"can't see {env.home} " in r.stderr and "unless it is in a never-shared folder of your home" in r.stderr, r.stderr
+
+
 @needs_proxy
 def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(env):
     # Regression (round three, R3-3): the file-argument block ran before the working-directory rule
@@ -1859,6 +1884,7 @@ def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(
             (work / "draft.txt").write_text("DRAFT\n")
             r3 = subprocess.run([lp, snippet, "draft.txt", str(work / "draft.txt")], cwd=str(work), env=e,
                                 capture_output=True, text=True, timeout=60)
+            _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e)
         finally:
             portal.close()
     finally:

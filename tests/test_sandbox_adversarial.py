@@ -159,7 +159,8 @@ def test_parse_folders_keeps_every_hostile_path_whole():
 def _through_the_launchers_own_lines(helper, args, tmp_path, visible=()):
     """The launcher's own file-argument lines (sb._FORWARD_BLOCK, as build_launcher fills them in),
     run by sh over `args` with `helper` as the helper; returns the arguments the app would get."""
-    block = sb._FORWARD_BLOCK.format(helper=shlex.quote(str(helper)), incwd='""', visible=" ".join(shlex.quote(str(v)) for v in visible))
+    block = sb._FORWARD_BLOCK.format(helper=shlex.quote(str(helper)), incwd='""', visible=" ".join(shlex.quote(str(v)) for v in visible),
+                                     never=shlex.quote(str(tmp_path / "never-shared")), name="App")
     script = f"id=io.appkata.app; rt={shlex.quote(str(tmp_path / 'rt'))}\n{block}" + 'for a; do printf "%s\\0" "$a"; done\n'
     r = subprocess.run(["sh", "-euc", script, "sh", *args], capture_output=True, timeout=30,
                        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})

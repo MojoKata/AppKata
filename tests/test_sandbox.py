@@ -1003,7 +1003,8 @@ def test_a_tool_run_in_a_system_place_is_not_given_it_and_says_why(tmp_path, mon
     assert (f"Demo runs sandboxed and isn't given {run_in} to work in: it is one of the system's own folders "
             f"({', '.join(sb.SYSTEM_PLACES)}), or in or above one, and those are never shared.\n"
             "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). "
-            "A file you name on the command line is handed over either way.\n") in r.stderr, r.stderr
+            "A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home "
+            "(your keys, your startup files, AppKata's own).\n") in r.stderr, r.stderr
     assert "can't see" not in r.stderr, r.stderr
 
 
@@ -2576,26 +2577,106 @@ def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):
     assert os.path.exists(helper) and "org.freedesktop.portal.Documents" in open(helper).read()
     # ...each only where the launcher shows it, which it doesn't where the session bus's address names
     # a file it can't read (PR #694's review, P3-B4)
-    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+{fake_home}/Projects}} -- "$@"' in text
+    # ...then the never-shared folders, which win over an argument (CR1.5-38): the session bus's
+    # socket files as the launcher read them, and R17.3.1's list as it is written
+    never = " ".join(shlex.quote(r) for r in dict.fromkeys([sb.sandboxes_root()] + [r for r, _ in sb._protected_roots(str(fake_home / "bin/apps"))]))
+    assert str(fake_home / ".ssh") in never.split() and str(fake_home / "bin/apps") in never.split()
+    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+{fake_home}/Projects}} -- "${{bussocks:-}}" {never} -- "$@"' in text
     assert text.index('folders=1; [ "${busok:-1}" = 1 ] || folders=') < text.index("forward-files.py")
     assert text.index("forward-files.py") < text.index('set -- -- "$appdir/$exe" "$@"')     # before the words are fixed
     assert text.index("--appkata-menu") < text.index("forward-files.py")                  # after the menu word is shifted off
     cli = sb.build_launcher("t", "T", "/x/1", "bin/t", sb.resolve_template("cli-tool"), forward=helper)
     # the tool's directory counts as visible only when the $cwd rule shares it (round three, R3-3),
     # so that rule is decided first and the forward call takes its answer
-    assert f'python3 {helper} "$id" "$rt" "${{cwdvis:-}}" ${{cwdvis:+"$cwdvis"}} -- "$@"' in cli
+    assert f'python3 {helper} "$id" "$rt" "${{cwdvis:-}}" ${{cwdvis:+"$cwdvis"}} -- "${{bussocks:-}}" ' in cli
     assert cli.index("share=1") < cli.index("forward-files.py") < cli.index('set -- --bind "$here" "$here"')
     assert _valid_sh(cli)
     assert "forward-files.py" not in sb.build_launcher("v", "V", "/x/1", "bin/v", sb.resolve_template("strict"), forward=helper)
 
 
 def _forward(tmp_path, cwd, incwd, visible, args):
-    helper = tmp_path / "forward-files.py"
+    return _handed(tmp_path, cwd, args, visible, incwd)[0]
+
+
+# A stand-in for python3-gi, first on the helper's path: it answers the document portal's calls and
+# writes each down ($PORTAL_LOG), with the file every descriptor it was passed leads to.
+_STAND_IN_GI = """import json, os
+
+
+class _Answer:
+    def __init__(self, value):
+        self.value = value
+
+    def unpack(self):
+        return self.value
+
+
+class _FDs:
+    def __init__(self):
+        self.fds = []
+
+    def append(self, fd):
+        self.fds.append(fd)
+        return len(self.fds) - 1
+
+
+class _Bus:
+    def _note(self, method, args, fds=()):
+        with open(os.environ["PORTAL_LOG"], "a") as f:
+            f.write(json.dumps([method, list(args), [os.readlink(f"/proc/self/fd/{fd}") for fd in fds]]) + "\\n")
+
+    def call_with_unix_fd_list_sync(self, name, path, iface, method, args, answer, flags, timeout, fds, cancel):
+        self._note(method, args.value, fds.fds)
+        return _Answer(("DOC",) if method == "Add" else (["DOC"], {})), None
+
+    def call_sync(self, name, path, iface, method, args, answer, flags, timeout, cancel):
+        self._note(method, args.value)
+
+
+class Gio:
+    class UnixFDList:
+        new = staticmethod(_FDs)
+
+    class BusType:
+        SESSION = 1
+
+    class DBusCallFlags:
+        NONE = 0
+
+    bus_get_sync = staticmethod(lambda kind, cancel: _Bus())
+
+
+class GLib:
+    class Variant:
+        def __init__(self, signature, value):
+            self.value = value
+
+    VariantType = staticmethod(lambda signature: signature)
+"""
+
+
+def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), home=None):
+    """The file-argument helper's own text run from `cwd` over `args`, against a stand-in document
+    portal: the arguments it answers, the lines it has the launcher say, and the portal's calls,
+    each [method, arguments, what the descriptors passed lead to]. `visible`: the folders the app
+    is shown; `incwd`: a command-line tool's shared directory; `never` and `sockets`: the
+    never-shared folders and the session bus's socket files the launcher gives it; `home`: the
+    user's home folder, the test's own unless given."""
+    helper, gi, log = tmp_path / "forward-files.py", tmp_path / "stand-in" / "gi", tmp_path / "portal.log"
     helper.write_text(sb.FORWARD_HELPER)
-    r = subprocess.run([sys.executable, str(helper), "io.appkata.t", str(tmp_path / "run"), incwd, *map(str, visible), "--", *args],
-                       cwd=str(cwd), capture_output=True, text=True, timeout=30)
+    gi.mkdir(parents=True, exist_ok=True)
+    (gi / "__init__.py").write_text("")
+    (gi / "repository.py").write_text(_STAND_IN_GI)
+    if log.exists():
+        log.unlink()
+    r = subprocess.run([sys.executable, str(helper), "io.appkata.t", str(tmp_path / "run"), incwd, *map(str, visible), "--",
+                        "".join(f"{s}\n" for s in sockets), *map(str, never), "--", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30,
+                       env={**os.environ, "PYTHONPATH": str(gi.parent), "PORTAL_LOG": str(log), **({"HOME": str(home)} if home else {})})
     assert r.returncode == 0, r.stderr
-    return forwarded_words(r.stdout)
+    lines = r.stdout.split("\n")
+    assert lines.pop() == "" and all(l[:1] in ("=", "!") for l in lines), r.stdout
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return forwarded_words("".join(l + "\n" for l in lines if l[0] == "=")), [l[1:] for l in lines if l[0] == "!"], calls
 
 
 def forwarded_words(answer: str) -> list[str]:
@@ -2646,6 +2727,161 @@ def test_a_cli_tools_relative_paths_in_its_shared_folder_stay_as_typed(tmp_path)
     (proj / "src").mkdir(parents=True)
     (proj / "a.txt").write_text("x")
     assert _forward(tmp_path, proj, str(proj), [proj], ["a.txt", ".", "src/"]) == ["a.txt", ".", "src/"]
+
+
+def _a_home_with_its_never_shared_places(tmp_path, monkeypatch):
+    """A home folder holding each never-shared place of R17.3.1 with a file in it, and ordinary
+    files beside them; AppKata's own folders are this home's. Returns the home and the list the
+    launcher gives the file-argument helper."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    for v in ("XDG_DATA_HOME", "APPKATA_APPS", "APPKATA_DATA"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
+    never = list(dict.fromkeys([sb.sandboxes_root()] + [r for r, _ in sb._protected_roots()]))
+    for root in never:
+        os.makedirs(os.path.join(root, "inside"), exist_ok=True)
+        with open(os.path.join(root, "inside", "file"), "w") as f:
+            f.write("x")
+    for rel in ("Documents/notes.txt", "proj/src/main.c", "dotfiles/bashrc", "dotfiles/ssh_config"):
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text("x")
+    return home, never
+
+
+def test_a_never_shared_folder_is_handed_over_by_no_argument_and_the_helper_says_why(tmp_path, monkeypatch):
+    # CR1.5-38 (the owner's decision of 2026-11-23: the never-shared list wins over an argument). The
+    # helper exported whatever an argument named, whole and read-write: `tool .` from the home
+    # folder, `tool ~/.ssh`, `/`, the home dropped on a menu entry. How it slipped past: the helper
+    # was never given the list, and every hand-over test named a file in ~/Documents.
+    home, never = _a_home_with_its_never_shared_places(tmp_path, monkeypatch)
+    ssh, rt = home / ".ssh", tmp_path / "run"
+    (ssh / "id_ed25519").write_text("KEY")
+    (home / "Documents" / "key").symlink_to(ssh / "id_ed25519")            # a link elsewhere that leads in
+    (ssh / "config").symlink_to(home / "dotfiles" / "ssh_config")         # a file of ~/.ssh kept elsewhere
+    os.rename(home / ".bashrc", home / ".bashrc.was")
+    (home / ".bashrc").symlink_to(home / "dotfiles" / "bashrc")           # a startup file kept elsewhere
+    (home / "keys").symlink_to(ssh)
+    refused = {".": "your whole home folder is never shared",
+               str(home): "your whole home folder is never shared",
+               str(home) + "/": "your whole home folder is never shared",
+               "/": "it holds your whole home folder, which is never shared",
+               str(tmp_path): "it holds your whole home folder, which is never shared",
+               "..": "it holds your whole home folder, which is never shared",
+               ".ssh": f"{ssh} is never shared",
+               str(ssh): f"{ssh} is never shared",
+               str(ssh / "id_ed25519"): f"{ssh} is never shared",
+               ".ssh/id_ed25519": f"{ssh} is never shared",
+               "Documents/../.ssh/id_ed25519": f"{ssh} is never shared",
+               str(home / "keys" / "id_ed25519"): f"{ssh} is never shared",
+               str(home / "Documents" / "key"): f"{ssh} is never shared",
+               str(ssh / "config"): f"{ssh} is never shared",
+               str(home / ".bashrc"): f"{home}/.bashrc is never shared",
+               str(home / ".config"): f"it holds {home}/.config/autostart, which is never shared",
+               str(home / ".local" / "share"): f"it holds {home}/.local/share/appkata/sandboxes, which is never shared",
+               str(home / "bin" / "apps" / "inside" / "file"): f"{home}/bin/apps is never shared",
+               str(rt / "inside" / "file"): f"{rt} is never shared"}
+    args = list(refused) + ["file://" + str(ssh / "id_ed25519"), "--key=" + str(ssh / "id_ed25519"), "-i" + str(ssh / "id_ed25519"),
+                            "file://" + str(home)]
+    words, said, calls = _handed(tmp_path, home, args, never=never, home=home)
+    assert words == args and calls == [], (words, calls)                # each passes as it was, and the portal is asked nothing
+    for arg, why in refused.items():
+        assert f"runs sandboxed and isn't handed {arg}: {why} with a sandboxed app." in said, (arg, said)
+    assert len(said) == len(refused), said                              # a file named three ways is said once
+    # ...and what is no never-shared place is handed over as before: a file, a folder, an option's
+    # value, a file under /tmp (the system's own places are a grant's rule, never an argument's: R17.3.3)
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / "draft.txt").write_text("x")
+    given = ["Documents/notes.txt", str(home / "proj"), "--file=" + str(home / "Documents" / "notes.txt"), str(tmp_path / "work" / "draft.txt"),
+             str(home / ".config" / "other.conf"), str(home / ".bashrc.was" / "inside" / "file")]
+    (home / ".config" / "other.conf").write_text("x")
+    doc = str(rt / "doc" / "DOC")
+    words, said, calls = _handed(tmp_path, home, given, never=never, home=home)
+    assert words == [f"{doc}/notes.txt", f"{doc}/proj", f"--file={doc}/notes.txt", f"{doc}/draft.txt", f"{doc}/other.conf", f"{doc}/file"] and said == []
+    assert [c[0] for c in calls] == ["Add", "GrantPermissions", "AddFull", "Add", "GrantPermissions", "Add", "GrantPermissions",
+                                     "Add", "GrantPermissions", "Add", "GrantPermissions"], calls
+
+
+def test_the_session_bus_socket_is_handed_over_by_no_argument_nor_a_folder_above_it(tmp_path, monkeypatch):
+    # ...and the bus's own socket file, wherever the session's address puts it ($bussocks, as the
+    # launcher read it): the file and what is above it, never what is beside it (R17.3.1)
+    home, never = _a_home_with_its_never_shared_places(tmp_path, monkeypatch)
+    sock, bus = _a_bus_socket(home / "session")
+    (home / "session" / "notes.txt").write_text("x")
+    bus = str(bus)
+    try:
+        words, said, calls = _handed(tmp_path, home, [bus, str(home / "session"), "session/notes.txt"], never=never, sockets=[bus], home=home)
+    finally:
+        sock.close()
+    assert words == [bus, str(home / "session"), str(tmp_path / "run" / "doc" / "DOC" / "notes.txt")], words
+    assert said == [f"runs sandboxed and isn't handed {bus}: {bus} is never shared with a sandboxed app.",
+                    f"runs sandboxed and isn't handed {home}/session: it holds {bus}, which is never shared with a sandboxed app."]
+    assert [c[0] for c in calls] == ["Add", "GrantPermissions"] and calls[0][2] == [str(home / "session" / "notes.txt")], calls
+
+
+def test_the_helper_hands_over_nothing_a_grant_could_not_share_but_under_the_systems_places(tmp_path, monkeypatch):
+    # The class: two rules for one list. A folder grant is judged by protected_folder(), a file
+    # argument by the helper's own lines, in another language and another process, and nothing held
+    # the second to the first. For every never-shared place, what is in it and what is above it:
+    # whatever a grant is refused, no argument is handed. The other way round only where the grant
+    # rule's reason is one of the system's own places, which an argument is not judged by (a file
+    # under /tmp is handed over, R17.3.3).
+    home, never = _a_home_with_its_never_shared_places(tmp_path, monkeypatch)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    places = [p for root in never for p in (root, os.path.join(root, "inside"), os.path.join(root, "inside", "file"), os.path.dirname(root))]
+    places += [str(home), str(tmp_path), "/", str(home / "Documents"), str(home / "Documents" / "notes.txt"), str(home / "proj"),
+               str(home / ".config" / "inside"), str(home / ".local" / "state")]
+    for d in (home / ".config" / "inside", home / ".local" / "state", tmp_path / "work"):
+        d.mkdir()
+    (tmp_path / "work" / "draft.txt").write_text("x")
+    places = list(dict.fromkeys(places + [str(tmp_path / "work"), str(tmp_path / "work" / "draft.txt")]))
+    words, said, calls = _handed(tmp_path, home, places, never=never, home=home)
+    kept = {p for p, w in zip(places, words) if p == w}
+    system = 0
+    for p in places:
+        why = sb.protected_folder(p)
+        if why.startswith(("the system's own ", "a folder above the system's own ")):
+            system, why = system + 1, ""
+        assert (p in kept) == bool(why), (p, why, said)
+    assert len(kept) == len(said) > 3 * len(never) and system == 2 and len(calls) >= 8, (len(kept), len(said), system, calls)
+
+
+def _a_python3_with_the_stand_in_portal(tmp_path) -> str:
+    """The script of a `python3` that finds the stand-in document portal (_STAND_IN_GI), for a
+    launcher to run its file-argument helper with."""
+    gi = tmp_path / "stand-in" / "gi"
+    gi.mkdir(parents=True, exist_ok=True)
+    (gi / "__init__.py").write_text("")
+    (gi / "repository.py").write_text(_STAND_IN_GI)
+    return (f"#!/bin/sh\nPYTHONPATH={shlex.quote(str(gi.parent))} PORTAL_LOG={shlex.quote(str(tmp_path / 'portal.log'))} "
+            f'exec {shlex.quote(sys.executable)} "$@"\n')
+
+
+@pytest.mark.parametrize("template", ["cli-tool", "standard"])
+def test_the_launcher_says_why_an_argument_in_a_never_shared_folder_is_not_handed_over(tmp_path, monkeypatch, template):
+    # CR1.5-38, through the launcher's own lines: `tool . ~/.ssh/id_ed25519 Documents/notes.txt` from
+    # the home folder. The tool's line said it couldn't see the home, and the helper then handed the
+    # home over, read-write. Now neither the home nor the key is handed over, each with its line on
+    # stderr after the app's name, and the file beside them still is.
+    home = tmp_path / "home"
+    key = home / ".ssh" / "id_ed25519"
+    for f in (key, home / "Documents" / "notes.txt"):
+        f.parent.mkdir(parents=True)
+        f.write_text("x")
+    (tmp_path / "forward-files.py").write_text(sb.FORWARD_HELPER)
+    args = [".", str(key), "--key=" + str(key), "Documents/notes.txt"]
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, "unix:path={rt}/bus", template=template, forward=str(tmp_path / "forward-files.py"),
+                                  tools={"python3": _a_python3_with_the_stand_in_portal(tmp_path)}, args=args)
+    calls = [json.loads(line) for line in (tmp_path / "portal.log").read_text().splitlines()]
+    assert r.returncode == 0 and app[-4:] == [".", str(key), "--key=" + str(key), str(rt / "doc" / "DOC" / "notes.txt")], (app[-5:], r.stderr)
+    assert [c[2] for c in calls if c[2]] == [[str(home / "Documents" / "notes.txt")]], calls       # the one file, and nothing else
+    lines = r.stderr.splitlines()
+    assert f"Demo runs sandboxed and isn't handed .: your whole home folder is never shared with a sandboxed app." in lines, r.stderr
+    assert lines.count(f"Demo runs sandboxed and isn't handed {key}: {home}/.ssh is never shared with a sandboxed app.") == 1, r.stderr
+    if template == "cli-tool":                    # the tool's own line no longer promises every named file
+        assert f"Demo runs sandboxed and can't see {home} " in r.stderr, r.stderr
+        assert "is handed over either way, unless it is in a never-shared folder of your home" in r.stderr, r.stderr
 
 
 def test_the_field_test_runs_each_check_under_the_template_it_names(tmp_path):
