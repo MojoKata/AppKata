@@ -10995,6 +10995,7 @@
   "tests/test_install_review.py",
   "tests/test_launch.py",
   "tests/test_pinned_inputs.py",
+  "tests/test_publish.py",
   "tests/test_qml_slots.py",
   "tests/test_sandbox.py",
   "tests/test_sandbox_backend.py",
