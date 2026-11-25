@@ -645,14 +645,18 @@ def test_no_command_link_is_ever_named_after_a_command_a_launcher_or_appkata_run
 _OTHER_PLATFORMS = {"open": "macOS", "icacls": "Windows", "notepad.exe": "Windows", "powershell.exe": "Windows"}
 
 
-def _run_by_name():
-    """Every program AppKata's own code (src/) runs by name: {name: ["file:line", ...]}. A name is
-    the first word of a list given first to any call (subprocess's, applog.run, a helper such as
-    autoupdate._out that runs what it is given), or what `which("name")` looks for. A wrapper that
-    puts its own program before its caller's words (flatpak.run: ["flatpak", *args]) gives that
-    program, and its callers' first words are that program's, not programs."""
+def _run_by_name(src=None):
+    """Every program AppKata's own code (`src`, src/ by default) runs by name: {name: ["file:line",
+    ...]}. A name is the first word of a list given first to any call (subprocess's, applog.run, a
+    helper such as autoupdate._out that runs what it is given), or what `which("name")` looks for.
+    Given to what runs a program (subprocess's calls, or a function of AppKata's that gives its
+    first parameter to one), the list may also be built first and given by name (`cmd =
+    [...]`, then `Popen(cmd)`, in the same function), chosen by a conditional (both its lists), or
+    added to (`["git"] + args`): #689's review, P2-4, the form gio came in by. A wrapper that puts
+    its own program before its caller's words (flatpak.run: ["flatpak", *args]) gives that program,
+    and its callers' first words are that program's, not programs."""
     import ast
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+    src = src or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
     trees = {}
     for d, _, names in os.walk(src):
         for n in sorted(names):
@@ -666,6 +670,37 @@ def _run_by_name():
             return node.elts[0].value
         return None
 
+    def firsts(node, assigned, seen=()):
+        """The first words of every list `node` can be: a list, either list of a conditional, the
+        left of a `+`, or a name's lists where its function assigns them."""
+        if isinstance(node, ast.IfExp):
+            return firsts(node.body, assigned, seen) + firsts(node.orelse, assigned, seen)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return firsts(node.left, assigned, seen)
+        if isinstance(node, ast.Name) and node.id not in seen:
+            return [w for v in assigned.get(node.id, []) for w in firsts(v, assigned, seen + (node.id,))]
+        return [w] if (w := first(node)) else []
+
+    def assignments(scope):
+        """{name: [the values assigned to it]} in a function (or a module's own statements)."""
+        out = {}
+        for n in (ast.walk(scope) if not isinstance(scope, ast.Module) else scope.body):
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        out.setdefault(t.id, []).append(n.value)
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+                out.setdefault(n.target.id, []).append(n.value)
+        return out
+
+    def calls(node, assigned):
+        """(call, what its function assigns) for every call under `node`, in its innermost function."""
+        for child in ast.iter_child_nodes(node):
+            inner = assignments(child) if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else assigned
+            if isinstance(child, ast.Call):
+                yield child, inner
+            yield from calls(child, inner)
+
     def callee(call, module):
         f = call.func
         if isinstance(f, ast.Name):
@@ -673,6 +708,20 @@ def _run_by_name():
         return (f.value.id, f.attr) if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else None
 
     module = lambda p: os.path.splitext(os.path.basename(p))[0]       # noqa: E731
+    runners = {("subprocess", f) for f in ("run", "Popen", "call", "check_call", "check_output")}
+    while True:                                 # and AppKata's own functions that run what they are given
+        more = set()
+        for p, tree in trees.items():
+            for fn in ast.walk(tree):
+                given = [a.arg for a in fn.args.args if a.arg not in ("self", "cls")][:1] \
+                    if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) else []
+                if given and (module(p), fn.name) not in runners and any(
+                        isinstance(c, ast.Call) and c.args and isinstance(c.args[0], ast.Name) and c.args[0].id == given[0]
+                        and callee(c, module(p)) in runners for c in ast.walk(fn)):
+                    more.add((module(p), fn.name))
+        if not more:
+            break
+        runners |= more
     wrappers = set()
     for p, tree in trees.items():
         for fn in ast.walk(tree):
@@ -684,15 +733,70 @@ def _run_by_name():
                         wrappers.add((module(p), fn.name))
     found = {}
     for p, tree in trees.items():
-        for c in ast.walk(tree):
-            if not isinstance(c, ast.Call) or not c.args or callee(c, module(p)) in wrappers:
+        for c, assigned in calls(tree, assignments(tree)):
+            if not c.args or callee(c, module(p)) in wrappers:
                 continue
-            name = first(c.args[0])
-            if name is None and (callee(c, module(p)) or ("", ""))[1] == "which" and isinstance(c.args[0], ast.Constant):
-                name = c.args[0].value
-            if isinstance(name, str) and re.fullmatch(r"[a-z0-9]([a-z0-9._+-]*[a-z0-9])?", name):     # a program's name
-                found.setdefault(name, []).append(f"{os.path.relpath(p, src)}:{c.lineno}")
+            words = [first(c.args[0])] if first(c.args[0]) else firsts(c.args[0], assigned) if callee(c, module(p)) in runners else []
+            if not words and (callee(c, module(p)) or ("", ""))[1] == "which" and isinstance(c.args[0], ast.Constant):
+                words = [c.args[0].value]
+            for name in words:
+                if isinstance(name, str) and re.fullmatch(r"[a-z0-9]([a-z0-9._+-]*[a-z0-9])?", name):     # a program's name
+                    found.setdefault(name, []).append(f"{os.path.relpath(p, src)}:{c.lineno}")
     return found
+
+
+# The forms a program's list takes on its way to what runs it (#689's review, P2-4), and what the
+# harness must find in them: {the source, the names it runs}
+_RUN_FORMS = ("""
+import subprocess
+
+
+def built_first(path):
+    cmd = ["built-first", path]
+    subprocess.Popen(cmd, start_new_session=True)
+
+
+def chosen(apt):
+    subprocess.run(["chosen-by-apt", "-L"] if apt else ["chosen-by-rpm", "-ql"], check=True)
+
+
+def chosen_then_run(apt, args):
+    cmd = ("chosen-a", "x") if apt else ["chosen-b"] + args
+    return _out(cmd)
+
+
+def _out(words):
+    return subprocess.check_output(words, text=True)
+
+
+def added(args):
+    _out(["added-to"] + args)
+
+
+def not_run(path):
+    words = ["not-a-program", path]
+    print(words)
+    return ", ".join(words)
+""", {"built-first", "chosen-by-apt", "chosen-by-rpm", "chosen-a", "chosen-b", "added-to"})
+
+
+def test_the_harness_finds_a_program_however_its_list_reaches_what_runs_it(tmp_path):
+    # #689's review, P2-4: _run_by_name took a list only where it was given straight to a call (or a
+    # which("name")), so a list built first and run after, as _launch_package's gio, or chosen by a
+    # conditional, as _package_entries' dpkg-query or rpm, got past it; gio was found only through
+    # the which() beside it. A list given by name, chosen or added to counts where what it is given
+    # to runs a program (subprocess's, or a function of AppKata's such as _out here that gives it to
+    # one), and not where it is printed or joined.
+    (tmp_path / "forms.py").write_text(_RUN_FORMS[0])
+    assert set(_run_by_name(str(tmp_path))) == _RUN_FORMS[1]
+    import inspect
+
+    def where(fn, text):                        # the line of `fn` holding `text`, as the harness names it
+        lines, start = inspect.getsourcelines(fn)
+        return f"{os.path.join('appkata_core', 'install.py')}:{start + next(i for i, line in enumerate(lines) if text in line)}"
+    found = _run_by_name()
+    assert where(install._package_entries, "subprocess.run(cmd") in set(found["dpkg-query"]) & set(found["rpm"])
+    assert where(install._launch_package, "subprocess.Popen(cmd") in set(found["gio"]) & set(found["gtk-launch"])
 
 
 def test_every_program_appkata_runs_by_name_is_a_name_no_command_link_takes():
