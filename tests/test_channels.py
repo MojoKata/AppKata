@@ -221,6 +221,31 @@ def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_a
     assert ran == []
 
 
+@pytest.mark.parametrize("plan, asks", [
+    (pkgbackend.Plan(upgrade=["demo"]), []),                                    # an update of the app: its own package
+    (pkgbackend.Plan(upgrade=["demo", "libother"]), ["Upgrades libother"]),
+    (pkgbackend.Plan(install=["demo"], remove=["other"]), ["Removes other"]),
+    (pkgbackend.Plan(downgrade=["demo"]), ["Downgrades demo"]),
+])
+def test_updating_an_app_from_its_releases_package_file_asks_only_about_other_packages(monkeypatch, plan, asks):
+    """A new finding beside #327: the review took the file's name for the package's, so every update
+    of an app installed from a release's .deb asked to confirm "Upgrades <the app's own package>"."""
+    ran = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None: ran.append(cmd))
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: plan)
+    file = os.path.join(os.sep, "downloads", "demo", "demo_2.0_all.deb")
+    if asks:
+        with pytest.raises(pkgbackend.NeedsConfirmation) as e:
+            pkgbackend.Cli("apt").install_file(file, "ab" * 32, package="demo")
+        assert e.value.lines == asks and ran == []
+    else:
+        pkgbackend.Cli("apt").install_file(file, "ab" * 32, package="demo")
+        assert len(ran) == 1
+
+
 def test_packagekit_is_never_handed_a_file():
     """InstallFiles takes a path, which PackageKit reads as root later, and no checksum: a release's
     package file goes through the command line (above), and PackageKit is asked for names alone."""

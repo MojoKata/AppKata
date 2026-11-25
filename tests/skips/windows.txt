@@ -54,6 +54,7 @@ tests/test_install_review.py::test_an_archive_with_nothing_but_helpers_has_no_pr
 tests/test_install_review.py::test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu  # the Linux install layout
 tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes  # the Linux install layout
 tests/test_install_review.py::test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files  # the Linux install layout
+tests/test_install_review.py::test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_without_asking  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_no_download  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_entry_away  # the Linux install layout
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout

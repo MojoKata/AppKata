@@ -2977,6 +2977,17 @@ def test_a_releases_package_never_goes_to_packagekit_which_takes_a_path_and_no_c
 
 
 @linux_only
+def test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_without_asking(env, server, package_tools, monkeypatch):
+    # A new finding beside #327: the dry run's review took the file's name for the package's
+    from appkata_core import pkgbackend
+    out, _ = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(upgrade=["demo"]))     # "Inst demo [1.0] (2.0 …)"
+    a, data = _package_file(server, "deb")
+    install.install(env, {**APP, "installVersion": "2.0"}, a, "deb", [a])
+    assert (out / "file").read_bytes() == data
+
+
+@linux_only
 def test_a_package_whose_plan_needs_the_users_ok_is_copied_nowhere_before_it_is_given(env, server, package_tools, monkeypatch):
     from appkata_core import pkgbackend
     out, staging = package_tools

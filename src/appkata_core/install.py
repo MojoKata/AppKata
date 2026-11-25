@@ -1425,7 +1425,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
                 pkg = subprocess.run(["rpm", "-qp", "--qf", "%{NAME}", file], capture_output=True, text=True).stdout.strip()
             be = pkgbackend.Cli("apt" if kind == "deb" else "dnf")
             try:
-                be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"))
+                be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"), package=pkg)
             except NeedsConfirmation:
                 raise
             except PackageError as e:

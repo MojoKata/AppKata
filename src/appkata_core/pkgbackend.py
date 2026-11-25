@@ -376,12 +376,16 @@ class Cli(Backend):
             cmd = _priv(["dnf", "-y", *verb, *names])
         _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
 
-    def install_file(self, file: str, sha256: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None) -> Plan:
+    def install_file(self, file: str, sha256: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
+                     package: str = "") -> Plan:
         """Install a package file a release published, whose SHA-256 AppKata checked (R16.8.5): the
         dry run and its review as for any install (R16.3.5), then the administrator's side installs
-        its own copy of the file, and only when that copy is the file that was checked."""
+        its own copy of the file, and only when that copy is the file that was checked. `package`
+        is the name of the package in the file: upgrading it is what an update of the app is, and
+        needs no confirmation (the file's own name is no package's)."""
         file = os.path.abspath(file)
-        plan, v = self.plan("install", [file])
+        plan = self.simulate("install", [file])
+        v = review(plan, "install", [package or os.path.basename(file)], self.facts(plan.names() | {package} - {""}))
         if v.refuse:
             raise Refused(v.refuse)
         if v.confirm and not confirmed:

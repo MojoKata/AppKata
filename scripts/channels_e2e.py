@@ -234,7 +234,8 @@ def release_file(db: DB, mgr: str, other: str) -> None:
     rel = tempfile.mkdtemp()
     deb(rel, "akfile", "1.0-1")
     a = {**app(db, "akfile", {}), "installVersion": "1.0", "version": "1.0"}
-    asset = Asset("akfile_1.0-1_all.deb", serve(rel) + "/akfile_1.0-1_all.deb")
+    base = serve(rel)
+    asset = Asset("akfile_1.0-1_all.deb", base + "/akfile_1.0-1_all.deb")
     asked, transaction = [], pkgbackend.PkTransport.transaction
     pkgbackend.PkTransport.transaction = lambda self, method, *args, **kw: asked.append(method) or transaction(self, method, *args, **kw)
 
@@ -245,6 +246,14 @@ def release_file(db: DB, mgr: str, other: str) -> None:
        pkgbackend.installed_version("akfile", mgr) == "1.0-1" and (rec["package"], rec["manager"]) == ("akfile", mgr), rec)
     ok("the copy's folder is gone, and this user couldn't have made or changed it",
        not left() and (root or not os.access(pkgbackend.STAGING, os.W_OK)), left())
+    # an update from the release's next file upgrades the app's own package: nothing to confirm
+    deb(rel, "akfile", "2.0-1")
+    newer = Asset("akfile_2.0-1_all.deb", base + "/akfile_2.0-1_all.deb")
+    try:
+        install.install(db, {**a, "installVersion": "2.0", "version": "2.0"}, newer, "deb", [newer])
+        ok("updated from the release's next file, with nothing to confirm (R16.3.5)", pkgbackend.installed_version("akfile", mgr) == "2.0-1")
+    except pkgbackend.NeedsConfirmation as e:
+        ok("updated from the release's next file, with nothing to confirm (R16.3.5)", False, e.lines)
     ok("PackageKit was never handed the file", "InstallFiles" not in asked, asked)
     install.uninstall(db, a["url"])
     ok("uninstalled", not pkgbackend.installed_version("akfile", mgr))
