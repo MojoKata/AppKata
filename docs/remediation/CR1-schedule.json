@@ -6,13 +6,18 @@
    "id": "U47",
    "name": "The Windows suite is collected again: scripts/mutate.py loads without SIGUSR1",
    "findings": [
-    710
+    710,
+    719
    ],
    "files": [
     "scripts/mutate.py",
     "tests/skips/windows.txt",
+    "tests/test_coverage_site.py",
+    "tests/test_demo_remake.py",
     "tests/test_imports_on_windows.py",
-    "tests/test_mutate.py"
+    "tests/test_mutate.py",
+    "tests/test_publish.py",
+    "tests/test_tour_data.py"
    ]
   },
   {
@@ -10627,6 +10632,23 @@
    "size": "small",
    "proof": "Tier 1: tests/test_imports_on_windows.py loads every test module with the signal module cut down to what Windows' has, and tests/test_mutate.py loads scripts/mutate.py with signal.SIGUSR1 removed; both fail before the fix. The suite collected on the release's Python for Windows (under Wine, the pinned PYWINE_IMAGE); then `scripts/test-windows-vm.sh --tests` on the Windows VM.",
    "note": "Filed by the coordinator from its VM runs for U07 and U03 (2026-11-24). The owner decided (2026-11-25) to fix it at once, in a pull request of its own ahead of the open units (#684, #689, #694), so their Windows tests can run. tests/test_mutate.py is skipped whole on Windows (tests/skips/windows.txt): its tests are written for Linux, where the tools run. scripts/mutate.py and tests/test_mutate.py are also U21's and U38's, which come after this unit."
+  },
+  {
+   "finding": 719,
+   "readiness": "ready",
+   "files": [
+    "tests/skips/windows.txt",
+    "tests/test_coverage_site.py",
+    "tests/test_demo_remake.py",
+    "tests/test_publish.py",
+    "tests/test_tour_data.py"
+   ],
+   "depends_on": [
+    710
+   ],
+   "size": "medium",
+   "proof": "`scripts/test-windows-vm.sh --tests` on the Windows VM ends with no failure and no error: each of the seven tests skips there and tests/skips/windows.txt lists it. Tier 1 runs all seven, with tests/test_skip_lists.py.",
+   "note": "Found by the Windows VM's first run of the collected suite for this unit's pull request (2026-11-25), and fixed in it: #710's fix isn't proven on Windows until that run passes. Five tests now skip where their Linux tool or the repository isn't there, and two already skipped, unlisted; the VM's copy of the sources stays the files git lists, not a work tree. tests/test_coverage_site.py and tests/test_demo_remake.py are also U21's, tests/test_publish.py U40's and U43's, and tests/test_tour_data.py U45's, which come after this unit: each change there is a skip line above one test (tests/test_tour_data.py: the file's)."
   },
   {
    "finding": 711,
