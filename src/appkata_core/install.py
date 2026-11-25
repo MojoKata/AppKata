@@ -7,6 +7,7 @@ from __future__ import annotations
 import configparser
 import glob
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -180,6 +181,21 @@ def _opener() -> urllib.request.OpenerDirector:
     return opener
 
 
+# What a connection that breaks raises, while a request is made or its answer read: an OSError, or
+# one of http.client's own, which are no OSErrors. An answer sent in chunks has no length to fall
+# short of, so its break is only ever an `IncompleteRead`, and one caught nowhere: no retry, no
+# resume, and "IncompleteRead(65536 bytes read)" shown as a crash (CR1.3-16).
+_BROKEN = (OSError, http.client.HTTPException)
+
+
+def _how_it_broke(e: BaseException) -> str:
+    if isinstance(e, http.client.IncompleteRead):
+        return "the connection closed before the whole file had come"
+    if isinstance(e, http.client.HTTPException):
+        return f"the server's answer couldn't be read ({type(e).__name__})"
+    return str(e)
+
+
 def downloads_dir() -> str:
     """Where partial downloads wait to be resumed (R4.8.2)."""
     from .platform import data_dir
@@ -219,7 +235,10 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                     meta["validator"] = validator
                     with open(meta_path, "w") as mf:
                         json.dump(meta, mf)
-                length = int(r.headers.get("Content-Length") or 0)
+                try:
+                    length = max(0, int(r.headers.get("Content-Length") or 0))
+                except ValueError:              # no number: no length, as http.client reads it
+                    length = 0
                 total = got + length if length else 0
                 with open(part, "ab" if resumed else "wb") as f:
                     while True:
@@ -247,11 +266,11 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                 if attempt <= retries:
                     continue
             raise InstallError(f"download failed: HTTP {e.code}") from None
-        except OSError as e:
+        except _BROKEN as e:
             attempt += 1
             if attempt > retries:
-                raise InstallError(f"download failed: {e}; press Update again to resume") from None
-            log.warning("download of %s broke at %d bytes (%s); resuming", url, got, e)
+                raise InstallError(f"download failed: {_how_it_broke(e)}; press Update again to resume") from None
+            log.warning("download of %s broke at %d bytes (%s); resuming", url, got, _how_it_broke(e))
             time.sleep(min(10, 2 * attempt))
     h = hashlib.sha256()
     with open(part, "rb") as f:
@@ -269,7 +288,7 @@ def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
     try:
         with _opener().open(_request(url, {"Range": f"bytes=0-{n - 1}"}), timeout=timeout) as r:
             return r.read(n)
-    except (OSError, NotFetched):
+    except (*_BROKEN, NotFetched):
         return b""
 
 
@@ -302,7 +321,7 @@ def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str, str]:
         except urllib.error.HTTPError as e:
             why.append(f"couldn't read {name} (HTTP {e.code})")
             continue
-        except OSError:
+        except _BROKEN:
             why.append(f"couldn't read {name}")
             continue
         cut = len(data) > _SUMS_MAX

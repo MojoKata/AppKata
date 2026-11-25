@@ -469,6 +469,119 @@ def test_cancelled_download_leaves_nothing(range_server, tmp_path):
     assert not list(tmp_path.iterdir())
 
 
+# ---------------------------------------------------------------- what a server can do to a download (R4.8.2; CR1.3-16)
+# How it slipped past: the one test of a break (above) cut an answer that has a Content-Length, and
+# a cut is then a short read. An answer sent in chunks has no length: its cut is http.client's
+# IncompleteRead, which is no OSError, so it was retried by nothing and reached the user raw.
+class _BadAnswers(http.server.BaseHTTPRequestHandler):
+    """One file, answered as `how` says: whole, or broken in one of the ways a server or a proxy
+    breaks an answer, `times` times (None: every time)."""
+    protocol_version = "HTTP/1.1"
+    data, how, times = b"", "", None
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def chunk(self, data, said=None):
+        self.wfile.write(b"%x\r\n" % (len(data) if said is None else said) + data + (b"\r\n" if said is None else b""))
+
+    def do_GET(self):
+        self.close_connection = True
+        self.asked.append(self.headers.get("Range"))
+        d, how, half = self.data, self.how, len(self.data) // 2
+        breaks = self.times is None or len(self.asked) <= self.times
+        if breaks and how == "a status line that isn't one":
+            self.wfile.write(b"\x00\x01 what is this\r\n\r\n")
+            return
+        if breaks and how == "a header line with no end":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Long: " + b"x" * 70000 + b"\r\n\r\n")
+            return
+        rng = self.headers.get("Range")
+        if rng and self.headers.get("If-Range") == '"v1"':            # the rest, to a request that resumes
+            start = int(rng.split("=")[1].split("-")[0])
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{len(d) - 1}/{len(d)}")
+            self.send_header("Content-Length", str(len(d) - start))
+            self.end_headers()
+            self.wfile.write(d[start:])
+            return
+        self.send_response(200)
+        if "resume" in how:
+            self.send_header("ETag", '"v1"')
+        if how == "a Content-Length that is no number":
+            self.send_header("Content-Length", "a lot")
+            self.end_headers()
+            self.wfile.write(d)
+            return
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        self.chunk(d[:half])
+        if breaks and how == "a chunk size that is no number":
+            self.wfile.write(b"zz\r\n" + d[half:] + b"\r\n0\r\n\r\n")
+        elif breaks:                                                  # the connection closes inside the second chunk
+            self.chunk(d[half:half + 10], said=len(d) - half)
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_RDWR)
+        else:
+            self.chunk(d[half:])
+            self.chunk(b"")
+
+
+@pytest.fixture
+def bad_answers(monkeypatch):
+    _BadAnswers.data, _BadAnswers.asked = os.urandom(300_000), []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BadAnswers)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/file.bin"
+    httpd.shutdown()
+
+
+_HALF = 150_000
+_CAME = _HALF - _HALF % (1 << 16)        # what download() had written when the second chunk broke: it reads 64 KiB at a time
+# how the answer breaks, how many times -> the Range of each request made, and whether the file comes whole
+_BREAKS = {
+    "an answer in chunks, cut inside a chunk, every time": ("cut in a chunk", None, [None] * 4, False),      # the finding's case
+    "an answer in chunks, cut inside a chunk, once": ("cut in a chunk", 1, [None, None], True),              # no validator: it starts over
+    "an answer in chunks, cut once, from a server that can resume": ("cut in a chunk, resume", 1, [None, f"bytes={_CAME}-"], True),
+    "an answer in chunks, cut three times": ("cut in a chunk", 3, [None] * 4, True),
+    "a chunk size that is no number, every time": ("a chunk size that is no number", None, [None] * 4, False),
+    "a status line that isn't one, every time": ("a status line that isn't one", None, [None] * 4, False),
+    "a status line that isn't one, once": ("a status line that isn't one", 1, [None, None], True),
+    "a header line with no end, every time": ("a header line with no end", None, [None] * 4, False),
+    "a Content-Length that is no number": ("a Content-Length that is no number", 0, [None], True),
+    "an answer in chunks, whole": ("cut in a chunk", 0, [None], True),
+}
+
+
+@pytest.mark.parametrize("breaks", list(_BREAKS))
+def test_a_download_whose_answer_breaks_is_retried_then_kept_and_fails_as_an_install_error(bad_answers, tmp_path, breaks):
+    """R4.8.2: "If the connection breaks, AppKata retries up to three times, continuing from where it
+    stopped ... Otherwise it starts over. A download that still fails ... is kept and resumed"."""
+    _BadAnswers.how, _BadAnswers.times, ranges, whole = _BREAKS[breaks]
+    dest = tmp_path / "file.bin"
+    if whole:
+        assert install.download(bad_answers, str(dest)) == hashlib.sha256(_BadAnswers.data).hexdigest()
+        assert dest.read_bytes() == _BadAnswers.data and sorted(os.listdir(tmp_path)) == ["file.bin"]
+    else:
+        with pytest.raises(install.InstallError, match="^download failed: .*; press Update again to resume$") as e:
+            install.download(bad_answers, str(dest))
+        assert "IncompleteRead(" not in str(e.value) and not dest.exists()
+        if "chunk" in breaks:           # what had come is kept, for the next try (a server that can resume takes it from there)
+            assert (tmp_path / "file.bin.part").read_bytes() == _BadAnswers.data[:_CAME]
+    assert _BadAnswers.asked == ranges
+
+
+@pytest.mark.parametrize("breaks", [b for b in _BREAKS if b.endswith("every time")])
+def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(bad_answers, breaks):
+    """The same break in the two other requests of an install: each caught an OSError alone."""
+    _BadAnswers.how, _BadAnswers.times = _BREAKS[breaks][:2]
+    assert install.head_bytes(bad_answers, 200_000) == b""
+    a = Asset("App.AppImage", bad_answers + "?the-file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", bad_answers)]) == ("", "", "couldn't read SHA256SUMS")
+
+
 # ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
 # How it slipped past: every test's file was on the test's own http server, so nothing asked what
 # else an address could be. download(), head_bytes() and expected_sha256() each opened whatever the
