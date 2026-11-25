@@ -101,6 +101,7 @@ tests/test_sandbox_run.py::test_saved_passwords_reach_the_secret_service_and_not
 tests/test_sandbox_run.py::test_simultaneous_first_launches_both_start  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_reach_the_filtered_bus_when_there_is_one  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[dbus-run-session]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[guid-first]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[no-address]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[dead]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[unset]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
