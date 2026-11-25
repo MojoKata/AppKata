@@ -7,6 +7,7 @@ from __future__ import annotations
 import configparser
 import glob
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -104,6 +105,81 @@ def check_not_running(folder: str, name: str) -> None:
         raise InUse(name, procs)
 
 
+class NotFetched(InstallError):
+    """An address AppKata doesn't download from (R4.4): any that isn't https:."""
+
+
+def _loopback(host: str) -> bool:
+    """Whether a request's host, as urllib has it (`name`, `name:port`, `[address]:port`), is this
+    computer itself by its own words: `localhost`, or a loopback address written out."""
+    colon, bracket = host.rfind(":"), host.rfind("]")
+    name = (host[:colon] if colon > bracket else host).strip("[]").lower()
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _refusal(req: urllib.request.Request, sent_on_by: urllib.request.Request | None = None) -> str:
+    """Why a request isn't made, or "" (R4.4): AppKata downloads over https: only. Plain http: is
+    used to this computer itself and nowhere else (the tests' own servers), and never as where a
+    redirect from https: leads. What is judged is urllib's own reading of the address, `req.type`
+    and `req.host`, which is what it connects by."""
+    host = req.host or ""
+    if req.type == "https" and host:
+        return ""
+    if req.type == "http" and _loopback(host) and (sent_on_by is None or sent_on_by.type == "http"):
+        return ""
+    shown = one_line(req.full_url)[:200]
+    if sent_on_by is not None:
+        return f"the download was sent on to an address that isn't https: ({shown}), where AppKata doesn't follow it"
+    return f"AppKata downloads over https: only, and this isn't an https: address ({shown})"
+
+
+def _request(url: str, headers: dict | None = None) -> urllib.request.Request:
+    """The request for an address a release gave, refused when AppKata doesn't download from it
+    (:func:`_refusal`). A release's file, the first bytes of an .exe and a checksum file were each
+    opened as they came, by urllib's default opener: `file:///proc/self/cwd/<path>` copied a file
+    of the user's into the app's folder as "the download", `ftp:` and `data:` worked as well, and
+    a file at a plain `http:` address, or at an `https:` one that redirected to `http:`, was
+    fetched without a word, for whoever sat on the network to replace (CR1.3-10)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    except ValueError:              # no scheme at all
+        raise NotFetched(f"AppKata downloads over https: only, and this isn't an https: address "
+                         f"({one_line(url)[:200]})") from None
+    if why := _refusal(req):
+        raise NotFetched(why)
+    return req
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """A redirect is followed only to an address :func:`_refusal` allows after the one that sent it
+    there: from https: to https:, never down to http:."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (why := _refusal(new, sent_on_by=req)):
+            fp.close()
+            raise NotFetched(why)
+        return new
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """What every request of this module is made with: urllib's default opener without its file:,
+    ftp: and data: handlers, so nothing but http(s) is opened even past :func:`_request`, and with
+    :class:`_Redirects` for urllib's own redirect rule. Made for each request, as the environment's
+    proxies are then."""
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(), urllib.request.HTTPHandler(),
+                    urllib.request.HTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(), _Redirects(),
+                    urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
 def downloads_dir() -> str:
     """Where partial downloads wait to be resumed (R4.8.2)."""
     from .platform import data_dir
@@ -113,7 +189,10 @@ def downloads_dir() -> str:
 def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 60, retries: int = 3) -> str:
     """Download to dest through dest + ".part", resuming a broken or earlier download with a Range
     request when the server still has the same file (R4.8.2). Returns the SHA-256 hex
-    digest of the whole file. Cancelling deletes the partial file; other failures keep it."""
+    digest of the whole file. Cancelling deletes the partial file; other failures keep it. Only
+    from an https: address, through every redirect (:func:`_request`, R4.4): :class:`NotFetched`
+    otherwise, before anything here is touched."""
+    _request(url)
     part, meta_path = dest + ".part", dest + ".part.json"
     try:
         meta = json.load(open(meta_path)) if os.path.exists(part) else {}
@@ -127,11 +206,11 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
     attempt = 0
     while True:
         got = os.path.getsize(part) if os.path.exists(part) else 0
-        headers = {"User-Agent": UA}
+        headers = {}
         if got and meta.get("validator"):
             headers.update({"Range": f"bytes={got}-", "If-Range": meta["validator"]})
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+            with _opener().open(_request(url, headers), timeout=timeout) as r:
                 resumed = r.status == 206
                 if not resumed:
                     got = 0
@@ -185,12 +264,12 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
 
 
 def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
-    """The first n bytes of a download (a Range request), to see what a .exe is (R4.2.1)."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Range": f"bytes=0-{n - 1}"})
+    """The first n bytes of a download (a Range request), to see what a .exe is (R4.2.1). None of
+    an address AppKata doesn't download from (:func:`_request`)."""
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener().open(_request(url, {"Range": f"bytes=0-{n - 1}"}), timeout=timeout) as r:
             return r.read(n)
-    except OSError:
+    except (OSError, NotFetched):
         return b""
 
 
@@ -207,16 +286,19 @@ def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str, str]:
     With no checksum to give, `why not` says what became of each checksum file the release has:
     one that couldn't be read, doesn't list the file, or is longer than what is read of it. The
     install goes on Unverified as R4.4 allows, and it went on saying nothing, as if the release
-    published none (CR1.3-29). "" when the release has none."""
+    published none (CR1.3-29). "" when the release has none. A checksum file at an address AppKata
+    doesn't download from (:func:`_request`) is one that couldn't be read."""
     if asset.digest.startswith("sha256:"):
         return asset.digest.split(":", 1)[1].lower(), "forge digest", ""
     why = []
     for sums in checksums_for(asset, assets):
         name = one_line(sums.name)[:80]         # the release's own text, on its way to a tooltip
         try:
-            req = urllib.request.Request(sums.url, headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with _opener().open(_request(sums.url), timeout=30) as r:
                 data = r.read(_SUMS_MAX + 1)
+        except NotFetched:
+            why.append(f"couldn't read {name}: it isn't at an https: address")
+            continue
         except urllib.error.HTTPError as e:
             why.append(f"couldn't read {name} (HTTP {e.code})")
             continue

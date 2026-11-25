@@ -170,6 +170,15 @@ became of each: it couldn't be read, it doesn't list the file, or it is longer t
 reads of it and that part doesn't list the file ("Its release has a checksum file, but this download
 was checked against none: couldn't read SHA256SUMS (HTTP 404)").
 
+Downloads are made over `https:` only. A release's file, the first bytes AppKata reads of a
+Windows `.exe` to tell its kind (R4.2.1) and a checksum file are fetched from no other kind of
+address (`http:`, `file:`, `ftp:`, `data:`), and a redirect is followed only to another `https:`
+address. An install whose file is at another kind of address, or is sent on to one, stops and says
+so ("AppKata downloads over https: only, and this isn't an https: address (…)"); a checksum file
+there is one that couldn't be read. The one exception is plain `http:` to this computer itself
+(`localhost` or a loopback address, as AppKata's own tests use), never as where a redirect from
+`https:` leads.
+
 A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
 `.minisig`, a sigstore bundle) is not checked.
 

@@ -1,5 +1,6 @@
 """Installing from a local web server (R4), and writing reviews with git (R8)."""
 
+import email
 import hashlib
 import http.server
 import io
@@ -8,10 +9,13 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
 import threading
+import urllib.request
+import urllib.response
 
 import pytest
 
@@ -463,6 +467,202 @@ def test_cancelled_download_leaves_nothing(range_server, tmp_path):
     with pytest.raises(install.Cancelled):
         install.download(range_server, str(dest), cancel=lambda: True)
     assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
+# How it slipped past: every test's file was on the test's own http server, so nothing asked what
+# else an address could be. download(), head_bytes() and expected_sha256() each opened whatever the
+# release gave, with urllib's default opener: file:, ftp: and data: as well, and any redirect.
+_NOT_HTTPS = [
+    "{file}", "file://localhost{path}", "FILE://{path}", "\tfile://{path}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage",
+    "data:application/octet-stream;base64,f0VMRg==", "http://example.org/x.AppImage", "HTTP://example.org/x.AppImage",
+    "http://192.0.2.7/x.AppImage", "http://192.168.1.9:8000/x.AppImage", "http://[2001:db8::7]/x.AppImage",
+    "http://127.0.0.1.example.org/x.AppImage", "http://localhost.example.org/x.AppImage", "http://127.0.0.1@example.org/x.AppImage",
+    "http://example.org@127.0.0.1/x.AppImage", "http://example.org:80@localhost/x.AppImage", "http://127.1/x.AppImage",
+    "http://0x7f.0.0.1/x.AppImage", "http://2130706433/x.AppImage", "http://0.0.0.0/x.AppImage", "http:///x.AppImage",
+    "https:///x.AppImage", "https:x.AppImage", "//example.org/x.AppImage", "example.org/x.AppImage", "/x.AppImage", "x.AppImage", "",
+    "gopher://example.org/x", "jar:file://{path}!/x", "ws://127.0.0.1/x",
+]
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Every connection and name lookup that isn't to this computer itself is refused, and kept."""
+    reached = []
+    real_connect, real_lookup = socket.socket.connect, socket.getaddrinfo
+
+    def connect(sock, address):
+        if isinstance(address, tuple) and address[0] not in ("127.0.0.1", "::1"):
+            reached.append(address)
+            raise OSError("the test reaches no network")
+        return real_connect(sock, address)
+
+    def lookup(host, *a, **k):
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            reached.append(host)
+            raise OSError("the test reaches no network")
+        return real_lookup(host, *a, **k)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    return reached
+
+
+def _refused_everywhere(url, folder, at_once=False):
+    """download(), the .exe probe and the checksum fetch each refuse `url`. `at_once`: for its own
+    address, before anything is asked, so download() leaves an unfinished download of another
+    address as it was."""
+    dest = folder / "x.AppImage"
+    folder.mkdir(exist_ok=True)
+    (folder / "x.AppImage.part").write_bytes(b"half of it")
+    (folder / "x.AppImage.part.json").write_text(json.dumps({"url": "https://example.org/earlier.AppImage", "validator": '"v1"'}))
+    with pytest.raises(install.InstallError, match=r"isn't https:|isn't an https: address|HTTP 30[0-9]"):
+        install.download(url, str(dest))
+    left = sorted(os.listdir(folder))
+    assert "x.AppImage" not in left and (not at_once or (left == ["x.AppImage.part", "x.AppImage.part.json"]
+                                                        and (folder / "x.AppImage.part").read_bytes() == b"half of it")), left
+    assert install.head_bytes(url) == b""
+    a = Asset("App.AppImage", "https://example.org/App.AppImage")
+    hex_, source, why = install.expected_sha256(a, [a, Asset("SHA256SUMS", url)])
+    assert (hex_, source) == ("", "") and why.startswith("couldn't read SHA256SUMS"), why
+    return why
+
+
+@pytest.mark.parametrize("address", _NOT_HTTPS, ids=[repr(a) for a in _NOT_HTTPS])
+def test_nothing_is_fetched_from_an_address_that_isnt_https(tmp_path, no_network, address):
+    """R4.4, the owner's decision on CR1.3-10: https: only. `file:///proc/self/cwd/<path>` as a
+    release link's address copied a file of the user's into the app's folder as "the download"."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_SHA + "  App.AppImage\n")                     # readable, and a checksum file if it were read
+    url = address.format(file=secret.as_uri(), path=secret.as_uri()[len("file://"):])
+    with pytest.raises(install.NotFetched, match="AppKata downloads over https: only"):
+        install.download(url, str(tmp_path / "y.AppImage"))
+    assert _refused_everywhere(url, tmp_path / "dl", at_once=True) == "couldn't read SHA256SUMS: it isn't at an https: address"
+    assert no_network == [] and sorted(os.listdir(tmp_path)) == ["dl", "secret.txt"]
+
+
+@pytest.mark.parametrize("host,itself", [
+    ("127.0.0.1", True), ("127.0.0.1:8000", True), ("localhost", True), ("LocalHost:80", True), ("[::1]", True), ("[::1]:8080", True),
+    ("127.8.9.1", True), ("example.org", False), ("example.org:443", False), ("127.0.0.1.example.org", False),
+    ("localhost.example.org", False), ("example.org@127.0.0.1", False), ("127.0.0.1@example.org", False), ("192.168.1.5", False),
+    ("10.0.0.1:80", False), ("0.0.0.0", False), ("[::]", False), ("[2001:db8::7]:80", False), ("127.1", False), ("0x7f.0.0.1", False),
+    ("2130706433", False), ("localhost.", False), ("", False), (":80", False),
+])
+def test_the_one_host_plain_http_is_used_to_is_this_computer_by_its_own_words(host, itself):
+    assert install._loopback(host) is itself
+
+
+class _SendsOn(http.server.BaseHTTPRequestHandler):
+    """Sends a request for /go on to `to`; anything else gets the file."""
+    to = ""
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        self.asked.append(self.path)
+        body = b"" if self.path == "/go" else _MINE.encode() if self.path == "/sums" else _FILE
+        self.send_response(302 if self.path == "/go" else 200)
+        if self.path == "/go":
+            self.send_header("Location", self.to)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def sends_on():
+    _SendsOn.to, _SendsOn.asked = "", []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SendsOn)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+@pytest.mark.parametrize("to", ["{file}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage", "http://example.org/x.AppImage",
+                                "http://192.0.2.7/x.AppImage", "//example.org/x.AppImage", "data:,x", "gopher://example.org/x"])
+def test_a_redirect_is_followed_to_no_address_that_isnt_https(tmp_path, no_network, sends_on, to):
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_MINE)
+    _SendsOn.to = to.format(file=secret.as_uri())
+    why = _refused_everywhere(sends_on + "/go", tmp_path / "dl")
+    assert why in ("couldn't read SHA256SUMS: it isn't at an https: address", "couldn't read SHA256SUMS (HTTP 302)")    # the second: urllib's own no
+    assert no_network == [] and set(_SendsOn.asked) == {"/go"}
+
+
+def test_a_redirect_on_this_computer_itself_is_followed_as_the_tests_servers_need(tmp_path, no_network, sends_on):
+    _SendsOn.to = sends_on + "/file"
+    assert install.download(sends_on + "/go", str(tmp_path / "x.AppImage")) == _SHA and (tmp_path / "x.AppImage").read_bytes() == _FILE
+    assert install.head_bytes(sends_on + "/go", 4) == _FILE[:4]
+    _SendsOn.to = sends_on + "/sums"
+    a = Asset("App.AppImage", sends_on + "/file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", sends_on + "/go")]) == (_SHA, "SHA256SUMS", "")
+
+
+class _NoTLS(urllib.request.HTTPSHandler):
+    """Stands in for https: with no TLS server: answers each address from a table of
+    {address: where it sends the request on, or the bytes it gives}."""
+    answers = {}
+    asked = []
+
+    def https_open(self, req):
+        self.asked.append(req.full_url)
+        answer = self.answers[req.full_url]
+        to = answer if isinstance(answer, str) else ""
+        headers = email.message_from_string(f"Location: {to}\n" if to else "Content-Length: %d\n" % len(answer))
+        r = urllib.response.addinfourl(io.BytesIO(b"" if to else answer), headers, req.full_url, 302 if to else 200)
+        r.msg = "Found" if to else "OK"
+        return r
+
+
+@pytest.fixture
+def no_tls(monkeypatch):
+    _NoTLS.answers, _NoTLS.asked = {}, []
+    monkeypatch.setattr(urllib.request, "HTTPSHandler", _NoTLS)
+    monkeypatch.setattr(urllib.request, "_opener", None)          # urllib's own default opener, made again with it
+    return _NoTLS
+
+
+@pytest.mark.parametrize("to", ["http://dl.example.org/x.AppImage", "{loopback}/file", "ftp://dl.example.org/x.AppImage",
+                                "http://localhost/x.AppImage"])
+def test_a_redirect_from_https_down_to_http_is_not_followed(tmp_path, no_network, no_tls, sends_on, to):
+    """R4.4: with no checksum published a download is Unverified and installed all the same, so a
+    file an https: address hands on to plain http: is whoever's sits on the network. Not even to
+    this computer itself: plain http: is for the tests' own servers, asked for as such."""
+    no_tls.answers = {"https://example.org/x.AppImage": to.format(loopback=sends_on)}
+    why = _refused_everywhere("https://example.org/x.AppImage", tmp_path / "dl")
+    assert why == "couldn't read SHA256SUMS: it isn't at an https: address"
+    with pytest.raises(install.NotFetched, match=r"sent on to an address that isn't https: \(" + re.escape(no_tls.answers["https://example.org/x.AppImage"])):
+        install.download("https://example.org/x.AppImage", str(tmp_path / "y.AppImage"))
+    assert no_network == [] and _SendsOn.asked == [] and set(no_tls.asked) == {"https://example.org/x.AppImage"}
+
+
+def test_an_https_address_and_a_redirect_from_it_to_another_are_downloaded_from(tmp_path, no_network, no_tls):
+    no_tls.answers = {"https://example.org/x.AppImage": "https://cdn.example.net/files/1", "https://cdn.example.net/files/1": _FILE,
+                      "https://example.org/SHA256SUMS": "https://cdn.example.net/files/2", "https://cdn.example.net/files/2": _MINE.encode()}
+    assert install.download("https://example.org/x.AppImage", str(tmp_path / "x.AppImage")) == _SHA
+    assert (tmp_path / "x.AppImage").read_bytes() == _FILE and install.head_bytes("https://example.org/x.AppImage", 4) == _FILE[:4]
+    a = Asset("App.AppImage", "https://example.org/x.AppImage")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", "https://example.org/SHA256SUMS")]) == (_SHA, "SHA256SUMS", "")
+    assert no_network == []
+
+
+def test_every_request_install_makes_is_made_by_the_one_function_that_checks_its_address():
+    """The class: three functions each opened an address of their own. A fourth that does is found
+    here, whatever it downloads."""
+    import ast
+    import inspect
+    made = {}
+    for fn in ast.walk(ast.parse(inspect.getsource(install))):
+        if isinstance(fn, (ast.FunctionDef, ast.ClassDef)):
+            for node in ast.walk(fn):
+                name = isinstance(node, ast.Call) and (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", ""))
+                if name in ("urlopen", "urlretrieve", "build_opener", "install_opener", "Request", "OpenerDirector", "HTTPConnection",
+                            "HTTPSConnection", "create_connection"):
+                    made.setdefault(name, set()).add(fn.name)
+    assert made == {"Request": {"_request"}, "OpenerDirector": {"_opener"}}
 
 
 def test_app_that_updates_itself_has_no_version_folders(env, server, tmp_path):
