@@ -220,7 +220,8 @@ NOT_OFFERED = {
 
 
 def password_bus(tmp_path, monkeypatch, state):
-    """This session's bus, as a stand-in gdbus first on PATH answers for org.freedesktop.secrets, in
+    """This session's bus, as a stand-in gdbus first on the launcher's PATH (sandbox.host_path, which
+    AppKata's ask runs with, whatever its own PATH) answers for org.freedesktop.secrets, in
     gdbus's own shapes (test_sandbox's _ANSWERS): "owned" by another program, "activatable" (the bus
     can start one), or "free"; or "hung", a bus that takes the ask and never answers (a stopped or
     wedged dbus-daemon), which the ask's `timeout 5` ends. Returns the file that holds what it was asked."""
@@ -233,7 +234,8 @@ def password_bus(tmp_path, monkeypatch, state):
                                 f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(state == "owned"))} ;; '
                                 f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if state == "activatable" else []))} ;; esac\n'))
     (fake / "gdbus").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ['PATH']}")
+    from appkata_core import sandbox
+    monkeypatch.setattr(sandbox, "HOST_PATH", f"{fake}{os.pathsep}{sandbox.HOST_PATH}")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/bus")
     return asked
 
