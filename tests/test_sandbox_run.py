@@ -1153,7 +1153,7 @@ def test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_wo
 # ---------------------------------------------------------------- the session's bus, wherever it listens (R17.5, CR1.5-18)
 
 @needs_proxy
-@pytest.mark.parametrize("session", ["no-address", "dbus-run-session"])
+@pytest.mark.parametrize("session", ["no-address", "dbus-run-session", "guid-first"])
 def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
     # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached
     # a bus only there. A `dbus-run-session` bus is a socket under /tmp since dbus 1.14: the proxy
@@ -1162,15 +1162,21 @@ def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
     # And with no address set the proxy was given "", not the runtime folder's bus, which is where
     # libdbus and GLib look. Every bus of these tests was at $XDG_RUNTIME_DIR/bus with its address
     # set, so nothing met either. Here: a login session's bus that no variable names, and a real
-    # dbus-run-session, whose address also carries the `,guid=…` every such address does.
+    # dbus-run-session, whose address also carries the `,guid=…` every such address does; and that
+    # address with `guid=` first, which libdbus and GIO read as well, and where the launcher started
+    # no proxy, since it took the path or the abstract name as the first key alone (PR #694's
+    # review, P4-B1a; at the merge base the proxy was given the address whole).
     session_bus = _Bus(env) if session == "no-address" else _RunSession(env)
-    said = {} if session == "no-address" else {"DBUS_SESSION_BUS_ADDRESS": session_bus.addr}
+    transport, _, keys = session_bus.addr.partition(":")
+    addr = transport + ":" + ",".join(sorted(keys.split(","), key=lambda k: not k.startswith("guid="))) if session == "guid-first" else session_bus.addr
+    said = {} if session == "no-address" else {"DBUS_SESSION_BUS_ADDRESS": addr}
     calls = (_OWN.format("io.appkata.web") + "; " + _CALL.format("NetworkMonitor.GetAvailable") + "; " +
              _CALL.format('FileChooser.OpenFile "" Pick "{}"') + "; true")
     try:
         assert session_bus.addr.startswith(("unix:path=", "unix:abstract=")), session_bus.addr
-        if session == "dbus-run-session":       # neither in the runtime folder nor named plainly
-            assert str(env.rt) not in session_bus.addr and ",guid=" in session_bus.addr, session_bus.addr
+        if session != "no-address":             # neither in the runtime folder nor named plainly
+            assert str(env.rt) not in addr and "guid=" in addr, addr
+            assert addr.startswith("unix:guid=") is (session == "guid-first"), addr
         portal = _DesktopPortal(env, session_bus)
         try:
             r = env.run(env.app("web", sb.resolve_template("online-app")), calls, env=said)

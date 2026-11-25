@@ -105,8 +105,8 @@ differ from its list (review 3, harness B).
 | R17.5 | The portals see the app as a host | test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy, test_the_portals_answer_a_sandboxed_app_as_a_host_caller, test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant, test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way |
 | R17.5 | GTK4 is held by the FileChooser denial itself | harness:filedialogs, harness:filedialogs-lmde7, claim |
 | R17.5 | The bus the proxy filters is the session's own | test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is, test_standard_apps_reach_the_session_bus_wherever_it_listens |
-| R17.5 | The launcher shows the proxy that bus wherever it listens | test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is, test_standard_apps_reach_the_session_bus_wherever_it_listens |
-| R17.5 | An address that names neither (a list of addresses | test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus, test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one |
+| R17.5 | The launcher shows the proxy that bus wherever it listens | test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is, test_standard_apps_reach_the_session_bus_wherever_it_listens, test_every_reading_of_the_bus_address_takes_its_keys_in_any_order |
+| R17.5 | An address that names neither (a list of addresses | test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus, test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one, test_every_reading_of_the_bus_address_takes_its_keys_in_any_order |
 | R17.5 | The proxy is the xdg-dbus-proxy the launcher's own PATH finds | test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can |
 | R17.5 | AppKata's own check keeps the same rule | test_a_bus_filter_the_launcher_would_refuse_counts_as_none_and_the_hint_names_it, test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can |
 | R17.5 | Where the launcher's PATH finds one elsewhere all the same | test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can |
@@ -175,7 +175,7 @@ differ from its list (review 3, harness B).
 | R17.9 | Customize turns it off | test_the_x11_abstract_socket_follows_the_network_grant_not_the_x11_one, claim, test_the_chips_tell_apart_every_change_that_runs_differently_and_no_other_but_the_listed |
 | R17.9 | Flatpak has the same property. | statement |
 | R17.9 | The same holds for every abstract-namespace socket on the host | test_what_an_app_sees_inside_is_exactly_what_the_inventory_lists, test_the_bus_warning_is_on_exactly_where_a_dbus_launch_bus_is_reachable |
-| R17.9 | AppKata warns about such a session in Settings → Sandbox | test_settings_and_app_detail_warn_about_an_abstract_session_bus_for_apps_with_the_network, test_the_bus_warning_is_said_only_for_an_abstract_session_bus |
+| R17.9 | AppKata warns about such a session in Settings → Sandbox | test_settings_and_app_detail_warn_about_an_abstract_session_bus_for_apps_with_the_network, test_the_bus_warning_is_said_only_for_an_abstract_session_bus, test_every_reading_of_the_bus_address_takes_its_keys_in_any_order |
 | R17.9 | A desktop's own login uses systemd's user bus | claim |
 | R17.9 | On X11, and on any Wayland compositor other | test_the_display_leak_warning_clears_only_gnome_wayland, harness:wayland, test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed, test_every_copy_of_the_warning_says_what_the_product_does_but_the_listed |
 | R17.9 | KDE/kwin is in between: it hides screen capture | harness:kwin, harness:kwin-lmde7, test_the_display_leak_warning_clears_only_gnome_wayland, test_the_warning_matches_the_display_the_app_gets_and_what_its_compositor_leaks_but_the_listed |

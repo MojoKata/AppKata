@@ -36,23 +36,22 @@ command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't 
 # The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
-busfile=
-case "$upstream" in
-  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
-  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
-esac
 # Every socket file the address names, one a line: no working directory or folder of the app's may
 # show one, wherever it lies (R17.3.1).
 nl='
 '
-bussocks= busok=1 rest="$upstream;"
+bussocks= busok=1 busabs= paths=0 busfile= rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
   keys="${e#unix:},"
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
-    case "$p" in path=*) p=${p#path=} ;; *) continue ;; esac
+    case "$p" in
+      abstract=*) busabs=1; continue ;;
+      path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
+    esac
     f=
     while [ -n "$p" ]; do
       case "$p" in
@@ -71,6 +70,17 @@ while [ -n "$rest" ]; do
     if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
   done
 done
+# What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name.
+busat=
+case "$upstream" in
+  *";"*) ;;
+  *) case "$paths$busabs:$busfile" in
+       1:/*%*) ;;
+       1:/*) busat=file ;;
+       01:) busat=abstract ;;
+     esac ;;
+esac
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
@@ -142,15 +152,16 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
 # alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the
 # runtime folder, and the proxy then made its socket and failed every connection without a
 # word (CR1.5-18). An abstract socket has no file: it is in the host's network namespace,
-# so the proxy stays in that only then, and has a network of its own otherwise. Any other
-# address is one the launcher can't read (a list of addresses, a path with an escaped byte or
-# a relative one, two paths, of which GDBus takes the last, another transport), so the proxy
-# couldn't be shown its bus: no proxy then.
+# so the proxy stays in that only then, and has a network of its own otherwise. Either is
+# read from the address's keys in any order ($busat, above: `guid=` can come first). Any
+# other address is one the launcher can't read (a list of addresses, a path with an escaped
+# byte or a relative one, two paths, of which GDBus takes the last, a path with an abstract
+# name, which no client takes, another transport), so the proxy couldn't be shown its bus:
+# no proxy then.
 proxy=
-case "$upstream" in
-  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
-  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
-  unix:abstract=*) start_proxy ;;
+case "$busat" in
+  file) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
+  abstract) start_proxy ;;
 esac
 if [ -z "$proxy" ]; then
   # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata's

@@ -1,6 +1,7 @@
 """App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
 import fnmatch
+import itertools
 import json
 import os
 import re
@@ -437,6 +438,10 @@ BUS_ADDRESSES = {
     "unix:path=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
     "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
     "unix:path=/srv/session,one/bus": "/srv/session",      # a comma ends the path, to the proxy as to the launcher (GDBus)
+    # `guid=` first: no program writes it, and libdbus and GIO read it all the same; the launcher
+    # took `path=` and `abstract=` as an entry's first key alone (PR #694's review, P4-B1a)
+    "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,path=/tmp/dbus-MZ8lHbtZ8K": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,abstract=/tmp/dbus-MZ8lHbtZ8K": None,
 }
 
 
@@ -583,6 +588,9 @@ def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
 
 @pytest.mark.parametrize("address", ["unix:path=/tmp/a%20b/bus", "unix:path={rt}/bus;unix:path=/tmp/dbus-MZ8lHbtZ8K", "unix:path=relative/bus",
                                      "unix:path=/tmp/dbus-one,path={rt}/bus",           # GDBus, the proxy's, takes the last (P3-B4)
+                                     # in any order of the keys; and a path with an abstract name, which no client takes (P4-B1a)
+                                     "unix:guid=0123,path=/tmp/a%20b/bus", "unix:guid=0123,path=/tmp/dbus-one,path={rt}/bus",
+                                     "unix:path={rt}/bus,abstract=/tmp/dbus-two", "unix:abstract=/tmp/dbus-two,path={rt}/bus",
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
 def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
@@ -825,7 +833,7 @@ def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, mo
     os.makedirs(run_in, exist_ok=True)
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), template="cli-tool", cwd=run_in)
     sock.close()
-    assert (proxy is not None) is (form in ("plain", "a link to it")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
+    assert (proxy is not None) is (form in ("plain", "guid first", "a link to it")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
     if where == "the socket's folder":
         assert run_in not in _binds(app) and app[app.index("--chdir") + 1] == str(tmp_path / "home"), app
         assert f"Demo runs sandboxed and can't see {run_in}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
@@ -916,6 +924,59 @@ def test_the_launcher_reads_the_bus_address_as_bus_files_does(address):
     assert said in (b"busok=1", b"busok=0") and end == b"", r.stdout
     want, readable = sb.bus_files(address)
     assert (files, said) == ([os.fsencode(f) for f in want], b"busok=1" if readable else b"busok=0"), address
+
+
+# PR #694's review, P4-B1a and P4-B1b: the launcher's choice of the bus the proxy is shown, and
+# bus_warning(), counted `path=` and `abstract=` only as an entry's first key, where bus_files() and
+# the launcher's reader of the socket files (P3-B4) take a key in any place, as libdbus and GIO do:
+# `unix:guid=…,path=…` left a Standard app with no session bus (at the merge base it had its filtered
+# one), and `unix:guid=…,abstract=…` without the warning that an app with the network grant reaches
+# that bus unfiltered. How it slipped past: P3-B4's harness held the two readers of the socket files
+# to each other, while the proxy's choice and the warning kept readings of their own, tested on the
+# forms dbus writes, which put the path or the name first. This holds every reading of the address
+# to every order of each entry's keys: the files, whether one can't be read, the bus the proxy is
+# shown and the warning stay the same, and the launcher's `abstract=` is the warning's.
+BUS_KEY_ORDERS = {
+    "unix:path=/nowhere/a/bus,guid=0123": "file /nowhere/a/bus",
+    "unix:abstract=/tmp/dbus-x,guid=0123": "abstract",
+    "unix:path=/nowhere/a/bus,guid=0123,foo=1": "file /nowhere/a/bus",       # a key the clients don't know: they connect
+    "unix:abstract=/tmp/dbus-a,abstract=/tmp/dbus-b": "abstract",             # the proxy's GDBus takes the last: no file to show it
+    "unix:path=/nowhere/a/bus,abstract=/tmp/dbus-x,guid=0123": "",           # no client takes both
+    "unix:path=/nowhere/a/first,path=/nowhere/b/second,guid=0123": "",       # GDBus takes the last, the proxy would be shown one
+    "unix:path=/nowhere/a%20b,guid=0123": "",                                # an escaped byte
+    "unix:path=relative/bus,guid=0123": "",
+    "unix:path=/nowhere/a/bus,guid=0123;unix:abstract=/tmp/dbus-x,guid=0123": "",   # a list
+    "unix:tmpdir=/tmp,guid=0123": "",
+    "tcp:host=localhost,port=4000": "",
+}
+
+
+def _key_orders(address):
+    """`address` with each entry's keys in every order (the entries in theirs)."""
+    entries = [e.partition(":") for e in address.split(";")]
+    for keys in itertools.product(*(itertools.permutations(k.split(",")) for _, _, k in entries)):
+        yield ";".join(t + c + ",".join(ks) for (t, c, _), ks in zip(entries, keys))
+
+
+@pytest.mark.parametrize("address,proxy", BUS_KEY_ORDERS.items())
+def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatch, address, proxy):
+    monkeypatch.setattr(sb, "OS", "linux")
+    script = ("set -u\nrt=/nowhere-rt\n" + sb._BUS_BLOCK + 'printf "%s" "$bussocks"; echo "busok=$busok busabs=${busabs:-0}"\n'
+              'case "$busat" in file) echo "proxy=file $busfile" ;; *) echo "proxy=$busat" ;; esac\n')
+    seen = set()
+    for order in _key_orders(address):
+        r = subprocess.run(["sh", "-c", script], env={"PATH": os.environ["PATH"], "DBUS_SESSION_BUS_ADDRESS": order},
+                           capture_output=True, timeout=30)
+        assert r.returncode == 0 and r.stderr == b"", (order, r.stderr)
+        *files, said, shown, end = r.stdout.split(b"\n")
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", order)
+        want, readable = sb.bus_files()
+        warns = bool(sb.bus_warning())
+        assert said == f"busok={int(readable)} busabs={int(warns)}".encode() and end == b"", (order, r.stdout)
+        assert sorted(files) == sorted(os.fsencode(f) for f in want), order
+        assert shown == f"proxy={proxy}".encode(), (order, shown)
+        seen.add((tuple(sorted(want)), readable, warns))
+    assert len(seen) == 1, seen
 
 
 @pytest.mark.parametrize("form", BUS_FORMS)
@@ -1996,6 +2057,8 @@ def test_the_display_leak_warning_clears_only_gnome_wayland(monkeypatch, tmp_pat
     ("unix:abstract=/tmp/dbus-AbCdEf,guid=0123", True),                   # dbus-run-session / dbus-launch on dbus 1.12
     ("unix:path=/tmp/dbus-AbCdEf,guid=0123", False),                      # the same on dbus 1.14 and later
     ("unix:path=/run/user/1000/bus;unix:abstract=/tmp/dbus-x", True),     # any address of a list counts
+    ("unix:guid=0123,abstract=/tmp/dbus-AbCdEf", True),                   # in any place among its keys (PR #694's review, P4-B1b)
+    (" unix:abstract=/tmp/dbus-AbCdEf", False),                           # ...and as the clients read an entry: none takes this one
     ("", False),
 ])
 def test_the_bus_warning_is_said_only_for_an_abstract_session_bus(monkeypatch, addr, warns):

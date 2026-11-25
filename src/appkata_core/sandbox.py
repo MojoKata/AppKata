@@ -547,6 +547,20 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     return roots
 
 
+def _bus_keys(address: str):
+    """Each key=value of every `unix:` entry of the session bus `address`, in order: the one way
+    AppKata reads an address, as libdbus, GIO and sd-bus do and as the launcher's shell does
+    (_BUS_BLOCK). A list's entries are split at `;`, an entry's keys at `,`, and a key counts in
+    any place among them (PR #694's review, P4-B1b: bus_warning() took `abstract=` as an entry's
+    first key alone, so `unix:guid=…,abstract=…`, which the clients connect to, went unwarned)."""
+    for entry in address.split(";"):
+        transport, _, keys = entry.partition(":")
+        if transport == "unix":
+            for key, eq, value in (kv.partition("=") for kv in keys.split(",")):
+                if eq:
+                    yield key, value
+
+
 def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     """The socket files the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS when
     None), and whether it names none AppKata can't read: the rule the launcher's shell reads an
@@ -564,30 +578,26 @@ def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     which is protected already."""
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "") if address is None else address
     files, readable = [], True
-    for entry in addr.split(";"):
-        transport, _, keys = entry.partition(":")
-        if transport != "unix":
+    for key, value in _bus_keys(addr):
+        if key != "path":
             continue
-        for key, eq, value in (kv.partition("=") for kv in keys.split(",")):
-            if key != "path" or not eq:
-                continue
-            path, rest = b"", os.fsencode(value)
-            while rest:
-                head, pct, rest = rest.partition(b"%")
-                path += head
-                if not pct:
-                    break
-                code, rest = rest[:2], rest[2:]
-                if not re.fullmatch(rb"[0-9A-Fa-f]{2}", code):
-                    path = None
-                    break
-                if code == b"00":
-                    break
-                path += bytes([int(code, 16)])
-            if path is None or not path.startswith(b"/") or b"\n" in path:
-                readable = False
-            else:
-                files.append(os.fsdecode(path))
+        path, rest = b"", os.fsencode(value)
+        while rest:
+            head, pct, rest = rest.partition(b"%")
+            path += head
+            if not pct:
+                break
+            code, rest = rest[:2], rest[2:]
+            if not re.fullmatch(rb"[0-9A-Fa-f]{2}", code):
+                path = None
+                break
+            if code == b"00":
+                break
+            path += bytes([int(code, 16)])
+        if path is None or not path.startswith(b"/") or b"\n" in path:
+            readable = False
+        else:
+            files.append(os.fsdecode(path))
     return files, readable
 
 
@@ -1272,11 +1282,13 @@ def bus_warning() -> dict:
     The network grant shares the host's network namespace, and an abstract-namespace socket belongs
     to it: where dbus is 1.12 (Mint 21.3, Ubuntu 22.04, RHEL 9), a session bus started with
     dbus-run-session or dbus-launch is one, and an app with the network grant reaches it directly,
-    past the filtering proxy (R17.5). A desktop's own login uses systemd's user bus, a path."""
+    past the filtering proxy (R17.5). A desktop's own login uses systemd's user bus, a path. An
+    `abstract=` key counts in any place among an entry's keys, as the clients read it (_bus_keys;
+    PR #694's review, P4-B1b), and an entry the clients don't read (` unix:…`) not at all."""
     if OS != "linux":
         return {}
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
-    if not any(a.strip().startswith("unix:abstract=") for a in addr.split(";")):
+    if not any(key == "abstract" for key, _ in _bus_keys(addr)):
         return {}
     return {"text": "This session's bus listens on an abstract socket, which an app with network access can reach "
                     "directly: for such apps the bus filter doesn't hold. A session started by the desktop's own login "
@@ -2041,27 +2053,34 @@ set -- -- "$appdir/$exe" "$@"
 # (P3-B4: it counted as unreadable, and the cover never asked); each as `pwd -P` names folders, the
 # way the working directory is compared, and a link as its target too; one a line. $busok is 0
 # where an entry names a file the launcher can't read (a path that isn't absolute, a broken escape,
-# a newline): no working directory and no granted folder is shown then. An abstract socket has no file.
+# a newline): no working directory and no granted folder is shown then. An abstract socket has no file;
+# $busabs is 1 where an entry has an `abstract=` key, as bus_warning() reads it (_bus_keys). $busat is
+# the bus the proxy is shown (R17.5), decided from the same keys, so in any order of them (PR #694's
+# review, P4-B1a: a case on the whole address took `path=` or `abstract=` as the first key alone, and
+# `unix:guid=…,path=…`, which libdbus and GIO read, got no proxy): "file" for one entry with one
+# `path=`, absolute, with no escaped byte, and no `abstract=` ($busfile, bound alone for the proxy);
+# "abstract" for one entry with `abstract=` and no `path=`; "" for any other, which the proxy can't be
+# shown (a list, two paths, of which its GDBus takes the last, an escaped or relative path, a path
+# with an abstract name, which no client takes, another transport).
 _BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
-busfile=
-case "$upstream" in
-  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
-  unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
-esac
 # Every socket file the address names, one a line: no working directory or folder of the app's may
 # show one, wherever it lies (R17.3.1).
 nl='
 '
-bussocks= busok=1 rest="$upstream;"
+bussocks= busok=1 busabs= paths=0 busfile= rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
   keys="${e#unix:},"
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
-    case "$p" in path=*) p=${p#path=} ;; *) continue ;; esac
+    case "$p" in
+      abstract=*) busabs=1; continue ;;
+      path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
+    esac
     f=
     while [ -n "$p" ]; do
       case "$p" in
@@ -2080,6 +2099,17 @@ while [ -n "$rest" ]; do
     if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
   done
 done
+# What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name.
+busat=
+case "$upstream" in
+  *";"*) ;;
+  *) case "$paths$busabs:$busfile" in
+       1:/*%*) ;;
+       1:/*) busat=file ;;
+       01:) busat=abstract ;;
+     esac ;;
+esac
 """
 
 # File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
@@ -2460,15 +2490,16 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the\n'
             '# runtime folder, and the proxy then made its socket and failed every connection without a\n'
             '# word (CR1.5-18). An abstract socket has no file: it is in the host\'s network namespace,\n'
-            '# so the proxy stays in that only then, and has a network of its own otherwise. Any other\n'
-            '# address is one the launcher can\'t read (a list of addresses, a path with an escaped byte or\n'
-            '# a relative one, two paths, of which GDBus takes the last, another transport), so the proxy\n'
-            '# couldn\'t be shown its bus: no proxy then.\n'
+            '# so the proxy stays in that only then, and has a network of its own otherwise. Either is\n'
+            '# read from the address\'s keys in any order ($busat, above: `guid=` can come first). Any\n'
+            '# other address is one the launcher can\'t read (a list of addresses, a path with an escaped\n'
+            '# byte or a relative one, two paths, of which GDBus takes the last, a path with an abstract\n'
+            '# name, which no client takes, another transport), so the proxy couldn\'t be shown its bus:\n'
+            '# no proxy then.\n'
             'proxy=\n'
-            'case "$upstream" in\n'
-            '  *";"*|unix:path=*%*|unix:path=*,path=*) ;;\n'
-            '  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
-            '  unix:abstract=*) start_proxy ;;\n'
+            'case "$busat" in\n'
+            '  file) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
+            '  abstract) start_proxy ;;\n'
             'esac\n'
             'if [ -z "$proxy" ]; then\n'
             '  # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata\'s\n'
