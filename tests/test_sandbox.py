@@ -597,6 +597,8 @@ def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
                                      # where the rest is such a key (it was taken as ending the path, and GDBus refused it)
                                      "unix:path={rt}/bus,", "unix:guid,path={rt}/bus", "unix:path={rt}/bus,,guid=0123",
                                      "unix:=0123,path={rt}/bus", "unix:abstract=/tmp/dbus-two,", "unix:path=/srv/session,one/bus",
+                                     # ...and a value with an escape it can't read, in any key
+                                     "unix:path={rt}/bus,guid=%zz", "unix:guid=%00,path={rt}/bus", "unix:abstract=/tmp/dbus-two%",
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
 def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
@@ -962,6 +964,10 @@ BUS_KEY_ORDERS = {
     "unix:path=/nowhere/a/bus,guid": "",
     "unix:path=/nowhere/a/bus,=0123": "",
     "unix:abstract=/tmp/dbus-x,": "",
+    # a value with an escape GDBus can't read (not two hex digits, or an escaped NUL), in any key
+    "unix:path=/nowhere/a/bus,guid=%zz": "",
+    "unix:path=/nowhere/a/bus,guid=%00": "",
+    "unix:abstract=/tmp/dbus-x%2,guid=0123": "",
 }
 
 
@@ -1004,7 +1010,8 @@ def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatc
 # orders, and every address the tests above read.
 BUS_KEY_SHAPES = ["path=/nowhere/a/bus", "path=/nowhere/b/bus", "path=relative/bus", "path=/nowhere/a%20b", "path=",
                   "abstract=/tmp/dbus-x", "abstract=/tmp/dbus-a%20b", "guid=0123", "guid=", "foo=1", "tmpdir=/tmp",
-                  "guid", "", "=0123"]
+                  "guid", "", "=0123", "guid=%zz", "guid=%2", "guid=%00", "foo=%", "guid=%41", "abstract=/tmp/dbus-%zz",
+                  "abstract=/tmp/dbus-a%00b"]
 
 _GIO_TAKES = """import json, sys
 from gi.repository import Gio, GLib
