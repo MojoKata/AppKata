@@ -1566,23 +1566,93 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
         _launch_package(row["name"], rec["package"], rec.get("manager") or ("apt" if linux_family() == "debian" else "dnf"))
 
 
-def _entry_string(value: str) -> str:
-    """A desktop entry's string value as it reads: its escapes (`\\s`, `\\n`, `\\t`, `\\r`, `\\\\`) turned
-    back into what they stand for."""
-    return re.sub(r"\\([sntr\\])", lambda m: {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}[m.group(1)], value)
+_SPACE = " \t\n\r\v\f"           # what GLib's key file reader takes for white space (g_ascii_isspace)
+_ESCAPES = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
 
 
-def _shown_on_this_desktop(entry) -> bool:
-    """Whether an entry is for this desktop by its `OnlyShowIn` and `NotShowIn`: the names in
-    $XDG_CURRENT_DESKTOP, in their order, the first one either key names deciding; with none named,
-    it is shown unless it has `OnlyShowIn` (the Desktop Entry Specification, as GLib reads it)."""
-    only, never = ({d for d in entry.get(k, "").split(";") if d} for k in ("OnlyShowIn", "NotShowIn"))
+def _key_file(path: str) -> dict | None:
+    """The keys of a desktop entry's [Desktop Entry] group, {key: value as written}, read as GLib
+    reads a key file (`g_key_file_load_from_file`), or None where GLib loads no entry from the file.
+    A line's leading white space is dropped; an empty line or one starting with `#` is a comment; a
+    `[group]` line, white space after it allowed, starts a group, and a group named twice is one;
+    any other line is `key=value`, `=` the one delimiter, white space around it dropped, keys as
+    written (case counts), a key given twice its last value. A line that is none of these, a key
+    before the first group or one GLib's key names don't allow, a group name with a bracket or a
+    control character, an `Encoding` other than UTF-8 in the first group, and a first group other
+    than [Desktop Entry], and GLib refuses the file; so does it here (#689's review, P2-2: the file
+    was read with configparser, which folds keys to lower case, takes an indented line for more of
+    the line before it, `:` for `=`, and `;` for a comment)."""
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
+            return None
+        with open(path, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    groups: dict[str, dict] = {}
+    keys = None
+    for line in lines:
+        line = (line[:-1] if line.endswith("\r") else line).lstrip(_SPACE)
+        if not line or line.startswith("#"):
+            continue
+        if m := re.fullmatch(r"\[([^\]]*)\][ \t]*", line):
+            if not m.group(1) or re.search(r"[\[\x00-\x1f\x7f]", m.group(1)):
+                return None
+            keys = groups.setdefault(m.group(1), {})
+            continue
+        key, eq, value = line.partition("=")
+        key = key.rstrip(_SPACE)
+        if not eq or keys is None or not re.fullmatch(r"[^=\[\]]+(\[[\w.@-]*\])?", key):
+            return None
+        value = value.lstrip(_SPACE)
+        if key == "Encoding" and keys is next(iter(groups.values())) and value.lower() != "utf-8":
+            return None
+        keys[key] = value
+    return groups["Desktop Entry"] if groups and next(iter(groups)) == "Desktop Entry" else None
+
+
+def _key_string(value: str | None, as_list: bool = False):
+    """A key file's string value as GLib's `g_key_file_get_string` has it, its escapes (`\\s`, `\\n`,
+    `\\t`, `\\r`, `\\\\`) turned back into what they stand for; with `as_list`, its list
+    (`g_key_file_get_string_list`), split at each `;` but an escaped one. None for no value, or one
+    holding any other escape, as GLib has no value then."""
+    if value is None:
+        return None
+    pieces, piece, i = [], "", 0
+    while i < len(value):
+        c = value[i]
+        if c == "\\":
+            nxt = value[i + 1:i + 2]
+            if nxt in _ESCAPES:
+                piece += _ESCAPES[nxt]
+            elif as_list and nxt == ";":
+                piece += ";"
+            else:
+                return None
+            i += 2
+            continue
+        if as_list and c == ";":
+            pieces.append(piece)
+            piece = ""
+        else:
+            piece += c
+        i += 1
+    if not as_list:
+        return piece
+    return pieces + ([piece] if piece else [])
+
+
+def _shown_on_this_desktop(only: list[str] | None, never: list[str] | None) -> bool:
+    """Whether an entry is for this desktop by its `OnlyShowIn` and `NotShowIn` lists (None: no such
+    key): the names in $XDG_CURRENT_DESKTOP, in their order, the first one either list names
+    deciding; with none named, it is shown unless it has `OnlyShowIn`, even an empty one (the
+    Desktop Entry Specification, as GLib reads it)."""
     for desktop in (d for d in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":") if d):
-        if desktop in only:
+        if desktop in (only or []):
             return True
-        if desktop in never:
+        if desktop in (never or []):
             return False
-    return not only
+    return only is None
 
 
 def _installed_program(word: str) -> bool:
@@ -1599,22 +1669,20 @@ def _menu_entry(path: str):
     `NotShowIn`), its program not installed (`TryExec`, or the first word of `Exec`), or not
     readable. These are the Desktop Entry Specification's rules as GLib applies them, which is what
     the menus of the desktops AppKata supports read entries with (R5.7.4; #689's review, P1-B4: only
-    `NoDisplay` and `Hidden` were read, and a package's entry for KDE alone was opened on GNOME)."""
-    cp = configparser.ConfigParser(interpolation=None, strict=False)
-    try:
-        if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
-            return None
-        cp.read(path, encoding="utf-8")
-        entry = cp["Desktop Entry"]
-    except (configparser.Error, OSError, UnicodeDecodeError, KeyError):
+    `NoDisplay` and `Hidden` were read, and a package's entry for KDE alone was opened on GNOME),
+    the file read as GLib reads it (:func:`_key_file`), and its booleans as GLib's: `true` or `1`,
+    white space after it allowed, and anything else not true (P2-2: `NoDisplay=1` was shown, and
+    `NoDisplay=True` hidden)."""
+    entry = _key_file(path)
+    if entry is None or _key_string(entry.get("Type")) != "Application":
         return None
-    if entry.get("Type") != "Application" or "true" in (entry.get("NoDisplay", "").lower(), entry.get("Hidden", "").lower()):
+    if any(entry.get(k, "").rstrip(_SPACE) in ("true", "1") for k in ("NoDisplay", "Hidden")):
         return None
-    if not _shown_on_this_desktop(entry):
+    if not _shown_on_this_desktop(_key_string(entry.get("OnlyShowIn"), True), _key_string(entry.get("NotShowIn"), True)):
         return None
-    if (try_exec := _entry_string(entry.get("TryExec", ""))) and not _installed_program(try_exec):
+    if (try_exec := _key_string(entry.get("TryExec"))) and not _installed_program(try_exec):
         return None
-    if command := _entry_string(entry.get("Exec", "")):
+    if command := _key_string(entry.get("Exec")):
         try:
             words = shlex.split(command)
         except ValueError:          # GLib can't read it either
@@ -1652,7 +1720,7 @@ def _package_entries(package: str, manager: str) -> list[str]:
         for name in names:
             entry = _menu_entry(os.path.join(folder, name))
             try:
-                words = shlex.split(entry.get("Exec", "")) if entry is not None else []
+                words = shlex.split(_key_string(entry.get("Exec")) or "") if entry is not None else []
             except ValueError:
                 continue
             while words and (os.path.basename(words[0]) == "env" or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0])):
