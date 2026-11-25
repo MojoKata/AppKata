@@ -530,6 +530,34 @@ def test_the_apps_the_setup_is_said_to_sandbox_are_the_ones_it_sandboxes(tmp_pat
         be.db.x("DELETE FROM installs")
 
 
+def test_an_app_with_a_launcher_where_launchers_find_no_bwrap_keeps_it_and_cant_start(tmp_path, monkeypatch):
+    # #689's review, P3-4: R17.4 said the apps of an install folder whose launchers find no bwrap run
+    # unsandboxed. That is so of one with no launcher (the two tests above); one that has a launcher
+    # keeps it, as R17.10 says, and only the user's own Off runs it unsandboxed. Installed in ~/bin
+    # while the system had its own bwrap, with the user's own in ~/bin since: AppKata's start
+    # rewrites its launcher and keeps it, App Detail says it can't start, and its launcher stops
+    # at "bubblewrap (bwrap) isn't installed".
+    be, home, URL = _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch)
+    be.setPref("installDir", str(home / "bin" / "apps"))
+    be.setPref("commandLinks", False)
+    be._app = lambda url: {"url": URL, "name": "Demo", "installed": "1.0"}
+    target = _installed_off_in(be, URL, home / "bin")
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    launcher = target / "run"
+    launcher.write_text("#!/bin/sh\n# the launcher of a system that had its own bwrap\n")
+    rec["launcher"] = rec["exec"] = str(launcher)
+    be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), URL))
+    assert be._heal_launchers() == [URL]                                     # not today's text: rewritten, and kept
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    assert rec["launcher"] == rec["exec"] == str(launcher) and be._sandbox_for_install(URL) is not None
+    info = be.sandboxInfo(URL)                                               # its App Detail
+    assert info["active"] and info["support"]["status"] == "unsupported", info["support"]
+    assert info["support"]["brokenHint"].startswith("Can't start: bubblewrap isn't installed, and it runs sandboxed."), info["support"]
+    started = subprocess.run([str(launcher)], env={"PATH": "/usr/bin:/bin", "HOME": str(home), "XDG_RUNTIME_DIR": str(tmp_path.resolve() / "run.d")},
+                             capture_output=True, text=True, timeout=30)
+    assert started.returncode == 1 and "AppKata: bubblewrap (bwrap) isn't installed, so Demo can't run sandboxed here." in started.stderr, started
+
+
 def _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch):
     """A Backend on a system whose folders hold no bwrap, with the user's own in ~/bin first on
     AppKata's PATH, and Demo reviewed Strict by a Trust: (the backend, the home, Demo's URL)."""
