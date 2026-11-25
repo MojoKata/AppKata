@@ -2114,6 +2114,51 @@ def test_a_sandbox_change_that_cant_be_put_back_names_what_isnt_as_it_was(env, s
     assert os.readlink(tmp_path / "cmd" / "demo-tool") == rec["exec"] and os.access(rec["exec"], os.X_OK)
 
 
+def _beside(tmp_path, env):
+    """What a process stopped part-way leaves beside an app's files, of all _left lists: a hard link a
+    sandbox change kept (`<path>.<pid>.was`) and a file a write hadn't finished (`<path>.<pid>.tmp`)."""
+    return sorted(k for k in _left(tmp_path, env) if re.search(r"\.[0-9]+\.(was|tmp)$", k))
+
+
+# The files of the test's sandboxed Demo Tool a sandbox change keeps aside, by their place under the test's folder
+_KEPT = [os.path.join("apps", "demo-tool", "run"), os.path.join("data", "sandboxes", ".identity", "apps", "demo-tool"),
+         os.path.join("data", "sandboxes", ".owners", "demo-tool"), os.path.join("data", "menu", "demo-tool"),
+         os.path.join("xdg", "applications", "appkata-demo-tool.desktop")]
+
+
+def _stopped_change(tmp_path, env, p, monkeypatch, gs):
+    """A sandbox change to `gs` whose process stopped (killed, the power gone) once the change was
+    written and before it dropped what it kept beside the app's files, and a write by another
+    process stopped the same way beside each of them."""
+    with monkeypatch.context() as m:
+        m.setattr(install, "_drop_aside", lambda kept: None)
+        install.rewrite_launcher(env, {**APP, "sandbox": gs}, p)
+    for f in _KEPT:
+        open(tmp_path / f"{f}.4242.tmp", "w").close()
+
+
+@linux_only
+@pytest.mark.parametrize("home", [True, False], ids=["with its private home", "keeping its private home"])
+def test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files(env, server, tmp_path, monkeypatch, home):
+    # #689's review, P6-B2: a sandbox change keeps the files it replaces as hard links beside them
+    # (<path>.<pid>.was) and drops them once it is written or put back. A process stopped between
+    # the two left them, as a write stopped part-way leaves <path>.<pid>.tmp; the next change of
+    # the app removed the .was, and an uninstall removed nothing but each file by its own name, so
+    # the old menu script, the old entry (in the user's applications folder), the old identity
+    # marker and the owner record (the app's URL) stayed for good, the private home gone or not.
+    from appkata_core import sandbox
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    _stopped_change(tmp_path, env, p, monkeypatch, sandbox.resolve_template("strict"))
+    left = _beside(tmp_path, env)
+    assert len([k for k in left if k.endswith(".was")]) == len([k for k in left if k.endswith(".tmp")]) == 5, left
+    assert install.uninstall(env, APP["url"], remove_sandbox=home) == []
+    assert _beside(tmp_path, env) == []
+    owner = tmp_path / "data" / "sandboxes" / ".owners" / "demo-tool"
+    assert owner.exists() is not home                                   # the private home, kept or not, as asked
+
+
 # ---------------------------------------------------------------- the program of an archive (CR1.3-17)
 
 _ELF, _SCRIPT = b"\x7fELF\x02\x01\x01" + b"\0" * 57, b"#!/bin/sh\nexec true\n"

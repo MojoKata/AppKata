@@ -2364,7 +2364,8 @@ class Backend(QObject):
         return False
 
     def _heal_launchers_at_startup(self) -> None:
-        """The startup pass, on its own thread: warm the bwrap probe (a 15 s timeout at worst) so the
+        """The startup pass, on its own thread: remove what a sandbox change or a write stopped
+        part-way left beside an app's files (install.sweep_left_beside), warm the bwrap probe (a 15 s timeout at worst) so the
         first App Detail or Settings → Sandbox on the UI thread finds the answer cached, then give any
         app installed while the system couldn't sandbox its launcher, then make or remove the command
         links whose names have been freed or taken since (:meth:`_refresh_command_links`). Regression
@@ -2372,6 +2373,10 @@ class Backend(QObject):
         start — every launcher in place — the probe still ran on the UI thread, the very thing moving
         it here was for."""
         changed = False
+        try:            # what a change or a write stopped part-way left beside an app's files (#689's review, P6-B2)
+            install.sweep_left_beside(self.db)
+        except Exception:           # never let this block startup
+            log.exception("couldn't remove what a stopped change left beside the apps' files")
         try:
             sandbox.userns_works()
             # logs an older AppKata kept by name move to their install's id, before the heal pass

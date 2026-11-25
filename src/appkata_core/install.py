@@ -1445,19 +1445,17 @@ def _keep_aside(kept: dict, rec: dict, app_id: str, portable: "Portable") -> Non
     """Keep in `kept` what a sandbox change can replace or remove (:func:`rewrite_launcher`), so
     that putting it back writes nothing (:func:`_put_back`): the launcher, its identity marker, the
     private home's owner record and the app-menu files, each as a hard link beside its place
-    (`<path>.<pid>.was`, removed by :func:`_drop_aside`, and one an earlier change left there by
-    the next), or as its bytes where the file system makes no hard links; a path with nothing there
-    as None; and the links `rec` names, by their targets. Filled as it goes, so what it made is
-    dropped if it stops part-way."""
-    paths = [rec.get("launcher"), sandbox.launcher_path(app_id, portable.root), sandbox.identity_path(app_id),
-             sandbox.home_owner_path(app_id), _menu_link_path(app_id), _menu_entry_path(app_id)]
-    for p in dict.fromkeys(p for p in paths + [f for f in rec.get("files", []) if _is_menu_file(f)] if p):
+    (`<path>.<pid>.was`, removed by :func:`_drop_aside`; what a change or a write stopped part-way
+    left beside it is removed first, :func:`_sweep_beside`), or as its bytes where the file system
+    makes no hard links; a path with nothing there as None; and the links `rec` names, by their
+    targets. Filled as it goes, so what it made is dropped if it stops part-way."""
+    paths = _kept_paths(rec, app_id, portable.root)
+    _sweep_beside(paths)                # what an earlier change or write couldn't remove
+    for p in paths:
         if os.path.islink(p):
             kept["files"][p] = ("link", os.readlink(p))
         elif os.path.isfile(p):
             aside = f"{p}.{os.getpid()}.was"
-            for stale in glob.glob(glob.escape(p) + ".*.was"):     # one an earlier change couldn't remove
-                os.remove(stale)
             try:
                 os.link(p, aside, follow_symlinks=False)
                 kept["files"][p] = ("aside", aside)
@@ -1467,6 +1465,51 @@ def _keep_aside(kept: dict, rec: dict, app_id: str, portable: "Portable") -> Non
         elif not os.path.lexists(p):
             kept["files"][p] = None
     kept["links"].update({link: os.readlink(link) for link in rec.get("links", []) if os.path.islink(link)})
+
+
+def _kept_paths(rec: dict, app_id: str, root: str) -> list[str]:
+    """The files of an installed app, `rec` its record and `root` its install folder, that a sandbox
+    change can replace or remove (:func:`_keep_aside`): its launcher, its identity marker, its
+    private home's owner record and its app-menu files."""
+    paths = [rec.get("launcher"), sandbox.launcher_path(app_id, root), sandbox.identity_path(app_id),
+             sandbox.home_owner_path(app_id), _menu_link_path(app_id), _menu_entry_path(app_id)]
+    return list(dict.fromkeys(p for p in paths + [f for f in rec.get("files", []) if _is_menu_file(f)] if p))
+
+
+def _sweep_beside(paths: list[str]) -> list[str]:
+    """Remove what a process stopped part-way (killed, the power gone) left beside these files: a
+    hard link a sandbox change kept (`<path>.<pid>.was`, :func:`_keep_aside`) and a file a write
+    hadn't finished (`<path>.<pid>.tmp`, :func:`_write_whole`); nothing else beside them. Called
+    with the activation lock held, so no change or write of this process is under way. Returns
+    what it removed; one it can't remove is logged and left for the next time. #689's review,
+    P6-B2: only the app's next sandbox change removed a .was, and nothing a .tmp, so an uninstall
+    left the old menu script and entry, identity marker and owner record beside where they were."""
+    gone = []
+    for p in paths:
+        for left in glob.glob(glob.escape(p) + ".*.was") + glob.glob(glob.escape(p) + ".*.tmp"):
+            if re.fullmatch(r"[0-9]+", left[len(p) + 1:-4]) and not os.path.isdir(left):
+                try:
+                    os.remove(left)
+                    gone.append(left)
+                except OSError:
+                    log.warning("couldn't remove %s", left)
+    return gone
+
+
+def sweep_left_beside(db: DB) -> list[str]:
+    """AppKata's start, for every portable app it installed: remove what a process stopped part-way
+    left beside the app's files (:func:`_sweep_beside`), as the app's next sandbox change and its
+    uninstall do. Returns what it removed."""
+    if OS != "linux":
+        return []
+    gone = []
+    with _ACTIVATE_LOCK:
+        for row in db.all("SELECT name, record FROM installs"):
+            rec = json.loads(row["record"] or "{}")
+            if rec.get("current") and rec.get("target"):
+                gone += _sweep_beside(_kept_paths(rec, app_id_of(rec, {"name": row["name"]}),
+                                                  rec.get("root") or os.path.dirname(rec["target"])))
+    return gone
 
 
 def _put_back(kept: dict, rec: dict, prev: dict, app_id: str, portable: "Portable", target: str, was: dict) -> list[str]:
@@ -1659,6 +1702,9 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
         sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (R17.14)
         if remove_sandbox:
             sandbox.remove_sandbox_home(app_id)
+        if rec.get("current") and rec.get("target"):     # what a stopped change or write left beside its files (P6-B2)
+            with _ACTIVATE_LOCK:
+                _sweep_beside(_kept_paths(rec, app_id, rec.get("root") or os.path.dirname(rec["target"])))
     return left
 
 

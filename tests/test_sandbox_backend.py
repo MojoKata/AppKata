@@ -934,6 +934,37 @@ def test_a_launcher_appkatas_start_cant_rewrite_is_left_as_it_was_and_not_audite
     assert be._heal_launchers() == [] and len(audit()) == 1
 
 
+def test_appkatas_start_removes_what_a_stopped_change_left_beside_an_apps_files(be, tmp_path, monkeypatch):
+    # #689's review, P6-B2: a sandbox change keeps the files it replaces as hard links beside them
+    # (<path>.<pid>.was) and drops them once it is written or put back. A process stopped between
+    # the two (killed, the power gone) left them, as a write stopped part-way leaves
+    # <path>.<pid>.tmp, and only the app's next sandbox change removed the .was. AppKata's start
+    # removes both now, for every app it installed, and nothing else.
+    import re
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    with monkeypatch.context() as m:
+        m.setattr(install, "_drop_aside", lambda kept: None)                # stopped before it dropped what it kept
+        assert be._regenerate_launcher(URL) is None
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    files = [rec["launcher"], sb.identity_path("demo"), sb.home_owner_path("demo")] + rec["files"][1:]
+    assert len(files) == 5 and all(os.path.isfile(f) for f in files), files    # its launcher, marker, owner, menu script and entry
+    for f in files:
+        open(f"{f}.4242.tmp", "w").close()                                  # a write another process didn't finish
+        open(f"{f}.mine", "w").close()                                      # and a file that isn't AppKata's
+    beside = lambda: sorted(os.path.join(d, n) for d, _, names in os.walk(tmp_path) for n in names      # noqa: E731
+                            if re.search(r"\.[0-9]+\.(was|tmp)$", n))
+    assert len(beside()) == 10, beside()
+    be._heal_launchers_at_startup()
+    assert beside() == [] and all(os.path.isfile(f) and os.path.isfile(f + ".mine") for f in files)
+
+
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
     # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
     # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder
