@@ -704,8 +704,14 @@ def _file_stem(app: dict, target: str) -> str:
     program's `.exe`. It is the name's ASCII letters and digits. An app whose name has none
     (日本語アプリ) got a file named just `.AppImage` or `.exe`: hidden on Linux, and no name at all.
     It gets the app's id (:func:`app_id_of`), which is the name of its folder, `target`
-    (CR1.3-39)."""
-    return re.sub(r"[^A-Za-z0-9]+", "", app["name"]) or os.path.basename(target)
+    (CR1.3-39). On Windows it is never a device's name (R15.16), as the app's folder and its
+    Start-menu shortcut aren't: an app named Con, Aux or COM 1 had its portable program kept as
+    `Con.exe`, which Windows reads as the console."""
+    stem = re.sub(r"[^A-Za-z0-9]+", "", app["name"]) or os.path.basename(target)
+    if OS == "windows":
+        from .windows import safe_name
+        stem = safe_name(stem)
+    return stem
 
 
 def _aside(path: str) -> str:
