@@ -153,8 +153,9 @@ gives none):
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
-package manager each time it installs, adopts (R16.4.2) or updates the copy; the chip is their
-answer, kept in the install record (R4.1).
+package manager each time it installs, adopts (R16.4.2) or updates the copy, and again when a sync
+finds the copy changed outside AppKata (R16.5.4), of the remote a Flatpak then comes from; the chip
+is their answer, kept in the install record (R4.1). A copy that hasn't changed keeps its chip.
 
 R16.4. **Tracking.**
 
