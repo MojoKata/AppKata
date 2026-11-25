@@ -3,32 +3,16 @@
  "sweep": "CR1",
  "units": [
   {
-   "id": "U01",
-   "name": "The backend's hand-off to the main thread",
+   "id": "U47",
+   "name": "The Windows suite is collected again: scripts/mutate.py loads without SIGUSR1",
    "findings": [
-    463,
-    464
+    710
    ],
    "files": [
-    "docs/requirements/R7-sources-perspective.md",
-    "scripts/areas.py",
-    "src/appkata/backend.py",
+    "scripts/mutate.py",
     "tests/skips/windows.txt",
-    "tests/test_backend.py"
-   ]
-  },
-  {
-   "id": "U02",
-   "name": "The release job attaches only the release files",
-   "findings": [
-    592
-   ],
-   "files": [
-    ".github/workflows/ci.yml",
-    "docs/RELEASE.md",
-    "docs/github-workflows.md",
-    "scripts/areas.py",
-    "tests/test_workflows.py"
+    "tests/test_imports_on_windows.py",
+    "tests/test_mutate.py"
    ]
   },
   {
@@ -127,9 +111,6 @@
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
     "tests/test_windows.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -402,9 +383,6 @@
     "tests/test_pinned_inputs.py",
     "tests/test_pins_newest.py",
     "tests/test_third_party_notices.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -434,9 +412,6 @@
     "tests/test_docs_facts.py",
     "tests/test_selfinstall.py",
     "tests/test_windows.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -747,7 +722,8 @@
     286,
     294,
     299,
-    419
+    419,
+    708
    ],
    "files": [
     "docs/requirements/R2-apps-and-sources.md",
@@ -875,7 +851,8 @@
     247,
     253,
     287,
-    495
+    495,
+    713
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -933,9 +910,6 @@
     "src/appkata_core/sync.py",
     "tests/test_backend.py",
     "tests/test_core.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -1132,9 +1106,6 @@
     "tests/test_dialog_contract.py",
     "tests/test_prefs.py",
     "tests/test_sandbox_ui_surfaces.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -1189,7 +1160,6 @@
     "tests/test_trust.py"
    ],
    "depends_on": [
-    "U01",
     "U28"
    ]
   },
@@ -1271,7 +1241,6 @@
     "tests/test_selfinstall.py"
    ],
    "depends_on": [
-    "U01",
     "U04",
     "U28"
    ]
@@ -1315,9 +1284,6 @@
     "tests/test_hardening.py",
     "tests/test_qml_slots.py",
     "tests/test_screens_contract.py"
-   ],
-   "depends_on": [
-    "U01"
    ]
   },
   {
@@ -1522,14 +1488,16 @@
     427,
     655,
     664,
-    668
+    668,
+    712
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
     "src/appkata_core/dbus.py",
     "src/appkata_core/flatpak.py",
     "src/appkata_core/pkgbackend.py",
-    "tests/test_channels.py"
+    "tests/test_channels.py",
+    "tests/test_sandbox.py"
    ]
   },
   {
@@ -1732,6 +1700,45 @@
     "docs/architecture/A2-sandbox-exposure.md",
     "docs/requirements/R17-app-sandboxing/R17.17-limits.md",
     "scripts/sandbox/exposure.py",
+    "tests/test_sandbox_exposure.py"
+   ]
+  },
+  {
+   "id": "U48",
+   "name": "The session-bus proxy lookup, and a request's name lookups",
+   "findings": [
+    711,
+    715
+   ],
+   "files": [
+    "src/appkata_core/http.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_forges.py",
+    "tests/test_sandbox_one_fact.py"
+   ],
+   "depends_on": [
+    "U03",
+    "U07",
+    "U09"
+   ]
+  },
+  {
+   "id": "U49",
+   "name": "Functions nothing calls",
+   "findings": [
+    716
+   ],
+   "files": [
+    "scripts/sandbox/exposure.py",
+    "src/appkata_core/appstream.py",
+    "src/appkata_core/devtools.py",
+    "src/appkata_core/gitsig.py",
+    "src/appkata_core/install.py",
+    "src/appkata_core/pkgbackend.py",
+    "src/appkata_core/sshsig.py",
+    "src/appkata_core/trustfile.py",
+    "src/appkata_core/windows.py",
+    "tests/test_core.py",
     "tests/test_sandbox_exposure.py"
    ]
   }
@@ -4889,9 +4896,6 @@
     "tests/test_backend.py",
     "tests/test_windows.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     467,
     486,
@@ -6839,9 +6843,6 @@
     "tests/test_audit_log_explore.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     321,
     456,
@@ -6864,7 +6865,6 @@
     "tests/test_backend.py"
    ],
    "depends_on": [
-    463,
     477
    ],
    "size": "small",
@@ -7120,9 +7120,6 @@
     "src/appkata/backend.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     439,
     457,
@@ -7213,42 +7210,6 @@
    "note": "Decided 2026-11-23: write down today's order (your own review's App name, then the Trusts' by Score, then the project's, then the install's); the requirement and the comment at catalog.py:192-193 change, the order in the code stays."
   },
   {
-   "finding": 463,
-   "readiness": "ready",
-   "files": [
-    "src/appkata/backend.py",
-    "tests/test_backend.py",
-    "scripts/areas.py",
-    "tests/skips/windows.txt"
-   ],
-   "related": [
-    464,
-    480,
-    484,
-    487
-   ],
-   "size": "small",
-   "proof": "A new test under a running event loop with real threads (threading.Thread.start not patched): Backend.install() on a never-installed app whose plan has ask False reaches _install once, on the main thread; the same for a plan with an error (its toast shows) and for addSourceWith(url, True, {}) reaching install. No VM needed: the finding's own VM run showed the fault, and the test holds the fix.",
-   "note": "The step's one High. tests/test_backend.py doesn't exist: this fix makes it, with its line under `ui-backend` in scripts/areas.py (tests/test_areas.py holds every test file to one area) and its line in tests/skips/windows.txt (no PySide6 on the Windows VM), and with the fixture of a real Backend, an event loop and real threads that the step's other findings then use. Most records of this step depend on it for that file alone. #464 is the same fault in syncNow; #480 and #484 change the same plan worker of install()."
-  },
-  {
-   "finding": 464,
-   "readiness": "ready",
-   "files": [
-    "src/appkata/backend.py",
-    "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
-   ],
-   "related": [
-    487
-   ],
-   "size": "small",
-   "proof": "A test under a running event loop with real threads: syncNow(callback) with sync.sync_all and foreign.scan stubbed runs the callback on the main thread after the reload; _background_sync() emits `notify` for a new update and for a newly vetoed installed version, and not with notifications off.",
-   "note": "The same fault as #463, fixed the same way (a private signal to a main-thread slot); the remedy's two forms give the same behaviour, so the pick is the unit's. Its test goes in tests/test_backend.py, a file that doesn't exist yet: #463's fix makes it (hence the dependency)."
-  },
-  {
    "finding": 465,
    "readiness": "ready",
    "files": [
@@ -7256,9 +7217,6 @@
     "src/appkata/qml/AppDetail.qml",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     223,
@@ -7295,9 +7253,6 @@
     "src/appkata/backend.py",
     "tests/test_install_review.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     326,
@@ -7348,9 +7303,6 @@
     "src/appkata/qml/ConfirmDialog.qml",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     410,
     475,
@@ -7370,9 +7322,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     439,
@@ -7397,7 +7346,6 @@
     "tests/test_dialog_contract.py"
    ],
    "depends_on": [
-    463,
     647
    ],
    "related": [
@@ -7423,9 +7371,6 @@
     "tests/test_core.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     472,
     479
@@ -7443,9 +7388,6 @@
     "src/appkata_core/db.py",
     "tests/test_trust.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     173,
@@ -7469,9 +7411,6 @@
     "tests/test_core.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     470,
     478,
@@ -7492,9 +7431,6 @@
     "tests/test_selfinstall.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "size": "small",
    "proof": "Tests: a new Backend with $APPIMAGE naming this process's own image writes an `adopted` Audit entry with the file and version; with $APPIMAGE naming another program's file (a run from source in an AppImage terminal) nothing is adopted and selfInstallOffer is null.",
    "note": "The entry's actor (You, or System) is the unit's pick. The finding's aside, whether Run from here (declineSelfInstall) belongs in the Audit under R2.11.3.1, is no part of the remedy and is left as it is; if the unit finds R2.11.3.1 asks for it, that is a new question. Its test goes in tests/test_backend.py, a file that doesn't exist yet: #463's fix makes it (hence the dependency)."
@@ -7506,9 +7442,6 @@
     "src/appkata/backend.py",
     "src/appkata/qml/ConfirmDialog.qml",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     440,
@@ -7526,9 +7459,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     470,
@@ -7551,9 +7481,6 @@
     "tests/test_audit_log_explore.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     249,
     333,
@@ -7573,9 +7500,6 @@
     "src/appkata/qml/InstallDialog.qml",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     470,
     478,
@@ -7591,9 +7515,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     470,
@@ -7612,9 +7533,6 @@
     "tests/test_sandbox_audit.py",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     439,
     456
@@ -7629,9 +7547,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     458,
@@ -7652,9 +7567,6 @@
     "src/appkata_core/install.py",
     "tests/test_backend.py",
     "tests/test_dialog_contract.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     480,
@@ -7685,9 +7597,6 @@
     "docs/requirements/R1-platform-and-architecture.md",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     326,
     593,
@@ -7705,8 +7614,6 @@
     "tests/test_backend.py"
    ],
    "depends_on": [
-    463,
-    464,
     465,
     466,
     467,
@@ -7769,9 +7676,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     488,
@@ -9357,23 +9261,6 @@
    "note": "The three calls of ex.expected (fieldtest.py:313, tests/test_sandbox_exposure.py:250 and :360) pass no kinds, so none changes."
   },
   {
-   "finding": 592,
-   "readiness": "ready",
-   "files": [
-    ".github/workflows/ci.yml",
-    "tests/test_workflows.py",
-    "docs/RELEASE.md"
-   ],
-   "related": [
-    609,
-    635,
-    217
-   ],
-   "size": "small",
-   "proof": "A tier 1 test that reads ci.yml's release job and holds its downloads (appimage, windows, signature) and the five names it gives gh release create to publish.sh's expect. The job runs only on a v* tag, so the run itself is proven by the next tag, or by a trial on a fork with a throwaway key, as publish.sh's GitHub half was (tests/test_publish.py's header).",
-   "note": "tests/test_workflows.py doesn't exist: the fix makes it, and #609 fills it out (the finding says the two go well together). If this is a unit of its own, to merge before the next tag, its test can read the job line by line and needs no YAML reader. Not run by the review: what gh release create does with a folder; it doesn't change the remedy. docs/RELEASE.md section 7 gets the line for a draft a failed release job left."
-  },
-  {
    "finding": 593,
    "readiness": "ready",
    "files": [
@@ -9902,9 +9789,6 @@
     "docs/requirements/R3-app-metadata.md",
     "tests/test_backend.py"
    ],
-   "depends_on": [
-    463
-   ],
    "related": [
     488,
     490
@@ -10093,9 +9977,6 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
-   ],
-   "depends_on": [
-    463
    ],
    "related": [
     326,
@@ -10714,10 +10595,120 @@
    "size": "small",
    "proof": "The project's document checks: tests/test_doccheck.py, tests/test_doc_links.py, tests/test_docs_facts.py and tests/test_public_text.py.",
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
+  },
+  {
+   "finding": 708,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "docs/requirements/R2-apps-and-sources.md",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    705
+   ],
+   "related": [
+    273,
+    277
+   ],
+   "size": "small",
+   "proof": "A test of the Source row's text for a rate limit from the token's own host (with the hint) and from a file storage host a redirect led to (without it); the document checks for R2.10.",
+   "note": "Found by U07's fifth batch (2026-11-24), and filed by the coordinator. #273 adds R2.10's other rows: one pass over R2.10's table."
+  },
+  {
+   "finding": 710,
+   "readiness": "ready",
+   "files": [
+    "scripts/mutate.py",
+    "tests/test_mutate.py",
+    "tests/test_imports_on_windows.py",
+    "tests/skips/windows.txt"
+   ],
+   "size": "small",
+   "proof": "Tier 1: tests/test_imports_on_windows.py loads every test module with the signal module cut down to what Windows' has, and tests/test_mutate.py loads scripts/mutate.py with signal.SIGUSR1 removed; both fail before the fix. The suite collected on the release's Python for Windows (under Wine, the pinned PYWINE_IMAGE); then `scripts/test-windows-vm.sh --tests` on the Windows VM.",
+   "note": "Filed by the coordinator from its VM runs for U07 and U03 (2026-11-24). The owner decided (2026-11-25) to fix it at once, in a pull request of its own ahead of the open units (#684, #689, #694), so their Windows tests can run. tests/test_mutate.py is skipped whole on Windows (tests/skips/windows.txt): its tests are written for Linux, where the tools run. scripts/mutate.py and tests/test_mutate.py are also U21's and U38's, which come after this unit."
+  },
+  {
+   "finding": 711,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox_one_fact.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "Tier 1, tests/test_sandbox_one_fact.py: with xdg-dbus-proxy only in a folder off the system's (~/.local/bin, or a fallback bwrap folder that host_path adds), AppKata reports the proxy as missing and writes no launcher that starts a bus filter; with it under /usr, as before.",
+   "note": "Found by the author's round on #689 (U03), and filed by the coordinator (2026-11-24). It builds on sandbox.host_which and HOST_PATH, which #689 adds for #407. The coordinator's note on the issue (from #689's pass 2, P2-3) narrows the remedy: the launcher runs the proxy inside a bwrap that binds only /usr, so the check looks only where that bwrap will, and a proxy anywhere else counts as missing. #694's pass 2 (P2-B4, in U09) settles which folders the proxy's own PATH holds, and the two must agree on where a proxy may be: so the unit comes after U09 as well as U03."
+  },
+  {
+   "finding": 712,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "Tier 1, beside test_the_apparmor_setup_has_no_path_in_its_script_and_profiles_only_a_path_it_can_name: with a stand-in pkexec and a stand-in env first on AppKata's own PATH, a package action starts the system's pkexec by its path and hands it /usr/bin/env by its path.",
+   "note": "Found by #689's pass 3 (U03's pull request), and filed by the coordinator (2026-11-24). It uses sandbox.HOST_PATH, which #689 adds for #407, so it comes after U03. Low and no new boundary, as the finding says."
+  },
+  {
+   "finding": 713,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/nostr.py",
+    "tests/test_core.py"
+   ],
+   "size": "small",
+   "proof": "tests/test_core.py: a relay typed with :0, for wss and for ws, is refused with a message that names the relay, and nothing is connected on 443 or 80; a relay with no port still takes its scheme's.",
+   "note": "Found by #684's round 5 (U07's pull request) beside its own fix of the same pattern in http.py (d1872e7), and filed by the coordinator (2026-11-24). nostr.py is U23's alone."
+  },
+  {
+   "finding": 715,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    682
+   ],
+   "related": [
+    695
+   ],
+   "size": "medium",
+   "proof": "tests/test_forges.py, with a slow stand-in resolver: a request looks its host up once; a lookup longer than the request's deadline ends the request at the deadline; a Cancel during the lookup returns at once and leaves the lookup's thread to finish on its own; the connection goes to the addresses the local-address check judged, and #682's tests still pass.",
+   "note": "Found by #684's pass 9 (U07's pull request), which left it, and filed by the coordinator. It changes the check and the connection that #682's fix made in #684, so it comes after U07; #695 (U07) is the same rule, a request's deadline and Cancel, for a slow answer. Two files, but the lookup moves to a thread and the request's clock starts before the check: medium."
+  },
+  {
+   "finding": 716,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata_core/pkgbackend.py",
+    "src/appkata_core/sshsig.py",
+    "src/appkata_core/windows.py",
+    "src/appkata_core/gitsig.py",
+    "src/appkata_core/appstream.py",
+    "src/appkata_core/trustfile.py",
+    "src/appkata_core/devtools.py",
+    "scripts/sandbox/exposure.py",
+    "tests/test_core.py",
+    "tests/test_sandbox_exposure.py"
+   ],
+   "depends_on": [
+    253
+   ],
+   "size": "medium",
+   "proof": "Tier 1: a search of src/ and scripts/ finds a caller for each of the nine that stays and no definition of each that goes, and the tests of one that goes go with it (split_settings in tests/test_core.py, argv_kind in tests/test_sandbox_exposure.py); the check #694's round 4 wrote (every function of a module is one something names) passes over src/ and scripts/.",
+   "note": "Found by a check written in #694's round 4 (U09's pull request), and filed by the coordinator. No unit holds most of the nine files it names (U27 holds four; U04, U08 and U19 three each), so it is a small unit of its own, the last: by then each file's own unit has merged, and has used its function or left it. #253 (U23) decides git_version and already takes split_settings out; this unit removes what is left of the nine, each with its tests. A function that something should call and doesn't is a finding of its own."
   }
  ],
  "shared_files": [
-  ".github/workflows/ci.yml",
   "DEVELOP.md",
   "docs/GENESIS.md",
   "docs/RELEASE.md",
