@@ -2161,6 +2161,36 @@ def test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files(e
 
 
 @linux_only
+def test_the_sweep_removes_only_what_a_stopped_change_or_write_left_beside_an_apps_files(env, server, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-T1: the sweep removes <path>.<digits>.was and <path>.<digits>.tmp beside an
+    # app's files and nothing else (R17.4). Every file the tests put beside them was of that shape
+    # or matched none of its globs, so with the check of the name and the folder taken out every
+    # test still passed. Here a file of each near shape is beside them too, with a folder and a
+    # link to one of the shape, and what a stopped write left of an app AppKata didn't install:
+    # AppKata's start removes the ten its stopped change left, keeps all of these and tries none.
+    import logging
+    from appkata_core import sandbox
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    _stopped_change(tmp_path, env, p, monkeypatch, sandbox.resolve_template("strict"))
+    left = _beside(tmp_path, env)
+    run, mine = str(tmp_path / _KEPT[0]), tmp_path / "mine"
+    keep = [f"{run}.abc.was", f"{run}.1.2.tmp", f"{run}..tmp", f"{run}.-5.was", f"{run}.٣.was", f"{run}.5.was.d",
+            f"{tmp_path / _KEPT[4]}.12.was.bak", str(tmp_path / "xdg" / "applications" / "appkata-other.desktop.4242.tmp")]
+    for f in keep:
+        open(f, "w").close()
+    mine.mkdir()
+    os.mkdir(f"{run}.77.was")                                           # a folder
+    os.symlink(mine, f"{run}.88.tmp")                                   # and a link to one
+    keep += [f"{run}.77.was", f"{run}.88.tmp"]
+    caplog.set_level(logging.WARNING, logger="appkata.install")
+    assert sorted(os.path.relpath(f, tmp_path) for f in install.sweep_left_beside(env)) == left and len(left) == 10
+    assert [f for f in keep if not os.path.lexists(f)] == [] and caplog.text == ""
+    assert sorted(_beside(tmp_path, env)) == sorted(os.path.relpath(f, tmp_path) for f in keep if re.search(r"\.[0-9]+\.(was|tmp)$", f))
+
+
+@linux_only
 @pytest.mark.parametrize("where", ["AppKata's start", "the change that kept it"])
 def test_a_file_left_beside_an_apps_files_that_cant_be_removed_is_logged_with_why(env, server, tmp_path, monkeypatch, caplog, where):
     # #689's review, P7-B1a: a leftover beside an app's files that AppKata's start (or the app's
