@@ -405,6 +405,43 @@ def test_a_refused_portable_install_leaves_everything_as_it_was(windows_road, en
         assert not any(os.path.exists(lnk) for lnk in windows_road["made"])
 
 
+@pytest.mark.parametrize("name,exe", [("日本語アプリ", "app.exe"), ("Приложение 2", "2.exe"), ("Demo Tool", "DemoTool.exe")])
+def test_a_portable_program_is_named_after_its_app_or_by_the_apps_id(windows_road, env, server, tmp_path, monkeypatch, name, exe):
+    # CR1.3-39, Windows' side: a portable .exe is kept under the app's name without what isn't an
+    # ASCII letter or digit, and an app whose name has none had a program named just `.exe`.
+    from appkata_core import install
+    monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
+    root, base = server
+    (root / "tool-1.0-portable.exe").write_bytes(b"MZ, and not a program")
+    a = Asset("tool-1.0-portable.exe", f"{base}/tool-1.0-portable.exe")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "bin"))
+    rec = install.install(env, {**APP, "name": name, "exeKind": "portable", "installVersion": "1.0"}, a, "exe", [a], portable=p)
+    assert rec["current"]["exec"] == os.path.join("1.0", exe) and os.listdir(rec["current"]["path"]) == [exe]
+    assert os.path.basename(rec["exec"]) == exe and os.path.exists(rec["exec"])
+    install.uninstall(env, APP["url"])
+    assert not os.path.lexists(rec["target"])
+
+
+@pytest.mark.parametrize("name,exe", [("Con", "_Con.exe"), ("AUX", "_AUX.exe"), ("Com 1", "_Com1.exe"), ("nul!", "_nul.exe"),
+                                      ("Console", "Console.exe"), ("Com 10", "Com10.exe")])
+def test_a_portable_program_of_an_app_named_as_a_device_has_a_name_windows_accepts(windows_road, env, server, tmp_path, monkeypatch, name, exe):
+    # R15.16: "App folder and file names avoid the names Windows reserves ... by adding `_`". The
+    # app's folder and its Start-menu shortcut did; its portable program was the name's letters and
+    # digits as they came, so an app named Con had `Con.exe`, which Windows reads as the console
+    # whatever the extension. Found beside CR1.3-39, in the same expression.
+    from appkata_core import install
+    monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
+    root, base = server
+    (root / "tool-1.0-portable.exe").write_bytes(b"MZ, and not a program")
+    a = Asset("tool-1.0-portable.exe", f"{base}/tool-1.0-portable.exe")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "bin"))
+    rec = install.install(env, {**APP, "name": name, "exeKind": "portable", "installVersion": "1.0"}, a, "exe", [a], portable=p)
+    assert os.listdir(rec["current"]["path"]) == [exe] and not w.RESERVED.match(exe) and w.safe_name(exe) == exe
+    assert os.path.basename(rec["exec"]) == exe and open(rec["exec"], "rb").read() == b"MZ, and not a program"
+    install.uninstall(env, APP["url"])
+    assert not os.path.lexists(rec["target"])
+
+
 # ---------------------------------------------------------------- the Visual C++ run-time (R15.18)
 def make_pe(path, dlls, delay=(), pe32plus=True):
     """A minimal Windows program whose import tables name `dlls` (and delay-loaded `delay`)."""

@@ -594,11 +594,82 @@ def command_link_refusal(name: str, link: str) -> str:
 
 
 def _safe(v: str) -> str:
+    """A version as one name, or a part of one, in an app's folder (R4.3.1): a version's own
+    folder, the version in an AppImage's file name, the folder an AppImage is extracted to
+    (sandbox.extracted_dir). Never empty, and never starting with a dot: the dots were kept, so
+    a release whose version was `..` had the install folder itself for its version's folder, and
+    :func:`_place` emptied it, every app AppKata installed; `.` was the app's own folder, with its
+    kept versions (CR1.3-9). A version is what the host that answers as the forge says it is."""
     s = re.sub(r"[^A-Za-z0-9._+-]+", "_", v or "unknown")
+    if s.startswith("."):
+        s = "_" + s
     if OS == "windows":
         from .windows import safe_name
         s = safe_name(s)
     return s
+
+
+# What AppKata keeps in an app's folder beside its versions' folders: the link to the current
+# version (R4.3.1.2; a junction on Windows, R15.5) and a sandboxed app's launcher (R17.4).
+_KEPT_NAMES = ("current", "run")
+# How the folders AppKata makes beside a version's own end, while it places one (:func:`_place`):
+# the version being unpacked, and the one whose place it takes, set aside (:func:`_aside`).
+_KEPT_ENDS = (".new", ".old")
+
+
+def _version_folder(version: str) -> str:
+    """The name of the folder one version of an archive is unpacked into (R4.3.1): the version as a
+    name (:func:`_safe`), with `_` before one that is a name AppKata keeps in the app's folder
+    itself (:data:`_KEPT_NAMES`), in any case, as Windows compares names (R15.16). A release whose
+    version was the word "current" asked for its folder at the link's own place, and one named
+    "run" at the launcher's: the first couldn't be installed, the second couldn't be installed
+    sandboxed, or sandboxed after (CR1.3-47). And with `_` after one that ends as the folders made
+    while a version is placed do (:data:`_KEPT_ENDS`): installing 2.0 began by removing what was at
+    `2.0.new`, and what was at `2.0.old` next, so a version named 2.0.new or 2.0.old was deleted
+    there, kept or in use, whether or not the install then succeeded. An AppImage's version is in
+    its file's name, which is none of these."""
+    name = _safe(version)
+    if name.lower() in _KEPT_NAMES:
+        name = "_" + name
+    if name.lower().endswith(_KEPT_ENDS):
+        name += "_"
+    return name
+
+
+def _file_name(name: str) -> str:
+    """The name a release's file is downloaded and kept under: its own, as one file name. The name
+    is the release author's text (a GitLab release link's is free text, a Gitea or Forgejo
+    attachment's is its uploader's, and a host that answers as a forge sends what it likes), and it
+    was used as a path as it came: `../../../x.tar.gz` was downloaded over a file three folders
+    above the app's download folder, moved to a place outside the app's folder with the executable
+    bit set, and deleted there when the install failed; a name starting with `/` dropped
+    AppKata's folder altogether (CR1.3-8).
+
+    So every path is made from what this returns: the part after the last `/` or `\\` (both, on
+    every system: a release is made for all of them). What is left is refused when it is no file's
+    name: empty, `.` or `..`; one starting with a dot (a hidden file, and never an installable
+    one); one holding a control character; on Windows one it reserves or can't hold (R15.16; a
+    `:` among them, which names a drive or a stream of another file)."""
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    bad = not base or base.startswith(".") or bool(_CONTROL.search(base))
+    if OS == "windows" and not bad:
+        from .windows import safe_name
+        bad = safe_name(base) != base
+    if bad:
+        raise InstallError(f"the release's file has a name that can't be used ({one_line(name or '')[:120]!r}); "
+                           "nothing was installed")
+    return base
+
+
+def _in_folder(folder: str, name: str) -> str:
+    """`name` as a path directly in `folder`, refused when the two joined are anywhere else. Every
+    name that reaches a path here is cleaned where it comes in (:func:`_file_name`, :func:`_safe`);
+    this is the check at the place of use, before anything is written, moved or deleted there, so
+    a name that got past them some day stops here."""
+    path = os.path.join(folder, name)
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(folder):
+        raise InstallError(f"{name!r} isn't a name in {folder}; nothing was installed")
+    return path
 
 
 def _extract(kind: str, file: str, dest: str) -> None:
@@ -635,6 +706,22 @@ def _appimage_name(asset_name: str, version: str, versioned: bool = False) -> st
         return asset_name
     stem, ext = os.path.splitext(asset_name)
     return f"{stem}-{_safe(version)}{ext}"
+
+
+def _file_stem(app: dict, target: str) -> str:
+    """The app's name in the name of a file AppKata names after it: `LocalSend.AppImage`, the stable
+    name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2), and a portable Windows
+    program's `.exe`. It is the name's ASCII letters and digits. An app whose name has none
+    (日本語アプリ) got a file named just `.AppImage` or `.exe`: hidden on Linux, and no name at all.
+    It gets the app's id (:func:`app_id_of`), which is the name of its folder, `target`
+    (CR1.3-39). On Windows it is never a device's name (R15.16), as the app's folder and its
+    Start-menu shortcut aren't: an app named Con, Aux or COM 1 had its portable program kept as
+    `Con.exe`, which Windows reads as the console."""
+    stem = re.sub(r"[^A-Za-z0-9]+", "", app["name"]) or os.path.basename(target)
+    if OS == "windows":
+        from .windows import safe_name
+        stem = safe_name(stem)
+    return stem
 
 
 def _aside(path: str) -> str:
@@ -674,10 +761,9 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
-        dest = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
-                            else _appimage_name(asset_name, version))
+        dest = _in_folder(target, _file_stem(app, target) + ".AppImage" if fixed else _appimage_name(asset_name, version))
         if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
-            dest = os.path.join(target, _appimage_name(asset_name, version, versioned=True))
+            dest = _in_folder(target, _appimage_name(asset_name, version, versioned=True))
         staging = dest + ".new"
         _remove_path(staging)
         try:
@@ -688,14 +774,14 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
             _remove_path(staging)
             raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
-    vdir = os.path.join(target, "app" if fixed else _safe(version))
+    vdir = _in_folder(target, "app" if fixed else _version_folder(version))
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
     try:
         if kind == "exe":                      # a portable Windows program
             os.makedirs(staging)
-            shutil.move(file, os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe"))
-            exe = os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe")
+            exe = os.path.join(staging, _file_stem(app, target) + ".exe")
+            shutil.move(file, exe)
         else:
             _extract(kind, file, staging)
             exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
@@ -760,7 +846,7 @@ def _enter_fixed_layout(rec: dict, app: dict, portable: "Portable", target: str)
     fixed name: neither a link AppKata made nor one of the app's own versions."""
     cur, kept, own = rec["current"], rec.get("kept", []), (portable.root, os.path.dirname(target))
     appimage = cur["path"].lower().endswith(".appimage") and not os.path.isdir(cur["path"])
-    fixed = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if appimage else "app")
+    fixed = os.path.join(target, _file_stem(app, target) + ".AppImage" if appimage else "app")
     aside = ""
     if fixed != cur["path"]:
         if os.path.lexists(fixed) and not _points_into(fixed, own) and fixed not in [k["path"] for k in kept]:
@@ -803,7 +889,7 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     run = os.path.join(target, cur["exec"])
     if portable.stable_name and OS != "windows":       # symlinks need extra rights on Windows
         if cur["path"].lower().endswith(".appimage"):      # LocalSend.AppImage → LocalSend-1.18.2-x86_64.AppImage
-            stable = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage")
+            stable = os.path.join(target, _file_stem(app, target) + ".AppImage")
             if stable != cur["path"]:
                 run = _link(cur["path"], stable)
                 rec["links"].append(stable)
@@ -1182,6 +1268,10 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     portable = portable or Portable()
     if app.get("foreign"):
         raise InstallError("installed outside AppKata; uninstall that copy first")   # R4.5.3
+    # The file's name on this computer (R4.8.2): the release's own, as one file name, for the
+    # download, the place it is installed to and what is deleted when it fails. `asset.name`, the
+    # release's, is what the record keeps: it is what the release's checksums and the next sync name.
+    name = _file_name(asset.name)
     rel_version = app.get("installVersion") or app.get("updateTo") or app.get("version", "")
     prev_row = db.one("SELECT record FROM installs WHERE url=?", (app["url"],))
     prev = json.loads(prev_row["record"] or "{}") if prev_row else {}
@@ -1193,6 +1283,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         check_not_running(moving_from.get("target", ""), app["name"])
     portable = _where_it_is(prev, portable)        # an update: the app stays in the folder it is in (R4.3.1)
     tmpdir = os.path.join(downloads_dir(), app_id)          # kept when a download breaks, to resume it
+    file = _in_folder(tmpdir, name)
     os.makedirs(tmpdir, exist_ok=True)
     check_not_running(prev.get("target", ""), app["name"])
     ok = keep = False
@@ -1200,10 +1291,9 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     undo = None             # takes a portable install back, from its first change until its record is stored
     retired: list[dict] = []        # the versions the new record no longer names: removed once it is stored (R4.6)
     try:
-        file = os.path.join(tmpdir, asset.name)
         log.info("downloading %s", asset.url)
         got = download(asset.url, file, progress, cancel)
-        log.info("downloaded %s (%d bytes, sha256 %s)", asset.name, os.path.getsize(file), got)
+        log.info("downloaded %s (%d bytes, sha256 %s)", name, os.path.getsize(file), got)
         if phase:
             phase("Verifying")
         want, how = expected_sha256(asset, assets)
@@ -1231,7 +1321,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             os.makedirs(updates, exist_ok=True)
             for old in os.listdir(updates):
                 os.remove(os.path.join(updates, old))
-            pending = os.path.join(updates, asset.name)
+            pending = _in_folder(updates, name)
             shutil.move(file, pending)
             rec = {**prev, "pendingSetup": pending, "verified": verified, "signer": signer}
             db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
@@ -1258,7 +1348,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             undo = partial(_undo_portable, db, app, rec, prev, portable, target, was)
             _secure_target(portable, target)
             rec.update(target=target, files=prev.get("files", []), links=prev.get("links", []), kept=[], selfUpdating=True)
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name, fixed=True)
+            rec["current"] = _place(kind, file, app, target, rel_version, name, fixed=True)
             was["aside"] = _set_aside(rec["current"])
             # the versions it had go once this one is installed, not before it is placed (R4.6)
             retired = [old for old in ([prev["current"]] + prev.get("kept", []) if prev.get("current") else [])
@@ -1284,7 +1374,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec.update(target=target, links=prev.get("links", []), files=prev.get("files", []),
                        shortcuts=prev.get("shortcuts", []), shims=prev.get("shims", []),
                        kept=([prev["current"]] if prev.get("current") else []) + prev.get("kept", []))
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name,
+            rec["current"] = _place(kind, file, app, target, rel_version, name,
                                     others=tuple(k["path"] for k in rec["kept"] if k.get("version") != rel_version))
             was["aside"] = _set_aside(rec["current"])
             if OS == "windows" and portable.motw:
@@ -1345,8 +1435,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             shutil.rmtree(tmpdir, ignore_errors=True)
         elif keep:
             pass
-        elif os.path.exists(os.path.join(tmpdir, asset.name)):
-            os.remove(os.path.join(tmpdir, asset.name))      # complete but bad (checksum, install): don't resume it
+        elif os.path.exists(file):
+            os.remove(file)                     # complete but bad (checksum, install): don't resume it
 
 
 def kept_versions(db: DB, url: str) -> list[str]:

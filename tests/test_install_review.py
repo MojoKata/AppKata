@@ -2456,3 +2456,366 @@ def test_install_options_on_windows_show_the_folder_an_installed_app_is_in(tmp_p
     assert plan["folderMe" if other == "me" else "folderEveryone"] == settings[other]          # where a move goes
     assert be._app_options(APP["url"]).root == was
     assert be._app_options(APP["url"], {"scope": other}).root == settings[other]               # what the move installs into
+
+
+# ---------------------------------------------------------------- a release's own text as a part of a path (CR1.3-8)
+
+def _own(tmp_path, env, app_id="demo-tool"):
+    """What an install changed that isn't the app's own: every difference `_left` sees from before
+    it, but the app's folder, its downloads, its command link (in the tests' `cmd`), its menu
+    entry with its script, and its row. Returns a function to call after it."""
+    before = _left(tmp_path, env)
+    own = tuple(os.path.join(*p, "") for p in (("apps", app_id), ("data", "downloads", app_id), ("cmd", app_id),
+                                               ("data", "menu", app_id), ("xdg", "applications", f"appkata-{app_id}.desktop")))
+
+    def others():
+        return {k: v for k, v in _changed(before, _left(tmp_path, env)).items()
+                if k != "<installs>" and not (k + os.sep).startswith(own)}
+    return others
+
+
+# where each name leads from the download folder (<data>/downloads/<app>/) and from the app's
+# folder (<apps>/<app>/), which are at different depths: {how the release names its file: the name}
+_PATH_NAMES = {"three folders up": "../../../{}", "two folders up": "../../{}", "another app's folder": "../other-app/{}",
+               "an absolute path": "{abs}", "a path that comes back": "x/../{}", "in a folder": "sub/{}"}
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["appimage", "tarball", "a self-updating appimage"])
+@pytest.mark.parametrize("named", list(_PATH_NAMES))
+def test_a_release_file_named_as_a_path_is_kept_under_its_last_part_in_the_apps_own_folders(env, server, tmp_path, named, kind):
+    # CR1.3-8: the release's name for its file was joined to the download folder and to the app's
+    # folder as it came. `../../../victim.tar.gz` was downloaded over the user's file three folders
+    # up; as an AppImage it was then moved to another depth, where a missing folder made the
+    # install fail and the failure deleted what the download had just replaced, and an existing one
+    # got the program, executable, outside the app's folder; `/...` dropped AppKata's folder.
+    file = "Victim-1.2.0-x86_64.AppImage" if "appimage" in kind else "victim-1.2.0-linux-x86_64.tar.gz"
+    theirs = [tmp_path / file, tmp_path / "apps" / file, tmp_path / "apps" / "other-app" / file,
+              tmp_path / "data" / "downloads" / "other-app" / file, tmp_path / "data" / file]
+    for f in theirs:                    # the user's, and another app's, wherever such a name leads
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    if "appimage" in kind:
+        a = _appimage(server, "served.AppImage", b"\x7fELF the release's")
+    else:
+        a = _tarball(server, "served.tar.gz", {"tool-1.2.0/tool": 0o755})
+    a = Asset(_PATH_NAMES[named].format(file, abs=str(theirs[0])), a.url)
+    others = _own(tmp_path, env)
+    app = {**APP, "autoUpdate": True} if kind.startswith("a self-updating") else APP
+    rec = install.install(env, app, a, kind.split()[-1], [a],
+                          portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False, command_dir=""))
+    assert others() == {} and [f.read_text() for f in theirs] == ["theirs"] * len(theirs)
+    folder = tmp_path / "apps" / "demo-tool"
+    assert os.path.dirname(rec["current"]["path"]) == str(folder) and _inside(rec["exec"], folder)
+    if kind == "appimage":                                      # under the name's last part (R4.3.1)
+        assert os.path.basename(rec["current"]["path"]) == file
+    assert _downloads() == [str(theirs[3])]                     # nothing of this app's, and the other app's as it was
+    assert env.one("SELECT asset FROM installs")["asset"] == a.name        # the release's own name, as its checksums name it
+
+
+@pytest.mark.parametrize("named", list(_PATH_NAMES) + ["three folders up, by backslashes"])
+def test_a_download_named_as_a_path_that_fails_its_checksum_is_deleted_where_it_was_downloaded(env, server, tmp_path, named):
+    # CR1.3-8, the failure's side (R4.8.2: "A complete file that fails its checksum or its install
+    # is deleted"): the file deleted was the one the release's name led to. On every system, so
+    # Windows' run shows it with its own separator; the backslashes are one file's name on Linux.
+    root, base = server
+    (root / "served.AppImage").write_bytes(b"tampered")
+    file = "Victim-1.2.0-x86_64.AppImage"
+    theirs = [tmp_path / file, tmp_path / "apps" / file, tmp_path / "apps" / "other-app" / file, tmp_path / "data" / file]
+    for f in theirs:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    form = _PATH_NAMES.get(named) or "..\\..\\..\\{}"
+    a = Asset(form.format(file, abs=str(theirs[0])), base + "/served.AppImage", digest="sha256:" + hashlib.sha256(b"original").hexdigest())
+    with pytest.raises(install.InstallError, match="doesn't match its checksum"):
+        install.install(env, APP, a, "appimage", [a])
+    assert [f.read_text() for f in theirs] == ["theirs"] * len(theirs)
+    assert _downloads() == [] and not (tmp_path / "apps" / "demo-tool").exists()
+
+
+def test_appkatas_own_setup_named_as_a_path_waits_in_the_updates_folder(env, server, tmp_path, monkeypatch):
+    # CR1.3-8, AppKata's own update on Windows (R2.11.5): the setup that waits for the restart was
+    # moved to the updates folder joined with the release's name, and run from there with the
+    # user's rights or an administrator's. Windows' road, on any system.
+    from appkata_core import windows
+    monkeypatch.setattr(install, "OS", "windows")
+    monkeypatch.setattr(windows, "authenticode", lambda path: ("NotSigned", ""))
+    root, base = server
+    (root / "served.exe").write_bytes(b"MZ the new setup")
+    theirs = [tmp_path / "AppKata-Setup.exe", tmp_path / "data" / "AppKata-Setup.exe"]     # two up from the updates folder,
+    for f in theirs:                                                                    # and from the download's
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    a = Asset("../../AppKata-Setup.exe", base + "/served.exe")
+    rec = install.install(env, {**APP, "selfSetup": True}, a, "exe", [a])
+    assert rec["pendingSetup"] == str(tmp_path / "data" / "updates" / "AppKata-Setup.exe")
+    assert open(rec["pendingSetup"], "rb").read() == b"MZ the new setup" and [f.read_text() for f in theirs] == ["theirs"] * 2
+    assert os.listdir(tmp_path / "data" / "updates") == ["AppKata-Setup.exe"] and _downloads() == []
+
+
+_FILE_NAMES = [     # (the release's name for its file, the name it is kept under: None = refused), on (which systems)
+    ("Tool-1.2.0-x86_64.AppImage", "Tool-1.2.0-x86_64.AppImage", "both"),
+    ("My Tool (1.2).tar.gz", "My Tool (1.2).tar.gz", "both"),
+    ("日本語アプリ-1.0.AppImage", "日本語アプリ-1.0.AppImage", "both"),
+    ("../../../victim.tar.gz", "victim.tar.gz", "both"),
+    ("/etc/victim.tar.gz", "victim.tar.gz", "both"),
+    ("..\\..\\..\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x.exe", "x.exe", "both"),
+    ("C:\\Users\\Public\\x.exe", "x.exe", "both"),
+    ("\\\\server\\share\\x.exe", "x.exe", "both"),
+    ("a/b\\c/..\\x.zip", "x.zip", "both"),
+    ("", None, "both"), (".", None, "both"), ("..", None, "both"), ("../..", None, "both"), ("tool/", None, "both"),
+    ("tool\\", None, "both"), ("/", None, "both"),
+    (".AppImage", None, "both"), ("../.hidden.tar.gz", None, "both"), ("...", None, "both"),
+    ("tool\n.AppImage", None, "both"), ("tool\x00.AppImage", None, "both"), ("tool\x7f.zip", None, "both"),
+    ("C:x.exe", None, "windows"), ("x.exe:stream", None, "windows"), ("con.exe", None, "windows"), ("NUL", None, "windows"),
+    ("x/COM1.zip", None, "windows"), ("tool.exe.", None, "windows"), ("tool.exe ", None, "windows"), ("a<b>.zip", None, "windows"),
+    ('a"b.zip', None, "windows"), ("a|b.zip", None, "windows"), ("a?.zip", None, "windows"), ("a*.zip", None, "windows"),
+]
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+@pytest.mark.parametrize("name,kept,on", _FILE_NAMES, ids=[repr(n) for n, _, _ in _FILE_NAMES])
+def test_the_one_file_name_a_release_file_is_kept_under(monkeypatch, name, kept, on, system):
+    # R4.8.2: the part after the last / or \ (on every system), refused when that is no file's name
+    # here. What Windows alone refuses is a name on Linux, where a release's Linux file may hold it.
+    monkeypatch.setattr(install, "OS", system)
+    if kept is None and on in ("both", system):
+        with pytest.raises(install.InstallError, match="has a name that can't be used .*nothing was installed"):
+            install._file_name(name)
+    else:
+        got = install._file_name(name)
+        assert got == (kept or name.rsplit("/", 1)[-1]) and "/" not in got and "\\" not in got
+
+
+def test_a_release_whose_file_has_no_usable_name_is_refused_before_anything_is_downloaded(env, server, tmp_path):
+    a = _appimage(server, "served.AppImage")
+    others = _own(tmp_path, env)
+    with pytest.raises(install.InstallError, match="has a name that can't be used"):
+        install.install(env, APP, Asset("../..", a.url), "appimage", [a])
+    assert others() == {} and _downloads() == [] and not (tmp_path / "apps").exists()
+    assert not (tmp_path / "data" / "downloads").exists() and env.one("SELECT * FROM installs") is None
+
+
+@pytest.mark.parametrize("name", ["../x-1.0.AppImage", "/x-1.0.AppImage", "sub/x-1.0.AppImage", "..", ".", ""])
+def test_no_name_is_joined_to_a_folder_unless_it_names_a_file_in_it(tmp_path, name):
+    # the check at the place of use: whatever cleans a name where it comes in, a path that isn't
+    # directly in its folder is refused before anything is written, moved or deleted there
+    folder = tmp_path / "apps" / "demo-tool"
+    with pytest.raises(install.InstallError, match="isn't a name in"):
+        install._in_folder(str(folder), name)
+    assert install._in_folder(str(folder), "x-1.0.AppImage") == str(folder / "x-1.0.AppImage")
+    if "x-1.0" in name:                 # and _place, given a path for the release's file name
+        file = tmp_path / "downloaded"
+        file.write_bytes(b"\x7fELF")
+        with pytest.raises(install.InstallError, match="isn't a name in"):
+            install._place("appimage", str(file), APP, str(folder), "1.0", name)
+        assert file.read_bytes() == b"\x7fELF" and os.listdir(folder) == [] and os.listdir(tmp_path / "apps") == ["demo-tool"]
+
+
+# ---------------------------------------------------------------- a release's version as a part of a path (CR1.3-9)
+
+def _other_app(env, server, p):
+    """Another app in the same install folder, installed and running."""
+    b = _tarball(server, "other-1.0.tar.gz", {"other-1.0/other": 0o755})
+    rec = install.install(env, {**APP, "url": APP["url"] + "-other", "name": "Other", "repo": "demo/other", "installVersion": "1.0"},
+                          b, "tarball", [b], portable=p)
+    assert _runs(rec["exec"]) == "other-1.0/other"
+    return rec
+
+
+@linux_only
+@pytest.mark.parametrize("version", ["..", ".", "...", ".hidden", "../.."])
+def test_a_release_whose_version_is_dots_gets_a_folder_in_the_apps_own_and_takes_no_other_apps(env, server, tmp_path, version):
+    # CR1.3-9: R4.3.1 unpacks an archive "into a folder named after its version", and the name kept
+    # the version's dots: for `..` that folder was the install folder itself, with every app in it,
+    # and for `.` the app's own, with its kept versions. A version is whatever the host that
+    # answers as the forge sends. The app is installed all the same, in a folder of its own.
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=2)
+    other = _other_app(env, server, p)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    others = _own(tmp_path, env)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**APP, "installVersion": version}, a, "tarball", [a], portable=p)
+    home = tmp_path / "apps" / "demo-tool"
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+    assert os.path.dirname(rec["current"]["path"]) == str(home) and not os.path.basename(rec["current"]["path"]).startswith(".")
+    assert rec["current"]["version"] == version and _runs(rec["exec"]) == "tool-next/tool" == _runs(tmp_path / "cmd" / "demo-tool")
+    assert [k["version"] for k in rec["kept"]] == ["1.0"] and os.path.isdir(rec["kept"][0]["path"])      # its kept version too
+    back = install.switch_to(env, dict(APP), "1.0", p)                      # which it goes back to, and returns from
+    assert _runs(back["exec"]) == "tool-1.0/tool" and [k["version"] for k in back["kept"]] == [version]
+    assert _runs(install.switch_to(env, dict(APP), version, p)["exec"]) == "tool-next/tool"
+    assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(home)
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_a_version_is_always_one_plain_name_in_the_apps_folder(monkeypatch, system):
+    # the class, for whatever a version holds: never empty, `.` or `..`, never a hidden name, never
+    # a path; and the versions people release are named as they were
+    import itertools
+    from appkata_core import sandbox
+    monkeypatch.setattr(install, "OS", system)
+    for v, name in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), ("v2", "v2"), ("nightly/2026 11", "nightly_2026_11"),
+                    ("", "unknown"), ("..", "_.."), (".", "_."), ("...", "_..."), (".5", "_.5"), ("../..", "_.._.."),
+                    ("/", "_"), ("\\", "_"), ("日本", "_")):
+        assert install._safe(v) == (name if system == "linux" or not name.endswith(".") else name.rstrip(".") + "_"), v
+    folder = os.path.join(os.path.abspath(os.sep), "apps", "demo-tool")
+    for v in ("".join(c) for n in range(6) for c in itertools.product("./\\ a_", repeat=n)):
+        s = install._safe(v)
+        assert s and s not in (".", "..") and not s.startswith(".") and "/" not in s and "\\" not in s, (v, s)
+        assert os.path.dirname(install._in_folder(folder, s)) == folder, (v, s)
+        assert system != "windows" or s[-1] not in ". ", (v, s)
+        assert os.path.dirname(sandbox.extracted_dir(folder, v)) == folder                # an extracted AppImage's folder
+        name = install._appimage_name("Tool.AppImage", v)                       # and an AppImage's own file
+        assert os.path.dirname(install._in_folder(folder, name)) == folder and name.startswith("Tool"), (v, name)
+
+
+def test_no_version_is_placed_in_a_folder_that_isnt_in_the_apps_own(tmp_path, monkeypatch):
+    # the check at the place of use (_in_folder), should a version's name ever come out as a path
+    folder, file = tmp_path / "apps" / "demo-tool", tmp_path / "downloaded.tar.gz"
+    (tmp_path / "apps" / "other-app" / "1.0").mkdir(parents=True)
+    file.write_bytes(b"an archive")
+    for name in ("..", ".", "../other-app", "/x", "a/b"):
+        monkeypatch.setattr(install, "_safe", lambda v, name=name: name)
+        with pytest.raises(install.InstallError, match="isn't a name in"):
+            install._place("tarball", str(file), APP, str(folder), "1.0", "tool.tar.gz")
+        assert os.listdir(folder) == [] and os.listdir(tmp_path / "apps" / "other-app") == ["1.0"] and file.exists()
+
+
+# ---------------------------------------------------------------- the file AppKata names after an app (CR1.3-39)
+
+@linux_only
+@pytest.mark.parametrize("name", ["日本語アプリ", "Приложение", "Εφαρμογή", "…", "!!!", ""])
+def test_an_app_whose_name_has_no_ascii_letter_or_digit_gets_its_id_in_the_file_named_after_it(env, server, tmp_path, name):
+    # CR1.3-39: the stable name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2)
+    # are the app's name without what isn't an ASCII letter or digit, which for such a name is
+    # nothing: the file was `.AppImage`, hidden and nameless. The whole road of that name: the
+    # fixed layout, AppKata's own update into versions with the stable link, and back.
+    from appkata_core import sandbox
+    app, gs = {**APP, "name": name}, sandbox.resolve_template("standard")
+    home, cmd = tmp_path / "apps" / "app", tmp_path / "cmd"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    a = _version(server, "appimage", "1.0")
+    rec = install.install(env, {**app, "installVersion": "1.0", "autoUpdate": True}, a, "appimage", [a], portable=p)
+    assert rec["id"] == "app" and os.listdir(home) == ["app.AppImage"]                    # it updates itself: one file
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"1.0"
+    install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": gs}, p)        # sandboxed, so AppKata updates it
+    a = _version(server, "appimage", "2.0")
+    rec = install.install(env, {**app, "installVersion": "2.0", "sandbox": gs}, a, "appimage", [a], portable=p)
+    assert os.readlink(home / "app.AppImage") == "Tool-2.0-x86_64.AppImage" and str(home / "app.AppImage") in rec["links"]
+    assert [os.path.basename(k["path"]) for k in rec["kept"]] == ["app-1.0.AppImage"]
+    assert not [n for n in os.listdir(home) if n.startswith(".")]
+    rec = install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": None}, p)       # Off: it updates itself again
+    assert os.listdir(home) == ["app.AppImage"] and not os.path.islink(home / "app.AppImage")
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"2.0"
+    # a second such app has its own id, and its own name
+    b = _appimage(server, "Other-1.0-x86_64.AppImage", b"other")
+    other = install.install(env, {**app, "url": APP["url"] + "-other", "name": "別のアプリ"}, b, "appimage", [b], portable=p)
+    assert other["id"] == "app-2" and other["exec"] == str(tmp_path / "apps" / "app-2" / "app-2.AppImage")
+    assert os.readlink(other["exec"]) == "Other-1.0-x86_64.AppImage"
+    assert install.uninstall(env, APP["url"]) == [] and install.uninstall(env, APP["url"] + "-other") == []
+    assert not os.path.lexists(home) and not os.path.lexists(tmp_path / "apps" / "app-2")
+
+
+def test_the_file_named_after_an_app_has_its_names_ascii_letters_and_digits_or_its_id():
+    folder = os.path.join("apps", "app-2")
+    for name, stem in (("LocalSend", "LocalSend"), ("Demo Tool", "DemoTool"), ("日本 App 2", "App2"), ("7-Zip", "7Zip"),
+                       ("日本語アプリ", "app-2"), ("", "app-2"), ("..", "app-2"), ("/", "app-2")):
+        assert install._file_stem({"name": name}, folder) == stem
+
+
+# ---------------------------------------------------------------- a version named as what AppKata keeps in the app's folder (CR1.3-47)
+
+@linux_only
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+@pytest.mark.parametrize("version", ["current", "run", "Current", "RUN"])
+def test_a_release_whose_version_is_a_name_appkata_keeps_in_the_apps_folder_is_installed_beside_it(env, server, tmp_path, version, sandboxed):
+    # CR1.3-47: an archive's version gets a folder named after it (R4.3.1), beside the `current`
+    # link (R4.3.1.2) and a sandboxed app's launcher, `run` (R17.4). A release whose version was
+    # the word "current" asked for its folder at the link's own place, and one named "run" at the
+    # launcher's: neither could be installed, and "run" installed unsandboxed couldn't be
+    # sandboxed after. It gets `_` before it, as a version of dots does (CR1.3-9), and is a
+    # version like any other from there: kept, gone back to, removed.
+    from appkata_core import sandbox
+    app = {**APP, **({"sandbox": sandbox.resolve_template("standard")} if sandboxed else {})}
+    home, cmd, folder = tmp_path / "apps" / "demo-tool", tmp_path / "cmd", "_" + version
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd), keep=2)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**app, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**app, "installVersion": version}, a, "tarball", [a], portable=p)
+
+    def whole(rec):
+        assert (rec["current"]["version"], rec["current"]["path"]) == (version, str(home / folder))
+        assert os.readlink(home / "current") == folder and _runs(home / "current" / "tool-next" / "tool") == "tool-next/tool"
+        assert (rec.get("launcher") == str(home / "run")) is sandboxed and os.path.isfile(home / "run") is sandboxed
+        if sandboxed:
+            assert rec["exec"] == rec["launcher"] and install.launcher_is_current(rec, app, p)
+        else:
+            assert _runs(rec["exec"]) == "tool-next/tool" == _runs(cmd / "demo-tool")
+        assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    whole(rec)
+    assert [k["version"] for k in rec["kept"]] == ["1.0"]
+    a = _version(server, "tarball", "2.0")                      # kept through the next update, and gone back to
+    rec = install.install(env, {**app, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+    assert [(k["version"], k["path"]) for k in rec["kept"]] == [(version, str(home / folder)), ("1.0", str(home / "1.0"))]
+    assert os.readlink(home / "current") == "2.0" and os.path.isdir(home / folder)
+    whole(install.switch_to(env, dict(app), version, p))
+    if not sandboxed:                                           # and an app installed unsandboxed can be sandboxed after
+        gs = sandbox.resolve_template("standard")
+        rec = install.rewrite_launcher(env, {**APP, "sandbox": gs}, p)
+        assert rec["launcher"] == str(home / "run") and os.path.isfile(home / "run") and os.path.isdir(home / folder)
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == [] and not os.path.lexists(home)
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_folder_a_version_is_unpacked_into(monkeypatch, system):
+    # the version as a name (CR1.3-9), and never one AppKata keeps there itself, in any case
+    # (Windows compares names without it, R15.16)
+    monkeypatch.setattr(install, "OS", system)
+    for version, folder in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), (".5", "_.5"), ("", "unknown"),
+                            ("current", "_current"), ("run", "_run"), ("Current", "_Current"), ("RUN", "_RUN"),
+                            ("currents", "currents"), ("current.1", "current.1"), ("rerun", "rerun"), ("app", "app"),
+                            ("2.0.new", "2.0.new_"), ("2.0.old", "2.0.old_"), ("2.0.OLD", "2.0.OLD_"), ("run.new", "run.new_"),
+                            ("new", "new"), ("2.0.newer", "2.0.newer"), ("2.0-old", "2.0-old"), ("current.old", "current.old_")):
+        assert install._version_folder(version) == folder
+        made = [folder + end for end in install._KEPT_ENDS]                 # what placing it makes beside it
+        assert not [v for v in ("2.0", "2.0.new", "2.0.old", "run", "current", version) if install._version_folder(v) in made]
+    kept = [n.lower() for n in install._KEPT_NAMES]
+    assert all(install._version_folder(v).lower() not in kept for v in install._KEPT_NAMES + ("CURRENT", "Run", "current ", " run"))
+
+
+# ---------------------------------------------------------------- a version named as a folder AppKata makes while placing one
+
+@linux_only
+@pytest.mark.parametrize("fails", [False, True], ids=["the install succeeds", "the install fails"])
+@pytest.mark.parametrize("state", ["in use", "kept"])
+@pytest.mark.parametrize("end", [".new", ".old", ".NEW"])
+def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_aside_folder(env, server, tmp_path, end, state, fails):
+    # Found beside CR1.3-47, in the same family: a version's folder at a name AppKata uses itself.
+    # Placing 2.0 unpacks it in `2.0.new`, after removing what is there, and sets what is at `2.0`
+    # aside in `2.0.old`, after removing what is there: a version named 2.0.new or 2.0.old was
+    # deleted by an install of 2.0, the one in use too, and whether or not the install succeeded
+    # (R4.6 keeps the installed version until the new one is in place).
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    home, odd = tmp_path / "apps" / "demo-tool", "2.0" + end
+    for v in (odd, "3.0")[:2 if state == "kept" else 1]:
+        a = _tarball(server, f"tool-{v}.tar.gz", {f"tool-{v}/tool": 0o755})
+        was = install.install(env, {**APP, "installVersion": v}, a, "tarball", [a], portable=p)
+    its = next(k["path"] for k in [was["current"]] + was["kept"] if k["version"] == odd)
+    before = _left(tmp_path, env)
+    if fails:
+        (server[0] / "tool-2.0.tar.gz").write_bytes(b"not an archive")
+        a = Asset("tool-2.0.tar.gz", server[1] + "/tool-2.0.tar.gz")
+        with pytest.raises(tarfile.ReadError):
+            install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _changed(before, _left(tmp_path, env)) == {}
+        assert _runs(was["exec"]) == f"tool-{was['current']['version']}/tool"
+    else:
+        a = _tarball(server, "tool-2.0.tar.gz", {"tool-2.0/tool": 0o755})
+        rec = install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _runs(rec["exec"]) == "tool-2.0/tool" and odd in [k["version"] for k in rec["kept"]]
+        back = install.switch_to(env, dict(APP), odd, p)
+        assert back["current"]["path"] == its and _runs(back["exec"]) == f"tool-{odd}/tool"
+    assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))
