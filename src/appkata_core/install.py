@@ -1566,33 +1566,43 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
         _launch_package(row["name"], rec["package"], rec.get("manager") or ("apt" if linux_family() == "debian" else "dnf"))
 
 
-_SPACE = " \t\n\r\v\f"           # what GLib's key file reader takes for white space (g_ascii_isspace)
+_SPACE = " \t\n\r\f"           # what GLib's key file reader takes for white space (g_ascii_isspace: no \v)
 _ESCAPES = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+_NOT_UTF8 = re.compile("[\udc80-\udcff]")     # a byte that isn't UTF-8, read with surrogateescape
 
 
 def _key_file(path: str) -> dict | None:
     """The keys of a desktop entry's [Desktop Entry] group, {key: value as written}, read as GLib
     reads a key file (`g_key_file_load_from_file`), or None where GLib loads no entry from the file.
-    A line's leading white space is dropped; an empty line or one starting with `#` is a comment; a
-    `[group]` line, white space after it allowed, starts a group, and a group named twice is one;
-    any other line is `key=value`, `=` the one delimiter, white space around it dropped, keys as
-    written (case counts), a key given twice its last value. A line that is none of these, a key
-    before the first group or one GLib's key names don't allow, a group name with a bracket or a
-    control character, an `Encoding` other than UTF-8 in the first group, and a first group other
-    than [Desktop Entry], and GLib refuses the file; so does it here (#689's review, P2-2: the file
-    was read with configparser, which folds keys to lower case, takes an indented line for more of
-    the line before it, `:` for `=`, and `;` for a comment)."""
+    The file is bytes, split at each line break; a carriage return before one is dropped, and the
+    last line keeps its own; a NUL ends a line (GLib reads each as a C string). A line's leading
+    white space is dropped; an empty line or one starting with `#` is a comment; a `[group]` line,
+    white space after it allowed, starts a group, and a group named twice is one; any other line is
+    `key=value`, `=` the one delimiter, white space around it dropped, keys as written (case
+    counts), a key given twice its last value. A line that is none of these, a key before the first
+    group or one GLib's key names don't allow (a space before its locale's bracket among them), a
+    group name with a bracket or a control character, an `Encoding` other than UTF-8 in the first
+    group, and a first group other than [Desktop Entry], and GLib refuses the file; so does it here
+    (#689's review, P2-2: the file was read with configparser, which folds keys to lower case, takes
+    an indented line for more of the line before it, `:` for `=`, and `;` for a comment). A byte
+    that isn't UTF-8 refuses no file: GLib checks a value when it is asked for as a string, and has
+    none then (:func:`_key_string`), so such bytes are kept as they are (surrogate escapes) and a
+    key's or a group's name may hold them (P3-1: the whole file was refused, and Open passed over an
+    entry the menu shows for a Latin-1 Comment[fr]). White space is GLib's, which a vertical tab
+    isn't."""
     try:
         if not os.path.isfile(path) or os.path.getsize(path) > 1 << 20:
             return None
-        with open(path, encoding="utf-8", newline="") as f:
-            lines = f.read().split("\n")
-    except (OSError, UnicodeDecodeError):
+        with open(path, "rb") as f:
+            lines = f.read().decode("utf-8", "surrogateescape").split("\n")
+    except OSError:
         return None
     groups: dict[str, dict] = {}
     keys = None
-    for line in lines:
-        line = (line[:-1] if line.endswith("\r") else line).lstrip(_SPACE)
+    for i, line in enumerate(lines):
+        if line.endswith("\r") and i < len(lines) - 1:
+            line = line[:-1]
+        line = line.split("\x00", 1)[0].lstrip(_SPACE)
         if not line or line.startswith("#"):
             continue
         if m := re.fullmatch(r"\[([^\]]*)\][ \t]*", line):
@@ -1602,7 +1612,7 @@ def _key_file(path: str) -> dict | None:
             continue
         key, eq, value = line.partition("=")
         key = key.rstrip(_SPACE)
-        if not eq or keys is None or not re.fullmatch(r"[^=\[\]]+(\[[\w.@-]*\])?", key):
+        if not eq or keys is None or not re.fullmatch(r"[^=\[\]]*[^=\[\] ](\[[\w.@-]*\])?", key):
             return None
         value = value.lstrip(_SPACE)
         if key == "Encoding" and keys is next(iter(groups.values())) and value.lower() != "utf-8":
@@ -1614,9 +1624,10 @@ def _key_file(path: str) -> dict | None:
 def _key_string(value: str | None, as_list: bool = False):
     """A key file's string value as GLib's `g_key_file_get_string` has it, its escapes (`\\s`, `\\n`,
     `\\t`, `\\r`, `\\\\`) turned back into what they stand for; with `as_list`, its list
-    (`g_key_file_get_string_list`), split at each `;` but an escaped one. None for no value, or one
-    holding any other escape, as GLib has no value then."""
-    if value is None:
+    (`g_key_file_get_string_list`), split at each `;` but an escaped one. None for no value, one
+    holding any other escape, or one with a byte that isn't UTF-8 (:func:`_key_file`), as GLib has
+    no value then."""
+    if value is None or _NOT_UTF8.search(value):
         return None
     pieces, piece, i = [], "", 0
     while i < len(value):

@@ -222,8 +222,8 @@ def test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name(db,
 
 # What a desktop's menu shows of an entry, by the Desktop Entry Specification as GLib applies it (the
 # reader the menus of the desktops AppKata supports use), on each desktop of $XDG_CURRENT_DESKTOP
-# here: {case: (the entry's lines after its Name, the desktops it shows on)}. `{bin}` is a folder
-# on the PATH with `prog`, `my prog` and a file that can't run, `notes.txt`.
+# here: {case: (the entry's lines after its Name, as text or as bytes, the desktops it shows on)}.
+# `{bin}` is a folder on the PATH with `prog`, `my prog` and a file that can't run, `notes.txt`.
 _DESKTOPS = ("GNOME", "ubuntu:GNOME", "X-Cinnamon", "KDE", "")
 _ALL, _GNOME = set(_DESKTOPS), {"GNOME", "ubuntu:GNOME"}
 _MENU_CASES = {
@@ -276,6 +276,29 @@ _MENU_CASES = {
     "Exec ending in an escape": ("Type=Application\nExec=no-such-program-here\\\n", _ALL),
     "TryExec with an escape GLib refuses": ("Type=Application\nExec=prog\nTryExec=no\\xsuch\n", _ALL),
     "a comment": ("# NoDisplay=true\nType=Application\nExec=prog\n", _ALL),
+    # #689's review, P3-1: the file read as bytes, as GLib reads it. A byte that isn't UTF-8 makes no
+    # file unreadable, only a string value that holds it, which GLib then has no value for
+    "a byte that isn't UTF-8 in a translated Comment": (b"Type=Application\nExec=prog\nComment[fr]=caf\xe9\n", _ALL),
+    "a byte that isn't UTF-8 in a comment line": (b"# caf\xe9\nType=Application\nExec=prog\n", _ALL),
+    "a byte that isn't UTF-8 in another group": (b"Type=Application\nExec=prog\n[Other]\nX=caf\xe9\n", _ALL),
+    "a byte that isn't UTF-8 in a key's and a group's name": (b"Type=Application\nExec=prog\nX-caf\xe9=1\n[caf\xe9]\n", _ALL),
+    "a byte that isn't UTF-8 in Exec, no value then": (b"Type=Application\nExec=no-such-program-here caf\xe9\n", _ALL),
+    "a byte that isn't UTF-8 in TryExec": (b"Type=Application\nExec=prog\nTryExec=no-such\xe9\n", _ALL),
+    "a byte that isn't UTF-8 in OnlyShowIn": (b"Type=Application\nExec=prog\nOnlyShowIn=KDE\xe9;\n", _ALL),
+    "a byte that isn't UTF-8 in Type": (b"Type=Application\xe9\nExec=prog\n", set()),
+    "a byte that isn't UTF-8 in a key's locale": (b"Type=Application\nExec=prog\nName[d\xe9]=x\n", set()),
+    "a vertical tab before a key": ("Type=Application\nExec=prog\n\vNoDisplay=true\n", _ALL),
+    "a vertical tab before =": ("Type=Application\nExec=prog\nNoDisplay\v=true\n", _ALL),
+    "a vertical tab after a boolean": ("Type=Application\nExec=prog\nNoDisplay=true\v\n", _ALL),
+    "a form feed before a key": ("Type=Application\nExec=prog\n\fNoDisplay=true\n", set()),
+    "lines ending in a carriage return and a line break": ("Type=Application\r\nExec=prog\r\n", _ALL),
+    "two carriage returns before a line break": ("Type=Application\r\r\nExec=prog\n", set()),
+    "a carriage return ending the file": ("Exec=prog\nType=Application\r", set()),
+    "a space before a key's locale": ("Type=Application\nExec=prog\nName [de]=x\n", set()),
+    "a tab before a key's locale": ("Type=Application\nExec=prog\nName\t[de]=x\n", _ALL),
+    "a NUL in a value, which ends it": (b"Type=Application\nExec=prog\nNoDisplay=true\x00 and more\n", set()),
+    "a NUL in a key": (b"Type=Application\nExec=prog\nNo\x00Display=true\n", set()),
+    "a NUL starting a line, a comment": (b"Type=Application\nExec=prog\n\x00NoDisplay=true\n", _ALL),
 }
 
 
@@ -317,7 +340,8 @@ def test_open_takes_only_an_entry_the_desktops_menu_shows(tmp_path, monkeypatch,
     paths = []
     for i, (case, (lines, _)) in enumerate(_MENU_CASES.items()):
         p = tmp_path / f"entry-{i}.desktop"
-        p.write_text(f"[Desktop Entry]\nName={case}\n" + lines.replace("{bin}", str(bin_)))
+        lines = lines if isinstance(lines, bytes) else lines.encode()
+        p.write_bytes(f"[Desktop Entry]\nName={case}\n".encode() + lines.replace(b"{bin}", os.fsencode(bin_)))
         paths.append(str(p))
     want = {case: desktop in shown for case, (_, shown) in _MENU_CASES.items()}
     assert {case: install._menu_entry(p) is not None for case, p in zip(_MENU_CASES, paths)} == want
