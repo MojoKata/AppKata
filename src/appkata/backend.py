@@ -20,7 +20,7 @@ from appkata_core import versions as vcmp
 from appkata_core.catalog import authority_view, short_fp
 from appkata_core.db import DB, now
 from appkata_core.forges import Asset
-from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_key
+from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_key, two_hosts
 from appkata_core import APPKATA_REPO, __version__ as APPKATA_VERSION
 from appkata_core.platform import data_dir
 
@@ -599,8 +599,14 @@ class Backend(QObject):
     @Slot(str, str)
     def setToken(self, host: str, token: str) -> None:
         """A token is kept for one address (R11.1.6): the host as a Source's is written, with its
-        port when the forge is on one, which is the key Http looks it up under (token_key)."""
+        port when the forge is on one, which is the key Http looks it up under (token_key). None is
+        kept for a name IDNA 2003 and IDNA 2008 read apart, which is two hosts (two_hosts): it was
+        kept under its IDNA 2003 form, another host (the review's pass 7, P7-1)."""
         host = token_key(host)
+        reason = token and two_hosts(host)
+        if reason:
+            self.toast.emit("error", f"No token kept for {host}: {reason}; typed in its IDNA 2008 form (xn--…), it is")
+            return
         t = self.db.get("tokens", {})
         if token:
             t[host] = token

@@ -232,6 +232,26 @@ def _a_name_as_sent(name: str) -> bool:
     return sent == looked_up and re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?", sent) is not None
 
 
+# The four characters IDNA 2003, by which Python's idna codec makes a name's IDNA form, and IDNA 2008,
+# by which registries and browsers make it, read apart (IDNA 2008's deviations), and how a refusal says
+# each: IDNA 2003 makes `ss` of ß, `σ` of ς, and nothing of the two zero-width ones.
+_TWO_HOSTS = {"ß": "ß", "ς": "ς", "\u200c": "a zero-width non-joiner (U+200C)",
+              "\u200d": "a zero-width joiner (U+200D)"}
+
+
+def two_hosts(name: str) -> str:
+    """Why a name, its escapes decoded, is no host Http asks for or a token is kept for, where it
+    holds one of the four characters IDNA 2003 and IDNA 2008 read apart (_TWO_HOSTS), else "". It is
+    judged in lower case, as every host is (a final `Σ` is `ς` in it). Such a name is two hosts: Http
+    sent `straße.example` as `strasse.example`, its IDNA 2003 form, which is another domain, and may
+    be anyone's, with the Source's token, the TLS check passing on that domain's own certificate,
+    where a browser asks for `xn--strae-oqa.example`, its IDNA 2008 form (the review's pass 7, P7-1).
+    In that form, which is ASCII, a name is sent as it is written."""
+    held = [_TWO_HOSTS[c] for c in dict.fromkeys(name.lower()) if c in _TWO_HOSTS]
+    return (f"a name with {' and '.join(held)} in it is two different hosts, one by IDNA 2003, by which AppKata "
+            "writes a name in ASCII, and another by IDNA 2008, by which browsers and registries write it") if held else ""
+
+
 def _a_host_and_port(text: str) -> bool:
     """Whether a host part is a host and its port and nothing else (_HOST_PART): an IPv6 address in
     brackets as they are written, or a name in the form it is sent (_a_name_as_sent). One longer
@@ -303,7 +323,10 @@ def _http_address(url: str):
     No address Http asks for needs any of these: an image's address has a path, and the host of one
     with a user part is found by no lookup. A user part isn't said, since it may be a password: a
     refusal names an address by a host and its port alone, or not at all (_named; the review's
-    passes 5 to 7, P5-B2, P6-B2 and P7-B4)."""
+    passes 5 to 7, P5-B2, P6-B2 and P7-B4).
+
+    Nor one whose host is a name IDNA 2003 and IDNA 2008 read apart (two_hosts), which is two hosts,
+    and was sent as the other one (the review's pass 7, P7-1): its refusal says so."""
     try:
         parts = urlsplit(url)
         parts.port
@@ -318,6 +341,9 @@ def _http_address(url: str):
         raise _refused("an address with a user part before its host", url)
     if not _a_host_and_port(written):
         raise _refused("an address whose host part is more than a host and its port", url)
+    reason = two_hosts(unquote(parts.hostname))
+    if reason:
+        raise Unreachable(f"{_named(url) or 'an address'} isn't asked for: {reason}; in its IDNA 2008 form (xn--…), it is")
     return parts
 
 
@@ -328,7 +354,12 @@ def _sent(host: str) -> str:
     (the review's pass 6, P6-B1). urllib sent the host as written, and http.client writes a Host
     header in Latin-1: a name in another script couldn't be sent at all, a Latin-1 one couldn't be
     sent to a proxy over http, and `übung.example` was sent to its server so, where its lookup and a
-    tunnel's CONNECT had `xn--bung-zra.example`. A name's IDNA form is _idna's."""
+    tunnel's CONNECT had `xn--bung-zra.example`. A name's IDNA form is _idna's, and a name IDNA 2003
+    and IDNA 2008 read apart has none (two_hosts): a key kept for one is kept as it is written
+    (_one_host), and no address is it."""
+    reason = two_hosts(host)
+    if reason:
+        raise UnicodeError(reason)
     return _idna(host)
 
 
@@ -695,9 +726,16 @@ class Http:
         was left to it (the review's pass 7, P7-3); and full-width `ｌｏｃａｌｈｏｓｔ`, sent as
         `localhost`, is refused. An address whose host part is more than a host and its port (a user part, a `\\`, a `?` or
         `#` before any path), which urllib sends to a proxy along with the host, is refused before
-        any of this, by _http_address (the review's passes 3 and 4, P3-1 and P4-1)."""
+        any of this, by _http_address (the review's passes 3 and 4, P3-1 and P4-1).
+
+        Nothing is asked for a Source whose host is a name IDNA 2003 and IDNA 2008 read apart
+        (two_hosts), whatever the address: the token kept for it was kept under its IDNA 2003 form,
+        another host, which an address on that host was sent (the review's pass 7, P7-1)."""
         parts = _http_address(url)
         host = unquote(parts.hostname).lower()     # as it is judged: the host alone here (_http_address)
+        reason = whose is not None and two_hosts(token_key(whose))
+        if reason:
+            raise Unreachable(f"nothing is asked for a Source on {token_key(whose)[:200]}: {reason}; written in its IDNA 2008 form (xn--…), it is")
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         sent = _sent(host)                         # as it is sent, the lookup's and the proxy's

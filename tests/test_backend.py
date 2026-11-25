@@ -26,7 +26,7 @@ import written
 
 pytest.importorskip("PySide6")
 
-from appkata_core import channels, foreign, sandbox, sync      # noqa: E402
+from appkata_core import audit, channels, foreign, sandbox, sync      # noqa: E402
 from appkata_core.db import now                      # noqa: E402
 
 URL = "https://github.com/example/demo"
@@ -476,6 +476,23 @@ def test_a_token_is_kept_under_the_one_address_it_belongs_to(be):
     assert [row["host"] for row in be.tokenHosts] == ["git.example.org", "git.example.org:3000"]
     be.setToken("git.example.org:3000", "")                        # the row's trash button
     assert be.db.get("tokens") == {"git.example.org": "on-the-default-port"} == be.http.tokens
+
+
+@pytest.mark.parametrize("typed, said", [
+    ("Straße.example", "straße.example: a name with ß in it"), ("https://stra%C3%9Fe.example:3000/o/r", "straße.example:3000: a name with ß in it"),
+    ("σίσυφος.example", "σίσυφος.example: a name with ς in it"),
+    ("می\u200cخواهم.example", "می\u200cخواهم.example: a name with a zero-width non-joiner (U+200C) in it"),
+    ("ශ්\u200dරී.example", "ශ්\u200dරී.example: a name with a zero-width joiner (U+200D) in it"),
+])
+def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_isnt_kept_and_a_toast_says_why(be, typed, said):
+    """The review's pass 7, P7-1: such a name's IDNA 2003 form, which Http sends a name in, is
+    another host than the one it names, and a token typed for it was kept under that other host."""
+    toasts = []
+    be.toast.connect(lambda kind, text: toasts.append((kind, text)))
+    logged = audit.count(be.db)
+    be.setToken(typed, "a-token")
+    assert be.db.get("tokens", {}) == {} == be.http.tokens and audit.count(be.db) == logged
+    assert [kind for kind, _ in toasts] == ["error"] and toasts[0][1].startswith(f"No token kept for {said} is two different hosts")
 
 
 # ---------------------------------------------------------------- the Add source preview (R7.2; CR1, #269)

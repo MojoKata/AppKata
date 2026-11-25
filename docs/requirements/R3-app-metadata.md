@@ -22,7 +22,13 @@ before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, escaped brackets
 (`%5b127.0.0.1%5d`), or a `?` or `#` right after its host with no path
 (`images.example.com?@10.0.0.5`) is asked for: a proxy is sent all of a host part, and may read
 another host out of it. Nor is one with a tab or a line break in its `//` or its host part, which one
-reading of an address drops and another keeps. None is asked for whose host stands for a
+reading of an address drops and another keeps. Nor is a name that holds, in lower case, `ß`, `ς`, a
+zero-width non-joiner (U+200C) or a zero-width joiner (U+200D), the four characters that IDNA 2003,
+by which AppKata writes a name in its IDNA form, and IDNA 2008, by which registries and browsers
+write it, read apart: such a name is two hosts, and `straße.example` is `strasse.example` by IDNA
+2003 and `xn--strae-oqa.example` by IDNA 2008. It is refused, with a message that says so, wherever
+a host is judged: an address, a redirect, the Source's own host, and the host a token is typed for (R11.1.6).
+Written in its IDNA 2008 form, which is ASCII, it is asked for. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
 Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
 port is the one its host names, or https's 443 where it names none; an address is on the port it is

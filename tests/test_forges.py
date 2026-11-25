@@ -1371,6 +1371,24 @@ INTERNATIONAL = [                # a host, and the form it is sent in
     pytest.param("例え.example", "xn--r8jz45g.example", id="cjk"),
     pytest.param("เว็บ.example", "xn--r3cz4e3a.example", id="thai-with-a-tone-mark"),
     pytest.param("İstanbul.example", "xn--istanbul-o0e.example", id="a-capital-i-with-a-dot"),
+    # beside DEVIATING's names below: a name with none of the four characters still goes (review pass 7, P7-1)
+    pytest.param("σίσυφοσ.example", "xn--kxa6akbbkh.example", id="greek-with-no-final-sigma"),
+    pytest.param("xn--strae-oqa.example", "xn--strae-oqa.example", id="a-sharp-s-in-its-idna-2008-form"),
+]
+# The review's pass 7, P7-1: a name is sent in its IDNA form, which Python's idna codec makes by IDNA
+# 2003, and four characters are read apart by IDNA 2008, by which registries and browsers make it.
+# IDNA 2003 makes `ss` of ß, `σ` of ς, and nothing of a zero-width non-joiner or joiner, so
+# `straße.example` was sent as `strasse.example`, another domain, which may be anyone's, with the
+# Source's token, its own certificate passing the TLS check. How it slipped past: every name in the
+# tests above is one host by both standards. The class is "the host sent isn't the host written", by
+# the codec's own reading, so a name with each of the four is asked for through Http's own opener, to
+# a real server whose certificate is for its IDNA 2003 form, as a request's address, the Source's own
+# host and a redirect's; and the names above, with none of the four, still go.
+DEVIATING = [                    # a name with one of the four, the host IDNA 2003 makes of it, and how a refusal says the character
+    pytest.param("straße.example", "strasse.example", "ß", id="a-sharp-s"),
+    pytest.param("σίσυφος.example", "xn--kxa6akbbkh.example", "ς", id="a-final-sigma"),
+    pytest.param("می\u200cخواهم.example", "xn--mgbn2ecje63g.example", "a zero-width non-joiner (U+200C)", id="a-zero-width-non-joiner"),
+    pytest.param("ශ්\u200dරී.example", "xn--10cl1a0b.example", "a zero-width joiner (U+200D)", id="a-zero-width-joiner"),
 ]
 OPENSSL_CNF = """[req]
 distinguished_name = dn
@@ -1391,13 +1409,14 @@ subjectAltName = {names}
 
 @pytest.fixture(scope="module")
 def certificate(tmp_path_factory):
-    """A server's certificate for INTERNATIONAL's names in the form they are sent, from a CA made here
-    for these tests alone, as (the CA's file, the certificate's, its key's): made by openssl, which
-    the Windows tier hasn't."""
+    """A server's certificate for INTERNATIONAL's names in the form they are sent, and for the hosts
+    IDNA 2003 makes of DEVIATING's, from a CA made here for these tests alone, as (the CA's file, the
+    certificate's, its key's): made by openssl, which the Windows tier hasn't."""
     if not shutil.which("openssl"):
         pytest.skip("needs openssl")
     at = tmp_path_factory.mktemp("tls")
-    (at / "openssl.cnf").write_text(OPENSSL_CNF.format(names=",".join(f"DNS:{p.values[1]}" for p in INTERNATIONAL)))
+    names = [p.values[1] for p in INTERNATIONAL + DEVIATING]
+    (at / "openssl.cnf").write_text(OPENSSL_CNF.format(names=",".join(f"DNS:{name}" for name in dict.fromkeys(names))))
 
     def openssl(*args):
         subprocess.run(["openssl", *args], cwd=at, check=True, capture_output=True)
@@ -1542,6 +1561,84 @@ def test_through_real_sockets_a_host_in_any_script_is_sent_over_tls_in_its_idna_
 @pytest.mark.parametrize("name, sent", INTERNATIONAL)
 def test_through_real_sockets_a_host_in_any_script_is_sent_over_plain_http_in_its_idna_form(monkeypatch, serving, route, name, sent):
     _asked_in_the_form_it_is_sent(monkeypatch, serving, "http", route, name, sent)
+
+
+def two_hosts(host, held):
+    """How the refusal of an address on `host` begins, its name holding `held` (DEVIATING)."""
+    return "^" + re.escape(f"{host} isn't asked for: a name with {held} in it is two different hosts")
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_through_real_sockets_a_name_idna_2003_and_2008_read_apart_is_asked_for_nowhere(monkeypatch, serving, trusting, route, name, twin, held):
+    origin = serving(tls=trusting)             # its certificate is for `twin` too: what is sent there is answered
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    proxy = None
+    if route == "through-a-proxy":
+        proxy = serving(_Forwarding, _ForwardingServer)
+        proxy.to = port
+        behind_a_proxy(monkeypatch, proxy, https=True)
+    source = f"{name}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    for written in (name, urllib.parse.quote(name)):           # as written, and escaped
+        with pytest.raises(Unreachable, match=two_hosts(source, held)):
+            http.json(f"https://{written}:{port}/api/v1/repos/o/r", token_host=source)       # the Source's own request
+        with pytest.raises(Unreachable, match=two_hosts(source, held)):
+            http.bytes(f"https://{written}:{port}/shot.png", token_host="git.example.org")   # an image there
+    # nor is anything asked for the Source, wherever the address is: its host's IDNA 2003 form
+    # was its key, and the twin's own address was sent its token
+    with pytest.raises(Unreachable, match="^" + re.escape(f"nothing is asked for a Source on {source}: a name with {held} in it")):
+        http.json(f"https://{twin}:{port}/api/v1/repos/o/r", token_host=source)
+    assert asked == [] and origin.seen == [] and (proxy is None or proxy.seen == [])
+    # the twin, asked for as itself, is another host than the Source's, and is sent no token
+    assert list(http.tokens) == [source]
+    assert http.json(f"https://{twin}:{port}/api/v1/repos/o/r") == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in origin.seen] == [("/api/v1/repos/o/r", f"{twin}:{port}", None)]
+
+
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_through_real_sockets_a_redirect_to_a_name_idna_2003_and_2008_read_apart_isnt_followed(monkeypatch, serving, trusting, name, twin, held):
+    origin = serving(tls=trusting)
+    port = origin.server_address[1]
+    origin.redirects = {"/api/v1/repos/o/r": f"https://{urllib.parse.quote(name)}:{port}/api/v1/repos/o/r"}
+    asked = at_this_computer(monkeypatch)
+    # the host redirected to is another than the Source's, and this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    source = f"images.example:{port}"
+    with pytest.raises(Unreachable, match=two_hosts(f"{name}:{port}", held)):
+        Http({source: "SECRET"}, timeout=5).json(f"https://{source}/api/v1/repos/o/r", token_host=source)
+    assert asked == ["images.example"] and [path for path, _ in origin.seen] == ["/api/v1/repos/o/r"]
+
+
+@pytest.mark.parametrize("address", [
+    "https://Straße.example/x", "https://STRA%C3%9FE.example/x", "https://straße.example:8443/x",
+    "https://example.ΣΊΣΥΦΟΣ/x",                         # in lower case, as every host is read, its final Σ is ς
+    "http://a\u200cb.example/x", "https://a%E2%80%8Db.example/x",
+])
+def test_a_name_with_any_of_the_four_in_any_form_is_refused_and_said(address):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=recording({}, seen)))
+    with pytest.raises(Unreachable, match=r"^\S+ isn't asked for: a name with (ß|ς|a zero-width (non-)?joiner \(U\+200[CD]\)) in it is two"):
+        http.bytes(address, token_host="git.example.org")
+    assert seen == []
+
+
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_is_kept_as_written_and_sent_nowhere(name, twin, held):
+    assert http_.token_key(name) == name == http_.token_key(f"https://{urllib.parse.quote(name)}/o/r")
+    seen = []
+    http = names(Http({name: "SECRET"}, opener=recording({}, seen)))
+    _ask(http, f"https://{twin}/x")
+    assert tokened(seen) == [] and [url for url, _ in seen] == [f"https://{twin}/x"]
+
+
+def test_r3_1_1_says_a_name_idna_2003_and_2008_read_apart_isnt_asked_for():
+    text = " ".join(reqdocs.item("R3.1.1").split())
+    assert "Nor is a name that holds, in lower case, `ß`, `ς`, a zero-width non-joiner (U+200C) or a zero-width joiner (U+200D)" in text
+    assert "`straße.example` is `strasse.example` by IDNA 2003 and `xn--strae-oqa.example` by IDNA 2008" in text
+    assert "the Source's own host, and the host a token is typed for (R11.1.6)" in text
 
 
 # The review's pass 8, P8-2: a request is made with its host as it is sent (round 6), and urllib's
