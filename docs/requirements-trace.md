@@ -59,7 +59,8 @@ differ from its list (review 3, harness B).
 | R17.3.1 | Some folders are never shared, whoever asks | test_protected_folders_are_never_granted, test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them, test_every_file_the_distributions_default_bashrc_sources_is_refused |
 | R17.3.1 | Mint's Nemo has ~/.local/share/nemo/scripts | test_protected_folders_are_never_granted |
 | R17.3.1 | Such a grant is dropped — the launcher | test_launcher_and_summary_refuse_protected_folders, test_a_custom_sandbox_cannot_share_a_protected_folder |
-| R17.3.1 | The list is _protected_roots() in | statement |
+| R17.3.1 | A grant is judged when the launcher is written, by AppKata's own session's bus | test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket, test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder |
+| R17.3.1 | The list is _protected_roots() and bus_sockets() in | test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies, statement |
 | R17.3.1 | A folder is named from / or ~ | test_a_folder_not_named_from_the_root_or_home_is_refused_and_never_bound, test_a_review_naming_a_relative_folder_never_opens_the_real_home |
 | R17.3.1 | Sandbox folders: home bound the real /home). | statement |
 | R17.3.1 | Secrets are refused when a review asks | test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can, test_the_users_own_secret_folder_stands_with_a_warning |
@@ -110,8 +111,11 @@ differ from its list (review 3, harness B).
 | R17.5.1 | The direct names of notifications, screensaver inhibit and tray are opened | test_standard_apps_reach_the_filtered_bus_when_there_is_one, test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed |
 | R17.5.1 | So per-interface --call and --broadcast rules allow each service's own | test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed, test_standard_apps_reach_the_filtered_bus_when_there_is_one, test_a_tray_icon_registers_with_a_watcher_which_can_talk_back_to_it, test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability |
 | R17.5.1 | The secrets name is opened the same way, for the Secret Service alone | test_saved_passwords_open_the_secret_service_alone, test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves |
+| R17.5.1 | Password service owns the name only where no other program holds it when the app starts | test_password_service_owns_the_name_only_where_no_other_program_holds_it, test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it |
+| R17.5.1 | Where another program holds it, the launcher starts the app without Password service | test_password_service_owns_the_name_only_where_no_other_program_holds_it, test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it, test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability |
 | R17.5.1 | Media keys lets the app own its own MPRIS name, the one a review gives | test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it, test_a_review_names_the_apps_mpris_name_and_reviews_merge_to_the_narrower_one, test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app |
 | R17.5.1 | An app no review has named may own every name below org.mpris.MediaPlayer2 | test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it, test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_that_app, test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog |
+| R17.5.1 | No summary chip shows the name, yet a review that names, changes or drops it raises the review badge | test_a_review_that_changes_only_the_mpris_name_raises_the_badge_and_offers_it, test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog |
 | R17.5.1 | The full mapping table is A1.2.3.14, which is also where each capability's names meet | test_every_fact_the_documents_state_is_what_the_code_says_but_the_listed |
 | R17.6 | The launcher presents each app a stable id | test_identity_is_a_valid_bus_name, test_identity_marker_cannot_be_swapped_for_a_host_file |
 | R17.6 | PipeWire/WirePlumber take the app for a sandboxed client | harness:wayland, claim |
@@ -234,6 +238,8 @@ differ from its list (review 3, harness B).
 | R17.16 | The Audit (R13) records every change of a | test_each_sandbox_mutation_writes_exactly_its_audit_entry, test_the_system_setup_is_audited_once_it_really_worked, test_the_repair_removes_appkatas_profile_heals_and_is_audited, test_the_audit_tells_apart_every_change_that_runs_differently_but_the_listed, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.17 | Limits, stated plainly in the UI and docs: | test_every_dialog_hint_has_a_row_in_the_evidence_table, test_the_bus_warning_is_said_only_for_an_abstract_session_bus |
 | R17.17 | Flatpak has the same property); a kernel exploit | statement |
+| R17.17 | Where the bus filter is xdg-dbus-proxy 0.1.6 or 0.1.7 without upstream's fix for broadcasts | test_standard_apps_reach_the_filtered_bus_when_there_is_one |
+| R17.17 | Its calls are filtered as R17.5 says on every version. | test_standard_apps_reach_the_filtered_bus_when_there_is_one, test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed |
 | R17.17 | No network is not no way out: a Standard app without the network grant | test_links_and_files_an_app_opens_go_to_the_host_through_the_portal, test_the_network_hint_says_what_an_app_without_the_network_can_still_send_out |
 | R17.17 | The bus filter (R17.5) is itself a program that reads every message | statement |
 | R17.17 | Beside those it holds only /usr and /etc read-only, as the app's | test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alone, test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone, test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own |
