@@ -32,6 +32,29 @@
    ]
   },
   {
+   "id": "U47",
+   "name": "The Windows suite is collected again: scripts/mutate.py loads without SIGUSR1",
+   "findings": [
+    710,
+    719,
+    718
+   ],
+   "files": [
+    "scripts/areas.py",
+    "scripts/mutate.py",
+    "tests/conftest.py",
+    "tests/skips/windows.txt",
+    "tests/test_coverage_site.py",
+    "tests/test_demo_remake.py",
+    "tests/test_imports_on_windows.py",
+    "tests/test_mutate.py",
+    "tests/test_own_home.py",
+    "tests/test_publish.py",
+    "tests/test_sandbox_run.py",
+    "tests/test_tour_data.py"
+   ]
+  },
+  {
    "id": "U03",
    "name": "The portable install: layout, command links and menu entries",
    "findings": [
@@ -905,7 +928,8 @@
     247,
     253,
     287,
-    495
+    495,
+    713
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -1553,14 +1577,16 @@
     427,
     655,
     664,
-    668
+    668,
+    712
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
     "src/appkata_core/dbus.py",
     "src/appkata_core/flatpak.py",
     "src/appkata_core/pkgbackend.py",
-    "tests/test_channels.py"
+    "tests/test_channels.py",
+    "tests/test_sandbox.py"
    ]
   },
   {
@@ -1763,6 +1789,45 @@
     "docs/architecture/A2-sandbox-exposure.md",
     "docs/requirements/R17-app-sandboxing/R17.17-limits.md",
     "scripts/sandbox/exposure.py",
+    "tests/test_sandbox_exposure.py"
+   ]
+  },
+  {
+   "id": "U48",
+   "name": "The session-bus proxy lookup, and a request's name lookups",
+   "findings": [
+    711,
+    715
+   ],
+   "files": [
+    "src/appkata_core/http.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_forges.py",
+    "tests/test_sandbox_one_fact.py"
+   ],
+   "depends_on": [
+    "U03",
+    "U07",
+    "U09"
+   ]
+  },
+  {
+   "id": "U49",
+   "name": "Functions nothing calls",
+   "findings": [
+    716
+   ],
+   "files": [
+    "scripts/sandbox/exposure.py",
+    "src/appkata_core/appstream.py",
+    "src/appkata_core/devtools.py",
+    "src/appkata_core/gitsig.py",
+    "src/appkata_core/install.py",
+    "src/appkata_core/pkgbackend.py",
+    "src/appkata_core/sshsig.py",
+    "src/appkata_core/trustfile.py",
+    "src/appkata_core/windows.py",
+    "tests/test_core.py",
     "tests/test_sandbox_exposure.py"
    ]
   }
@@ -10955,6 +11020,128 @@
    "note": "Found by U07's fifth batch (2026-11-24), and filed by the coordinator. #273 adds R2.10's other rows: one pass over R2.10's table."
   },
   {
+   "finding": 710,
+   "readiness": "ready",
+   "files": [
+    "scripts/mutate.py",
+    "tests/test_mutate.py",
+    "tests/test_imports_on_windows.py",
+    "tests/skips/windows.txt"
+   ],
+   "size": "small",
+   "proof": "Tier 1: tests/test_imports_on_windows.py loads every test module with the signal module cut down to what Windows' has, and tests/test_mutate.py loads scripts/mutate.py with signal.SIGUSR1 removed; both fail before the fix. The suite collected on the release's Python for Windows (under Wine, the pinned PYWINE_IMAGE); then `scripts/test-windows-vm.sh --tests` on the Windows VM.",
+   "note": "Filed by the coordinator from its VM runs for U07 and U03 (2026-11-24). The owner decided (2026-11-25) to fix it at once, in a pull request of its own ahead of the open units (#684, #689, #694), so their Windows tests can run. tests/test_mutate.py is skipped whole on Windows (tests/skips/windows.txt): its tests are written for Linux, where the tools run. scripts/mutate.py and tests/test_mutate.py are also U21's and U38's, which come after this unit."
+  },
+  {
+   "finding": 719,
+   "readiness": "ready",
+   "files": [
+    "tests/skips/windows.txt",
+    "tests/test_coverage_site.py",
+    "tests/test_demo_remake.py",
+    "tests/test_publish.py",
+    "tests/test_tour_data.py"
+   ],
+   "depends_on": [
+    710
+   ],
+   "size": "medium",
+   "proof": "`scripts/test-windows-vm.sh --tests` on the Windows VM ends with no failure and no error: each of the seven tests skips there and tests/skips/windows.txt lists it. Tier 1 runs all seven, with tests/test_skip_lists.py.",
+   "note": "Found by the Windows VM's first run of the collected suite for this unit's pull request (2026-11-25), and fixed in it: #710's fix isn't proven on Windows until that run passes. Five tests now skip where their Linux tool or the repository isn't there, and two already skipped, unlisted; the VM's copy of the sources stays the files git lists, not a work tree. tests/test_coverage_site.py and tests/test_demo_remake.py are also U21's, tests/test_publish.py U40's and U43's, and tests/test_tour_data.py U45's, which come after this unit: each change there is a skip line above one test (tests/test_tour_data.py: the file's)."
+  },
+  {
+   "finding": 711,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox_one_fact.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "Tier 1, tests/test_sandbox_one_fact.py: with xdg-dbus-proxy only in a folder off the system's (~/.local/bin, or a fallback bwrap folder that host_path adds), AppKata reports the proxy as missing and writes no launcher that starts a bus filter; with it under /usr, as before.",
+   "note": "Found by the author's round on #689 (U03), and filed by the coordinator (2026-11-24). It builds on sandbox.host_which and HOST_PATH, which #689 adds for #407. The coordinator's note on the issue (from #689's pass 2, P2-3) narrows the remedy: the launcher runs the proxy inside a bwrap that binds only /usr, so the check looks only where that bwrap will, and a proxy anywhere else counts as missing. #694's pass 2 (P2-B4, in U09) settles which folders the proxy's own PATH holds, and the two must agree on where a proxy may be: so the unit comes after U09 as well as U03."
+  },
+  {
+   "finding": 712,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "Tier 1, beside test_the_apparmor_setup_has_no_path_in_its_script_and_profiles_only_a_path_it_can_name: with a stand-in pkexec and a stand-in env first on AppKata's own PATH, a package action starts the system's pkexec by its path and hands it /usr/bin/env by its path.",
+   "note": "Found by #689's pass 3 (U03's pull request), and filed by the coordinator (2026-11-24). It uses sandbox.HOST_PATH, which #689 adds for #407, so it comes after U03. Low and no new boundary, as the finding says."
+  },
+  {
+   "finding": 713,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/nostr.py",
+    "tests/test_core.py"
+   ],
+   "size": "small",
+   "proof": "tests/test_core.py: a relay typed with :0, for wss and for ws, is refused with a message that names the relay, and nothing is connected on 443 or 80; a relay with no port still takes its scheme's.",
+   "note": "Found by #684's round 5 (U07's pull request) beside its own fix of the same pattern in http.py (d1872e7), and filed by the coordinator (2026-11-24). nostr.py is U23's alone."
+  },
+  {
+   "finding": 715,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/http.py",
+    "tests/test_forges.py"
+   ],
+   "depends_on": [
+    682
+   ],
+   "related": [
+    695
+   ],
+   "size": "medium",
+   "proof": "tests/test_forges.py, with a slow stand-in resolver: a request looks its host up once; a lookup longer than the request's deadline ends the request at the deadline; a Cancel during the lookup returns at once and leaves the lookup's thread to finish on its own; the connection goes to the addresses the local-address check judged, and #682's tests still pass.",
+   "note": "Found by #684's pass 9 (U07's pull request), which left it, and filed by the coordinator. It changes the check and the connection that #682's fix made in #684, so it comes after U07; #695 (U07) is the same rule, a request's deadline and Cancel, for a slow answer. Two files, but the lookup moves to a thread and the request's clock starts before the check: medium."
+  },
+  {
+   "finding": 716,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata_core/pkgbackend.py",
+    "src/appkata_core/sshsig.py",
+    "src/appkata_core/windows.py",
+    "src/appkata_core/gitsig.py",
+    "src/appkata_core/appstream.py",
+    "src/appkata_core/trustfile.py",
+    "src/appkata_core/devtools.py",
+    "scripts/sandbox/exposure.py",
+    "tests/test_core.py",
+    "tests/test_sandbox_exposure.py"
+   ],
+   "depends_on": [
+    253
+   ],
+   "size": "medium",
+   "proof": "Tier 1: a search of src/ and scripts/ finds a caller for each of the nine that stays and no definition of each that goes, and the tests of one that goes go with it (split_settings in tests/test_core.py, argv_kind in tests/test_sandbox_exposure.py); the check #694's round 4 wrote (every function of a module is one something names) passes over src/ and scripts/.",
+   "note": "Found by a check written in #694's round 4 (U09's pull request), and filed by the coordinator. No unit holds most of the nine files it names (U27 holds four; U04, U08 and U19 three each), so it is a small unit of its own, the last: by then each file's own unit has merged, and has used its function or left it. #253 (U23) decides git_version and already takes split_settings out; this unit removes what is left of the nine, each with its tests. A function that something should call and doesn't is a finding of its own."
+  },
+  {
+   "finding": 718,
+   "readiness": "ready",
+   "files": [
+    "tests/conftest.py",
+    "tests/test_own_home.py",
+    "tests/test_sandbox_run.py",
+    "scripts/areas.py"
+   ],
+   "size": "medium",
+   "proof": "tests/test_own_home.py (tier 1): what a test writes to its home lands in its tmp_path, and a pytest run on a made-up user's home fails when a test reached it. Then the whole suite outside a container with the real home's bin, .local/share/appkata and .local/share/applications listed before and after, tier 1 and the launcher tier in their containers, and `scripts/test-windows-vm.sh --tests`: no test relies on the real home.",
+   "note": "Filed by the coordinator from CR1 Part 2's runs (2026-11-25), and fixed in this unit's pull request at the coordinator's word: tests this unit touched were among those writing into the real home (tests/test_demo_remake.py's build cloned the demo's Trusts there on every local run). tests/conftest.py is also U21's and U38's, which come after this unit; scripts/areas.py and tests/test_sandbox_run.py are shared files. What wrote sandboxes/app4 and the 22:06 demo isn't found: it now lands in its test's tmp_path, or fails the run."
+  },
+  {
    "finding": 709,
    "readiness": "ready",
    "files": [
@@ -11061,6 +11248,7 @@
   "tests/test_install_review.py",
   "tests/test_launch.py",
   "tests/test_pinned_inputs.py",
+  "tests/test_publish.py",
   "tests/test_qml_slots.py",
   "tests/test_sandbox.py",
   "tests/test_sandbox_backend.py",

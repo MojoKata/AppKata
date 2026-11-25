@@ -76,7 +76,10 @@ SOURCES = ("src", "scripts")  # mutmut's source_paths: where a change's file is
 NOT_MUTATED = ["scripts/mutate_plugin.py"]
 LIMIT_GB = 5.0  # the run stops past this (PSS); CI's runners give it more (--limit)
 WORKER_GB = 2.0  # one change's worker past this much of its own is stopped, the change killed
-OUT_OF_MEMORY = -signal.SIGUSR1  # mutmut keeps a worker stopped so as this exit code
+# mutmut keeps a worker stopped so as this exit code: the signal's number, negated. Windows' Python
+# has no SIGUSR1, and no run either (tier 1's container is Linux): there the number is Linux's, so
+# this file loads and `record` and `gather` count a run's stopped changes as they do on Linux.
+OUT_OF_MEMORY = -getattr(signal, "SIGUSR1", 10)
 
 # Where the code as written is, for a test that reads a module's source rather than running it
 # (tests/written.py): in a run, the checkout, since the copy's modules are mutmut's, every change in

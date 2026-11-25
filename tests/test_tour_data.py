@@ -11,6 +11,8 @@ import subprocess
 import pytest
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+pytestmark = pytest.mark.skipif(not (shutil.which("sh") and shutil.which("sha256sum")),
+                                reason="runs scripts/tour-data.sh, a POSIX shell script")
 
 STUB = '''import os, sys
 here = os.path.dirname(os.path.abspath(__file__))
