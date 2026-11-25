@@ -709,6 +709,53 @@ def test_a_sandbox_change_that_cant_be_written_says_so_and_leaves_the_app_as_it_
     assert len(toasts) == 1 and not os.path.exists(rec["launcher"]) and not be.sandboxInfo(URL)["active"]
 
 
+def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be, tmp_path, monkeypatch):
+    # #689's review, C-1 (its checker's note on P4-1): _regenerate_launcher caught InstallError and
+    # OSError alone. Any other error (P4-1's UnicodeEncodeError was one) left the Sandbox dialog's
+    # Save after the choice was saved and before its audit row and the reload: the choice was in
+    # force, unaudited, and the window not refreshed. At AppKata's start it stopped the heal pass,
+    # so the apps after that one kept their stale launchers, at every start. Here the launcher's
+    # rewrite fails for one app with an error AppKata doesn't expect.
+    from appkata_core import install
+    other = URL + "-other"
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    target = tmp_path / "bin" / "apps" / "other"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    (target / "1.0" / "bin" / "other").write_text("#!/bin/sh\n")
+    (target / "1.0" / "bin" / "other").chmod(0o755)
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/other"},
+           "target": str(target), "links": [], "files": []}
+    be.db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
+            (other, "Other", "1.0", "tarball", json.dumps(rec), now()))
+    be._app = lambda url: {"url": url, "name": "Demo" if url == URL else "Other", "installed": "1.0"}
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    launchers = {}
+    for url in (URL, other):
+        be._regenerate_launcher(url)
+        be._pin_sandbox(url, be._resolved_sandbox(url))
+        launchers[url] = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])["launcher"]
+        with open(launchers[url], "wb") as f:
+            f.write(b"#!/bin/sh\n# hand-edited\n")                     # not today's text: the start rewrites it
+    real, toasts, reloads = install.rewrite_launcher, [], []
+
+    def fails_for_demo(db, app, portable):
+        if app["url"] == URL:
+            raise ValueError("a stand-in for an error AppKata doesn't expect")
+        return real(db, app, portable)
+    monkeypatch.setattr(install, "rewrite_launcher", fails_for_demo)
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+    monkeypatch.setattr(be, "reload", lambda: reloads.append(1))
+    be._heal_launchers()                                                    # AppKata's start goes on past Demo
+    with open(launchers[other], "rb") as f:
+        assert f.read() != b"#!/bin/sh\n# hand-edited\n"
+    be.setSandbox(URL, {"template": "strict", "overrides": {}})
+    assert toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: a stand-in for an error AppKata doesn't expect")]
+    row = be.db.one("SELECT action, subject FROM audit ORDER BY id DESC LIMIT 1")
+    assert (row["action"], row["subject"]) == ("set the sandbox of", "Demo") and reloads == [1]
+
+
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
     # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
     # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder

@@ -2300,7 +2300,10 @@ class Backend(QObject):
     def _regenerate_launcher(self, url: str) -> str:
         """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
         Returns "", or why it couldn't: the app is then as it was, install.rewrite_launcher having
-        taken the change back (#689's review, P4-B3)."""
+        taken the change back (#689's review, P4-B3). An error AppKata doesn't expect is logged with
+        its traceback and returned the same way, so the Sandbox dialog's Save still audits the
+        choice it saved and refreshes the window, and AppKata's start goes on to the next app (C-1:
+        only InstallError and OSError were caught, and any other error left both half-way)."""
         a = self._app(url)
         if not a:
             return ""
@@ -2310,6 +2313,9 @@ class Backend(QObject):
         except (install.InstallError, OSError) as e:
             log.warning("couldn't regenerate the launcher for %s: %s", url, e)
             return str(e)
+        except Exception as e:      # noqa: BLE001
+            log.exception("couldn't regenerate the launcher for %s", url)
+            return str(e) or type(e).__name__
         return ""
 
     def _apply_sandbox(self, url: str) -> None:
