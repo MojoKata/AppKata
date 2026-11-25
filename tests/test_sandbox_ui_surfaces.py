@@ -166,9 +166,17 @@ def _file(name, digest=""):
       "No checksum published": "2.0 publishes no checksum for the file Update would take: there is nothing to check the download against."}),
     ({"verified": "signed", "signer": "Demo Ltd"}, None, {"Verified · Demo Ltd": ""}),
     ({"verified": "unverified"}, _file("demo-2.0.dmg"), {"Unverified": ""}),            # 2.0 has no file for this computer
+    # a channel's copy: the chip and who signed it are its record's (R16.3.6; CR1, #318)
+    ({"channel": "flatpak", "flatpak": "org.example.Demo", "remote": "vendor", "verified": "signed", "signer": "vendor"}, None,
+     {"Verified": "Signed by vendor"}),
+    ({"channel": "package", "package": "demo", "manager": "apt", "pkgVersion": "1.0-1", "verified": "signed", "signer": "LP-PPA-demo"}, None,
+     {"Verified": "Signed by LP-PPA-demo"}),
+    ({"channel": "flatpak", "flatpak": "org.example.Demo", "remote": "aktest", "verified": "unverified"}, None,
+     {"Unverified": "No key checked this copy: flatpak doesn't check its remote, aktest, against one"}),
     (None, None, {"No checksum published": "1.0 publishes no checksum for the file Install would take: "
                                            "there is nothing to check the download against."}),
-], ids=["unverified-and-an-update-with-a-digest", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest", "not-installed"])
+], ids=["unverified-and-an-update-with-a-digest", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest",
+        "a-vendors-flatpak", "a-ppas-package", "a-flatpak-no-key-checked", "not-installed"])
 def test_app_detail_shows_what_the_installed_file_was_checked_against_and_a_forecast_for_the_next_one(ui, be, app, record, newer, chips):
     rels = json.loads(be.db.one("SELECT releases FROM apps WHERE url=?", (URL,))["releases"])
     if newer:
@@ -617,3 +625,22 @@ def test_app_detail_shows_the_launch_command_and_the_audit_records_its_hash(ui, 
     _call(dlg, "close")
     be.setSandbox(URL, {"template": "off"})                            # no launcher: no link
     assert _part(_show(ui, be), "showLaunchCommand").property("visible") is False
+
+
+@pytest.mark.parametrize("ch, says", [
+    ({"kind": "package", "manager": "apt", "distro": "Ubuntu"}, "example.org · .deb · Ubuntu"),
+    ({"kind": "package", "manager": "apt", "distro": ""}, "example.org · .deb"),          # no repository's key checked it (R16.3.6)
+    ({"kind": "package", "manager": "dnf", "distro": ""}, "example.org · .rpm"),
+    ({"kind": "flatpak", "distro": ""}, "example.org · Flatpak"),
+])
+def test_the_apps_row_of_a_package_names_its_repository_only_where_the_record_has_one(ui, be, app, ch, says):
+    """CR1, #318: the row ended "· .deb · " once a package's record could name no repository."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQml import QQmlComponent, qmlEngine
+    made = QQmlComponent(qmlEngine(ui), QUrl.fromLocalFile(os.path.join(os.path.dirname(__file__), "..", "src", "appkata", "qml", "AppRow.qml")))
+    row = made.createWithInitialProperties({"app": {"url": URL, "name": "Demo", "host": "example.org", "installed": "1.0", "ch": ch}})
+    assert row is not None, made.errorString()
+    try:
+        assert says in _seen(row) and not any(t.endswith("· ") for t in _seen(row)), _seen(row)
+    finally:
+        row.deleteLater()

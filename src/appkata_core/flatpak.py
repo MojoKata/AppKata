@@ -47,6 +47,26 @@ def has_remote(name: str = FLATHUB) -> bool:
     return name in remotes(False) or name in remotes(True)
 
 
+def remote_options(system: bool = False) -> dict[str, set[str]]:
+    """An installation's remotes, each with its options as `flatpak remotes` words them
+    ("no-gpg-verify", "no-enumerate"…)."""
+    p = run(["remotes", _scope(system), "--columns=name,options"])
+    out: dict[str, set[str]] = {}
+    for line in p.stdout.splitlines() if p.returncode == 0 else []:
+        name, _, options = line.partition("\t")
+        if name.strip():
+            out[name.strip()] = {o.strip() for o in options.split(",") if o.strip()}
+    return out
+
+
+def checks_signatures(remote: str, system: bool = False) -> bool:
+    """Whether flatpak checks what it takes from this remote against the remote's key (R16.3.6):
+    the installation has the remote, and signature checking isn't off for it (a remote added with
+    `--no-gpg-verify`, or the `<app ID>-origin` remote an unsigned bundle leaves)."""
+    options = remote_options(system).get(remote) if remote else None
+    return options is not None and "no-gpg-verify" not in options
+
+
 def add_flathub() -> None:
     """Asked once, before the first Flathub install (R16.3.4)."""
     p = run(["remote-add", "--user", "--if-not-exists", FLATHUB, FLATHUB_REPO])

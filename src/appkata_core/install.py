@@ -2290,9 +2290,19 @@ def uninstall_blocker(rec: dict) -> str:
     return ""
 
 
-def _distro() -> str:
-    from .channels import distro_name
-    return distro_name()
+def channel_verdict(rec: dict) -> dict:
+    """What checked the copy a channel's record is of, as the record keeps it (R16.3.6): asked of
+    flatpak and the package manager each time the copy is installed, adopted or updated, never
+    taken as given. A Flatpak is "signed" when its remote is one flatpak checks against the
+    remote's key, a package when a repository whose key is checked offers the installed version;
+    `signer` is that remote or repository. Otherwise "unverified", and `repository` is the
+    package's unkeyed repository, if it has one."""
+    if rec.get("channel") == "flatpak":
+        remote = rec.get("remote", "")
+        if flatpak.checks_signatures(remote, rec.get("installation") == "system"):
+            return {"verified": "signed", "signer": "Flathub" if remote == flatpak.FLATHUB else remote}
+        return {"verified": "unverified", "signer": ""}
+    return pkgbackend.signed_by(rec["package"], rec.get("manager"))
 
 
 def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None, phase=None, on_wait=None,
@@ -2316,8 +2326,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         except flatpak.FlatpakError as e:
             raise InstallError(str(e)) from None
         rec = {"channel": "flatpak", "flatpak": got.app_id, "remote": remote, "commit": got.commit,
-               "installation": "user", "branch": got.branch, "verified": "signed", "signer": remote.capitalize(),
+               "installation": "user", "branch": got.branch,
                "perms": flatpak.permissions(meta), "extraData": flatpak.extra_data_host(meta)}
+        rec.update(channel_verdict(rec))
         raw, kind, asset = got.version, "flatpak", f"{remote} {got.app_id}"
         version = channels.project_version("flatpak", got.version) or got.version
     elif option["channel"] == "package":
@@ -2325,8 +2336,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         name = option["value"]
         _apply(be, "install", [name], confirmed, progress, cancel, on_wait)
         raw = pkgbackend.installed_version(name, be.manager)
-        rec = {"channel": "package", "package": name, "manager": be.manager, "verified": "signed",
-               "signer": _distro(), "pkgVersion": raw, "origin": option.get("origin", "")}
+        rec = {"channel": "package", "package": name, "manager": be.manager, "pkgVersion": raw,
+               "origin": option.get("origin", "")}
+        rec.update(channel_verdict(rec))
         kind, asset = be.manager, name
         version = channels.project_version(be.manager, raw)
     else:
@@ -2368,6 +2380,7 @@ def update_channel(db: DB, url: str, progress=None, cancel=None, on_wait=None, c
     else:
         raise InstallError("not installed from a channel")
     rec.pop("pending", None)
+    rec.update(channel_verdict(rec))        # of the copy that is installed now
     db.x("UPDATE installs SET version=?, record=?, installed_at=? WHERE url=?", (version, json.dumps(rec), now(), url))
     return rec
 

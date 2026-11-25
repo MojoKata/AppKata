@@ -141,7 +141,8 @@ def channel_view(rec: dict, version: str, releases: list[dict], det, check: dict
         label = name + (" · verified" if flag else " · community" if flag is not None and remote == "flathub" else "")
         raw = ""
     else:
-        label = (rec.get("signer") or "Distribution") + (f" ({rec['origin']})" if rec.get("origin") else "")
+        # its repository's own name (R16.1.2), which the record has only where one checked it (R16.3.6)
+        label = (rec.get("signer") or "Package") + (f" ({rec['origin']})" if rec.get("origin") else "")
         raw = rec.get("pkgVersion", "")
     return {"kind": rec.get("channel"), "label": label, "value": rec.get("flatpak") or rec.get("package") or "",
             "verified": check.get("verified"), "check": check.get("state", ""), "checkDetail": check.get("detail", ""),

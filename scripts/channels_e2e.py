@@ -99,6 +99,9 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         rec = install.install_channel(db, a, opts[0])
         row = db.one("SELECT * FROM installs WHERE url=?", (a["url"],))
         ok("installed through the channel (R16.3.5)", row and row["version"] == "1.0" and rec["manager"] == mgr, row)
+        # this repository is taken without a key ([trusted=yes], gpgcheck=0): no key checked the package
+        ok("a package of a repository trusted without a key isn't Verified (R16.3.6)",
+           rec["verified"] == "unverified" and rec["repository"] == (f"file:{repo}" if mgr == "apt" else "akrepo"), rec)
         # a newer version appears in the repository
         if mgr == "apt":
             deb(repo, "akdemo", "2.0-1")
@@ -111,8 +114,9 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         sync.track_channel_installs(db)
         rec = json.loads(db.one("SELECT record FROM installs WHERE url=?", (a["url"],))["record"])
         ok("the sync records it as pending", rec.get("pending", {}).get("projectVersion") == "2.0", rec.get("pending"))
-        install.update_channel(db, a["url"])
+        rec = install.update_channel(db, a["url"])
         ok("updated (R16.5.5)", db.one("SELECT version FROM installs WHERE url=?", (a["url"],))["version"] == "2.0")
+        ok("and still not Verified after its update", rec["verified"] == "unverified", rec)
         # a desktop metapackage that depends on it: uninstalling is refused (R16.4.3)
         meta = "task-akdemo-desktop"
         if mgr == "apt":
@@ -163,13 +167,27 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
     row = db.one("SELECT * FROM foreign_installs WHERE url=?", (b["url"],))
     ok("found as adoptable (R16.4.2)", row and row.get("adopt"), row)
     if row and row.get("adopt"):
-        foreign.adopt(db, b["url"])
+        rec = foreign.adopt(db, b["url"])
         ok("adopted", db.one("SELECT 1 FROM installs WHERE url=?", (b["url"],)) is not None)
+        ok("the distribution's key checked it: Verified, signed by its repository (R16.3.6)",
+           rec["verified"] == "signed" and rec["signer"] in ("Ubuntu", "Debian", "Fedora Project", "Rocky Enterprise Software Foundation"), rec)
         install.uninstall(db, b["url"])
         ok("adopted package uninstalled", not pkgbackend.installed_version(distro_pkg, mgr))
     # and installing it through the channel
     rec = install.install_channel(db, b, {"channel": "package", "value": distro_pkg})
     ok(f"{distro_pkg} installed from the distribution", bool(pkgbackend.installed_version(distro_pkg, mgr)))
+    ok("Verified, signed by its repository", rec["verified"] == "signed" and rec["signer"], rec)
+    if mgr == "apt":
+        # the same package put in by hand over the distribution's (`dpkg -i`): no repository offers
+        # that version, so adopting it finds no key that checked it
+        install.uninstall(db, b["url"])
+        byhand = tempfile.mkdtemp()
+        deb(byhand, distro_pkg, "99.0-1")
+        sh(f"dpkg -i {byhand}/{distro_pkg}_99.0-1_all.deb >/dev/null")
+        foreign.scan(db)
+        rec = foreign.adopt(db, b["url"])
+        ok("a package put in by hand is adopted as not Verified (R16.3.6)",
+           (rec["verified"], rec["signer"], rec["repository"], rec["pkgVersion"]) == ("unverified", "", "", "99.0-1"), rec)
     install.uninstall(db, b["url"])
     ok(f"{distro_pkg} uninstalled", not pkgbackend.installed_version(distro_pkg, mgr))
 
@@ -208,6 +226,9 @@ def flatpaks(db: DB) -> None:
     ok("Source settings link the Flatpak with its remote", found.get("flatpak") and found["flatpak"].remote == "aktest")
     rec = install.install_channel(db, a, {"channel": "flatpak", "value": "org.appkata.Hello", "remote": "aktest"})
     ok("installed per user (R16.3.4)", "org.appkata.Hello" in flatpak.installed() and rec["perms"] == ["Network"], rec)
+    # aktest was added with --no-gpg-verify: flatpak checked this copy against no key
+    ok("a Flatpak from a remote with signature checking off isn't Verified (R16.3.6)",
+       (rec["verified"], rec["signer"]) == ("unverified", "") and not flatpak.checks_signatures("aktest"), rec)
     first = rec["commit"]
     build_flatpaks(repo, 2)
     sync.track_channel_installs(db)
@@ -235,7 +256,8 @@ def flatpaks(db: DB) -> None:
     row = db.one("SELECT * FROM foreign_installs WHERE url=?", (a["url"],))
     ok("found as adoptable", row and row.get("adopt"), row)
     if row and row.get("adopt"):
-        foreign.adopt(db, a["url"])
+        rec = foreign.adopt(db, a["url"])
+        ok("adopted from the remote it came from, and not Verified", (rec["remote"], rec["verified"]) == ("aktest", "unverified"), rec)
         install.uninstall(db, a["url"])
         ok("adopted and uninstalled", "org.appkata.Hello" not in flatpak.installed())
     sh("flatpak uninstall --user -y --noninteractive --all >/dev/null 2>&1", check=False)

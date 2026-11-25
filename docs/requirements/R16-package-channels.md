@@ -138,9 +138,23 @@ R16.3.5. **Installing a package.** Through the package backend (R16.8):
 3. The record holds the package name, the manager, the repository, and whether the package was
    already marked as a dependency (R16.4.3).
 
-R16.3.6. **Verification** (R4.4). Flatpak commits and packages are checked by flatpak, apt and dnf
-against their repositories' keys; AppKata shows **Verified** with the tooltip "Signed by Flathub"
-or "Signed by Ubuntu" (the repository's name).
+R16.3.6. **Verification** (R4.4). flatpak checks a Flatpak's commits against its remote's key, and
+apt and dnf check packages against their repositories' keys. AppKata shows **Verified** only for
+a copy that was checked so, with the tooltip "Signed by Flathub" or "Signed by Ubuntu" (the
+remote's or the repository's own name, as R16.1.2 shows it; "Signed by its repository" when it
+gives none):
+
+- A Flatpak, when signature checking is on for the remote it came from. A remote added with
+  `--no-gpg-verify`, and the one a bundle installed from a file leaves behind, have it off.
+- A package, when a repository whose key the package manager checks offers the installed version.
+  A version no repository offers (one installed from a file, or one its repository has since
+  replaced) and a package of a repository that is trusted without a key (`[trusted=yes]`) were
+  checked against nothing AppKata can tell.
+
+Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
+named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
+package manager each time it installs, adopts (R16.4.2) or updates the copy; the chip is their
+answer, kept in the install record (R4.1).
 
 R16.4. **Tracking.**
 
