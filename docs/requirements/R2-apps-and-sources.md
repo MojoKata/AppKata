@@ -194,7 +194,10 @@ folder (R4.3.1), usually from `~/Downloads`, and AppKata hasn't installed itself
      stable-name link `AppKata.AppImage` (R4.3.1.2), and records that copy as the installed version.
   2. Writes `appkata.desktop` in `~/.local/share/applications/` and its icon in
      `~/.local/share/icons/hicolor/` (scalable and 256 px), pointing at the stable link. The entry's
-     name matches the window's desktop file name, so the taskbar shows AppKata's icon.
+     name matches the window's desktop file name, so the taskbar shows AppKata's icon. Its program is
+     `/bin/sh`, which runs the stable link by its own path with the files opened, so a `%` in the
+     install folder's path doesn't keep AppKata out of GLib's menus (Cinnamon, GNOME, MATE, Xfce),
+     as it doesn't an app (R4.3.1.1).
   3. Points the `appkata://` handler (R11.3) and the autostart entry (R1.7.4), when on, at the stable
      link, so updates never break them.
   4. Starts the installed copy and quits. With **Delete the downloaded file** (checked) it deletes

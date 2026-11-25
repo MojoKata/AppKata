@@ -109,11 +109,17 @@ def write_icons() -> list[str]:
 
 
 def _exec_value(exec_path: str) -> str:
-    """`Exec=` for AppKata's own entry, escaped as every entry's is (:func:`install.desktop_exec`). A
-    path it refuses (a quote or a line break in the install folder's name) is an OSError, which
-    both callers of :func:`install_self` report."""
+    """`Exec=` for AppKata's own entry, escaped as every entry's is (:func:`install.desktop_exec`).
+    Its program is `/bin/sh`, which runs `exec_path` by its own path with the opened files
+    (`sh -c 'exec "$0" "$@"'`): GLib looks for an entry's program before it reads `%%` as `%`, so
+    with a `%` in the install folder's path AppKata, its program there, was in no menu of
+    Cinnamon, GNOME, MATE or Xfce (#689's review, P4-2), as an app was before #685. Not a script
+    of its own, as an app's entry has (`/bin/sh "<script>"`): AppKata's program is an AppImage,
+    which sh can't read as a script, and `exec` runs it as it is, with no file to write, record
+    or remove. A path it refuses (a quote or a line break in the install folder's name) is an
+    OSError, which both callers of :func:`install_self` report."""
     try:
-        return desktop_exec(exec_path)
+        return desktop_exec(exec_path, sh_exec=True)
     except ValueError as e:
         raise OSError(str(e)) from None
 

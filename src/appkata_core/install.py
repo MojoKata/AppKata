@@ -225,22 +225,37 @@ def desktop_value(text: str) -> str:
 # The program an app's menu entry starts, its script the first argument (#689's review, P3-2): a
 # path GLib finds whatever AppKata's own folder holds or where it is mounted
 MENU_SHELL = "/bin/sh"
+# What /bin/sh runs for AppKata's own entry (:func:`desktop_exec`'s `sh_exec`): the program, its
+# first argument, by its own path, with the rest (#689's review, P4-2)
+SH_EXEC = 'exec "$0" "$@"'
 
 
-def desktop_exec(exec_path: str, *words: str, through_sh: bool = False) -> str:
+def _exec_word(text: str) -> str:
+    """`text` as one double-quoted word of `Exec=`, as the Desktop Entry Specification asks: `\\`,
+    `"`, `$` and a backtick escaped, a `%` doubled (its backslashes are doubled again with the rest
+    of the value, :func:`desktop_exec`)."""
+    return '"' + re.sub(r'([\\$`"])', r"\\\1", text).replace("%", "%%") + '"'
+
+
+def desktop_exec(exec_path: str, *words: str, through_sh: bool = False, sh_exec: bool = False) -> str:
     """The value of `Exec=` that starts `exec_path` with AppKata's own `words` and the opened files
     (`%U`), written as the Desktop Entry Specification asks: the path in double quotes with `\\`, `$`
     and a backtick escaped, a `%` doubled, and then every backslash doubled again, as in any string
     value. With `through_sh`, the entry's program is `/bin/sh` (:data:`MENU_SHELL`) and `exec_path`,
-    a script, its first argument. A path with a quote or a control character (a line break) is
+    a script, its first argument. With `sh_exec`, the program is `/bin/sh` too, and `exec_path`, a
+    program that needn't be a script (AppKata's own AppImage), the first argument of
+    `sh -c 'exec "$0" "$@"'` (:data:`SH_EXEC`), which runs it by its own path with the rest: GLib
+    looks for the entry's program before it reads `%%` as `%`, so a `%` in the path of the program
+    itself kept the entry out of its menus (#689's review, P4-2), and as an argument it is read as
+    `%` when GLib starts the entry. A path with a quote or a control character (a line break) is
     refused with ValueError: no entry starts such a path, and nothing is written for it. So is one
     with a byte that isn't UTF-8, which an entry, UTF-8 text, can't hold (#689's review, P3-B3)."""
     if '"' in exec_path or _CONTROL.search(exec_path):
         raise ValueError(f"{one_line(exec_path)!r} has a quote or a line break in it, which a menu entry can't start")
     if _NOT_UTF8.search(exec_path):
         raise ValueError(f"{exec_path!r} has a byte that isn't UTF-8 in it, which a menu entry can't hold")
-    quoted = re.sub(r"([\\$`])", r"\\\1", exec_path).replace("%", "%%")
-    return " ".join([*([MENU_SHELL] if through_sh else []), f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
+    lead = [MENU_SHELL, "-c", _exec_word(SH_EXEC)] if sh_exec else [MENU_SHELL] if through_sh else []
+    return " ".join([*lead, _exec_word(exec_path), *words, "%U"]).replace("\\", "\\\\")
 
 
 def _menu_exec(exec_path: str, *words: str) -> str:

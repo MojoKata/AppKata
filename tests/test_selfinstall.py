@@ -57,7 +57,8 @@ def test_install_self(env):
     assert os.path.islink(stable) and os.readlink(stable) == os.path.basename(copy)
     assert not image.exists()                                           # the download was deleted
     entry = open(selfinstall.desktop_entry_path()).read()
-    assert f'Exec="{stable}" %U' in entry and "Icon=appkata" in entry and "StartupWMClass=appkata" in entry
+    assert f'Exec=/bin/sh -c "exec \\\\"\\\\$0\\\\" \\\\"\\\\$@\\\\"" "{stable}" %U\n' in entry, entry
+    assert "Icon=appkata" in entry and "StartupWMClass=appkata" in entry
     assert "MimeType=x-scheme-handler/appkata;" in entry
     icons = selfinstall.icon_paths()
     assert open(icons["svg"]).read() == "<svg/>" and os.path.getsize(icons["png"]) == 4
@@ -95,7 +96,7 @@ def test_appkatas_own_menu_entry_escapes_its_path_and_a_folder_it_cannot_start_i
     rec = selfinstall.install_self(db, root, version="0.1.0")
     stable = os.path.join(root, "appkata", "AppKata.AppImage")
     exec_line = next(l for l in open(selfinstall.desktop_entry_path()).read().splitlines() if l.startswith("Exec="))
-    assert rec["exec"] == stable and _exec_words(exec_line[len("Exec="):]) == [stable, "%U"], exec_line
+    assert rec["exec"] == stable and _exec_words(exec_line[len("Exec="):]) == [*_SH_EXEC, stable, "%U"], exec_line
     os.remove(selfinstall.desktop_entry_path())
     db.x("DELETE FROM installs")
     for bad in ('quo"te', "line\nbreak"):
@@ -106,6 +107,51 @@ def test_appkatas_own_menu_entry_escapes_its_path_and_a_folder_it_cannot_start_i
     with pytest.raises(OSError, match="quote or a line break"):
         selfinstall.write_desktop_entry('/opt/quo"te/AppKata.AppImage')
     assert not os.path.exists(selfinstall.desktop_entry_path())
+
+
+_SH_EXEC = ["/bin/sh", "-c", 'exec "$0" "$@"']        # AppKata's own entry: sh runs its program (#689's review, P4-2)
+
+
+def _glib_starts(path):
+    """What GLib starts from the entry at `path` as a desktop's menu does, with no file
+    (Gio.DesktopAppInfo.launch): the program's output, "not shown" where GLib loads no app from it
+    or its menu doesn't show it, or None where no system python3 has python3-gi (tier 1's
+    container has it). shutil.which is the env fixture's stand-in here, so python3 is looked for
+    by its path."""
+    import subprocess
+    py = next((p for p in ("/usr/bin/python3", "/bin/python3") if os.access(p, os.X_OK)), None)
+    if not py or subprocess.run([py, "-c", "import gi"], capture_output=True).returncode:
+        return None
+    code = ("import sys, gi\ngi.require_version('Gio', '2.0')\nfrom gi.repository import Gio\n"
+            "try:\n    i = Gio.DesktopAppInfo.new_from_filename(sys.argv[1])\nexcept TypeError:\n    i = None\n"
+            "if not i or not i.should_show():\n    print('not shown', end='')\nelse:\n    i.launch([], None)\n")
+    return subprocess.run([py, "-c", code, str(path)], capture_output=True, text=True, timeout=60).stdout
+
+
+@pytest.mark.parametrize("folder", ["apps", "100% apps", "a%U b"], ids=["plain", "a percent", "a field code"])
+def test_appkatas_own_menu_entry_starts_it_whatever_its_install_folder_holds(env, folder):
+    # #689's review, P4-2: AppKata's own entry named its program, the stable link in the install
+    # folder, as the entry's program. GLib looks for an entry's program before it reads %% as %, so
+    # with a % in the install folder (Settings names it, R4.3.1) AppKata, installed and recorded,
+    # was in no menu of Cinnamon, GNOME, MATE or Xfce, as an app was before #685. The entry's
+    # program is /bin/sh, which runs the stable link by its own path with the opened files; here
+    # the AppImage is a program that isn't a script (a copy of echo), which `/bin/sh "<path>"`
+    # couldn't run, and GLib itself, where it is here, loads, shows and starts the entry.
+    from test_install_review import _exec_words
+    import subprocess
+    db, home = env["db"], env["home"]
+    with open("/bin/echo", "rb") as f:
+        env["image"].write_bytes(f.read())
+    root = str(home / folder)
+    rec = selfinstall.install_self(db, root, version="0.1.0")
+    stable = os.path.join(root, "appkata", "AppKata.AppImage")
+    exec_line = next(l for l in open(selfinstall.desktop_entry_path()).read().splitlines() if l.startswith("Exec="))
+    words = _exec_words(exec_line[len("Exec="):])
+    assert rec["exec"] == stable and words == [*_SH_EXEC, stable, "%U"], exec_line
+    if (glib := _glib_starts(selfinstall.desktop_entry_path())) is not None:
+        assert glib == "\n", glib                                     # GLib shows the entry and starts echo, with no file
+    started = subprocess.run(words[:-1] + ["a file.txt", "100%"], capture_output=True, text=True)
+    assert (started.returncode, started.stdout, started.stderr) == (0, "a file.txt 100%\n", ""), started
 
 
 def test_icon_falls_back_to_the_package(env, monkeypatch):
