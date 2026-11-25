@@ -83,7 +83,7 @@ differ from its list (review 3, harness B).
 | R17.3.3 | The user's own choice in the install options | test_an_apps_kind_is_the_users_word_then_the_downloads_then_an_app, test_the_install_dialogs_kind_choice_moves_the_sandbox_card_and_is_saved, test_the_install_dialogs_sandbox_card_is_what_planfor_computes |
 | R17.3.3 | A command-line tool gets no app-menu entry when | test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry |
 | R17.3.3 | The cli-tool template binds the directory the tool | test_cli_tool_sees_and_writes_the_project_folder_it_is_run_in, test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments |
-| R17.3.3 | The directory is not shared when it is | test_cli_tool_never_gets_the_home_or_above_or_appkata_areas, test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder |
+| R17.3.3 | The directory is not shared when it is | test_cli_tool_never_gets_the_home_or_above_or_appkata_areas, test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder, test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it, test_a_tool_is_shown_no_folder_where_the_session_bus_names_a_file_it_cannot_read |
 | R17.3.4 | Personal templates (naming the user's own paths) | deferred, test_a_customization_saved_as_any_template_plus_changes_is_the_same_grant_set, test_a_folder_template_offers_its_folder_in_place_and_keeps_its_name, test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens |
 | R17.3.4 | The Sandbox dialog describes such a set by | test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens |
 | R17.3.5 | What a review may do. | statement |

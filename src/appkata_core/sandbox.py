@@ -549,17 +549,19 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
 
 def bus_sockets(address: str | None = None) -> list[str]:
     """The socket files of the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS
-    when None): each `unix:path=` in it, a list's too, unescaped. The bus is where its socket is, and
-    that need not be the runtime folder: dbus-run-session and dbus-launch put it under /tmp (R17.5),
-    where a grant of /tmp, or a tool run there, showed the app the unfiltered bus (the review of
-    PR #694, P1-2). An abstract socket has no file, and with no address the bus is the runtime
-    folder's, which is protected already."""
+    when None): each `unix:path=` in it, a list's too, unescaped as bytes, as the launcher's shell
+    reads them (a byte that isn't UTF-8 kept as the file system keeps it: PR #694's review, P2-1).
+    The bus is where its socket is, and that need not be the runtime folder: dbus-run-session and
+    dbus-launch put it under /tmp (R17.5), where a grant of /tmp, or a tool run there, showed the
+    app the unfiltered bus (the review of PR #694, P1-2). An abstract socket has no file, and with
+    no address the bus is the runtime folder's, which is protected already."""
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "") if address is None else address
     out = []
     for entry in addr.split(";"):
         transport, _, keys = entry.partition(":")
         if transport == "unix":
-            out += [urllib.parse.unquote(v) for k, _, v in (kv.partition("=") for kv in keys.split(",")) if k == "path" and v.startswith("/")]
+            out += [os.fsdecode(urllib.parse.unquote_to_bytes(v)) for k, _, v in (kv.partition("=") for kv in keys.split(","))
+                    if k == "path" and v.startswith("/")]
     return out
 
 
@@ -1959,9 +1961,13 @@ set -- -- "$appdir/$exe" "$@"
 # The session bus (R17.5), read first, Standard apps only: the proxy filters it, and the working
 # directory and the folder grants must never show the app its socket file, wherever that lies
 # (R17.3.1): dbus-run-session and dbus-launch put it under /tmp, and a tool run in /tmp, or a grant
-# of /tmp, showed the app the unfiltered bus (the review of PR #694, P1-2). $busreal is that file as
-# `pwd -P` names folders, the way the working directory is compared; empty where the address names
-# none the launcher can read (an abstract socket has no file).
+# of /tmp, showed the app the unfiltered bus (the review of PR #694, P1-2). $bussocks holds every
+# socket file the address names, as bus_sockets() reads them (PR #694's review, P2-1: the launcher
+# read a plain `unix:path=` alone, so a list, `guid=` first or an escaped byte left the file shown):
+# each `unix:` entry of a list, `path=` among its keys in any place, %XX unescaped as a byte; each as
+# `pwd -P` names folders, the way the working directory is compared, and a link as its target too;
+# one a line. $busok is 0 where an entry names a file the launcher can't read (a relative path, a
+# broken escape, a newline): no working directory is shared then. An abstract socket has no file.
 _BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
@@ -1970,10 +1976,33 @@ case "$upstream" in
   *";"*|unix:path=*%*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
-# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
-# folder of the app's may show it, wherever it lies (R17.3.1).
-busreal=$busfile
-if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
+# Every socket file the address names, one a line: no working directory or folder of the app's may
+# show one, wherever it lies (R17.3.1).
+nl='
+'
+bussocks= busok=1 rest="$upstream;"
+while [ -n "$rest" ]; do
+  e=${rest%%;*}; rest=${rest#*;}
+  case "$e" in unix:*) ;; *) continue ;; esac
+  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
+  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
+  f=
+  while [ -n "$p" ]; do
+    case "$p" in
+      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
+        f="$f$(printf "\\\\$(printf %o "$((0x$x))")")" ;;
+      %*) busok=0; f=; break ;;
+      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+      *) f="$f$p"; p= ;;
+    esac
+  done
+  case "$f" in /*) ;; *) busok=0; continue ;; esac
+  case "$f" in *"$nl"*) busok=0; continue ;; esac
+  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+  bussocks="$bussocks$f$nl"
+  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
+done
 """
 
 # File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
@@ -2136,8 +2165,9 @@ _GUARD_FN = """guard() {
 # The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
 # home, or the whole filesystem at /), AppKata's own areas (installed apps, other apps' private
-# homes), or a folder that holds the session bus's socket file ($busreal, wherever the session's
-# address puts it). There the tool runs in its private home instead and says why. Paths are compared physically
+# homes), or a folder that holds a socket file of the session bus ($bussocks, wherever the session's
+# address puts them; any folder, where it names one the launcher can't read). There the tool runs in
+# its private home instead and says why. Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
 # be shared (round three, R3-3: it always counted "$PWD", so a file named from a refused folder was
@@ -2147,7 +2177,13 @@ _CWD_DECIDE = """here=$(pwd -P 2>/dev/null || echo /)
 hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
-for d in "$hm" {protected} ${{busreal:+"$busreal"}}; do
+for d in "$hm" {protected}; do
+  case "$d/" in "$here"/*) share=0 ;; esac
+done
+[ "${{busok:-1}}" = 1 ] || share=0
+rest=${{bussocks:-}}
+while [ -n "$rest" ]; do
+  d=${{rest%%"$nl"*}}; rest=${{rest#*"$nl"}}
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in {protected}; do
@@ -2161,8 +2197,12 @@ _CWD_WORDS = """if [ "$share" = 1 ]; then
   set -- {bind} "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
-  echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  if [ "${{busok:-1}}" = 1 ]; then
+    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  else
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\\n" {name} "$here" "$upstream" >&2
+  fi
 fi
 """
 
@@ -2236,15 +2276,20 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # that holds its socket is refused above), and this session's bus can be elsewhere: one started
     # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket
     # is inside a granted folder all the same, the file is covered, after that folder's bind, so the
-    # app never sees the unfiltered bus (R17.3.1). Each folder as the app sees it, and as it really is.
+    # app never sees the unfiltered bus (R17.3.1). Each folder as the app sees it, and as it really is;
+    # each socket file the address names, but a link, which the folder shows pointing at a file it
+    # doesn't (its target is in $bussocks too, and covered where a granted folder holds it).
     granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
     if standard and granted:
-        cover = ["# A granted folder that holds this session's bus socket all the same: the file covered (R17.3.1).",
-                 'if [ -S "$busreal" ]; then']
+        cover = ["# A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).",
+                 'rest=$bussocks',
+                 'while [ -n "$rest" ]; do',
+                 '  s=${rest%%"$nl"*}; rest=${rest#*"$nl"}',
+                 '  if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'  r={q(os.path.realpath(dest))}; case "$busreal" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{busreal#"$r"}}" "$@" ;; esac')
-        out.append("\n".join(cover + ["fi"]) + "\n")
+            cover.append(f'    r={q(os.path.realpath(dest))}; case "$s" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+        out.append("\n".join(cover + ["  fi", "done"]) + "\n")
 
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:

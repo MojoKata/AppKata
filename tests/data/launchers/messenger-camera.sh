@@ -41,10 +41,33 @@ case "$upstream" in
   *";"*|unix:path=*%*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
-# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
-# folder of the app's may show it, wherever it lies (R17.3.1).
-busreal=$busfile
-if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
+# Every socket file the address names, one a line: no working directory or folder of the app's may
+# show one, wherever it lies (R17.3.1).
+nl='
+'
+bussocks= busok=1 rest="$upstream;"
+while [ -n "$rest" ]; do
+  e=${rest%%;*}; rest=${rest#*;}
+  case "$e" in unix:*) ;; *) continue ;; esac
+  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
+  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
+  f=
+  while [ -n "$p" ]; do
+    case "$p" in
+      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
+        f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
+      %*) busok=0; f=; break ;;
+      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+      *) f="$f$p"; p= ;;
+    esac
+  done
+  case "$f" in /*) ;; *) busok=0; continue ;; esac
+  case "$f" in *"$nl"*) busok=0; continue ;; esac
+  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+  bussocks="$bussocks$f$nl"
+  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
+done
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or

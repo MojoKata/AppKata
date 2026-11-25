@@ -652,35 +652,77 @@ def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_l
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:abstract=/tmp/dbus-one;unix:path={tmp_path}/a%20b/bus")
     assert sb.bus_sockets() == [f"{tmp_path}/a b/bus"]
     assert sb.protected_folder(str(tmp_path / "a b")) == "a folder above the session bus's socket"
+    # an escaped byte as the byte it is, as the launcher's shell reads it, UTF-8 or not (PR #694's review, P2-1)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/a%ffb/bus")
+    odd = os.fsdecode(os.fsencode(str(tmp_path)) + b"/a\xffb")
+    assert sb.bus_sockets() == [odd + "/bus"] and sb.protected_folder(odd) == "a folder above the session bus's socket"
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=0123")
     assert sb.bus_sockets() == [] and sb.protected_folder(str(folder)) == ""
 
 
+# PR #694's review, P2-1: the launcher's own rules (the working directory, the cover of a granted
+# folder) read the socket from a plain `unix:path=` address alone, while bus_sockets() reads every
+# form, so a session whose address was a list, put `guid=` first or escaped a byte -- or named a link
+# to the socket -- left the file in sight of a tool run beside it or a folder granted. How it slipped
+# past: P1-2's tests used the address dbus itself writes, and the forms the proxy can't take were
+# tested for the proxy alone. Each form is a way to name the socket `_a_bus_socket` makes in `tmp`.
+BUS_FORMS = {
+    "plain": "unix:path={tmp}/dbus-MZ8lHbtZ8K,guid=0123",
+    "guid first": "unix:guid=0123,path={tmp}/dbus-MZ8lHbtZ8K",
+    "a list": "unix:abstract=/tmp/dbus-none;unix:path={tmp}/dbus-MZ8lHbtZ8K",
+    "an escaped byte": "unix:path={up}/%74mp/dbus-%4dZ8lHbtZ8K",
+    "a link to it": "unix:path={up}/elsewhere/bus",
+}
+
+
+def _bus_form(form, path):
+    """The session address of `form` for the socket at `path` (and the link it names, made)."""
+    if form == "a link to it":
+        os.makedirs(path.parent.parent / "elsewhere", exist_ok=True)
+        (path.parent.parent / "elsewhere" / "bus").symlink_to(path)
+    return BUS_FORMS[form].format(tmp=path.parent, up=path.parent.parent)
+
+
+@pytest.mark.parametrize("form", BUS_FORMS)
 @pytest.mark.parametrize("where", ["the socket's folder", "a folder beside it"])
-def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, monkeypatch, where):
+def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, monkeypatch, where, form):
     sock, path = _a_bus_socket(tmp_path / "tmp")
     run_in = os.path.realpath(path.parent if where == "the socket's folder" else path.parent / "project")
     os.makedirs(run_in, exist_ok=True)
-    proxy, app, r, rt = _launched(tmp_path, monkeypatch, f"unix:path={path},guid=0123", template="cli-tool", cwd=run_in)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), template="cli-tool", cwd=run_in)
     sock.close()
-    assert proxy is not None and r.returncode == 0, (r.stdout, r.stderr)
+    assert (proxy is not None) is (form in ("plain", "a link to it")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
     if where == "the socket's folder":
         assert run_in not in _binds(app) and app[app.index("--chdir") + 1] == str(tmp_path / "home"), app
         assert f"Demo runs sandboxed and can't see {run_in}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
     else:
-        assert _binds(app)[run_in] == ("--bind", run_in) and r.stderr == "", (app, r.stderr)
+        assert _binds(app)[run_in] == ("--bind", run_in) and "can't see" not in r.stderr, (app, r.stderr)
 
 
-def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch):
+@pytest.mark.parametrize("address", ["unix:path=relative/dbus-MZ8lHbtZ8K", "unix:path=/tmp/dbus-%zz", "unix:abstract=/tmp/x;unix:path=/tmp/a%0Ab"])
+def test_a_tool_is_shown_no_folder_where_the_session_bus_names_a_file_it_cannot_read(tmp_path, monkeypatch, address):
+    # ...and an address that names a socket file the launcher can't read (a relative path, a broken
+    # escape, a newline) could name one anywhere: the tool is shown no working folder, and told why.
+    run_in = tmp_path / "project"
+    run_in.mkdir()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, template="cli-tool", cwd=run_in)
+    assert proxy is None and r.returncode == 0 and str(run_in) not in _binds(app), (app, r.stderr)
+    assert (f"Demo runs sandboxed and can't see {run_in}, nor any folder here: this session bus's address ({address}) names a socket "
+            "file AppKata can't read, which could be there.") in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("form", BUS_FORMS)
+def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch, form):
     # A grant is judged when the launcher is written, by AppKata's own session's bus; a session
-    # started another way can put its bus inside that folder later. The run covers the file.
+    # started another way can put its bus inside that folder later. The run covers the file, however
+    # the session's address names it (P2-1, above).
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
-    sock, path = _a_bus_socket(tmp_path / "shared")
+    sock, path = _a_bus_socket(tmp_path / "tmp")
     folder = str(path.parent)
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}})
-    proxy, app, r, rt = _launched(tmp_path, monkeypatch, f"unix:path={path},guid=0123", gs=gs)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), gs=gs)
     sock.close()
-    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    assert r.returncode == 0 and "AppKata: the session bus here" not in r.stderr or proxy is None, (r.stdout, r.stderr)
     binds = _binds(app)
     assert binds[folder] == ("--bind-try", folder) and binds[str(path)] == ("--ro-bind", "/dev/null"), binds
     assert app.index(str(path)) > app.index(folder)                     # after the folder's own bind

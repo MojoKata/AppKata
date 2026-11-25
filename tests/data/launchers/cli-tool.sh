@@ -41,15 +41,44 @@ case "$upstream" in
   *";"*|unix:path=*%*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
-# Its socket file, where the address names one, as `pwd -P` names folders: no working directory or
-# folder of the app's may show it, wherever it lies (R17.3.1).
-busreal=$busfile
-if [ -n "$busfile" ] && bd=$(cd "${busfile%/*}/" 2>/dev/null && pwd -P); then busreal="${bd%/}/${busfile##*/}"; fi
+# Every socket file the address names, one a line: no working directory or folder of the app's may
+# show one, wherever it lies (R17.3.1).
+nl='
+'
+bussocks= busok=1 rest="$upstream;"
+while [ -n "$rest" ]; do
+  e=${rest%%;*}; rest=${rest#*;}
+  case "$e" in unix:*) ;; *) continue ;; esac
+  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
+  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
+  f=
+  while [ -n "$p" ]; do
+    case "$p" in
+      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
+        f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
+      %*) busok=0; f=; break ;;
+      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+      *) f="$f$p"; p= ;;
+    esac
+  done
+  case "$f" in /*) ;; *) busok=0; continue ;; esac
+  case "$f" in *"$nl"*) busok=0; continue ;; esac
+  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+  bussocks="$bussocks$f$nl"
+  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
+done
 here=$(pwd -P 2>/dev/null || echo /)
 hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
-for d in "$hm" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt" ${busreal:+"$busreal"}; do
+for d in "$hm" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
+  case "$d/" in "$here"/*) share=0 ;; esac
+done
+[ "${busok:-1}" = 1 ] || share=0
+rest=${bussocks:-}
+while [ -n "$rest" ]; do
+  d=${rest%%"$nl"*}; rest=${rest#*"$nl"}
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
@@ -88,8 +117,12 @@ if [ "$share" = 1 ]; then
   set -- --bind "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\n" App "$here" >&2
-  echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  if [ "${busok:-1}" = 1 ]; then
+    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\n" App "$here" >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  else
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\n" App "$here" "$upstream" >&2
+  fi
 fi
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
