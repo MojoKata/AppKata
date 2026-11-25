@@ -7,3 +7,4 @@
 #701  small  CR1.5-45 The folders a sandbox never shares hold only one install folder, so with apps in two install folders a sandboxed app in one can be granted the other read-write.
 #383  small  CR1.5-8 Chromium profiles, Firefox forks, Evolution's mail and GNOME Online Accounts' tokens aren't secrets, so a review can grant them.
 #392  small  CR1.5-17 The never-shared and secret folders are checked only at their default places, so one moved by an XDG variable can be granted.
+#745  small  CR1.8-39 The review badge and the Audit name a refused folder among what a reviewer's set adds. (Added by the coordinator after batch 3: found by batch 3.)

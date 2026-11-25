@@ -200,7 +200,9 @@
     401,
     666,
     701,
-    736
+    736,
+    743,
+    745
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -223,7 +225,8 @@
     "tests/test_sandbox_one_fact.py",
     "tests/test_sandbox_run.py",
     "tests/test_sandbox_two_apps.py",
-    "tests/test_sandbox_user_shaped.py"
+    "tests/test_sandbox_user_shaped.py",
+    "tests/test_backend.py"
    ]
   },
   {
@@ -541,8 +544,7 @@
     216,
     220,
     221,
-    639,
-    734
+    639
    ],
    "files": [
     "DEVELOP.md",
@@ -1720,7 +1722,9 @@
     199,
     200,
     204,
-    619
+    619,
+    744,
+    734
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -11486,7 +11490,7 @@
    "related": [],
    "size": "small",
    "proof": "The document checks.",
-   "note": "Found by U05's first batch (2026-11-25) after #380's fix, and filed by the coordinator; U13 holds the file."
+   "note": "Found by U05's first batch (2026-11-25) after #380's fix, and filed by the coordinator; U42 (the sandbox's architecture text) holds the file."
   },
   {
    "finding": 736,
@@ -11506,6 +11510,56 @@
    "size": "medium",
    "proof": "A folder argument, a link planted in it through the document portal, then a file argument through the link: the target is not handed over (tier 1, and tier 2 with the real portal in both containers).",
    "note": "Found by U05's second batch (2026-11-25) on its branch after #379's fix, and filed by the coordinator; taken in U05's fifth batch beside #400 (the same portal records), so #379 closes with its road shut."
+  },
+  {
+   "finding": 743,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
+    "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    736
+   ],
+   "size": "medium",
+   "proof": "A cli-tool run in a granted folder's parent replaces the folder with a link; after the launcher is written again, the grant is dropped, not followed (tier 1, and tier 2 in both containers).",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; #665's fix leaves it open, so U05's sixth batch takes it and #665 closes with it shut."
+  },
+  {
+   "finding": 744,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    734
+   ],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; with #734 in U42, which holds A1.2."
+  },
+  {
+   "finding": 745,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    391
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of the badge and the Audit for a review naming a refused folder.",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; U05's fourth batch takes it, beside its other refused-folder work."
   }
  ],
  "shared_files": [
