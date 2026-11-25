@@ -16,7 +16,7 @@ import logging
 
 from . import audit, channels, forges, gitsig, metadata, trustfile, urls
 from .db import DB, now
-from .http import Http, NotFound, RateLimited, SourceError, Unreachable
+from .http import Cancelled, Http, NotFound, RateLimited, SourceError, Unreachable
 from .install import one_line
 from .platform import data_dir
 
@@ -46,6 +46,10 @@ def _ext(name: str, data: bytes) -> str:
 
 
 def _save_image(http: Http, url: str, dest_base: str, token_host: str | None = None) -> str:
+    """Fetch an image and keep it. The address may be one the project wrote (its metainfo, its
+    README) or the forge gave (an avatar), so `token_host` is always the Source's host: Http sends
+    that host's token to no other (R9.2.2), opens only http and https, and refuses an address on
+    this computer or its local network unless it is that host's."""
     data = http.bytes(url, token_host=token_host, max_bytes=MAX_IMAGE)
     ext = _ext(url, data)
     if ext not in (".png", ".jpg", ".svg", ".webp", ".gif"):
@@ -154,11 +158,22 @@ def sync_app(db: DB, http: Http, url: str, root: str | None = None) -> None:
                 db.x("INSERT OR REPLACE INTO app_meta(url, appstream_id) VALUES(?,?)", (url, meta_info["id"]))
     except SourceError as e:
         log.warning("%s: %s (%s)", url, e, e.code)
-        extra = dict(e.extra)
-        db.x("""INSERT INTO apps(url, name, host, repo, fetched_at, error, error_code, error_extra) VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(url) DO UPDATE SET error=excluded.error, error_code=excluded.error_code,
-                error_extra=excluded.error_extra, fetched_at=excluded.fetched_at""",
-             (url, repo.name, repo.host, repo.path, now(), str(e), e.code, json.dumps(extra)))
+        _failed(db, url, repo, str(e), e.code, dict(e.extra))
+    except Exception as e:        # noqa: BLE001 — one app's sync must never end the Sync (CR1 #269)
+        # what nothing above expected, such as a forge's answer of another shape (a KeyError, an
+        # AttributeError): on this app's row like any other error (R2.10), as the kind for a Source
+        # that couldn't be read, and in the app log with its traceback
+        log.exception("%s: an unexpected error", url)
+        said = f"unexpected error ({type(e).__name__}: {str(e)[:200]}); the app log has the details"
+        _failed(db, url, repo, said, Unreachable.code, {"unexpected": type(e).__name__})
+
+
+def _failed(db: DB, url: str, repo: urls.Repo, error: str, code: str, extra: dict) -> None:
+    """An app's last error, on its row (R2.10). What an earlier sync stored stays."""
+    db.x("""INSERT INTO apps(url, name, host, repo, fetched_at, error, error_code, error_extra) VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(url) DO UPDATE SET error=excluded.error, error_code=excluded.error_code,
+            error_extra=excluded.error_extra, fetched_at=excluded.fetched_at""",
+         (url, repo.name, repo.host, repo.path, now(), error, code, json.dumps(extra)))
 
 
 # ---------------------------------------------------------------- trusts
@@ -370,7 +385,8 @@ def authorities_for(db: DB, tid: int) -> list[gitsig.Authority]:
 
 def ensure_assets(db: DB, http: Http, url: str, version: str) -> dict | None:
     """A release's files, fetched now if the last sync didn't (the GitHub fallback only reads the
-    newest few releases' files). Returns the release dict."""
+    newest few releases' files). Returns the release dict, or raises the forge's SourceError: what
+    is stored stays as it was."""
     row = db.one("SELECT releases, forge FROM apps WHERE url=?", (url,))
     if not row:
         return None
@@ -381,14 +397,11 @@ def ensure_assets(db: DB, http: Http, url: str, version: str) -> dict | None:
     repo = urls.parse(url)
     f = forges.forge_for(http, repo, row["forge"] or None)
     if isinstance(f, forges.GitHub):
-        try:
-            if f.web:
-                raise forges.RateLimited("api.github.com", 0)
-            d = f._get(f"{f.base}/releases/tags/{forges.quote(rel['tag'], safe='')}")
-            assets = [forges.Asset(a["name"], a["browser_download_url"], a.get("size", 0), a.get("digest") or "")
-                      for a in d.get("assets", [])]
-        except (forges.RateLimited, SourceError):
-            assets, _ = f._assets_web(rel["tag"])
+        # the API's list, and github.com's own page of the release for github.com alone, when its
+        # API's limit is used up. Any failure of the API used to end at that page, whichever host
+        # the Source is on: a GitHub Enterprise's release got the files, and the digests, of
+        # whatever project has its path on github.com (CR1 #265). An error is the caller's to show.
+        assets = f.release_assets(rel["tag"])
     else:
         match = next((r for r in f.releases() if r.tag == rel["tag"]), None)
         assets = match.assets if match else []
@@ -422,7 +435,9 @@ def catalog_urls(db: DB) -> list[str]:
 
 def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | None = None, workers: int = 4,
              on_item=None) -> None:
-    """Trusts first (they add Catalog apps), then every app, four hosts at a time (R9.2.1)."""
+    """Trusts first (they add Catalog apps), then every app, four hosts at a time (R9.2.1), then the
+    package channels. Cancel stops the requests of each step where they are (R9.2.1): a Trust's key
+    lookup, an app's sync, a link check (the review's pass 1, P1-B5: it reached only the apps)."""
     progress = progress or Progress()
     trusts = [t["id"] for t in db.all("SELECT id FROM trusts WHERE enabled=1")]
     progress.total = len(trusts)
@@ -430,7 +445,13 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
         if progress.cancelled:
             return
         progress.current = db.one("SELECT name FROM trusts WHERE id=?", (tid,))["name"]
-        sync_trust(db, http, tid, root)
+        try:
+            # a Trust whose sync it stops keeps what the last Sync stored: nothing of it is stored
+            # before its key lookup, the one request Http makes for it
+            with http.stopping(lambda: progress.cancelled):
+                sync_trust(db, http, tid, root)
+        except Cancelled:
+            return
         progress.done += 1
         on_item and on_item()
     apps = catalog_urls(db)
@@ -440,7 +461,17 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
         if progress.cancelled:
             return
         progress.current = url.split("/", 3)[-1]
-        sync_app(db, http, url, root)
+        try:
+            # Cancel stops this app's requests where they are, an answer still being read too
+            # (CR1 #296): the app keeps what the last Sync stored, and isn't counted as done
+            with http.stopping(lambda: progress.cancelled):
+                sync_app(db, http, url, root)
+        except Cancelled:
+            return
+        except Exception:        # noqa: BLE001 — sync_app puts an app's error on its row; this is what
+            # it couldn't: an address nothing can parse, a database that can't be written. The apps
+            # after it are still synced, and the Sync ends as one does (CR1 #269)
+            log.exception("%s: its sync couldn't be finished", url)
         with progress.lock:
             progress.done += 1
         on_item and on_item()
@@ -448,15 +479,20 @@ def sync_all(db: DB, http: Http, progress: Progress | None = None, root: str | N
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, apps))
     if not progress.cancelled:
-        sync_channels(db, http)
+        try:
+            with http.stopping(lambda: progress.cancelled):
+                sync_channels(db, http, progress)
+        except Cancelled:
+            pass
     db.put("last_sync", now())
 
 
 # ---------------------------------------------------------------- package channels (R16)
-def sync_channels(db: DB, http: Http) -> None:
+def sync_channels(db: DB, http: Http, progress: Progress | None = None) -> None:
     """Every sync: who updates what (R16.5.2), channel installs still there or changed elsewhere
     (R16.4.1, R16.5.4), pending updates (R16.5.5) and the link checks (R16.1.5). Skipped off Linux and
-    inside a Flatpak sandbox (R16.10). Never fails the sync."""
+    inside a Flatpak sandbox (R16.10). Never fails the sync. The Sync's Cancel (`progress`) stops it
+    between its steps and between two apps' link checks; sync_all stops a request under way."""
     if not channels.enabled():
         return
     from . import autoupdate
@@ -465,9 +501,11 @@ def sync_channels(db: DB, http: Http) -> None:
         db.put("autoupdate", det.as_dict())
     except Exception:
         log.exception("couldn't read the system's update settings")
-    for step in (track_channel_installs, check_links):
+    for step, args in ((track_channel_installs, ()), (check_links, (progress,))):
+        if progress and progress.cancelled:
+            return
         try:
-            step(db, http)
+            step(db, http, *args)
         except Exception:
             log.exception("channels: %s failed", step.__name__)
 
@@ -545,8 +583,9 @@ def _changed_elsewhere(db: DB, row: dict, rec: dict, raw: str, version: str, who
     db.x("UPDATE installs SET version=? WHERE url=?", (version or raw, row["url"]))
 
 
-def check_links(db: DB, http: Http) -> None:
-    """The link checks, each when its answer can change (R16.1.5)."""
+def check_links(db: DB, http: Http, progress: Progress | None = None) -> None:
+    """The link checks, each when its answer can change (R16.1.5). A Sync's Cancel (`progress`)
+    stops them before the next app's."""
     from . import appstream, flatpak, pkgbackend
     try:
         cat = appstream.load_cached()
@@ -555,6 +594,8 @@ def check_links(db: DB, http: Http) -> None:
     mgr = channels.manager()
     has_fp = flatpak.available()
     for url in catalog_urls(db):
+        if progress and progress.cancelled:
+            return
         found = channels.links(db, url, cat, mgr)
         meta = db.one("SELECT appstream_id FROM app_meta WHERE url=?", (url,)) or {}
         fl, pk = found.get("flatpak"), found.get("package")

@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import threading
 from datetime import datetime, timezone
+
+from .platform import data_dir
 
 SCHEMA_VERSION = 7
 SCHEMA = """
@@ -65,9 +68,50 @@ def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _narrow(path: str, most: int) -> None:
+    """Takes from a file or folder every permission beyond `most`. Never adds one."""
+    try:
+        has = stat.S_IMODE(os.stat(path).st_mode)
+        if has & ~most:
+            os.chmod(path, has & most)
+    except OSError:          # not ours to change (a folder another account made): left as it is
+        pass
+
+
+def private_dir(path: str) -> None:
+    """Makes a folder for the user's own account alone (0700), and narrows it when it is there
+    already and wider. AppKata's data folder holds the database, with the API tokens in plain text
+    (R11.1.6), and its log folder the user's Sources, paths and commands: made as the umask allows
+    they were 0755, open to every other account the home folder lets in (CR1 #434). Windows keeps
+    both under %LOCALAPPDATA%, which is the user's own."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        _narrow(path, 0o700)
+
+
+def private_file(path: str) -> None:
+    """Makes a file for the user's own account alone (0600) when it isn't there, and narrows one
+    that is."""
+    if os.name == "nt":
+        return
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
+    except OSError:          # can't be made or written: whoever opens it next says so
+        return
+    _narrow(path, 0o600)
+
+
 class DB:
     def __init__(self, path: str):
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        folder = os.path.dirname(os.path.abspath(path))
+        if folder == data_dir():
+            private_dir(folder)
+        else:                    # a database kept elsewhere (a test's, a script's): its folder isn't AppKata's to narrow
+            os.makedirs(folder, exist_ok=True)
+        # the file is made before SQLite opens it: SQLite gives its -wal and -shm the database's own mode
+        for file in (path, path + "-wal", path + "-shm"):
+            if file == path or os.path.exists(file):
+                private_file(file)
         self.path = path
         self.lock = threading.RLock()
         self.c = sqlite3.connect(path, check_same_thread=False, isolation_level=None)

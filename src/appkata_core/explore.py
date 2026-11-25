@@ -43,14 +43,14 @@ def _strip(s: str) -> str:
 def github(http: Http, q: str, limit: int = 20) -> list[Match]:
     try:
         d = http.json(f"https://api.github.com/search/repositories?q={quote(q)}&per_page={limit}",
-                      token_host="github.com", accept="application/vnd.github+json")
+                      token_host="github.com", forge="github", accept="application/vnd.github+json")
         return [Match(i["name"], i["owner"]["login"], i["html_url"], i["html_url"], i.get("description") or "",
                       i.get("stargazers_count", 0), i.get("pushed_at") or i.get("updated_at") or "", i.get("language") or "",
                       bool(i.get("archived")), (i.get("topics") or [])[:5], "github")
                 for i in d.get("items", [])[:limit]]
     except RateLimited:
         pass       # github.com's own search page answers JSON too, without the API's limit
-    d = http.json(f"https://github.com/search?q={quote(q)}&type=repositories", token_host="github.com")
+    d = http.json(f"https://github.com/search?q={quote(q)}&type=repositories", token_host="github.com", forge="github")
     out = []
     for r in (d.get("payload") or {}).get("blackbirdSearchRoute", {}).get("results", [])[:limit]:
         full = _strip(r.get("hl_name", ""))
@@ -64,7 +64,7 @@ def github(http: Http, q: str, limit: int = 20) -> list[Match]:
 
 def gitlab(http: Http, q: str, limit: int = 20, host: str = "gitlab.com") -> list[Match]:
     d = http.json(f"https://{host}/api/v4/projects?search={quote(q)}&order_by=star_count&sort=desc&per_page={limit}&simple=true",
-                  token_host=host)
+                  token_host=host, forge="gitlab")
     return [Match(p.get("name", ""), (p.get("namespace") or {}).get("full_path", "") or p.get("path_with_namespace", "").rsplit("/", 1)[0],
                   p.get("web_url", ""), p.get("web_url", ""), p.get("description") or "", p.get("star_count", 0),
                   p.get("last_activity_at", ""), "", bool(p.get("archived")), (p.get("topics") or [])[:5], "gitlab")
@@ -72,7 +72,7 @@ def gitlab(http: Http, q: str, limit: int = 20, host: str = "gitlab.com") -> lis
 
 
 def codeberg(http: Http, q: str, limit: int = 20, host: str = "codeberg.org") -> list[Match]:
-    d = http.json(f"https://{host}/api/v1/repos/search?q={quote(q)}&sort=stars&order=desc&limit={limit}", token_host=host)
+    d = http.json(f"https://{host}/api/v1/repos/search?q={quote(q)}&sort=stars&order=desc&limit={limit}", token_host=host, forge="forgejo")
     return [Match(r.get("name", ""), (r.get("owner") or {}).get("login", ""), r.get("html_url", ""), r.get("html_url", ""),
                   r.get("description") or "", r.get("stars_count", 0), r.get("updated_at", ""), r.get("language") or "",
                   bool(r.get("archived")), (r.get("topics") or [])[:5], "codeberg")

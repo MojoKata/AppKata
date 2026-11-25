@@ -48,6 +48,20 @@ characters and a trash button; then a host field, a hidden token field and a "+"
 text explains that tokens raise rate limits (GitHub allows 60 requests an hour without one),
 are only sent to their own host, and are never exported.
 
+A token belongs to one address. The host is entered as a Source's address has it: its name, and
+its port when the forge is on one (`git.example.org:3000`); a name alone means the default port.
+The host field's placeholder is "host or host:port", and the help text says how a forge on its own
+port is entered. A whole address pasted into the field is kept as its host, with the port it
+writes out and no other: `http://git.lan/o/r` is kept as `git.lan`, as its Source's host is, and
+`git.lan:80` and `http://git.lan:80/o/r` as `git.lan:80`; a port written `:443` is the same as none. A row,
+and the Audit's line for a token, show its host in its own script, as a Source's address has it
+(`übung.lan`), while the token is kept under the host in the form it is sent (`xn--bung-zra.lan`),
+the one every rule compares (R9.2.2).
+
+Tokens are kept in the database (R1.8). On Linux the data folder and the log folder (R14.3) are
+the user's own account's alone (mode 0700), and so is the database file (0600); one that is there
+already and wider is narrowed when AppKata starts.
+
 R11.1.7. **Nostr relays** (R1.5): the relay list, each with a trash button, and a field and "+"
 button to add one (`wss://…`).
 

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 
+from .db import private_dir, private_file
 from .platform import OS
 
 LIMIT = 2 * 1024 * 1024
@@ -35,11 +36,17 @@ class TwoFileHandler(logging.Handler):
     def __init__(self, folder: str, limit: int = LIMIT):
         super().__init__()
         self.folder, self.limit = folder, limit
-        os.makedirs(folder, exist_ok=True)
+        private_dir(folder)                    # the log names the user's Sources, paths and commands (CR1 #434)
         self.path = os.path.join(folder, CURRENT)
         self.prev = os.path.join(folder, PREVIOUS)
         self._lock = threading.Lock()
-        self.f = open(self.path, "a", encoding="utf-8")
+        if os.path.exists(self.prev):
+            private_file(self.prev)
+        self.f = self._open()
+
+    def _open(self):
+        private_file(self.path)
+        return open(self.path, "a", encoding="utf-8")
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -57,7 +64,7 @@ class TwoFileHandler(logging.Handler):
         if os.path.exists(self.prev):          # 14.4.1.1
             os.remove(self.prev)
         os.replace(self.path, self.prev)       # 14.4.1.2
-        self.f = open(self.path, "a", encoding="utf-8")    # 14.4.1.3
+        self.f = self._open()                  # 14.4.1.3
 
     def close(self) -> None:
         with self._lock:

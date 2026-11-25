@@ -1,14 +1,34 @@
 """Forge API parsing against recorded responses, so no forge needs to be reachable."""
 
+import errno
+import inspect
 import io
+import ipaddress
 import json
+import os
+import re
+import select
+import shutil
+import socket
+import socketserver
+import ssl
+import subprocess
+import threading
 import time
+import types
 import urllib.error
+import urllib.parse
+import urllib.request
+from http.client import BadStatusLine, HTTPConnection, IncompleteRead, InvalidURL, LineTooLong
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from appkata_core import forges, urls
-from appkata_core.http import Http, RateLimited
+from appkata_core import channels, explore, forges, gitsig, metadata, sync, urls
+from appkata_core import http as http_
+from appkata_core.db import DB, now
+from appkata_core.http import Http, RateLimited, SourceError, Unreachable
+import reqdocs
 
 
 class FakeResponse(io.BytesIO):
@@ -31,6 +51,8 @@ def opener(routes):
         url = req.full_url
         for prefix, body in routes.items():
             if url.startswith(prefix):
+                if isinstance(body, BaseException):         # what opening the address ends in
+                    raise body
                 if isinstance(body, int):
                     raise urllib.error.HTTPError(url, body, "err", {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(time.time()) + 60)}, None)
                 return FakeResponse(url, body)
@@ -68,7 +90,7 @@ def test_forgejo_detection_and_releases():
 
 
 def test_rate_limit_is_typed_and_remembered():
-    http = Http(opener=opener({"https://api.github.com/repos/a/b": 403}))
+    http = names(Http(opener=opener({"https://api.github.com/repos/a/b": 403})))
     f = forges.GitHub(http, urls.parse("https://github.enterprise.example/a/b"), api="https://api.github.com")
     with pytest.raises(RateLimited):
         f._info_api()
@@ -168,3 +190,4305 @@ def test_without_the_releases_page_the_pages_keep_every_feed_entry():
     http._open = no_listing
     _, web = _read(http)
     assert list(web) == [t for t, *_ in REPO]
+
+
+# ---------------------------------------------------------------- where a token goes (R9.2.2)
+# CR1's #263: Http took the token from a host its caller named, whatever the address it then asked
+# for, and Sync named the Source's host for every image, the ones a project's README and metainfo
+# write themselves too. No test looked at what a request carried: every fake opener here answered by
+# the address alone. The class is "a request carries the token of a host it isn't for", so the
+# harness records each request with its headers, and the whole-Sync test holds every request a Sync
+# makes to the one rule, whichever line asked for it.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+
+
+def recording(routes, seen):
+    """opener(), noting each request as (address, its headers by lower-case name)."""
+    answer = opener(routes)
+
+    def open_(req, timeout=0):
+        seen.append((req.full_url, {k.lower(): v for k, v in req.header_items()}))
+        return answer(req, timeout)
+    return open_
+
+
+PUBLIC = "8.8.8.8"
+
+
+def names(http, table=None):
+    """Stands in for the name lookup, so no test asks a name server: a host in `table` gets its
+    addresses there, an address is itself, and every other name gets a public address."""
+    def lookup(host):
+        if host in (table or {}):
+            return table[host]
+        try:
+            return [str(ipaddress.ip_address(host))]
+        except ValueError:
+            return [PUBLIC]
+    http._lookup = lookup
+    return http
+
+
+def tokened(seen):
+    """The addresses that were sent a token, in either header."""
+    return [url for url, h in seen if "authorization" in h or "private-token" in h]
+
+
+def _ask(http, url, **kw):
+    try:
+        http.bytes(url, **kw)
+    except SourceError:
+        pass
+
+
+@pytest.mark.parametrize("url, sent", [
+    ("https://github.com/o/r", True),
+    ("https://api.github.com/repos/o/r", True),
+    ("https://raw.githubusercontent.com/o/r/main/README.md", True),
+    ("https://avatars.githubusercontent.com/u/1", False),            # GitHub's, but not a named host
+    ("https://evil.example/screenshot.png", False),
+    ("https://notgithub.com/o/r", False),                            # ends in the same letters
+    ("https://api.github.com.evil.example/repos/o/r", False),        # starts with them
+    ("https://github.com@evil.example/o/r", False),                  # the host is evil.example, and it isn't asked at all (P3-1)
+    ("http://github.com/o/r", False),                                # plain http: never
+    ("http://api.github.com/repos/o/r", False),
+    ("http://raw.githubusercontent.com/o/r/main/icon.png", False),
+])
+def test_the_github_token_goes_to_its_named_hosts_over_https_and_nowhere_else(url, sent):
+    seen = []
+    http = names(Http({"github.com": "ghp_SECRET", "evil.example": ""}, opener=recording({}, seen)))
+    _ask(http, url, token_host="github.com")
+    assert [u for u, _ in seen] == ([] if "@" in url else [url])     # an address with a user part is refused (review pass 3, P3-1)
+    assert tokened(seen) == ([url] if sent else []), seen
+    if sent:
+        assert seen[0][1]["authorization"] == "Bearer ghp_SECRET"
+
+
+@pytest.mark.parametrize("host, header", [("gitlab.com", "private-token"), ("codeberg.org", "authorization")])
+def test_another_hosts_token_goes_to_that_host_alone(host, header):
+    seen = []
+    http = names(Http({host: "SECRET"}, opener=recording({}, seen)))
+    for url in (f"https://{host}/api/x", f"https://api.{host}/x", f"https://raw.{host}/x", f"http://{host}/api/x",
+                "https://api.github.com/x", "https://raw.githubusercontent.com/x", "https://evil.example/x.png"):
+        _ask(http, url, token_host=host)
+    assert tokened(seen) == [f"https://{host}/api/x"]
+    assert "SECRET" in seen[0][1][header]
+
+
+def test_a_request_that_names_no_host_gets_its_own_hosts_token_and_no_other():
+    seen = []
+    http = Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({}, seen))
+    for url in ("https://github.com/o/r/releases.atom", "http://github.com/o/r/releases.atom",
+                "https://gitlab.com/o/r", "https://flathub.org/api/v2/x"):
+        _ask(http, url)
+    assert [(u, h.get("authorization") or h.get("private-token")) for u, h in seen if u in tokened(seen)] == [
+        ("https://github.com/o/r/releases.atom", "Bearer ghp_SECRET"), ("https://gitlab.com/o/r", "glpat_SECRET")]
+
+
+@pytest.mark.parametrize("url, sent", [
+    ("https://raw.githubusercontent.com/o/r/main/icon.png", True),   # the Source's own file
+    ("https://evil.example/screenshot.png", False),                  # what a README or a metainfo names
+    ("http://evil.example/screenshot.png", False),
+    ("https://gitlab.com/o/r/-/raw/main/shot.png", False),           # another forge the user has a token for
+])
+def test_an_image_on_another_host_is_fetched_without_the_sources_token(tmp_path, url, sent):
+    seen = []
+    http = names(Http({"github.com": "ghp_SECRET", "gitlab.com": "glpat_SECRET"}, opener=recording({url: PNG}, seen)))
+    assert sync._save_image(http, url, str(tmp_path / "hero"), token_host="github.com") == str(tmp_path / "hero.png")
+    assert tokened(seen) == ([url] if sent else []), seen
+
+
+METAINFO = """<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application"><id>org.example.r</id><name>R</name><summary>An app</summary>
+<icon type="remote">https://evil.example/icon.png</icon>
+<screenshots><screenshot type="default"><image>http://evil.example/shot.png</image></screenshot></screenshots>
+</component>"""
+
+
+def test_a_whole_sync_sends_the_token_to_the_sources_named_hosts_alone(tmp_path):
+    """Every request of a Sync, against the rule: a token only over https, only to the Source's host and
+    its named API and raw-file hosts. The project's metainfo and README name images elsewhere."""
+    api, raw = "https://api.github.com/repos/o/r", "https://raw.githubusercontent.com/o/r/main/"
+    seen = []
+    http = names(Http({"github.com": "ghp_SECRET"}, opener=recording({
+        api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+        api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in (
+            "README.md", "data/org.example.r.metainfo.xml", "data/icons/icon.png", "docs/window.png")]},
+        api: {"name": "r", "full_name": "o/r", "default_branch": "main",
+              "owner": {"avatar_url": "https://avatars.githubusercontent.com/u/1"}},
+        raw + "README.md": b"# R\n\n![shot](https://evil.example/screenshot.png)\n\n![window](docs/window.png)\n",
+        raw + "data/org.example.r.metainfo.xml": METAINFO.encode(),
+        raw + "docs/window.png": PNG,
+        "https://avatars.githubusercontent.com/u/1": PNG,
+    }, seen)))
+    db = DB(str(tmp_path / "a.db"))
+    sync.sync_app(db, http, "https://github.com/o/r", root=str(tmp_path))
+    app = db.one("SELECT * FROM apps WHERE url=?", ("https://github.com/o/r",))
+    assert app["error_code"] is None and app["icon"].endswith("icon.png") and app["hero"].endswith("hero.png")
+    asked = [u for u, _ in seen]
+    for elsewhere in ("https://evil.example/icon.png", "http://evil.example/shot.png",
+                      "https://evil.example/screenshot.png", "https://avatars.githubusercontent.com/u/1"):
+        assert elsewhere in asked, asked               # the Sync did ask for each of them
+    allowed = ("https://api.github.com/", "https://raw.githubusercontent.com/", "https://github.com/")
+    assert [u for u in tokened(seen) if not u.startswith(allowed)] == []
+    assert sorted(set(tokened(seen))) == sorted({u for u in asked if u.startswith(allowed)})
+
+
+def test_r9_2_2_names_the_hosts_the_code_sends_a_token_to():
+    """CR1's #276: R9.2.2 said a token never goes to another host, while github.com's goes to its API
+    and raw-file hosts by design, and it gave no list to hold the code to. It names them now, and the
+    code keeps them in one place: the two say the same."""
+    text = reqdocs.item("R9.2.2")
+    named = set(re.findall(r"`([a-z0-9-]+(?:\.[a-z0-9-]+)+)`", text))
+    assert named == {h for host in http_.TOKEN_HOSTS for h in http_.token_hosts(host)}, text
+    assert named == {"github.com", "api.github.com", "raw.githubusercontent.com"}
+    assert "every other host" in text and http_.token_hosts("git.example.net") == ("git.example.net",)
+
+
+# ---------------------------------------------------------------- a redirect (R9.2.2)
+# CR1's #264: urllib copies a request's headers to wherever a redirect points, the token with them,
+# and follows https to http. The fake openers above stand in for urlopen whole, so no test ever ran
+# a redirect: these go through Http's own opener and real sockets, to two servers on this machine.
+class _Recorder(BaseHTTPRequestHandler):
+    """Notes each request as (path, its headers by lower-case name), and redirects the paths it is told to.
+    With `files` it is a forge: a path there (its query left out) is answered with its bytes, or as
+    JSON, or by a function that writes the answer itself, and any other path is a 404."""
+
+    def do_GET(self):
+        self.server.seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
+        to = self.server.redirects.get(self.path)
+        body, status = (b"" if to else b'{"ok": true}'), (302 if to else 200)
+        if not to and self.server.files is not None:
+            body = self.server.files.get(urllib.parse.urlsplit(self.path).path)
+            if callable(body):
+                return body(self)
+            status = 404 if body is None else 200
+            body = b"" if body is None else body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(status)
+        if to:
+            self.send_header("Location", to)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_CONNECT(self):
+        """A proxy's tunnel, for an https request through it: noted as ("CONNECT host:port", its
+        headers), and the requests that come through it are then this server's own, plain as the
+        pair's https is (`pair`)."""
+        self.server.seen.append((f"CONNECT {self.path}", {k.lower(): v for k, v in self.headers.items()}))
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        self.close_connection = False
+
+    def log_message(self, *a):
+        pass
+
+
+class _PlainHttps(HTTPConnection):
+    """An https connection of `pair`'s: http's, on https's port."""
+    default_port = 443
+
+
+@pytest.fixture
+def pair(monkeypatch):
+    """Servers A and B, reached as https://127.0.0.1:<port> and https://localhost:<port>: two host
+    names. A token is only ever sent over https, and a certificate for this machine would have to be
+    made first, so Http's https handler is given a plain connection, Http's own as for http: the
+    request, its headers and the redirect are handled as https all the way, and only the encryption
+    is left out. The connection's own port is https's, as a proxy's tunnel names it (CONNECT)."""
+    monkeypatch.setattr(http_._Connections, "https_open", lambda self, req: self.do_open(self._with(_PlainHttps, req), req))
+    servers = []
+    for host in ("127.0.0.1", "localhost"):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
+        server.seen, server.redirects, server.files = [], {}, None
+        server.at = f"{host}:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        servers.append(server)
+    yield servers
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def elsewhere(monkeypatch, http):
+    """For a test through real sockets whose server B stands for a host elsewhere: B's name is
+    looked up as this computer's address, which the connection needs (it connects to the addresses
+    the lookup gave, CR1 #682), and that address counts as a public one, as a host elsewhere's does.
+    What is local is tested without it."""
+    real = http_._local
+    monkeypatch.setattr(http_, "_local", lambda address: address != "127.0.0.1" and real(address))
+    return names(http, {"localhost": ["127.0.0.1"]})
+
+
+def _with_token(monkeypatch, header, a):
+    """An Http with a token for server A (its address: its name and its port), sent in the named
+    header. Server B's name counts as a public host's here: a redirect to an address on this computer
+    is refused (further down)."""
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN"}, timeout=10))
+    if header == "private-token":            # the form a host named for GitLab gets
+        monkeypatch.setattr(http, "_auth", lambda *a, **k: {"PRIVATE-TOKEN": "SECRET-TOKEN"})
+    return http
+
+
+def _secrets(seen):
+    return [(path, k) for path, h in seen for k, v in h.items() if "SECRET-TOKEN" in v]
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+def test_a_redirect_to_another_host_arrives_without_the_token(pair, monkeypatch, header):
+    a, b = pair
+    a.redirects["/api/x"] = f"https://{b.at}/elsewhere"
+    assert _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/x") == {"ok": True}
+    assert _secrets(a.seen) == [("/api/x", header)]
+    assert [path for path, _ in b.seen] == ["/elsewhere"] and _secrets(b.seen) == []
+    assert not {"authorization", "private-token"} & set(b.seen[0][1])
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+def test_a_redirect_on_the_same_host_keeps_the_token(pair, monkeypatch, header):
+    # a renamed repository's API address answers with a redirect on the same host
+    a, b = pair
+    a.redirects["/api/old"] = "/api/new"
+    assert _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/old") == {"ok": True}
+    assert _secrets(a.seen) == [("/api/old", header), ("/api/new", header)]
+
+
+@pytest.mark.parametrize("header", ["authorization", "private-token"])
+@pytest.mark.parametrize("to", ["a", "b"])
+def test_a_redirect_from_https_to_http_of_a_request_with_a_token_is_refused(pair, monkeypatch, header, to):
+    a, b = pair
+    a.redirects["/api/x"] = f"http://{(a if to == 'a' else b).at}/plain"
+    with pytest.raises(Unreachable, match="http"):
+        _with_token(monkeypatch, header, a).json(f"https://{a.at}/api/x")
+    assert [path for path, _ in a.seen] == ["/api/x"] and b.seen == []      # /plain was never asked for
+
+
+def test_a_redirect_from_https_to_http_without_a_token_is_followed(pair, monkeypatch):
+    a, b = pair
+    a.redirects["/x"] = f"http://{b.at}/plain"
+    assert elsewhere(monkeypatch, Http({"gitlab.com": "SECRET-TOKEN"}, timeout=10)).json(f"https://{a.at}/x") == {"ok": True}
+    assert [path for path, _ in b.seen] == ["/plain"] and _secrets(a.seen + b.seen) == []
+
+
+# ---------------------------------------------------------------- which addresses are opened at all
+# CR1's #266: Http opened whatever urllib can, so a project's icon address could be a file on this
+# computer, or on Windows a file: address that makes it log in to a host over SMB; and any image
+# address could be on this computer or its local network. Only the hero loop looked at an address,
+# and only for "http" at its start. The class is "an address a project wrote is opened as it stands",
+# so the rule is Http's, for every caller: http and https alone, and no host that stands for a local
+# address unless it is the Source's own.
+NOT_HTTP = ["file:///etc/hostname", "file://attacker.example/share/icon.png", "file:////attacker.example/share/icon.png",
+            "ftp://attacker.example/icon.png", "data:image/png;base64,iVBORw0KGgo=", "FILE:///etc/hostname",
+            "gopher://attacker.example/", "icon.png", ""]
+
+
+@pytest.mark.parametrize("url", NOT_HTTP)
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_only_http_and_https_addresses_are_opened_whoever_asks(url, call):
+    seen = []
+    http = names(Http(opener=recording({url or "x": PNG}, seen)))
+    with pytest.raises(Unreachable):
+        getattr(http, call)(url)
+    assert seen == [] and http.calls == 0
+
+
+def test_https_own_opener_has_no_way_to_open_anything_but_http_and_https(tmp_path):
+    (tmp_path / "private.png").write_bytes(PNG)
+    http = Http(timeout=5)
+    for url in ((tmp_path / "private.png").as_uri(), "ftp://127.0.0.1:1/icon.png", "data:text/plain,hi"):
+        with pytest.raises(urllib.error.URLError, match="unknown url type"):
+            http._open(urllib.request.Request(url), timeout=5).close()
+
+
+def test_a_file_address_is_not_saved_as_an_icon(tmp_path):
+    # with Http's own opener: the review saved a local file's bytes as icon.png this way
+    (tmp_path / "private.png").write_bytes(PNG)
+    with pytest.raises(Unreachable):
+        sync._save_image(Http(timeout=5), (tmp_path / "private.png").as_uri(), str(tmp_path / "icon"), token_host="github.com")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["private.png"]
+
+
+LOCAL = ["127.0.0.1", "127.8.9.1", "192.168.1.1", "10.0.0.5", "172.16.0.9", "169.254.1.1", "169.254.169.254", "0.0.0.0",
+         "100.64.0.1", "::1", "fe80::1", "fe80::1%eth0", "fd00::1", "::ffff:127.0.0.1", "::ffff:192.168.1.1", "::"]
+
+
+@pytest.mark.parametrize("address", LOCAL)
+def test_an_image_whose_host_stands_for_a_local_address_is_refused(tmp_path, address):
+    url, seen = "https://img.example/shot.png", []
+    for addresses in ([address], [PUBLIC, address]):          # one local address among a host's is enough
+        http = names(Http(opener=recording({url: PNG}, seen)), {"img.example": addresses})
+        with pytest.raises(Unreachable, match="img.example"):
+            sync._save_image(http, url, str(tmp_path / "hero"), token_host="github.com")
+    assert seen == [] and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8080/shot.png", "http://192.168.1.1/shot.png", "https://169.254.1.1/shot.png",
+                                 "http://[::1]:8080/shot.png", "http://localhost:631/shot.png"])
+def test_an_image_at_a_local_address_is_refused_by_the_real_lookup(tmp_path, url):
+    # no stand-in: an address needs no name server, and neither does localhost
+    seen = []
+    with pytest.raises(Unreachable):
+        sync._save_image(Http(opener=recording({url: PNG}, seen)), url, str(tmp_path / "hero"), token_host="github.com")
+    assert seen == [] and list(tmp_path.iterdir()) == []
+
+
+def test_a_host_whose_name_cant_be_looked_up_is_refused_too(tmp_path, monkeypatch):
+    # with no proxy (behind one the name is the proxy's to look up: further down). A stand-in
+    # opener goes through none, whatever the system's settings, the runner's own included
+    def fails(host):
+        raise OSError("Name or service not known")
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
+    seen = []
+    http = Http(opener=recording({"https://img.example/shot.png": PNG}, seen))
+    http._lookup = fails
+    with pytest.raises(Unreachable, match="img.example"):
+        sync._save_image(http, "https://img.example/shot.png", str(tmp_path / "hero"), token_host="github.com")
+    assert seen == []
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "192.168.1.1", "169.254.1.1"])
+def test_the_sources_own_host_may_stand_for_a_local_address(tmp_path, address):
+    # a forge on the user's own network: its files, its API and what names no other host
+    url, seen = "https://git.lan.example/o/r/raw/branch/main/shot.png", []
+    http = names(Http({"git.lan.example": "SECRET"}, opener=recording({"https://git.lan.example/": PNG}, seen)),
+                 {"git.lan.example": [address]})
+    assert sync._save_image(http, url, str(tmp_path / "hero"), token_host="git.lan.example").endswith("hero.png")
+    assert http.bytes("https://git.lan.example/api/v1/version") == PNG
+    assert [u for u, _ in seen] == [url, "https://git.lan.example/api/v1/version"]
+
+
+def test_a_whole_sync_opens_only_http_and_https_and_no_local_address_but_the_sources(tmp_path):
+    """A forge on the local network, whose project names a file, an ftp address, and images on this
+    computer and on other hosts of the network: the Sync fetches the forge's own, and none of those."""
+    (tmp_path / "private.png").write_bytes(PNG)
+    private = (tmp_path / "private.png").as_uri()
+    web, api = "https://git.lan.example/", "https://git.lan.example/api/v1/repos/o/r"
+    raw = web + "o/r/raw/branch/main/"
+    metainfo = METAINFO.replace("https://evil.example/icon.png", private).replace(
+        "http://evil.example/shot.png", "http://nas.lan.example/shot.png")
+    readme = ("# R\n\n![shot](http://192.168.1.7/screenshot.png)\n\n![shot](http://localhost:631/screenshot2.png)\n\n"
+              "![window](docs/window.png)\n")
+    seen = []
+    http = names(Http({"git.lan.example": "SECRET"}, opener=recording({
+        web + "api/v1/version": {"version": "1.22.0"},
+        api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+        api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in (
+            "README.md", "data/org.example.r.metainfo.xml", "docs/window.png")]},
+        api: {"name": "r", "full_name": "o/r", "default_branch": "main", "avatar_url": "ftp://nas.lan.example/avatar.png"},
+        raw + "README.md": readme.encode(),
+        raw + "data/org.example.r.metainfo.xml": metainfo.encode(),
+        raw + "docs/window.png": PNG,
+        private: PNG, "ftp://": PNG, "http://": PNG,            # each would answer, if it were asked
+    }, seen)), {"git.lan.example": ["192.168.1.5"], "nas.lan.example": ["192.168.1.9"], "localhost": ["127.0.0.1"]})
+    db = DB(str(tmp_path / "a.db"))
+    sync.sync_app(db, http, "https://git.lan.example/o/r", root=str(tmp_path / "data"))
+    app = db.one("SELECT * FROM apps WHERE url=?", ("https://git.lan.example/o/r",))
+    assert app["error_code"] is None and app["forge"] == "gitea" and app["readme"].startswith("# R")
+    assert app["icon"] == "" and app["hero"].endswith("hero.png")      # no icon: each one it names is refused
+    assert [u for u, _ in seen if not u.startswith(web)] == []
+    assert raw + "docs/window.png" in [u for u, _ in seen]
+
+
+def test_a_redirect_to_a_local_address_is_refused(pair):
+    # server A is the host asked, so it may be local; B is another name for this computer
+    a, b = pair
+    a.redirects["/x"] = f"http://{b.at}/admin"
+    a.redirects["/y"] = f"https://{b.at}/admin"
+    for path in ("/x", "/y"):
+        with pytest.raises(Unreachable, match="localhost"):
+            Http(timeout=10).json(f"https://{a.at}{path}")
+    assert b.seen == []
+    a.redirects["/z"] = "/elsewhere"                 # on the host itself, as before
+    assert Http(timeout=10).json(f"https://{a.at}/z") == {"ok": True}
+
+
+@pytest.mark.parametrize("to, says", [("ftp://127.0.0.1:1/x", r"isn't an http or https one \(127.0.0.1:1\)"),   # urllib would follow it
+                                      ("file:///etc/hostname", "HTTP 302")])                      # urllib's own refusal
+def test_a_redirect_to_anything_but_http_and_https_is_refused(pair, to, says):
+    a, b = pair
+    a.redirects["/x"] = to
+    with pytest.raises(Unreachable, match=says):
+        Http(timeout=10).json(f"https://{a.at}/x")
+
+
+# CR1's #682: the check above looked a host's name up, and urllib's connection looked it up again,
+# so a name that answered the check with a public address and the connection with a local one had
+# the request sent into this computer after all. How it slipped past: every test of the rule stood
+# in for Http's lookup alone, which the connection never asked. The class is "the address checked
+# isn't the one connected to", so the name server is stood in for where every lookup goes, the
+# socket's own, and its answer changes between one lookup and the next.
+def rebinding(monkeypatch, name, *answers):
+    """Stands in for the name server at the socket's own lookup, which a connection makes as much as
+    Http's check does: `name` gets the first of `answers` at its first lookup, the second at its
+    second, and the last at every later one. Every other name and address is looked up as ever.
+    Gives the list of `name`'s lookups."""
+    real, asked = socket.getaddrinfo, []
+
+    def getaddrinfo(host, *a, **k):
+        if host != name:
+            return real(host, *a, **k)
+        asked.append(host)
+        return real(answers[min(len(asked), len(answers)) - 1], *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return asked
+
+
+def test_a_name_that_answers_the_check_with_a_public_address_and_the_connection_with_a_local_one_is_refused(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    asked = rebinding(monkeypatch, "rebound.example", PUBLIC, "127.0.0.1")
+    with pytest.raises(Unreachable, match=r"^rebound.example is on this computer or its local network \(127.0.0.1\)"):
+        sync._save_image(Http(timeout=5), f"https://rebound.example:{a.server_address[1]}/shot.png", str(tmp_path / "hero"),
+                         token_host="github.com")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []
+    assert len(asked) == 2                     # the check's, and the connection's, which is the one it connects to
+
+
+def test_a_redirect_to_a_name_that_answers_the_connection_with_a_local_address_is_refused(pair, monkeypatch):
+    a, b = pair
+    rebinding(monkeypatch, "rebound.example", PUBLIC, "127.0.0.1")
+    a.redirects["/x"] = f"https://rebound.example:{b.server_address[1]}/admin"
+    with pytest.raises(Unreachable, match="^rebound.example is on this computer"):
+        Http(timeout=5).json(f"https://{a.at}/x")
+    assert [p for p, _ in a.seen] == ["/x"] and b.seen == []
+
+
+def test_the_sources_own_host_on_the_local_network_is_still_reached_by_its_name(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/api/v1/version": {"version": "1.22.0"}, "/o/r/raw/branch/main/shot.png": PNG}
+    rebinding(monkeypatch, "git.lan.example", "127.0.0.1")
+    host = f"git.lan.example:{a.server_address[1]}"
+    http = Http(timeout=5)
+    assert http.json(f"https://{host}/api/v1/version") == {"version": "1.22.0"}
+    assert sync._save_image(http, f"https://{host}/o/r/raw/branch/main/shot.png", str(tmp_path / "hero"), token_host=host).endswith("hero.png")
+
+
+# The review's pass 1, P1-B3: Http's own connection (CR1 #682) made the socket for each of a host's
+# addresses, and read the address, outside the try that goes on to the next address, so an address
+# whose socket couldn't be made (an IPv6 one on a computer with IPv6 off) ended the request, where
+# socket.create_connection, which it replaced, goes on to the next one. How it slipped past: every
+# lookup in the tests gave one address, or addresses that connect. The class is "a failure at one
+# of a host's addresses ends the request", so the first address here fails at each step of
+# connecting in turn: reading it, making its socket, connecting.
+def failing_at(monkeypatch, address, step):
+    """Stands in for the socket module of Http's connections: `address` fails at `step`, "read"
+    (its numeric lookup), "socket" (no socket of its family can be made: IPv6, which is off) or
+    "connect" (refused). Every other address connects for real. Gives the addresses connected to."""
+    real, tried = socket, []
+
+    def getaddrinfo(host, *a, **k):
+        if host == address and step == "read":
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return real.getaddrinfo(host, *a, **k)
+
+    class Made(real.socket):
+        def connect(self, at):
+            tried.append(at[0])
+            if at[0] == address and step == "connect":
+                raise ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+            return super().connect(at)
+
+    def made(family, kind, proto):
+        if step == "socket" and family == real.AF_INET6:
+            raise OSError(errno.EAFNOSUPPORT, "Address family not supported by protocol")
+        return Made(family, kind, proto)
+    monkeypatch.setattr(http_, "socket", types.SimpleNamespace(**{**vars(real), "getaddrinfo": getaddrinfo, "socket": made}))
+    return tried
+
+
+@pytest.mark.parametrize("first, step", [("::1", "socket"), ("192.0.2.1", "read"), ("192.0.2.1", "connect")])
+def test_an_address_that_fails_is_passed_over_for_the_hosts_next_one(pair, monkeypatch, first, step):
+    a, b = pair
+    a.files = {"/o/r/raw/branch/main/shot.png": PNG}
+    tried = failing_at(monkeypatch, first, step)
+    http = names(Http(timeout=5), {"git.lan.example": [first, "127.0.0.1"]})
+    assert http.bytes(f"https://git.lan.example:{a.server_address[1]}/o/r/raw/branch/main/shot.png") == PNG
+    assert tried == [first] * (step == "connect") + ["127.0.0.1"] and len(a.seen) == 1
+
+
+def test_a_host_none_of_whose_addresses_connects_is_unreachable(pair, monkeypatch):
+    a, b = pair
+    failing_at(monkeypatch, "::1", "socket")
+    http = names(Http(timeout=5), {"git.lan.example": ["::1"]})
+    with pytest.raises(Unreachable, match="^couldn't reach git.lan.example: .*Address family not supported"):
+        http.bytes(f"https://git.lan.example:{a.server_address[1]}/x")
+    assert a.seen == []
+
+
+PROXIES = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
+
+
+def behind_a_proxy(monkeypatch, proxy, https=False, **more):
+    """The system's proxy for http is server `proxy`, which answers whatever it is asked for: as
+    the environment says it, which every platform reads first. With `https` it is https's too, which
+    a request goes through in a tunnel (CONNECT). `more` sets others, such as no_proxy. Http reads
+    the proxies when it is made."""
+    for name in PROXIES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("http_proxy", f"http://{proxy.at}")
+    if https:
+        monkeypatch.setenv("https_proxy", f"http://{proxy.at}")
+    for name, value in more.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_a_proxy_on_this_computer_is_still_used_for_a_host_elsewhere(pair, monkeypatch):
+    # the connection is the proxy's, which may be on this computer: the host asked is the proxy's to look up
+    a, b = pair
+    behind_a_proxy(monkeypatch, a)
+    assert names(Http(timeout=5)).json("http://img.example/x.json", token_host="github.com") == {"ok": True}
+    assert [p for p, _ in a.seen] == ["http://img.example/x.json"]
+
+
+# The review's pass 1, P1-1: the check above looks the name of an address a project or a forge
+# names up on this computer, and refused a name it didn't find as "couldn't reach". Behind a proxy
+# that isn't what the connection would find: the proxy looks the name up. On a network where only
+# the proxy knows the names outside, every image elsewhere and every redirect of a Source's request
+# to another host was refused, and the proxy was never asked. How it slipped past: the one test of
+# a proxy stood in for a lookup that knows every name. The class is "this computer's lookup taken
+# for the proxy's", so the name server here knows no name outside this computer.
+def knows_only(http, table):
+    """Stands in for a name server that knows the names in `table` and no other: this computer's,
+    on a network where only the proxy looks up the names outside. An address is itself, as
+    getaddrinfo reads one: an IPv6 address with a zone only where the zone names an interface here."""
+    zones = {name for _, name in socket.if_nameindex()}
+
+    def lookup(host):
+        if host in table:
+            return table[host]
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            ip = None
+        if ip is None or getattr(ip, "scope_id", None) not in (None, *zones):
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return [str(ip)]
+    http._lookup = lookup
+    return http
+
+
+def test_behind_a_proxy_a_name_this_computer_cant_look_up_is_asked_for_through_it(pair, monkeypatch, tmp_path):
+    a, b = pair
+    a.files = {"/icon.png": PNG, "/avatar.png": PNG}
+    behind_a_proxy(monkeypatch, a)
+    http = knows_only(Http(timeout=5), {"localhost": ["127.0.0.1"]})        # B's name: a Source's host, asked directly
+    icon = sync._save_image(http, "http://images.example.com/icon.png", str(tmp_path / "icon"), token_host="git.example.org")
+    assert icon.endswith("icon.png")
+    b.redirects["/o/r/avatar"] = "http://avatars.example.com/avatar.png"   # a Source's request, redirected elsewhere
+    assert http.bytes(f"https://{b.at}/o/r/avatar") == PNG
+    assert [p for p, _ in a.seen] == ["http://images.example.com/icon.png", "http://avatars.example.com/avatar.png"]
+    assert "Behind a proxy, the proxy looks a host's name up" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.mark.parametrize("url, table, env", [
+    ("http://nas.lan.example/shot.png", {"nas.lan.example": ["192.168.1.9"]}, {}),    # a name this computer finds local
+    ("http://192.168.1.9/shot.png", {}, {}),                                          # an address needs no name server
+    ("http://localhost:631/shot.png", {}, {}),                                        # this computer, whoever looks it up
+    ("http://printer.localhost/shot.png", {}, {}),
+    ("http://images.example.com/shot.png", {}, {"no_proxy": "images.example.com"}),  # asked directly: this computer's lookup
+])
+def test_behind_a_proxy_what_this_computer_can_tell_is_local_is_still_refused(pair, monkeypatch, tmp_path, url, table, env):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, **env)
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), table), url, str(tmp_path / "shot"), token_host="git.example.org")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []
+
+
+# The review's pass 2, P2-1: the check read a host as the address spells it, and urllib sends it
+# decoded: in the Host header, in a proxy's CONNECT and to a direct connection's lookup. Behind a
+# proxy, a local address spelled so that this computer's lookup can't read it (escapes, a trailing
+# dot, an IPv6 zone, a port inside the host, a number for its last part) was taken for a name only
+# the proxy knows, and the proxy was sent the address. How it slipped past: every host in the tests
+# was spelled plainly, and the stand-in proxy took no CONNECT, so no https request through it was
+# ever seen. The class is "the host checked isn't the host sent", so these spell local addresses in
+# each way urllib decodes or a lookup reads differently, over http and over https, and the proxy
+# notes each CONNECT: none may reach it.
+@pytest.mark.parametrize("url", [
+    "http://%31%30.0.0.5/shot.png",             # escapes: 10.0.0.5
+    "http://%6c%6fcalhost/shot.png",            # localhost
+    "http://127.0.0.1./shot.png",               # a trailing dot, which the lookup doesn't read as an address
+    "http://10.0.0.5%2e/shot.png",              # the same, escaped
+    "http://0x7f.1/shot.png",                   # 127.0.0.1 to many a lookup, a proxy's too, and not to this one
+    "http://[fe80::1%25eth9]/shot.png",         # link-local, with a zone the lookup doesn't read
+    "https://%31%30.0.0.5/shot.png",            # CONNECT 10.0.0.5:443
+    "https://127.0.0.1%3a9200/shot.png",        # CONNECT 127.0.0.1:9200: a port inside the host
+    "https://169.254.169.254%2e/shot.png",      # CONNECT 169.254.169.254.:443
+])
+def test_behind_a_proxy_a_local_address_however_it_is_spelled_is_refused(pair, monkeypatch, tmp_path, url):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=url.startswith("https:"))
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), {}), url, str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+def test_behind_a_proxy_a_name_only_it_knows_is_asked_for_over_https_through_its_tunnel(pair, monkeypatch, tmp_path):
+    # what P2-1's rule leaves to the proxy: a plain name, one with `_` and a name's trailing dot too
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=True)
+    http = knows_only(Http(timeout=5), {})
+    for host in ("images.example.com", "img_1.cdn-example.com."):
+        saved = sync._save_image(http, f"https://{host}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+        assert saved.endswith("shot.png")
+    assert [p for p, _ in a.seen] == ["CONNECT images.example.com:443", "/shot.png",
+                                      "CONNECT img_1.cdn-example.com.:443", "/shot.png"]
+    assert "only a plain name is left to the proxy" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+# The review's pass 7, P7-3: the rule above leaves to the proxy a plain name this computer can't look
+# up, and read the name as written, in its script, where the lookup is given its IDNA form and so is
+# the proxy: übung.example.org and बिंब.example.org were refused ("couldn't reach übung.example.org:
+# ... xn--bung-zra.example.org"), and xn--bung-zra.example.org was asked for through the proxy. How
+# it slipped past: every name only the proxy knew in the tests was ASCII. The class is "the host
+# judged isn't the host sent", at the proxy's rule, so these are names in other scripts, escaped
+# and full-width, over http and https; and what this computer can tell is local, spelled so, is
+# still refused.
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name, sent", [
+    ("übung.example.org", "xn--bung-zra.example.org"),
+    ("ÜBUNG.example.org", "xn--bung-zra.example.org"),
+    ("%C3%BCbung.example.org", "xn--bung-zra.example.org"),
+    ("बिंब.example.org", "xn--i1b7fb8e.example.org"),
+    ("ｉｍａｇｅｓ.example.org", "images.example.org"),           # full-width letters
+])
+def test_behind_a_proxy_a_name_only_it_knows_in_any_script_is_asked_for_through_it(pair, monkeypatch, tmp_path, scheme, name, sent):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    saved = sync._save_image(knows_only(Http(timeout=5), {}), f"{scheme}://{name}/shot.png", str(tmp_path / "shot"),
+                             token_host="git.example.org")
+    assert saved.endswith("shot.png")
+    assert [p for p, _ in a.seen] == ([f"CONNECT {sent}:443", "/shot.png"] if scheme == "https" else [f"http://{sent}/shot.png"])
+    assert "whose last part isn't a number, in the form it is sent, so a name in any script is one" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name", [
+    "ｌｏｃａｌｈｏｓｔ", "ｐｒｉｎｔｅｒ.ｌｏｃａｌｈｏｓｔ",   # localhost, whoever looks it up
+    "１２７.1", "０ｘ７ｆ.1",                                # 127.1 and 0x7f.1: a number for a last part
+    "1\U0001FBF0.0.0.1",                                     # xn--1-ed6s.0.0.1, which a reader that knows 🯰 reads as 10.0.0.1
+    "①②⑦.0.0.1",                                             # 127.0.0.1, which this computer looks up as itself
+])
+def test_behind_a_proxy_a_local_address_in_another_script_is_still_refused(pair, monkeypatch, tmp_path, scheme, name):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), {}), f"{scheme}://{name}/shot.png", str(tmp_path / "shot"),
+                         token_host="git.example.org")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+# The review's pass 10, P10-1: the proxy's rule (_bypassed) asks of a host with its name in its
+# script too, each `xn--` part read back by Python's idna codec (_in_its_script), and a name with a
+# part the codec can't read back is kept as it is sent: a catch of the codec's UnicodeError, which no
+# test held. Such a name is asked for, since the codec makes an ASCII name's IDNA form without
+# reading its `xn--` parts (_http_address). Without the catch, behind a proxy, an image on
+# xn--zz.example.org, whose name this computer can't look up, raised a UnicodeDecodeError out of
+# Http's check (_allowed), which no SourceError handler passes over: that app's sync ended on its
+# row as an unexpected error, and the next image wasn't tried (R3.1.1). And a request whose name was
+# looked up here, or a redirect's, was refused as one that can't be sent. How it slipped past: every
+# `xn--` name in the tests was one the codec reads back. The class is "a name the codec takes one
+# way and not the other", so these are names with an `xn--` part the codec can't read back, at each
+# place the proxy's rule is asked: Http's check, a redirect's check and its opener, over http and
+# https.
+@pytest.mark.parametrize("host, script", [
+    ("xn--bung-zra.lan:3000", "übung.lan:3000"),          # each `xn--` part read back, and the port as it is
+    ("xn--31bq9g.example", "गिट.example"),
+    ("git.example:8443", "git.example:8443"),             # no such part
+    ("[::1]:8080", "[::1]:8080"),                         # an IPv6 address
+    ("xn--zz.example.org", "xn--zz.example.org"),         # a part the codec can't read back: as it is sent
+    ("xn--a.example.org:8443", "xn--a.example.org:8443"),
+])
+def test_a_host_part_in_its_script_has_each_idna_part_read_back_or_is_as_it_is_sent(host, script):
+    assert http_._in_its_script(host) == script
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name", ["xn--zz.example.org", "xn--a.example.org"])
+@pytest.mark.parametrize("asked", [
+    "by-a-name-not-looked-up-here",        # Http's check asks the proxy's rule, outside the request's own errors
+    "by-a-redirect",                       # a redirect's check asks it
+    "by-a-name-looked-up-here",            # the check doesn't need it, and the opener asks it alone
+])
+def test_behind_a_proxy_a_name_whose_idna_part_the_codec_cant_read_back_is_asked_for_through_it(pair, monkeypatch, tmp_path, asked, scheme, name):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https", no_proxy="localhost")     # B, a Source's host, is asked directly
+    looked_up = names if asked == "by-a-name-looked-up-here" else knows_only
+    http = looked_up(Http(timeout=5), {"localhost": ["127.0.0.1"]})
+    url = f"{scheme}://{name}/shot.png"
+    if asked == "by-a-redirect":
+        b.redirects["/o/r/shot"] = url
+        assert http.bytes(f"https://{b.at}/o/r/shot") == PNG        # a Source's request, redirected there
+    else:
+        assert sync._save_image(http, url, str(tmp_path / "shot"), token_host="git.example.org").endswith("shot.png")
+    assert [p for p, _ in a.seen] == ([f"CONNECT {name}:443", "/shot.png"] if scheme == "https" else [url])
+    assert http._proxied(http_._http_address(url))                  # and Http's rule says it went through the proxy
+
+
+# The review's pass 3, P3-1: the check reads the host after an address's `@`, and urllib sends all
+# that comes before the path, the user part too and decoded, as the host: a proxy is sent
+# `10.0.0.5/@images.example.com` in the Host header and a tunnel's CONNECT, and one that reads a
+# host out of it its own way connects to 10.0.0.5 (tinyproxy ends a CONNECT's host at its first
+# `/`; a browser's reading of an address ends it at a `\`). How it slipped past: P2-1's spellings
+# were all of the host itself, and the one address in the tests with a user part was asked of a
+# stand-in opener, which sends nothing. The class is "a part of the address that is sent and isn't
+# read", so a local address is written in the user part in each way a proxy may read it as the
+# host, over http and https, with the name after the `@` a public one and one only the proxy knows,
+# and the Source's own: none reaches the proxy.
+USER_PARTS = [
+    "127.0.0.1\\@images.example.com",                    # a `\`, which a browser's reading takes for a `/`
+    "127.0.0.1:9200\\@images.example.com",               # the same, with a port
+    "10.0.0.5%2f@images.example.com",                    # 10.0.0.5/@images.example.com: tinyproxy's 10.0.0.5
+    "169.254.169.254%2flatest%2f@images.example.com",
+    "127.0.0.1%23@images.example.com",                   # 127.0.0.1#@images.example.com
+    "%5b::1%5d%2f@images.example.com",                   # [::1]/@images.example.com: an IPv6 address, bracketed
+    "user:pw@images.example.com",                        # a plain user part: no address Http asks for has one
+    ":10.0.0.5%2f@images.example.com",                   # an empty user name, the address in its password (review pass 4, P4-B2)
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("user_part", USER_PARTS)
+def test_behind_a_proxy_an_address_with_a_user_part_is_refused(pair, monkeypatch, tmp_path, user_part, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="user part") as refused:
+        sync._save_image(http, f"{scheme}://{user_part}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+    # the refusal names the host after the last `@` and nothing before it: no part of the user
+    # part, which may be a password (review pass 4, P4-B2)
+    assert str(refused.value) == "an address with a user part before its host (images.example.com) isn't asked for"
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_behind_a_proxy_a_user_part_before_the_sources_own_host_is_refused_too(pair, monkeypatch, tmp_path, scheme):
+    # the Source's own host may be local, and is asked for without a look at its addresses: the
+    # user part is refused before that
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable, match="user part"):
+        sync._save_image(names(Http({"git.example.org": "SECRET"}, timeout=5)), f"{scheme}://10.0.0.5%2f@git.example.org/shot.png",
+                         str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "none with a user part before its host" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pair, monkeypatch):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a)
+    http = knows_only(Http(timeout=5), {"localhost": ["127.0.0.1"]})        # B's name: a Source's host, asked directly
+    b.redirects["/o/r/avatar"] = "http://10.0.0.5%2f@avatars.example.com/avatar.png"
+    with pytest.raises(Unreachable, match="user part"):
+        http.bytes(f"https://{b.at}/o/r/avatar")
+    assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
+
+
+# The review's pass 5, P5-B2: the refusal of an address urlsplit can't read, or that has no host or
+# another scheme, said 200 characters of the address, its user part too, where the refusals above
+# name only what follows the last `@`. How it slipped past: P4-B2's test held the refusals of
+# addresses urlsplit reads. The class is "a refusal says a user part", so these have a user part
+# and meet the first refusal: a port that isn't one, a password with a `/`, no host, ftp.
+#
+# The review's pass 6, P6-B2: that refusal, and the two of a host part that is more than a host, still
+# said a user part spelled with %40, which the rule for a user part reads as an `@` (it decodes the
+# host part first): `https://user:SECRET%40h.example:8x/x` was said whole, and so was
+# `https:/\t/%2fSECRET%40h.example/x`'s host part. The class is "a refusal says a user part", however
+# it is spelled, so every refusal names an address by its host and port alone: what follows its last
+# `@`, written or escaped, its escapes decoded, and nothing of its path.
+#
+# The review's pass 7, P7-B4: a user part spelled with a full-width `＠` or `%2540` has no `@` or
+# `%40`, so the refusal said it whole; and where it read the whole address it named what followed an
+# `@` in its path or query (`(2x.png)` for `.../secret-name@2x.png`, the `AAAA` of a data: address).
+# The class is still "a refusal says a user part", and listing its spellings can't end it, so a
+# refusal says a host and its port only where they are in the form an address Http asks for has,
+# read from the host part alone, and else names no part of the address.
+NOT_HTTP = "an address that isn't an http or https one ({}) isn't asked for"
+MORE = "an address whose host part is more than a host and its port ({}) isn't asked for"
+USER = "an address with a user part before its host ({}) isn't asked for"
+
+
+def unnamed(said):
+    """A refusal that names no part of its address."""
+    return said.replace(" ({})", "")
+
+
+@pytest.mark.parametrize("url, said", [
+    ("https://user:pw@images.example.com:99999/x", NOT_HTTP.format("images.example.com:99999")),
+    ("ftp://user:pw@images.example.com/x", NOT_HTTP.format("images.example.com")),
+    ("ftp://user:SECRET%40images.example.com/x", NOT_HTTP.format("images.example.com")),    # a user part spelled with %40 (P6-B2)
+    ("https:/\n/user:SECRET%40images.example.com/x", NOT_HTTP.format("images.example.com")),  # a line break in its `//` too
+    ("https://user:SECRET%40images.example.com:8x/x", unnamed(NOT_HTTP)),     # what follows the `@` isn't a host and its port
+    ("https://user:pw@images.example.com:8x/x", unnamed(NOT_HTTP)),
+    ("https://images.example.com:8x/x?u=a", unnamed(NOT_HTTP)),
+    ("http://user:p/w@images.example.com/x", unnamed(NOT_HTTP)),             # urlsplit's port: "p", and the rest a path
+    ("http://user:pw@/x", unnamed(NOT_HTTP)),
+    # a user part in another spelling (P7-B4)
+    ("https://user:SECRET＠images.example.com/x", unnamed(NOT_HTTP)),         # a full-width @, which urlsplit refuses
+    ("https://SECRET＠images.example.com/x", unnamed(NOT_HTTP)),
+    ("https://user:SECRET%EF%BC%A0images.example.com/x", unnamed(NOT_HTTP)),  # the same, escaped
+    ("https://user:SECRET%2540images.example.com/x", unnamed(NOT_HTTP)),      # %40, escaped once more
+    # no host part: nothing of the address (P7-B4)
+    ("file:///home/me/SECRET/path@x.png", unnamed(NOT_HTTP)),
+    ("data:image/png;base64,SECRET@AAAA", unnamed(NOT_HTTP)),
+    ("file:C:\\Users\\me\\SECRET.png", unnamed(NOT_HTTP)),
+    ("mailto:SECRET@images.example.com", unnamed(NOT_HTTP)),
+    ("https:x//SECRET@images.example.com/x", unnamed(NOT_HTTP)),             # a `//` in its path isn't a host part's
+    ("ftp://images.example.com?q=SECRET@b/x", unnamed(NOT_HTTP)),            # a query's `@`, before any path
+])
+def test_the_refusal_of_an_address_that_isnt_an_http_one_says_no_user_part(url, said):
+    seen = []
+    with pytest.raises(Unreachable) as refused:
+        names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
+    assert str(refused.value) == said and seen == []
+    assert not {"SECRET", "user", "pw", "AAAA", "x.png"} & set(re.findall(r"[\w.]+", str(refused.value)))
+
+
+@pytest.mark.parametrize("url, said", [
+    # a host part that isn't urlsplit's: a tab or a line break in its `//` (P5-B1)
+    ("https:/\t/%2fSECRET%40images.example.com/x", MORE.format("images.example.com")),
+    ("https:/\t/user:SECRET@images.example.com/x", MORE.format("images.example.com")),
+    ("http:/\n/10.0.0.5@images.example.com/x//y", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com:8443/x", MORE.format("images.example.com:8443")),
+    # and an `@` in its path or query is the path's or the query's (P7-B4)
+    ("https:/\n/images.example.com/u/secret-name@2x.png", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com/a?token=SECRET@b", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com/avatars/me@example.com/a.png", MORE.format("images.example.com")),
+    # a user part before the host, written or escaped
+    ("https://%2fSECRET%40images.example.com/x", USER.format("images.example.com")),
+    ("https://user:SECRET%2540@images.example.com/x", USER.format("images.example.com")),
+    # a `?` or `#` in the host part: urlsplit's host part ends there, a proxy's at the `/`, and what
+    # isn't a host by both readings isn't said (P7-B4)
+    ("https://user:SECRET@images.example.com?x/y", unnamed(USER)),
+    ("https://images.example.com?@10.0.0.5/x", unnamed(USER)),
+    ("https://images.example.com?token=SECRET@b/x", unnamed(USER)),
+    ("https://user:SECRET@x.example?a@b/x", unnamed(USER)),
+    ("https://SECRET#Z﹫images.example.com/x", unnamed(MORE)),             # a small @, which a reader that applies NFKC takes for one
+    ("https://SECRET?Z%25%34%30images.example.com/x", unnamed(MORE)),       # %40, its every character escaped
+    # a host part with what no host has: none of it is a host's (P7-B4), and an `@` after it is the path's
+    ("https://a⑴b.example:8443/@x/shot.png", unnamed(MORE)),
+    ("https://SECRET%2540images.example.com/x", unnamed(MORE)),             # %40, escaped once more
+    ("https://127.0.0.1%5cSECRET.images.example.com/x", unnamed(MORE)),
+])
+def test_a_refusal_of_a_host_part_names_its_host_alone(url, said):
+    seen = []
+    with pytest.raises(Unreachable) as refused:
+        names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
+    assert str(refused.value) == said and seen == []
+    assert not {"SECRET", "secret", "2x.png", "b", "example.com", "x"} & set(re.findall(r"[\w.-]+", str(refused.value)))
+
+
+# The review's pass 4, P4-1: the check above refused an `@` in what urlsplit reads as the host part,
+# and two more spellings carry another host past it. A `\` in the host: this computer's lookup takes
+# it for an escape, so `127.0.0.1\x.images.example.com` is looked up as `127.0.0.1x.images.example.com`,
+# which a project's own domain can answer with a public address, and the proxy is sent the host as
+# written, which a browser's reading of an address ends at the `\`. And a `?` or `#` right after the
+# host, with no path: urlsplit's host part ends there, urllib sends a proxy the whole address over
+# http, and one that ends the host part only at the first `/` reads 10.0.0.5 out of
+# `images.example.com?@10.0.0.5`, which was judged as images.example.com. How it slipped past: P3-1's
+# tests wrote a local address before an `@`, the one character the check looked for, and every
+# address in them had a path. The class is "the host part holds more than the host judged", so the
+# rule is now what a host part may hold, and these write a local address in it with what isn't a
+# host's, over http and https, the name judged a public one and one only the proxy knows, and the
+# Source's own: none reaches the proxy.
+HOST_PARTS = [
+    "127.0.0.1\\x.images.example.com",                   # looked up as 127.0.0.1x.images.example.com
+    "127.0.0.1%5cx.images.example.com",                  # the same, escaped: the Host header has the `\`
+    "images.example.com?@10.0.0.5",                      # the query, before any path
+    "images.example.com#@10.0.0.5",                      # the fragment, which urllib sends a proxy too
+    "images.example.com?x@169.254.169.254:80",           # any address, on any port
+    "%5b127.0.0.1%5d",                                   # escaped brackets: judged a name, and a proxy is sent 127.0.0.1 (review pass 5, P5-2)
+    "%5b%3a%3a1%5d",                                     # [::1]
+    "%5b10.0.0.5%5d:8080",                               # [10.0.0.5], on a port
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("host_part", HOST_PARTS)
+def test_behind_a_proxy_an_address_whose_host_part_is_more_than_a_host_is_refused(pair, monkeypatch, tmp_path, host_part, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(http, f"{scheme}://{host_part}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+@pytest.mark.parametrize("host_part", ["git.example.org?@10.0.0.5", "git.example.org#@10.0.0.5"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_behind_a_proxy_the_sources_own_host_part_is_held_to_the_rule_too(pair, monkeypatch, tmp_path, scheme, host_part):
+    # the Source's own host may be local, and is asked for without a look at its addresses: what
+    # follows it in the host part is refused before that
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(names(Http({"git.example.org": "SECRET"}, timeout=5)), f"{scheme}://{host_part}/shot.png",
+                         str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "is a host and its port and nothing else" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+# The review's pass 5, P5-B1: the rule above read the host part from the address as written, and
+# everything after it read urlsplit's parts, which drops every tab and line break first. With one in
+# the address's `//` and another `//` in its path, the host part read was the text after the second,
+# and the user part, `\` and `?` refusals didn't see the host part urlsplit read, `10.0.0.5@...`.
+# Nothing was sent, since urllib's own reading finds no host there, but only by that. How it slipped
+# past: every address in the tests read the same with its tabs and line breaks dropped. The class
+# is "two readings of one host part", so these break the `//` with a tab or a line break.
+SPLIT_HOST_PARTS = [
+    ":/\n/10.0.0.5@images.example.com/x//y",
+    ":/\t/10.0.0.5%2f@images.example.com/x//y",
+    ":/\r\n/images.example.com?@10.0.0.5/x//y",
+    ":/\n/127.0.0.1\\x.images.example.com/x//y",
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("rest", SPLIT_HOST_PARTS)
+def test_behind_a_proxy_an_address_whose_tabs_and_line_breaks_move_its_host_part_is_refused(pair, monkeypatch, tmp_path, rest, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(http, scheme + rest, str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "a tab or a line break in its `//` or its host part" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_host_is_refused(pair, monkeypatch):
+    # a redirect's `?` or `#` right after its host is no way in: urllib gives an address with no
+    # path the path `/` before it follows it
+    a, b = pair
+    behind_a_proxy(monkeypatch, a)
+    http = names(Http(timeout=5), {"localhost": ["127.0.0.1"]})          # B's name: a Source's host, asked directly
+    b.redirects["/o/r/avatar"] = "http://127.0.0.1\\x.avatars.example.com/avatar.png"
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        http.bytes(f"https://{b.at}/o/r/avatar")
+    assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
+
+
+@pytest.mark.parametrize("url, sent", [                          # an address, and as it is sent (review pass 6, P6-B1)
+    ("http://images.example.com/@x/shot.png",) * 2,                     # an `@` after the first `/` is the path's
+    ("http://images.example.com/shot.png?u=a@b#@c",) * 2,
+    ("https://img_1.cdn-example.com.:8443/shot.png",) * 2,              # a `_`, a name's trailing dot, a port
+    ("https://images.example.com:/shot.png",) * 2,                      # a `:` that names no port
+    ("https://[2606:4700::1111]/shot.png",) * 2,                        # an IPv6 address
+    ("https://bücher.example/shot.png", "https://xn--bcher-kva.example/shot.png"),     # a name outside ASCII
+    ("https://b%C3%BCcher.example/shot.png", "https://xn--bcher-kva.example/shot.png"),  # the same, escaped
+    # names whose letters hold marks (review pass 5, P5-1)
+    ("https://हिन्दी.example/shot.png", "https://xn--j2bd4cyah0f.example/shot.png"),    # Devanagari: its vowel signs and its virama are marks
+    ("https://example.भारत/shot.png", "https://example.xn--h2brj9c/shot.png"),          # India's own top-level name
+    ("https://தமிழ்.example/shot.png", "https://xn--rlcus7b3d.example/shot.png"),       # Tamil
+    ("https://เว็บ.example/shot.png", "https://xn--r3cz4e3a.example/shot.png"),          # Thai, with a tone mark
+    ("https://İstanbul.example/shot.png", "https://xn--istanbul-o0e.example/shot.png"),  # a capital İ, which lower() makes an i and a mark
+    ("https://%E0%A4%AD%E0%A4%BE%E0%A4%B0%E0%A4%A4.example/shot.png", "https://xn--h2brj9c.example/shot.png"),  # भारत, escaped
+    ("https://Images.Example.COM:8443/Shot.png?A=B", "https://images.example.com:8443/Shot.png?A=B"),         # the host in lower case, and only it
+    ("https://a。b.example/shot.png", "https://a.b.example/shot.png"),             # IDNA's own dots (review pass 6, P6-1)
+    ("https://⒈x.example./shot.png", "https://1.x.example./shot.png"),             # a dot its IDNA form makes, and a name's final dot
+])
+def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url, sent):
+    seen = []
+    _ask(names(Http(opener=recording({}, seen))), url, token_host="git.example.org")
+    assert [u for u, _ in seen] == [sent]
+
+
+# The review's pass 5, P5-1 and P5-2: the rule above judged a name by Python's \w, after .lower(),
+# and \w is letters and digits without Unicode's marks. A name in Devanagari, Tamil or Thai, whose
+# vowels and tone marks are marks, was refused, and so was İstanbul, whose İ lower() makes an i and a
+# mark; a Source on such a host couldn't be synced at all. And `⑴` and `ͺ` are \w, though a name's
+# IDNA form, the one its lookup and a proxy are sent, makes `(1)` and a space of them. Its brackets
+# were matched with the escapes decoded, so `%5b127.0.0.1%5d` passed as a name, and a proxy is sent
+# it as the address 127.0.0.1 (in HOST_PARTS above). How it slipped past: the one name outside ASCII
+# in the tests was a Latin one, and every bracket in them was written. The class is "the host judged
+# isn't the host sent", so a name is judged in the form that is sent: names in other scripts, the
+# Source's own too, must be asked for, and names whose IDNA form is more than a name mustn't.
+def test_a_source_on_a_host_whose_name_has_marks_is_asked_for_with_its_token():
+    seen = []
+    _ask(names(Http({"गिट.example": "SECRET"}, opener=recording({}, seen))), "https://गिट.example/api/v1/repos/o/r", token_host="गिट.example")
+    assert tokened(seen) == ["https://xn--31bq9g.example/api/v1/repos/o/r"]         # as it is sent (review pass 6, P6-B1)
+    assert "whose IDNA form, the one its lookup and a proxy are sent" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+#
+# The review's pass 6, P6-1: R3.1.1 says a name with no IDNA form isn't asked for, and no test had
+# one, so taking out the `except UnicodeError` that refuses it let a UnicodeError out of Http, which
+# ended a whole Sync once (CR1 #269). And `‥` and `㏇` are no dots to the IDNA codec, which splits
+# a name into its parts before it makes their IDNA form, and that form makes dots of them: `a‥b` is
+# sent as `a..b`, a name with an empty part, which was asked for. The class is "a name that is no
+# name in the form it is sent", so these have no IDNA form, or one with an empty part.
+@pytest.mark.parametrize("host", [
+    "a⑴b.example",              # its IDNA form: a(1)b.example
+    "a%E2%91%B4b.example",      # the same, escaped
+    "aͺb.example",              # its IDNA form holds a space
+    "Ⱥb.example",               # a letter Unicode 3.2 hadn't: its IDNA form isn't its lower case's
+    # no IDNA form (review pass 6, P6-1)
+    "a..b.example",             # an empty part
+    ".example",
+    "a.example..",              # an empty part before a final dot
+    "a" * 64 + ".example",      # a part of more than 63 characters
+    "é" * 64 + ".example",      # the same, outside ASCII
+    "%ffb.example",             # U+FFFD, which IDNA has no form for
+    # an IDNA form with an empty part
+    "a‥b.example",              # a..b.example
+    "‥.example",                # ...example
+    "㏇.example",               # co..example
+    "a.㏇.",                    # a.co.., two final dots
+])
+def test_a_name_whose_idna_form_is_more_than_a_name_is_refused(host):
+    seen = []
+    with pytest.raises(Unreachable, match="more than a host and its port"):
+        names(Http(opener=recording({}, seen))).bytes(f"https://{host}/shot.png", token_host="git.example.org")
+    assert seen == []
+    assert "or whose IDNA form has an empty part" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+# The review's pass 8, P8-B1: Python's idna codec makes a part's IDNA form before it measures it, in a
+# time that grows as the square of the part's length, and the rule above asked it of a host of any
+# length. A README's image on a host of one part of 8,000 characters of CJK held a Sync for ten
+# seconds before it was refused, past the request's deadline and its Cancel, which only a request's
+# steps are held to; one of a million characters would hold it for hours. How it slipped past: no
+# host in the tests was longer than 70 characters, and no test timed a refusal. The class is "work
+# that grows faster than what it is given, done before any bound", so each way a host reaches the
+# codec is given a host of one long part, or a long name of short parts, and timed.
+LONG_PART = "".join(chr(0x4E00 + i * 7919 % 20000) for i in range(8000))     # 8,000 characters of CJK, few of them alike
+
+
+@pytest.mark.parametrize("url", [
+    pytest.param(f"https://{LONG_PART}.example/screenshot.png", id="a-long-part"),
+    pytest.param(f"https://{urllib.parse.quote(LONG_PART)}.example/screenshot.png", id="escaped"),
+    pytest.param("https://" + "ü." * 100_000 + "example/screenshot.png", id="a-long-name-of-short-parts"),
+    pytest.param(f"https://git.example.org@{LONG_PART}.example/screenshot.png", id="after-a-user-part"),    # named by its refusal, if at all (_named)
+    pytest.param(f"ftp://{LONG_PART}.example/screenshot.png", id="no-http-address"),                       # the same
+])
+def test_a_readme_image_on_a_host_longer_than_any_is_refused_at_once(tmp_path, url):
+    [image] = metadata.readme_images(f"# App\n\n![screenshot]({url})\n")
+    seen = []
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^an address (whose host part is more than a host and its port|with a user part before its host"
+                                          "|that isn't an http or https one) isn't asked for$"):
+        sync._save_image(names(Http(opener=recording({}, seen))), image, str(tmp_path / "shot"), token_host="git.example.org")
+    assert time.monotonic() - started < 1 and seen == []
+    assert "all of it at most 300 characters" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_a_redirect_to_a_host_longer_than_any_is_refused_at_once(pair):
+    a, b = pair
+    a.redirects["/o/r/avatar"] = f"https://{LONG_PART}.example/avatar.png".encode().decode("latin-1")    # the bytes a forge sends
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+        names(Http(timeout=5)).bytes(f"https://{a.at}/o/r/avatar")
+    assert time.monotonic() - started < 1 and [p for p, _ in a.seen] == ["/o/r/avatar"]
+
+
+def test_a_token_typed_for_a_host_longer_than_any_is_kept_at_once():
+    # the tokens are read when Http is made, at the application's start, and each Forge names its
+    # Source's host when it is made (set_forge): both are kept as every rule compares hosts (_one_host)
+    host = f"{LONG_PART}.example"
+    started = time.monotonic()
+    http = Http({host: "SECRET"})
+    http.set_forge(host, "gitea")
+    assert time.monotonic() - started < 1 and list(http.tokens) == list(http.forges) == [host]
+
+
+# The review's pass 9, P9-B2: the 300 characters above were a host part's bound alone, which only the
+# addresses Http asks for are held to, and a Source's host, which a Trust's table can write, reached
+# the codec when its Forge was made (set_forge, token_key) with no bound but each part's 63, so a host
+# of 500,000 short parts held Forge() for two seconds, with no deadline or Cancel. How it slipped past:
+# the test above gives a token's host one long part, which the 63 refuses at once. The class is the
+# same as above, so a long name of short parts reaches each of them: a Forge, a typed token, a request.
+def test_a_source_on_a_host_of_short_parts_longer_than_any_is_made_and_refused_at_once():
+    host = "ü." * 1_000_000 + "example.org"
+    seen = []
+    started = time.monotonic()
+    http = names(Http({host: "SECRET"}, opener=recording({}, seen)))
+    forge = forges.forge_for(http, urls.parse(f"https://{host}/o/r"), "gitea")
+    with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+        forge.info()
+    assert time.monotonic() - started < 1 and seen == []
+    assert list(http.tokens) == list(http.forges) == [host]      # kept as it is written: it is sent nowhere
+
+
+# The review's pass 9, P9-B4: the bounds above were tested only far past them (a part of 64 ASCII
+# letters, which the codec refuses itself, 8,000 characters, 100,000 parts), so a 63-character part
+# refused, a 253-character name on a port refused, or a name with `。` between two parts counted as
+# one part of 81, passed every test. The class is "a bound tested only far from its edge", so each
+# is asked for at its edge and one past it.
+NAME_253 = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 61])     # the longest name there is, as it is sent
+BOUNDS = [                       # a host part, and the form it is sent in, or None where it is refused
+    pytest.param("a" * 63 + ".example", "a" * 63 + ".example", id="a-part-of-63"),
+    pytest.param("a" * 63 + "­.example", None, id="a-part-of-64-the-codec-would-make-63"),     # a soft hyphen, which it maps to nothing
+    pytest.param(NAME_253 + ".:65535", NAME_253 + ".:65535", id="the-longest-host-and-port"),       # 260 characters
+    pytest.param(NAME_253 + ":" + "65535".zfill(46), NAME_253 + ":" + "65535".zfill(46), id="300-characters"),
+    pytest.param(NAME_253 + ":" + "65535".zfill(47), None, id="301-characters"),
+    *(pytest.param("a" * 40 + dot + "b" * 40 + ".example", "a" * 40 + "." + "b" * 40 + ".example", id=f"a-name-with-{name}")
+      for dot, name in ((".", "a-dot"), ("。", "an-ideographic-dot"), ("．", "a-full-width-dot"), ("｡", "a-half-width-ideographic-dot"))),
+]
+
+
+@pytest.mark.parametrize("host, sent", BOUNDS)
+def test_a_host_part_at_a_bound_is_asked_for_and_one_past_it_isnt(host, sent):
+    seen = []
+    http = names(Http(opener=recording({}, seen)))
+    if sent is None:
+        with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+            http.bytes(f"https://{host}/shot.png", token_host="git.example.org")
+    else:
+        _ask(http, f"https://{host}/shot.png", token_host="git.example.org")
+    assert [url for url, _ in seen] == ([] if sent is None else [f"https://{sent}/shot.png"])
+
+
+@pytest.mark.parametrize("length, kept", [(300, "xn--tda."), (301, "ü.")])
+def test_a_tokens_host_at_a_names_bound_is_kept_in_its_idna_form_and_one_past_it_as_written(length, kept):
+    rest = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 63, "e" * (length - 258)])
+    [key] = Http({f"ü.{rest}": "SECRET"}).tokens
+    assert key == kept + rest
+
+
+# The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host
+# as written: in the Host header, which http.client writes in Latin-1, so a name outside it couldn't
+# be sent at all ("can't be sent (UnicodeEncodeError)"), and over plain http through a proxy, in an
+# address that must be ASCII, not even a Latin-1 one; and a Latin-1 one was sent to the server as
+# `Host: übung.example`, where its lookup and a tunnel's CONNECT had its IDNA form. A Source on such
+# a host couldn't be synced. How it slipped past: the tests above ask a stand-in opener, which is
+# handed the request and builds no Host header, and nothing went through Http's own opener with
+# such a name. The class is "the host judged isn't the host sent", at the last step, so these go
+# through Http's own opener to a real server, over TLS and plain http, directly and through a proxy
+# that forwards what it is asked, and hold each place the host is sent: its lookups, the Host
+# header, a tunnel's CONNECT and the address a proxy is sent.
+INTERNATIONAL = [                # a host, and the form it is sent in
+    pytest.param("images.example", "images.example", id="ascii"),
+    pytest.param("übung.example", "xn--bung-zra.example", id="latin-1"),
+    pytest.param("गिट.example", "xn--31bq9g.example", id="devanagari"),
+    pytest.param("例え.example", "xn--r8jz45g.example", id="cjk"),
+    pytest.param("เว็บ.example", "xn--r3cz4e3a.example", id="thai-with-a-tone-mark"),
+    pytest.param("İstanbul.example", "xn--istanbul-o0e.example", id="a-capital-i-with-a-dot"),
+    # beside DEVIATING's names below: a name with none of the four characters still goes (review pass 7, P7-1)
+    pytest.param("σίσυφοσ.example", "xn--kxa6akbbkh.example", id="greek-with-no-final-sigma"),
+    pytest.param("xn--strae-oqa.example", "xn--strae-oqa.example", id="a-sharp-s-in-its-idna-2008-form"),
+]
+# The review's pass 7, P7-1: a name is sent in its IDNA form, which Python's idna codec makes by IDNA
+# 2003, and four characters are read apart by IDNA 2008, by which registries and browsers make it.
+# IDNA 2003 makes `ss` of ß, `σ` of ς, and nothing of a zero-width non-joiner or joiner, so
+# `straße.example` was sent as `strasse.example`, another domain, which may be anyone's, with the
+# Source's token, its own certificate passing the TLS check. How it slipped past: every name in the
+# tests above is one host by both standards. The class is "the host sent isn't the host written", by
+# the codec's own reading, so a name with each of the four is asked for through Http's own opener, to
+# a real server whose certificate is for its IDNA 2003 form, as a request's address, the Source's own
+# host and a redirect's; and the names above, with none of the four, still go.
+DEVIATING = [                    # a name with one of the four, the host IDNA 2003 makes of it, and how a refusal says the character
+    pytest.param("straße.example", "strasse.example", "ß", id="a-sharp-s"),
+    pytest.param("σίσυφος.example", "xn--kxa6akbbkh.example", "ς", id="a-final-sigma"),
+    pytest.param("می\u200cخواهم.example", "xn--mgbn2ecje63g.example", "a zero-width non-joiner (U+200C)", id="a-zero-width-non-joiner"),
+    pytest.param("ශ්\u200dරී.example", "xn--10cl1a0b.example", "a zero-width joiner (U+200D)", id="a-zero-width-joiner"),
+]
+OPENSSL_CNF = """[req]
+distinguished_name = dn
+[dn]
+[ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+subjectAltName = {names}
+"""
+
+
+@pytest.fixture(scope="module")
+def certificate(tmp_path_factory):
+    """A server's certificate for INTERNATIONAL's names in the form they are sent, and for the hosts
+    IDNA 2003 makes of DEVIATING's, from a CA made here for these tests alone, as (the CA's file, the
+    certificate's, its key's): made by openssl, which the Windows tier hasn't."""
+    if not shutil.which("openssl"):
+        pytest.skip("needs openssl")
+    at = tmp_path_factory.mktemp("tls")
+    names = [p.values[1] for p in INTERNATIONAL + DEVIATING]
+    (at / "openssl.cnf").write_text(OPENSSL_CNF.format(names=",".join(f"DNS:{name}" for name in dict.fromkeys(names))))
+
+    def openssl(*args):
+        subprocess.run(["openssl", *args], cwd=at, check=True, capture_output=True)
+    key = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-config", "openssl.cnf"]
+    openssl("req", "-x509", *key, "-extensions", "ca", "-subj", "/CN=AppKata tests' CA", "-days", "30",
+            "-keyout", "ca.key", "-out", "ca.pem")
+    openssl("req", "-new", *key, "-subj", "/CN=images.example", "-keyout", "server.key", "-out", "server.csr")
+    openssl("x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "2", "-days", "30",
+            "-extfile", "openssl.cnf", "-extensions", "server", "-out", "server.pem")
+    return str(at / "ca.pem"), str(at / "server.pem"), str(at / "server.key")
+
+
+class _Forwarding(socketserver.BaseRequestHandler):
+    """A proxy before one server, `server.to` (its port), whatever host it is asked for: a tunnel's
+    CONNECT is answered and piped to that server both ways, and a request in an address's whole form
+    is sent on to it as it came. The first line of each is noted in `server.seen`."""
+
+    def handle(self):
+        head = b""
+        while b"\r\n\r\n" not in head:
+            got = self.request.recv(65536)
+            if not got:
+                return
+            head += got
+        first = head.partition(b"\r\n")[0].decode("latin-1")
+        self.server.seen.append(first)
+        with socket.create_connection(("127.0.0.1", self.server.to), timeout=5) as up:
+            if first.startswith("CONNECT "):
+                self.request.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                head = head.partition(b"\r\n\r\n")[2]
+            up.sendall(head)
+            other = {self.request: up, up: self.request}
+            while True:
+                ready, _, _ = select.select(list(other), [], [], 5)
+                for end in ready:
+                    got = end.recv(65536)
+                    if not got:
+                        return
+                    other[end].sendall(got)
+                if not ready:
+                    return
+
+
+class _ForwardingServer(socketserver.ThreadingTCPServer):
+    daemon_threads = allow_reuse_address = True
+
+
+@pytest.fixture
+def serving():
+    """serving(handler, server_class) starts a server on this computer for the test and gives it, with
+    `seen`, `redirects`, `files` and `at` as `pair`'s have; serving(..., tls=(certificate, key)) wraps
+    its socket in TLS. Each is stopped after the test."""
+    started = []
+
+    def start(handler=_Recorder, server_class=ThreadingHTTPServer, tls=None):
+        server = server_class(("127.0.0.1", 0), handler)
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(*tls)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        server.seen, server.redirects, server.files = [], {}, None
+        server.at = f"127.0.0.1:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        started.append(server)
+        return server
+    yield start
+    for server in started:
+        server.shutdown()
+        server.server_close()
+
+
+def at_this_computer(monkeypatch):
+    """Stands in for the name server at the socket's own lookup, which Http's check and its connection
+    both ask: every name under .example, in whatever form it is asked for, is this computer. Gives
+    the list of the names asked for."""
+    real, asked = socket.getaddrinfo, []
+
+    def getaddrinfo(host, *a, **k):
+        if not (isinstance(host, str) and host.rstrip(".").endswith(".example")):
+            return real(host, *a, **k)
+        asked.append(host)
+        return real("127.0.0.1", *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return asked
+
+
+def _asked_in_the_form_it_is_sent(monkeypatch, serving, scheme, route, name, sent, tls=None):
+    """A Source on `name`'s API asked for with its token, then an image there asked for by another
+    Source's request, through Http's own opener, to a real server on this computer, directly or
+    through a proxy: each place the host is sent has `sent`."""
+    origin = serving(tls=tls)
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    proxy = None
+    if route == "through-a-proxy":
+        proxy = serving(_Forwarding, _ForwardingServer)
+        proxy.to = port
+        behind_a_proxy(monkeypatch, proxy, https=True)
+    source = f"{name}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    assert http.json(f"{scheme}://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    # the image is another host's than the Source's, and this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    assert http.bytes(f"{scheme}://{name}:{port}/shot.png", token_host="git.example.org") == PNG
+    paths = ["/api/v1/repos/o/r", "/shot.png"]
+    if route == "direct":
+        assert asked == [sent, sent, sent]             # the Source's connection's lookup; the image's check's and connection's
+    else:
+        assert asked == [sent]                         # the image's check's: the proxy looks a name up itself
+        assert proxy.seen == ([f"CONNECT {sent}:{port} HTTP/1.1"] * 2 if scheme == "https" else
+                              [f"GET http://{sent}:{port}{path} HTTP/1.1" for path in paths])
+        if scheme == "http":
+            paths = [f"http://{sent}:{port}{path}" for path in paths]
+    assert [(path, h["host"], h.get("authorization")) for path, h in origin.seen] == [
+        (paths[0], f"{sent}:{port}", "token SECRET" if scheme == "https" else None), (paths[1], f"{sent}:{port}", None)]
+    assert "is sent in its IDNA form" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.fixture
+def trusting(monkeypatch, certificate):
+    """The TLS context of Http's connections trusts the CA `certificate` was made by, as well as the
+    system's; gives the certificate and its key, for a server."""
+    ca, cert, key = certificate
+    real = ssl.create_default_context
+
+    def made(*a, **k):
+        context = real(*a, **k)
+        context.load_verify_locations(ca)
+        return context
+    monkeypatch.setattr(ssl, "create_default_context", made)
+    return cert, key
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, sent", INTERNATIONAL)
+def test_through_real_sockets_a_host_in_any_script_is_sent_over_tls_in_its_idna_form(monkeypatch, serving, trusting, route, name, sent):
+    _asked_in_the_form_it_is_sent(monkeypatch, serving, "https", route, name, sent, tls=trusting)
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, sent", INTERNATIONAL)
+def test_through_real_sockets_a_host_in_any_script_is_sent_over_plain_http_in_its_idna_form(monkeypatch, serving, route, name, sent):
+    _asked_in_the_form_it_is_sent(monkeypatch, serving, "http", route, name, sent)
+
+
+def two_hosts(host, held):
+    """How the refusal of an address on `host` begins, its name holding `held` (DEVIATING)."""
+    return "^" + re.escape(f"{host} isn't asked for: a name with {held} in it is two different hosts")
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_through_real_sockets_a_name_idna_2003_and_2008_read_apart_is_asked_for_nowhere(monkeypatch, serving, trusting, route, name, twin, held):
+    origin = serving(tls=trusting)             # its certificate is for `twin` too: what is sent there is answered
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    proxy = None
+    if route == "through-a-proxy":
+        proxy = serving(_Forwarding, _ForwardingServer)
+        proxy.to = port
+        behind_a_proxy(monkeypatch, proxy, https=True)
+    source = f"{name}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    for written in (name, urllib.parse.quote(name)):           # as written, and escaped
+        with pytest.raises(Unreachable, match=two_hosts(source, held)):
+            http.json(f"https://{written}:{port}/api/v1/repos/o/r", token_host=source)       # the Source's own request
+        with pytest.raises(Unreachable, match=two_hosts(source, held)):
+            http.bytes(f"https://{written}:{port}/shot.png", token_host="git.example.org")   # an image there
+    # nor is anything asked for the Source, wherever the address is: its host's IDNA 2003 form
+    # was its key, and the twin's own address was sent its token
+    with pytest.raises(Unreachable, match="^" + re.escape(f"nothing is asked for a Source on {source}: a name with {held} in it")):
+        http.json(f"https://{twin}:{port}/api/v1/repos/o/r", token_host=source)
+    assert asked == [] and origin.seen == [] and (proxy is None or proxy.seen == [])
+    # the twin, asked for as itself, is another host than the Source's, and is sent no token
+    assert list(http.tokens) == [source]
+    assert http.json(f"https://{twin}:{port}/api/v1/repos/o/r") == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in origin.seen] == [("/api/v1/repos/o/r", f"{twin}:{port}", None)]
+
+
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_through_real_sockets_a_redirect_to_a_name_idna_2003_and_2008_read_apart_isnt_followed(monkeypatch, serving, trusting, name, twin, held):
+    origin = serving(tls=trusting)
+    port = origin.server_address[1]
+    origin.redirects = {"/api/v1/repos/o/r": f"https://{urllib.parse.quote(name)}:{port}/api/v1/repos/o/r"}
+    asked = at_this_computer(monkeypatch)
+    # the host redirected to is another than the Source's, and this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    source = f"images.example:{port}"
+    with pytest.raises(Unreachable, match=two_hosts(f"{name}:{port}", held)):
+        Http({source: "SECRET"}, timeout=5).json(f"https://{source}/api/v1/repos/o/r", token_host=source)
+    assert asked == ["images.example"] and [path for path, _ in origin.seen] == ["/api/v1/repos/o/r"]
+
+
+@pytest.mark.parametrize("address", [
+    "https://Straße.example/x", "https://STRA%C3%9FE.example/x", "https://straße.example:8443/x",
+    "https://example.ΣΊΣΥΦΟΣ/x",                         # in lower case, as every host is read, its final Σ is ς
+    "http://a\u200cb.example/x", "https://a%E2%80%8Db.example/x",
+])
+def test_a_name_with_any_of_the_four_in_any_form_is_refused_and_said(address):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=recording({}, seen)))
+    with pytest.raises(Unreachable, match=r"^\S+ isn't asked for: a name with (ß|ς|a zero-width (non-)?joiner \(U\+200[CD]\)) in it is two"):
+        http.bytes(address, token_host="git.example.org")
+    assert seen == []
+
+
+# The refusal above says why, and a Source whose forge type isn't known yet had it on no row: the
+# forge probes (forges.detect) pass over a refused request for the next probe, and each was refused
+# alike, so the row said AppKata couldn't tell which forge the host runs, and to set its type. A
+# refusal of such a name is one that gets no answer, which ends the probing with its own error.
+@pytest.mark.parametrize("kind", [None, "gitea"])
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_a_source_on_a_name_idna_2003_and_2008_read_apart_has_why_on_its_row(tmp_path, monkeypatch, name, twin, held, kind):
+    source = f"https://{name}/o/r"
+    db = catalog(tmp_path, monkeypatch, [source])
+    if kind:
+        db.x("UPDATE sources SET settings=?", (json.dumps({"forge": kind}),))
+    seen = []
+    sync.sync_all(db, names(Http({name: "SECRET"}, opener=recording({}, seen))), root=str(tmp_path), workers=1)
+    app = rows(db)[urls.normalize(source)]
+    assert app["error_code"] == "Unreachable" and re.match(two_hosts(name, held), app["error"]), app
+    assert seen == []
+
+
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_is_kept_as_written_and_sent_nowhere(name, twin, held):
+    assert http_.token_key(name) == name == http_.token_key(f"https://{urllib.parse.quote(name)}/o/r")
+    seen = []
+    http = names(Http({name: "SECRET"}, opener=recording({}, seen)))
+    _ask(http, f"https://{twin}/x")
+    assert tokened(seen) == [] and [url for url, _ in seen] == [f"https://{twin}/x"]
+
+
+def test_r3_1_1_says_how_the_systems_list_of_hosts_reached_directly_is_read():
+    # the review's pass 10, P10-B1, as the owner decided it: NO_PROXY's and SYSTEM_LISTS' rows hold it
+    text = " ".join(reqdocs.item("R3.1.1").split())
+    assert ("`no_proxy`, or the bypass list of Windows' or macOS' own settings, each read as Python's urllib reads it") in text
+    assert "an entry in another Unicode form of the name, decomposed (NFD) or full-width, names no host" in text
+
+
+def test_r3_1_1_says_a_name_idna_2003_and_2008_read_apart_isnt_asked_for():
+    text = " ".join(reqdocs.item("R3.1.1").split())
+    assert "Nor is a name that holds, in lower case, `ß`, `ς`, a zero-width non-joiner (U+200C) or a zero-width joiner (U+200D)" in text
+    assert "`straße.example` is `strasse.example` by IDNA 2003 and `xn--strae-oqa.example` by IDNA 2008" in text
+    assert "the Source's own host, and the host a token is typed for (R11.1.6)" in text
+
+
+# The review's pass 8, P8-2: a request is made with its host as it is sent (round 6), and urllib's
+# ProxyHandler compares each no_proxy entry, as it is written, with that host, in its IDNA form. An
+# entry in a name's script, no_proxy=übung.example, named no host, and every request to the Source
+# übung.example went through the proxy, its token inside the tunnel; and _proxied, which says what
+# the handler does, read the host as written, so the two disagreed. How it slipped past: the one
+# no_proxy entry in the tests was ASCII. The class is "one host, two spellings", at no_proxy, so an
+# entry in each form names an address in each form, through Http's own opener to a real server on
+# this computer, reached directly or through a proxy before it.
+NO_PROXY = [                     # a no_proxy entry, and whether it names übung.example on the server's port
+    pytest.param("übung.example", True, id="its-script"),
+    pytest.param("xn--bung-zra.example", True, id="its-idna-form"),
+    pytest.param("ÜBUNG.EXAMPLE", True, id="in-upper-case"),
+    pytest.param(".übung.example", True, id="with-a-leading-dot"),          # it, and the names under it
+    pytest.param("other.example, übung.example:{port}", True, id="with-its-port-in-a-list"),
+    pytest.param("bücher.example", False, id="another-name"),
+    # values urllib reads as an entry `*`, which names no host, and not as the `*` that names every
+    # one: no_proxy's entries read again and joined back into a list made them that (review pass 9, P9-B1)
+    pytest.param("*", True, id="every-host"),
+    pytest.param(" *", False, id="a-star-after-a-space"),
+    pytest.param("* ", False, id="a-star-before-a-space"),
+    pytest.param(".*", False, id="a-star-after-a-dot"),
+    pytest.param("*,a..b", False, id="a-star-beside-a-name-with-no-idna-form"),
+    # an entry with no IDNA form beside one that names the host, which still does (review pass 9, P9-B4)
+    pytest.param("a..b, übung.example", True, id="beside-a-name-with-an-empty-part"),
+    pytest.param("a" * 64 + ".example, übung.example", True, id="beside-a-name-with-a-part-of-64"),
+    # an entry is read as urllib reads it: in another Unicode form of the name, decomposed (NFD) or
+    # full-width, it names no host, as no tool that reads no_proxy as urllib does would read it so
+    # either (review pass 10, P10-B1, as the owner decided it)
+    pytest.param("u\u0308bung.example", False, id="decomposed"),
+    pytest.param("\uff55\u0308bung.example", False, id="full-width"),
+]
+
+
+def _routed_by_no_proxy(monkeypatch, serving, scheme, entry, direct, written, tls=None):
+    _routed(monkeypatch, serving, scheme, direct, written, tls,
+            lambda proxy, port: behind_a_proxy(monkeypatch, proxy, https=True, no_proxy=entry.format(port=port)))
+
+
+def _routed(monkeypatch, serving, scheme, direct, written, tls, settings):
+    """A Source on übung.example, written `written`, asked for with its token, then an image there
+    asked for by another Source's request, through Http's own opener, to a real server on this
+    computer, with a proxy before it that `settings(proxy, port)` makes the system's: each is
+    reached directly if `direct`, else through the proxy, and Http's rule (_proxied) says the same."""
+    origin = serving(tls=tls)
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    proxy = serving(_Forwarding, _ForwardingServer)
+    proxy.to = port
+    settings(proxy, port)
+    source = f"{written}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    assert http.json(f"{scheme}://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    # an image there that another Source's request asks for: this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    url = f"{scheme}://{written}:{port}/shot.png"
+    assert http.bytes(url, token_host="git.example.org") == PNG
+    sent = f"xn--bung-zra.example:{port}"
+    assert proxy.seen == ([] if direct else [f"CONNECT {sent} HTTP/1.1"] * 2 if scheme == "https" else
+                          [f"GET http://{sent}{path} HTTP/1.1" for path in ("/api/v1/repos/o/r", "/shot.png")])
+    assert [path for path, _ in origin.seen] == ["/api/v1/repos/o/r", "/shot.png"] if direct or scheme == "https" else \
+        [f"http://{sent}{path}" for path in ("/api/v1/repos/o/r", "/shot.png")]
+    assert http._proxied(http_._http_address(url)) is not direct       # Http's rule says what its opener did
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example", "%C3%BCbung.example"])
+@pytest.mark.parametrize("entry, direct", NO_PROXY)
+def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_tls(monkeypatch, serving, trusting, entry, direct, written):
+    _routed_by_no_proxy(monkeypatch, serving, "https", entry, direct, written, tls=trusting)
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example", "%C3%BCbung.example"])
+@pytest.mark.parametrize("entry, direct", NO_PROXY)
+def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_plain_http(monkeypatch, serving, entry, direct, written):
+    _routed_by_no_proxy(monkeypatch, serving, "http", entry, direct, written)
+
+
+# The review's pass 9, P9-1: with no proxy in the environment, urllib reads the system's own proxy
+# and its bypass list, Windows' ProxyOverride or macOS' exceptions, and compares each entry, as it is
+# written, with the host it is given, which Http sends in its IDNA form (round 6). Round 8 read
+# no_proxy's entries again in their IDNA form and left the system's lists as urllib reads them, so
+# an entry in a name's script, übung.example or übung.*, named no host there, and every request to
+# the Source übung.example went through the proxy. How it slipped past: every proxy in the tests was
+# the environment's, which Linux, where they run, reads alone. The class is "Http's reading of a
+# bypass list isn't urllib's", so the system's lists are stood in for by CPython's own reading of
+# each, on every platform, and the host is asked of them in its script and its IDNA form, as
+# no_proxy's values above, which urllib reads its own way too.
+SYSTEMS = {                      # the system's bypass list, holding `entry`, as CPython's urllib reads it there
+    "windows": lambda entry: lambda host: urllib.request._proxy_bypass_winreg_override(host, entry),       # the port left out
+    "macos": lambda entry: lambda host: urllib.request._proxy_bypass_macosx_sysconf(                       # the port compared too
+        host, {"exclude_simple": False, "exceptions": [entry]}),
+}
+SYSTEM_LISTS = [                 # a system, an entry of its bypass list, and whether it names übung.example on the server's port
+    pytest.param("windows", "übung.example", True, id="windows-its-script"),
+    pytest.param("windows", "xn--bung-zra.example", True, id="windows-its-idna-form"),
+    pytest.param("windows", "übung.*", True, id="windows-a-pattern-in-its-script"),
+    pytest.param("windows", "bücher.example", False, id="windows-another-name"),
+    pytest.param("macos", "übung.example:{port}", True, id="macos-its-script"),
+    pytest.param("macos", "xn--bung-zra.example:{port}", True, id="macos-its-idna-form"),
+    pytest.param("macos", "übung.*", True, id="macos-a-pattern-in-its-script"),
+    pytest.param("macos", "bücher.example:{port}", False, id="macos-another-name"),
+    # an entry in another Unicode form of the name names no host (review pass 10, P10-B1)
+    pytest.param("windows", "u\u0308bung.example", False, id="windows-decomposed"),
+    pytest.param("macos", "u\u0308bung.example:{port}", False, id="macos-decomposed"),
+]
+
+
+def behind_the_systems_proxy(monkeypatch, proxy, bypass):
+    """The system's own settings name server `proxy` for http and https, and `bypass(host)` is their
+    bypass list's answer, and the environment names no proxy: as urllib reads Windows' and macOS'
+    settings there."""
+    for name in PROXIES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"http": f"http://{proxy.at}", "https": f"http://{proxy.at}"})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", bypass)
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example"])
+@pytest.mark.parametrize("system, entry, direct", SYSTEM_LISTS)
+def test_through_real_sockets_the_systems_bypass_list_in_any_form_names_its_host_over_tls(monkeypatch, serving, trusting, system, entry, direct, written):
+    _routed(monkeypatch, serving, "https", direct, written, trusting,
+            lambda proxy, port: behind_the_systems_proxy(monkeypatch, proxy, SYSTEMS[system](entry.format(port=port))))
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example"])
+@pytest.mark.parametrize("system, entry, direct", SYSTEM_LISTS)
+def test_through_real_sockets_the_systems_bypass_list_in_any_form_names_its_host_over_plain_http(monkeypatch, serving, system, entry, direct, written):
+    _routed(monkeypatch, serving, "http", direct, written, None,
+            lambda proxy, port: behind_the_systems_proxy(monkeypatch, proxy, SYSTEMS[system](entry.format(port=port))))
+
+
+def test_through_real_sockets_a_redirect_on_a_sources_own_host_in_any_script_is_that_host(pair, monkeypatch):
+    # a path alone is made an address with the host part the request was sent with, and a forge may
+    # write that host part out: either is the Source's own host, which may be on this computer, and
+    # keeps its token, and the request it leads to is sent as the first one was
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.redirects["/api/v1/repos/o/r"] = "/api/v1/repos/o/renamed"
+    a.redirects["/api/v1/repos/o/renamed"] = f"https://xn--31bq9g.example:{port}/api/v1/repos/o/r2"
+    source = f"गिट.example:{port}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [
+        (path, f"xn--31bq9g.example:{port}", "token SECRET") for path in ("/api/v1/repos/o/r", "/api/v1/repos/o/renamed", "/api/v1/repos/o/r2")]
+    assert asked == ["xn--31bq9g.example"] * 3         # each connection's lookup; the Source's own host needs no check's
+
+
+def test_through_real_sockets_a_redirect_to_a_host_in_any_script_is_sent_in_its_idna_form(pair, monkeypatch):
+    a, b = pair
+    asked = at_this_computer(monkeypatch)
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))   # B stands for a host elsewhere
+    a.redirects["/o/r/avatar"] = f"https://%E4%BE%8B%E3%81%88.example:{b.server_address[1]}/avatar.png"     # 例え.example, escaped
+    source = f"git.example:{a.server_address[1]}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/o/r/avatar", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in b.seen] == [
+        ("/avatar.png", f"xn--r8jz45g.example:{b.server_address[1]}", None)]
+    assert asked == ["git.example", "xn--r8jz45g.example", "xn--r8jz45g.example"]    # A's connection's; B's check's and connection's
+
+
+# The review's pass 7, P7-2 and P7-B2: a host was sent as it is judged, and the rules that compare two
+# hosts (whose token a request carries, whether an address is the Source's own host, which may be
+# local, whether a redirect keeps the token, whose limit an answer is) read the host as it was
+# written. The Source's own host in another form, its IDNA form or its script, or escaped, was sent
+# as the Source's own requests are and taken for another host: a forge on
+# the user's network that names its avatars in its IDNA form had them refused as local, and its
+# redirect to itself in another form was refused, or followed without the token on a public forge.
+# How it slipped past: round 6's tests asked for the Source's host in the form it was typed in, and
+# their one redirect to another form was to the form the request was sent in, which round 6 mapped
+# back to the one written. The class is "one host, two spellings", so the Source here is on this
+# computer, typed in one form, and asked for, redirected to and limited in another.
+OTHER_FORMS = [                  # a Source's host as typed, as an address names it, and as that is sent
+    pytest.param("übung.example", "xn--bung-zra.example", "xn--bung-zra.example", id="its-idna-form"),
+    pytest.param("xn--bung-zra.example", "übung.example", "xn--bung-zra.example", id="its-script"),
+    pytest.param("übung.example", "%C3%BCbung.example", "xn--bung-zra.example", id="escaped"),
+    pytest.param("xn--bung-zra.example", "%C3%9CBUNG.example", "xn--bung-zra.example", id="escaped-in-upper-case"),
+    pytest.param("गिट.example", "xn--31bq9g.example", "xn--31bq9g.example", id="devanagari"),
+    pytest.param("git.example", "%67it.example", "git.example", id="an-ascii-name-escaped"),
+    pytest.param("git.example", "%47it.example", "git.example", id="an-escaped-capital"),
+]
+
+
+@pytest.mark.parametrize("typed, named, sent", OTHER_FORMS)
+def test_through_real_sockets_the_sources_own_host_in_another_form_is_the_sources_own(pair, monkeypatch, typed, named, sent):
+    # an avatar the forge names in another form than the Source's, on this computer: the Source's
+    # own host, which may be local, asked for with its token
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.files = {"/avatars/1": PNG}
+    source = f"{typed}:{port}"
+    assert Http({source: "SECRET"}, timeout=5).bytes(f"https://{named}:{port}/avatars/1", token_host=source) == PNG
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [("/avatars/1", f"{sent}:{port}", "token SECRET")]
+    assert asked == [sent]                             # the connection's lookup: the Source's own host needs no check's
+    assert "is the Source's own host in whichever form it is written" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+SELF_REDIRECTS = [               # a Source's host as typed, and sent; where its forge redirects, and that host as sent
+    pytest.param("bücher.example", "xn--bcher-kva.example", "https://bücher.example:{port}/b".encode().decode("latin-1"),
+                 "xn--bcher-kva.example", id="its-script-in-utf-8"),
+    pytest.param("bücher.example", "xn--bcher-kva.example", "https://BÜCHER.example:{port}/b".encode().decode("latin-1"),
+                 "xn--bcher-kva.example", id="in-upper-case-in-utf-8"),
+    pytest.param("xn--bcher-kva.example", "xn--bcher-kva.example", "https://b%C3%BCcher.example:{port}/b",
+                 "xn--bcher-kva.example", id="its-script-escaped"),
+    pytest.param("git.example", "git.example", "https://git%2eexample:{port}/b", "git.example", id="an-escape"),
+]
+
+
+@pytest.mark.parametrize("typed, first, location, then", SELF_REDIRECTS)
+def test_through_real_sockets_a_redirect_to_the_sources_own_host_in_another_form_keeps_its_token(pair, monkeypatch, typed, first, location, then):
+    # a forge on this computer that writes its own host out in another form in a redirect: the
+    # Source's own host, which may be local, and the token goes on with the request (R9.2.2)
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.redirects["/a"] = location.format(port=port)        # a raw UTF-8 Location is the bytes the forge sent
+    source = f"{typed}:{port}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/a", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [
+        ("/a", f"{first}:{port}", "token SECRET"), ("/b", f"{then}:{port}", "token SECRET")]
+    assert asked == [first, then]                      # each connection's lookup: no check's
+
+
+def test_through_real_sockets_a_limit_answered_in_one_form_of_a_host_holds_in_the_other(pair, clock, monkeypatch):
+    a, b = pair
+    port = a.server_address[1]
+    at_this_computer(monkeypatch)
+    a.files = {"/api/x": saying(429), "/api/y": {"ok": True}}
+    http = Http(timeout=5)
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} rate limit reached$"):
+        http.json(f"https://übung.example:{port}/api/x")
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} rate limit reached$"):
+        http.json(f"https://xn--bung-zra.example:{port}/api/y")
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} "):
+        http.json(f"https://%C3%BCbung.example:{port}/api/y")
+    assert [p for p, _ in a.seen] == ["/api/x"] and http.limited == {f"xn--bung-zra.example:{port}": clock.now + 60}
+
+
+# The review's pass 8, P8-B2: the rules above made a name with its final dot the Source's own host, and
+# R9.2.2 said so, but the name is sent with its dot: to the lookup, in the Host header and as the
+# name TLS checks the certificate against, and a certificate for `images.example` isn't one for
+# `images.example.`. So no request to it, the token's included, ever got past the handshake. How it
+# slipped past: the tests of a final dot went through the pair, whose https leaves out the
+# encryption. A final dot now makes a name another host, as it is sent, and these hold that over
+# real TLS: the Source's own host is local, so another host there is refused before anything is sent.
+@pytest.mark.parametrize("typed, named", [
+    pytest.param("images.example", "images.example.", id="with-a-final-dot"),
+    pytest.param("images.example.", "images.example", id="without-its-final-dot"),
+])
+def test_over_real_tls_the_sources_name_with_or_without_its_final_dot_is_another_host(monkeypatch, serving, trusting, typed, named):
+    origin = serving(tls=trusting)
+    origin.files = {"/avatars/1": PNG}
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    source = f"{typed}:{port}"
+    with pytest.raises(Unreachable, match=rf"^{re.escape(named)} is on this computer or its local network \(127\.0\.0\.1\): not fetched"):
+        Http({source: "SECRET"}, timeout=5).bytes(f"https://{named}:{port}/avatars/1", token_host=source)
+    assert origin.seen == []
+
+
+def test_over_real_tls_a_redirect_to_the_sources_name_with_a_final_dot_isnt_followed(monkeypatch, serving, trusting):
+    origin = serving(tls=trusting)
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    origin.redirects["/a"] = f"https://images.example.:{port}/b"
+    source = f"images.example:{port}"
+    with pytest.raises(Unreachable, match=r"^images\.example\. is on this computer or its local network \(127\.0\.0\.1\): not fetched"):
+        Http({source: "SECRET"}, timeout=5).json(f"https://{source}/a", token_host=source)
+    assert [(path, h.get("authorization")) for path, h in origin.seen] == [("/a", "token SECRET")]
+    assert "in whichever form it is written, read as it is sent (R3.1.1): in its IDNA form or its script, or escaped." in \
+        " ".join(reqdocs.item("R9.2.2").split())
+
+
+# ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
+# CR1's #275: Http chose the token's header from the host's name, so a GitLab without "gitlab" in its
+# name (three of the hosts forges.KNOWN lists) was sent "Authorization: token", which GitLab has no use
+# for: the token did nothing, and nothing said so. No test looked at a header's form, and every host
+# in the tests had its forge in its name. The class is "what a host runs is read from what it is
+# called", so the hosts here have names that say nothing or say the wrong thing, and the stand-in
+# forge answers only the form its type takes.
+NEUTRAL = "git.example.org"
+FORMS = {"github": ("authorization", "Bearer SECRET"), "ghe": ("authorization", "Bearer SECRET"),
+         "gitlab": ("private-token", "SECRET"),
+         "forgejo": ("authorization", "token SECRET"), "gitea": ("authorization", "token SECRET")}
+
+
+def tokens_sent(seen):
+    """Of each request, the token headers it carried: [(address, {header: value})]."""
+    return [(url, {k: v for k, v in h.items() if k in http_.TOKEN_HEADERS}) for url, h in seen]
+
+
+def test_every_forge_type_has_its_form_and_a_redirect_knows_each_header():
+    assert set(http_.TOKEN_FORMS) == set(forges.LABELS) == set(FORMS)
+    assert {header.lower() for header, _ in http_.TOKEN_FORMS.values()} == set(http_.TOKEN_HEADERS)
+    assert {kind: (header.lower(), before + "SECRET") for kind, (header, before) in http_.TOKEN_FORMS.items()} == FORMS
+
+
+@pytest.mark.parametrize("host", [NEUTRAL, "gitlab.example.org", "notgithub.com", "code.gitea.example"])
+@pytest.mark.parametrize("kind", sorted(FORMS))
+def test_a_forges_requests_carry_the_token_in_its_types_form_whatever_the_host_is_called(tmp_path, kind, host):
+    seen = []
+    http = names(Http({host: "SECRET"}, opener=recording({f"https://{host}/": PNG}, seen)))
+    f = forges.forge_for(http, urls.parse(f"https://{host}/o/r"), kind)
+    with pytest.raises(Unreachable, match="JSON"):
+        f.info()                                                     # its API
+    assert f.raw("icon.png", "main") == PNG                          # a file of the repository
+    sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=host)   # and as Sync asks
+    assert len(seen) == 3 and [sent for _, sent in tokens_sent(seen)] == [dict([FORMS[kind]])] * 3, seen
+
+
+@pytest.mark.parametrize("host", sorted(forges.KNOWN))
+def test_every_host_appkata_knows_gets_the_form_of_the_forge_it_runs(host):
+    # the finding's three: invent.kde.org, salsa.debian.org and framagit.org are GitLab's
+    seen = []
+    http = names(Http({host: "SECRET"}, opener=recording({"https://": PNG}, seen)))
+    forges.forge_for(http, urls.parse(f"https://{host}/o/r")).raw("README.md", "main")
+    assert tokens_sent(seen) == [(seen[0][0], dict([FORMS[forges.KNOWN[host]]]))]
+    assert {h: forges.KNOWN[h] for h in ("invent.kde.org", "salsa.debian.org", "framagit.org")} == {
+        "invent.kde.org": "gitlab", "salsa.debian.org": "gitlab", "framagit.org": "gitlab"}
+
+
+def only_its_form(kind, routes, seen):
+    """A forge of this type that needs its token: recording(), which answers 401 unless the request
+    carries the token in the one form the type takes. (A real GitLab or Gitea takes Bearer too.)"""
+    answer = recording(routes, seen)
+
+    def open_(req, timeout=0):
+        sent = {k.lower(): v for k, v in req.header_items() if k.lower() in http_.TOKEN_HEADERS}
+        if sent != dict([FORMS[kind]]):
+            seen.append((req.full_url, sent))
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+        return answer(req, timeout)
+    return open_
+
+
+PROJECT = {"name": "r", "full_name": "o/r", "path_with_namespace": "o/r", "default_branch": "main"}
+
+
+@pytest.mark.parametrize("kind, probe, answer", [
+    ("gitlab", "/api/v4/projects?per_page=1", []),
+    ("ghe", "/api/v3/meta", {"installed_version": "3.14.0"}),
+    ("gitea", "/api/v1/version", {"version": "1.22.0"}),
+    ("forgejo", "/api/v1/version", {"version": "11.0.1+gitea-1.22.0"}),
+])
+@pytest.mark.parametrize("host", [NEUTRAL, "gitlab-mirror.example.org"])
+def test_a_forge_that_needs_its_token_is_detected_and_read_on_a_host_whose_name_says_nothing(tmp_path, host, kind, probe, answer):
+    """From the first probe to an image, as Sync goes: a host whose type nothing says yet, which
+    answers only its own form. Each probe asks in the form of the forge whose API it asks for."""
+    seen = []
+    web = f"https://{host}"
+    http = names(Http({host: "SECRET"}, opener=only_its_form(kind, {
+        web + probe: answer, web + "/api/": PROJECT, web + "/o/r/": PNG}, seen)))
+    repo = urls.parse(web + "/o/r")
+    assert forges.detect(http, host) == kind
+    f = forges.forge_for(http, repo, kind)
+    assert f.info().name == "r" and f.raw("icon.png", "main") == PNG
+    assert sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=host).endswith("icon.png")
+    assert all(url.startswith(web + "/") and len(sent) == 1 for url, sent in tokens_sent(seen)), seen
+
+
+@pytest.mark.parametrize("host, value", [
+    ("github.com", "Bearer SECRET"), ("api.github.com", "Bearer SECRET"),
+    ("notgithub.com", "token SECRET"),                       # ends in the same letters: not GitHub's form
+    ("github.com.evil.example", "token SECRET"), ("api.github.evil.example", "token SECRET"),
+    (NEUTRAL, "token SECRET"),
+])
+def test_with_no_forge_type_known_only_github_coms_own_names_get_its_form(host, value):
+    seen = []
+    _ask(names(Http({host: "SECRET"}, opener=recording({}, seen))), f"https://{host}/x")
+    assert tokens_sent(seen) == [(f"https://{host}/x", {"authorization": value})]
+
+
+def test_a_search_sends_the_token_in_the_form_of_the_forge_it_searches():
+    seen = []
+    http = names(Http({"invent.kde.org": "SECRET", "gitlab-mirror.example.org": "SECRET", "github.com": "SECRET"},
+                      opener=recording({"https://invent.kde.org/": [], "https://gitlab-mirror.example.org/": {"data": []},
+                                        "https://api.github.com/": {"items": []}}, seen)))
+    assert explore.gitlab(http, "q", host="invent.kde.org") == []
+    assert explore.codeberg(http, "q", host="gitlab-mirror.example.org") == []
+    assert explore.github(http, "q") == []
+    assert [sent for _, sent in tokens_sent(seen)] == [dict([FORMS["gitlab"]]), dict([FORMS["forgejo"]]), dict([FORMS["github"]])]
+
+
+# ---------------------------------------------------------------- which host a token is kept for (R9.2.2, R11.1.6)
+# CR1's #297: two notions of a host met. A Source's host carries its port (urls.parse) and the forges
+# named it so, while Http looked a token up by the address's name alone: a token kept for a forge on
+# a port was sent by some calls and not by others, and one kept for a name went to every port of it.
+# The owner's decision: a token belongs to one address; a name alone means the default port. The
+# hosts in the tests had no ports, so the two notions never differed. The class is "one fact, two
+# spellings", so the tests hold every call a Source makes to the Source's host as urls.parse writes it.
+LAN = "git.lan.example"
+
+
+@pytest.mark.parametrize("kept, url, token_host, sent", [
+    # kept for the forge on its port: its calls (which name the Source's host) and the probes (which don't)
+    (LAN + ":3000", f"https://{LAN}:3000/api/v1/repos/o/r", LAN + ":3000", True),
+    (LAN + ":3000", f"https://{LAN}:3000/api/v1/version", None, True),
+    (LAN + ":3000", f"https://{LAN}/api/v1/version", None, False),              # the default port: another address
+    (LAN + ":3000", f"https://{LAN}:9999/other-service", None, False),
+    (LAN + ":3000", f"https://{LAN}:9999/other-service", LAN + ":3000", False),
+    (LAN + ":3000", f"https://{LAN}/o/r/raw/branch/main/icon.png", LAN + ":3000", False),
+    (LAN + ":3000", f"http://{LAN}:3000/api/v1/version", None, False),          # plain http: never
+    # kept for the name alone: the default port only
+    (LAN, f"https://{LAN}/api/v1/repos/o/r", LAN, True),
+    (LAN, f"https://{LAN}/api/v1/version", None, True),
+    (LAN, f"https://{LAN}:443/api/v1/version", None, True),                     # the default port, written out
+    (LAN, f"https://{LAN}:3000/api/v1/version", None, False),
+    (LAN, f"https://{LAN}:3000/api/v1/repos/o/r", LAN + ":3000", False),
+    (LAN, f"https://{LAN}:3000/api/v1/repos/o/r", LAN, False),
+    (LAN, f"https://{LAN}:9999/other-service", LAN, False),
+    (LAN, f"https://{LAN}:80/x", None, False),                                  # https on http's port isn't the default
+    # a port 0, written, is port 0 and no default (review pass 5, P5-B4): `parts.port or 443` made it 443
+    (LAN, f"https://{LAN}:0/api/v1/version", None, False),
+    (LAN, f"https://{LAN}:0/api/v1/repos/o/r", LAN, False),
+    (LAN + ":443", f"https://{LAN}/api/v1/version", None, True),                # however the default port was typed
+    # a named host is asked on its default port too
+    ("github.com", "https://api.github.com/repos/o/r", "github.com", True),
+    ("github.com", "https://api.github.com:8443/repos/o/r", "github.com", False),
+    ("github.com", "https://raw.githubusercontent.com:8443/o/r/main/icon.png", "github.com", False),
+    ("github.com:8443", "https://api.github.com/repos/o/r", "github.com:8443", False),
+])
+def test_a_token_is_sent_to_the_one_address_it_is_kept_for(kept, url, token_host, sent):
+    seen = []
+    http = names(Http({kept: "SECRET"}, opener=recording({}, seen)))
+    _ask(http, url, **({"token_host": token_host} if token_host else {}))
+    assert [u for u, _ in seen] == [url] and tokened(seen) == ([url] if sent else []), seen
+
+
+@pytest.mark.parametrize("source, host", [
+    (f"https://{LAN}/o/r", LAN), (f"https://{LAN}:443/o/r", LAN), (f"http://{LAN}/o/r", LAN),
+    (f"https://{LAN}:3000/o/r", LAN + ":3000"), (f"http://{LAN}:3000/o/r.git", LAN + ":3000"),
+    (f"https://{LAN.upper()}:8443/o/r/releases", LAN + ":8443"),
+])
+@pytest.mark.parametrize("kind", ["gitlab", "forgejo", "ghe"])
+def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_path, source, host, kind):
+    """The token is kept under the host as the Source shows it (urls.parse), and another port of the
+    same name has a token of its own. From the probes to an image, every request for the Source
+    carries the Source's, and none carries the other."""
+    repo = urls.parse(source)
+    other = LAN + ":9999" if repo.host == LAN else LAN
+    assert repo.host == host == http_.token_key(host)
+    seen = []
+    web = f"https://{host}"
+    http = names(Http({host: "SECRET", other: "OTHER"}, opener=recording({web + "/api/": PROJECT, web + "/": PNG}, seen)))
+    with pytest.raises(SourceError):
+        forges.detect(http, repo.host)                    # the four probes: nothing here says what it runs
+    f = forges.forge_for(http, repo, kind)
+    assert f.info().name == "r" and f.raw("icon.png", "main") == PNG
+    assert sync._save_image(http, f.raw_url("icon.png", "main"), str(tmp_path / "icon"), token_host=repo.host).endswith("icon.png")
+    assert len(seen) == 7 and all(url.startswith(web + "/") for url, _ in seen), seen
+    sent = [value for _, headers in tokens_sent(seen) for value in headers.values()]
+    assert len(sent) == 7 and all("SECRET" in value for value in sent), seen
+    _ask(http, f"https://{other}/elsewhere", token_host=repo.host)       # an address on the other port, asked for the Source
+    assert tokens_sent(seen)[-1] == (f"https://{other}/elsewhere", {})
+
+
+@pytest.mark.parametrize("typed, key", [
+    ("github.com", "github.com"), ("  GitHub.com ", "github.com"),
+    ("git.example.org:3000", "git.example.org:3000"), ("Git.Example.Org:3000", "git.example.org:3000"),
+    ("git.example.org:443", "git.example.org"),                       # the default port, typed out
+    ("https://git.example.org:3000/o/r", "git.example.org:3000"),     # a whole address, pasted
+    ("https://git.example.org/", "git.example.org"), ("git.example.org/o/r", "git.example.org"),
+    # a pasted address's port is the one it writes out, and a scheme alone names none: the Source
+    # `http://git.example.org/o/r` is on `git.example.org`, whose key it is (review pass 2, P2-B2)
+    ("http://git.example.org/", "git.example.org"), ("http://git.example.org/o/r", "git.example.org"),
+    ("git.example.org:80", "git.example.org:80"), ("http://git.example.org:80/o/r", "git.example.org:80"),
+    ("https://git.example.org:80/", "git.example.org:80"), ("http://git.example.org:443/", "git.example.org"),
+    ("ssh://git.example.org/o/r", "git.example.org"), ("http://git.example.org:3000/o/r", "git.example.org:3000"),
+    ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
+    ("git.example.org:port", "git.example.org:port"),                 # no address: kept as typed
+    # one host in whichever form it is typed: as it is sent (review pass 7, P7-2)
+    ("übung.example.org", "xn--bung-zra.example.org"), ("Übung.Example.Org:3000", "xn--bung-zra.example.org:3000"),
+    ("https://%C3%BCbung.example.org/o/r", "xn--bung-zra.example.org"),
+    ("%67it.example.org", "git.example.org"),
+    ("git.example.org.", "git.example.org."), ("git.example.org.:3000", "git.example.org.:3000"),   # another host, as it is sent (review pass 8, P8-B2)
+])
+def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(typed, key):
+    assert http_.token_key(typed) == key == http_.token_key(key)
+    seen = []
+    http = names(Http({typed: "SECRET"}, opener=recording({}, seen)))
+    assert list(http.tokens) == [key]
+    if ":port" not in key:
+        _ask(http, f"https://{key}/x")
+        assert tokened(seen) == [f"https://{key}/x"]
+
+
+@pytest.mark.parametrize("typed", ["a..b.example.org", "a" * 64 + ".example.org", "%ffb.example.org", "é" * 64 + ".example.org"])
+def test_a_token_typed_for_a_name_with_no_idna_form_is_kept_and_sent_nowhere(typed):
+    # a token is kept under its name as it is sent (review pass 7, P7-2), and a name with none is
+    # kept as typed, decoded: the tokens are read when Http is made, at the application's start
+    seen = []
+    http = names(Http({typed: "SECRET"}, opener=recording({}, seen)))
+    assert list(http.tokens) == [http_.token_key(typed)]
+    _ask(http, f"https://{typed}/x", token_host=typed)
+    assert seen == []
+
+
+@pytest.mark.parametrize("source_host, url, fetched", [
+    (LAN + ":3000", f"https://{LAN}:3000/o/r/raw/branch/main/shot.png", True),
+    (LAN + ":3000", f"http://{LAN}:3000/o/r/raw/branch/main/shot.png", True),      # the same port, in plain http
+    (LAN + ":3000", f"https://{LAN}:9999/admin/shot.png", False),                  # whatever else listens on that machine
+    (LAN + ":3000", f"https://{LAN}/shot.png", False),
+    (LAN, f"https://{LAN}/o/r/raw/branch/main/shot.png", True),
+    (LAN, f"http://{LAN}:443/o/r/raw/branch/main/shot.png", True),                 # the Source's own port, in plain http
+    (LAN, f"http://{LAN}/o/r/raw/branch/main/shot.png", False),                    # http's own port, 80: not the Source's 443
+    (LAN, f"https://{LAN}:80/o/r/raw/branch/main/shot.png", False),
+    (LAN, f"https://{LAN}:0/o/r/raw/branch/main/shot.png", False),                 # port 0, written: not 443 (review pass 5, P5-B4)
+    (LAN, f"http://{LAN}:631/admin/shot.png", False),
+    (LAN, f"https://{LAN}:9999/admin/shot.png", False),
+])
+def test_on_a_local_forge_only_the_sources_own_address_may_be_local(tmp_path, source_host, url, fetched):
+    # CR1 #266's exception is for the Source's own host, and a host is one address (#297): its exact
+    # port, the review's pass 1, P1-2, as the owner decided it. A Source with no port is on https's
+    # 443, so an address with none in plain http, which is on port 80, is another host: it was taken
+    # for the Source's own, since a host left out its scheme's own port, whichever the scheme
+    seen = []
+    http = names(Http({source_host: "SECRET"}, opener=recording({url: PNG}, seen)), {LAN: ["192.168.1.5"]})
+    if fetched:
+        assert sync._save_image(http, url, str(tmp_path / "hero"), token_host=source_host).endswith("hero.png")
+    else:
+        with pytest.raises(Unreachable, match="local network"):
+            sync._save_image(http, url, str(tmp_path / "hero"), token_host=source_host)
+    assert [u for u, _ in seen] == ([url] if fetched else [])
+
+
+# The review's pass 8, P8-1, as the owner decided it: Settings' row and the Audit's line showed a
+# token's key, its host in the form it is sent, so a token typed `übung.lan` for the Source
+# `übung.lan` was listed as `xn--bung-zra.lan`. A row shows its host in its script, and what a row
+# shows is its key again, which the row's trash button removes.
+@pytest.mark.parametrize("key, shown", [
+    ("xn--bung-zra.lan", "übung.lan"), ("gitea.xn--bung-zra.lan:3000", "gitea.übung.lan:3000"),
+    ("xn--31bq9g.example", "गिट.example"), ("git.example.org", "git.example.org"), ("git.example.org.", "git.example.org."),
+    ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
+    ("xn--zz.example.org", "xn--zz.example.org"),                   # a part the codec can't read back: as it is kept
+    ("xn--strae-oqa.example", "xn--strae-oqa.example"),             # IDNA 2008's form, which IDNA 2003 can't read back
+    ("straße.example", "straße.example"), ("a..b.example.org", "a..b.example.org"),     # kept as written: no IDNA form
+])
+def test_a_tokens_host_is_shown_in_its_script_and_what_is_shown_is_its_key(key, shown):
+    assert http_.token_host_shown(key) == shown and http_.token_key(shown) == key
+
+
+def test_r11_1_6_says_a_tokens_row_shows_its_host_in_its_script():
+    r11 = " ".join(reqdocs.item("R11.1.6").split())
+    assert ("A row, and the Audit's line for a token, show its host in its own script, as a Source's address has it "
+            "(`übung.lan`), while the token is kept under the host in the form it is sent (`xn--bung-zra.lan`)") in r11
+    assert http_.token_host_shown(http_.token_key("übung.lan")) == "übung.lan" and http_.token_key("übung.lan") == "xn--bung-zra.lan"
+
+
+def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
+    """The finding's last part: Settings' host field took any text and nothing said which key was
+    meant. The requirement, the field and its help text say it, and the example they give is a key."""
+    r11, r9 = " ".join(reqdocs.item("R11.1.6").split()), " ".join(reqdocs.item("R9.2.2").split())
+    assert "A token belongs to one address" in r11 and "a name alone means the default port" in r11
+    # a pasted address's port is the one it writes out (review pass 2, P2-B2)
+    assert "with the port it writes out and no other: `http://git.lan/o/r` is kept as `git.lan`, as its Source's host is" in r11
+    assert "`git.lan:80` and `http://git.lan:80/o/r` as `git.lan:80`; a port written `:443` is the same as none" in r11
+    for pasted, kept in (("http://git.lan/o/r", "git.lan"), ("git.lan:80", "git.lan:80"), ("http://git.lan:80/o/r", "git.lan:80"),
+                         ("git.lan:443", "git.lan")):
+        assert http_.token_key(pasted) == kept
+    assert http_.token_key("http://git.lan/o/r") == urls.parse("http://git.lan/o/r").host      # the Source's own host
+    assert "A host is one address" in r9 and "a name alone means the default port" in r9
+    assert "nor to another port of its own" in r9
+    assert "`http://git.example.org/` is on port 80, another host than `https://git.example.org/`" in r9         # P1-2
+    assert "The Source's own port is the one its host names, or https's 443" in " ".join(reqdocs.item("R3.1.1").split())
+    with open(os.path.join(reqdocs.ROOT, "src", "appkata", "qml", "SettingsDialog.qml"), encoding="utf-8") as f:
+        qml = f.read()
+    assert 'placeholder: "host or host:port"' in qml and '"host or host:port"' in r11
+    example = "git.example.org:3000"
+    assert f"`{example}`" in r11 and f"({example})" in qml and http_.token_key(example) == example
+    assert "a host alone means the default port" in qml
+
+
+# ---------------------------------------------------------------- R9.2.2, held whole (CR1 #292)
+# CR1's #292: no test built an Http with a token and looked at what was sent where, so #263, #264,
+# #275 and #297 all passed the suite, and so would a regression of any of their fixes. Each of those
+# has its own tests above, written against its own fault. These hold the requirement instead: the
+# rule is written once more here, from R9.2.2's and R11.1.6's words and apart from Http (no name of
+# Http's own is used below), and every request of three whole Syncs and three searches is held to it,
+# whichever line of the application asked. A redirect needs Http's own opener, so the last test goes
+# through real sockets.
+CARRIES = ("authorization", "private-token")
+NAMED = {"github.com": ("api.github.com", "raw.githubusercontent.com")}       # R9.2.2's list
+KEPT = {"github.com": ("github", "ghp_GITHUB"), "git.example.org": ("gitlab", "glpat_NEUTRAL"),
+        "code.example.net:3000": ("forgejo", "FORGEJO-ON-ITS-PORT"), "code.example.net": ("forgejo", "FORGEJO-DEFAULT-PORT"),
+        "gitlab.com": ("gitlab", "glpat_COM"), "codeberg.org": ("forgejo", "CODEBERG"), "evil.example": ("forgejo", "EVIL")}
+TAKES = {"github": "authorization: Bearer {}", "gitlab": "private-token: {}", "forgejo": "authorization: token {}"}
+
+
+def may_carry(url):
+    """R9.2.2: the hosts whose token a request to this address may carry. Over https only; a host is
+    one address, its name and its port, and a name alone is the default port; github.com's goes to
+    its two named hosts as well."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https":
+        return set()
+    host = parts.hostname if parts.port in (None, 443) else f"{parts.hostname}:{parts.port}"
+    return {host} | {kept for kept, named in NAMED.items() if host in named}
+
+
+def probe(url):
+    """An address forges.detect asks to find out what a host runs: the three APIs and the home page."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.path == "/" or url.endswith(("/api/v1/version", "/api/v4/projects?per_page=1", "/api/v3/meta"))
+
+
+def breaks_r9_2_2(seen):
+    """Each request that carried what R9.2.2 doesn't let it: a token of a host the address isn't,
+    one over plain http, two at once, or one in a form its forge doesn't take. A probe asks before
+    anything says what the host runs, so it may carry the host's token in any forge's form."""
+    out = []
+    for url, headers in seen:
+        sent = [f"{k}: {v}" for k, v in headers.items() if k in CARRIES]
+        allowed = [form.format(token) for host, (kind, token) in KEPT.items() if host in may_carry(url)
+                   for form in ([TAKES[kind]] if not probe(url) else TAKES.values())]
+        if sent and (len(sent) > 1 or sent[0] not in allowed):
+            out.append((url, sent))
+    return out
+
+
+def project(hostile):
+    """A project's files that name four addresses elsewhere, as its icon, its screenshot and two README
+    images, and one image of its own."""
+    metainfo = METAINFO.replace("https://evil.example/icon.png", hostile[0]).replace("http://evil.example/shot.png", hostile[1])
+    readme = f"# R\n\n![shot]({hostile[2]})\n\n![shot]({hostile[3]})\n\n![window](docs/shot-window.png)\n"
+    return {"README.md": readme.encode(), "data/org.example.r.metainfo.xml": metainfo.encode(), "docs/shot-window.png": PNG}
+
+
+ELSEWHERE = {
+    "https://github.com/o/r": ["https://evil.example/icon.png", "http://raw.githubusercontent.com/o/r/main/shot.png",
+                               "https://notgithub.com/o/r/shot.png", "https://raw.githubusercontent.com:8443/o/r/main/shot.png"],
+    "https://git.example.org/o/r": ["http://git.example.org/o/r/-/raw/main/icon.png", "https://git.example.org:8443/shot.png",
+                                    "https://git.example.org.evil.example/shot.png", "https://gitlab.com/o/r/-/raw/main/shot.png"],
+    "https://code.example.net:3000/o/r": ["https://code.example.net/shot-on-the-default-port.png", "https://code.example.net:9999/shot.png",
+                                          "http://code.example.net:3000/o/r/raw/branch/main/shot.png", "https://evil.example:3000/shot.png"],
+}
+OWN = {      # each Source's own addresses: every request to them carries its token
+    "https://github.com/o/r": ("https://api.github.com/", "https://raw.githubusercontent.com/"),
+    "https://git.example.org/o/r": ("https://git.example.org/",),
+    "https://code.example.net:3000/o/r": ("https://code.example.net:3000/",),
+}
+
+
+def three_forges():
+    """github.com, a GitLab whose name says nothing and a Forgejo on a port, each with a project that
+    names images elsewhere; and the three searches."""
+    release = {"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "released_at": "2026-05-02T00:00:00Z", "assets": []}
+    blobs = [{"path": p, "type": "blob"} for p in project([""] * 4)]
+    info = {"name": "r", "full_name": "o/r", "path_with_namespace": "o/r", "default_branch": "main"}
+    routes = {"https://gitlab.com/api/v4/projects?search=": [], "https://codeberg.org/api/v1/repos/search": {"data": []},
+              "https://api.github.com/search/": {"items": []}}
+    for api, raw, tree, listing, avatar in (
+            ("https://api.github.com/repos/o/r", "https://raw.githubusercontent.com/o/r/main/", "/git/trees/main", {"tree": blobs},
+             {"owner": {"avatar_url": "https://avatars.githubusercontent.com/u/1"}}),
+            ("https://git.example.org/api/v4/projects/o%2Fr", "https://git.example.org/o/r/-/raw/main/", "/repository/tree", blobs,
+             {"avatar_url": "https://git.example.org/uploads/avatar.png"}),
+            ("https://code.example.net:3000/api/v1/repos/o/r", "https://code.example.net:3000/o/r/raw/branch/main/", "/git/trees/main",
+             {"tree": blobs}, {"avatar_url": "https://code.example.net:3000/avatars/1"})):
+        source = next(s for s in ELSEWHERE if raw.startswith(OWN[s]))
+        routes.update({api: {**info, **avatar}, api + "/releases": [release], api + tree: listing,
+                       (avatar.get("owner") or avatar)["avatar_url"]: PNG})
+        routes.update({raw + path: body for path, body in project(ELSEWHERE[source]).items()})
+    routes["https://git.example.org/api/v4/projects?per_page=1"] = []                      # the probes that answer
+    routes["https://code.example.net:3000/api/v1/version"] = {"version": "11.0.1+gitea-1.22.0"}
+    return dict(sorted(routes.items(), key=lambda kv: -len(kv[0])))         # opener() takes the first prefix: the longest first
+
+
+def test_every_request_of_three_syncs_and_three_searches_keeps_r9_2_2(tmp_path):
+    seen = []
+    http = names(Http({host: token for host, (_, token) in KEPT.items()}, opener=recording(three_forges(), seen)))
+    db = DB(str(tmp_path / "a.db"))
+    for source, kind in zip(ELSEWHERE, ("github", "gitlab", "forgejo")):
+        sync.sync_app(db, http, source, root=str(tmp_path))
+        app = db.one("SELECT * FROM apps WHERE url=?", (source,))
+        assert app["error_code"] is None and app["forge"] == kind, (source, app["error"])
+        assert app["icon"].endswith("icon.png") and app["hero"].endswith("hero.png")
+    for service in ("gitlab", "codeberg", "github"):
+        assert explore.search(http, service, "q") == {"matches": [], "error": ""}
+    asked = [url for url, _ in seen]
+    assert [u for urls_ in ELSEWHERE.values() for u in urls_ if u not in asked] == []        # each was asked for
+    assert breaks_r9_2_2(seen) == []
+    # and the rule isn't kept by sending nothing: every request to a Source's own addresses, and every
+    # search, carried that host's token in its forge's form, and no request elsewhere carried any
+    for source, own in OWN.items():
+        kind, token = KEPT[urls.parse(source).host]
+        mine = [[f"{k}: {v}" for k, v in h.items() if k in CARRIES] for url, h in seen if url.startswith(own) and not probe(url)]
+        assert len(mine) >= 7 and all(sent == [TAKES[kind].format(token)] for sent in mine), (source, mine)
+        probes = [[v for k, v in h.items() if k in CARRIES] for url, h in seen if url.startswith(own) and probe(url)]
+        assert all(len(sent) == 1 and sent[0].endswith(token) for sent in probes), (source, probes)
+    for url, h in seen:
+        if "search" in url:
+            kind, token = KEPT[may_carry(url).intersection(KEPT).pop()]
+            assert [f"{k}: {v}" for k, v in h.items() if k in CARRIES] == [TAKES[kind].format(token)], url
+    assert [url for url, h in seen if set(h) & set(CARRIES) and url in sum(ELSEWHERE.values(), [])] == []
+
+
+def test_the_harness_itself_sees_each_way_r9_2_2_is_broken():
+    # the rule above, tried on requests that break it: a check that passes whatever it is shown holds nothing
+    wrong = [("https://evil.example/shot.png", {"authorization": "Bearer ghp_GITHUB"}),            # another host
+             ("https://notgithub.com/o/r", {"authorization": "Bearer ghp_GITHUB"}),                # ends in the same letters
+             ("http://api.github.com/repos/o/r", {"authorization": "Bearer ghp_GITHUB"}),          # plain http
+             ("https://api.github.com:8443/repos/o/r", {"authorization": "Bearer ghp_GITHUB"}),    # a named host, another port
+             ("https://code.example.net/x", {"authorization": "token FORGEJO-ON-ITS-PORT"}),       # another port of its own name
+             ("https://code.example.net:9999/x", {"authorization": "token FORGEJO-DEFAULT-PORT"}),
+             ("https://git.example.org/api/v4/x", {"authorization": "token glpat_NEUTRAL"}),       # a form GitLab doesn't take
+             ("https://evil.example/api/v1/version", {"authorization": "token glpat_NEUTRAL"}),    # a probe, with another host's
+             ("https://api.github.com/x", {"authorization": "Bearer ghp_GITHUB", "private-token": "ghp_GITHUB"})]
+    right = [("https://api.github.com/repos/o/r", {"authorization": "Bearer ghp_GITHUB", "accept": "x"}),
+             ("https://raw.githubusercontent.com:443/o/r/main/x", {"authorization": "Bearer ghp_GITHUB"}),
+             ("https://git.example.org/api/v4/x", {"private-token": "glpat_NEUTRAL"}),
+             ("https://code.example.net:3000/x", {"authorization": "token FORGEJO-ON-ITS-PORT"}),
+             ("https://code.example.net/x", {"authorization": "token FORGEJO-DEFAULT-PORT"}),
+             ("https://git.example.org/api/v1/version", {"authorization": "token glpat_NEUTRAL"}),     # a probe: any form
+             ("http://evil.example/shot.png", {"accept": "*/*"})]
+    assert [url for url, _ in breaks_r9_2_2(wrong + right)] == [url for url, _ in wrong]
+
+
+@pytest.mark.parametrize("kind", ["gitlab", "forgejo", "ghe"])
+def test_through_real_sockets_a_forges_token_reaches_its_own_address_alone(pair, monkeypatch, kind):
+    """Http's own opener, a forge on a port, and its redirects: a file that is kept on another host, an
+    API address that moved on its own, and one that points at plain http."""
+    a, b = pair
+    repo = urls.parse(f"https://{a.at}/o/r")
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN", "127.0.0.1": "ITS-DEFAULT-PORT", b.at: "ANOTHER-HOSTS"}, timeout=10))
+    f = forges.forge_for(http, repo, kind)
+    raw, api = urllib.parse.urlsplit(f.raw_url("big.bin", "main")).path, urllib.parse.urlsplit(f.base).path
+    a.redirects[raw] = f"https://{b.at}/storage/big.bin"
+    a.redirects[api] = api + "-renamed"
+    a.redirects[api + "/releases"] = f"http://{a.at}{api}/releases"
+    assert f.raw("big.bin", "main") == b'{"ok": true}' and f._get(f.base) == {"ok": True}
+    with pytest.raises(Unreachable, match="plain http"):
+        f._get(f.base + "/releases")
+    form = TAKES["github" if kind == "ghe" else kind].format("SECRET-TOKEN")
+    assert [(path, [f"{k}: {v}" for k, v in h.items() if k in CARRIES]) for path, h in a.seen] == [
+        (raw, [form]), (api, [form]), (api + "-renamed", [form]), (api + "/releases", [form])]
+    assert [(path, [k for k in h if k in CARRIES]) for path, h in b.seen] == [("/storage/big.bin", [])]
+
+
+# ---------------------------------------------------------------- what a Sync didn't expect (R9.2, R2.10)
+# CR1's #269: Http promised typed errors and mapped urllib's OSErrors alone, and a Sync recorded on
+# an app's row only a SourceError: anything else, such as http.client's own errors for an address it
+# can't send or an answer cut short, a forge's answer of another shape, or git missing, left the
+# worker and ended the whole Sync, with the apps still queued dropped and no time of the last Sync
+# kept. How it slipped past: no test called sync_all, every stand-in opener raised only an HTTPError,
+# and every stand-in forge answered as its documentation says. The class is "something a Sync didn't
+# expect ends it", so it is held at each of its layers: whatever opening or reading an address ends
+# in, Http gives a SourceError; whatever one app's sync ends in, wherever, the Sync goes on, that
+# app's row says so and every other app is stored.
+class Clock:
+    """Http's clock and its waits: a wait is noted and moves the time on, and nothing waits."""
+
+    def __init__(self):
+        self.now, self.waits = time.time(), []
+
+    def time(self):
+        return self.now
+
+    monotonic = time
+
+    def sleep(self, seconds):
+        self.waits.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    monkeypatch.setattr(http_, "time", Clock())
+    return http_.time
+
+
+class Broken(FakeResponse):
+    """An answer whose body can't be read."""
+
+    def __init__(self, url, error):
+        super().__init__(url, b"")
+        self.error = error
+
+    def read(self, *a):
+        raise self.error
+
+    read1 = read
+
+
+def ending_in(error, when, seen=None):
+    """An opener whose every request ends in `error`: when the address is opened, or when its answer is read."""
+    def open_(req, timeout=0):
+        seen is not None and seen.append(req.full_url)
+        if when == "opened":
+            raise error
+        return Broken(req.full_url, error)
+    return open_
+
+
+ENDS_IN = [InvalidURL("URL can't contain control characters. '/a b.png' (found at least ' ')"),       # http.client's own
+           UnicodeEncodeError("ascii", "/ä.png", 1, 2, "ordinal not in range(128)"),
+           ValueError("Invalid header value b'x\\n'"), BadStatusLine("\x16\x03\x01"), LineTooLong("header line"),
+           IncompleteRead(b"half", 96),
+           ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"),                         # and what was mapped already
+           ConnectionResetError(104, "Connection reset by peer"), TimeoutError("timed out"),
+           urllib.error.URLError(OSError(111, "Connection refused"))]
+
+
+@pytest.mark.parametrize("error", ENDS_IN, ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize("when", ["opened", "read"])
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_whatever_opening_or_reading_an_address_ends_in_http_gives_a_source_error(clock, error, when, call):
+    http = names(Http(opener=ending_in(error, when)))
+    with pytest.raises(Unreachable) as e:
+        getattr(http, call)("https://git.example.org/api/x")
+    assert "git.example.org" in str(e.value) and json.dumps(e.value.extra)        # a Sync writes both on the row
+
+
+def test_an_answer_cut_short_is_asked_for_again(clock):
+    seen = []
+    http = names(Http(opener=ending_in(IncompleteRead(b"half", 96), "read", seen)))
+    with pytest.raises(Unreachable, match="git.example.org cut its answer short"):
+        http.bytes("https://git.example.org/api/x")
+    assert len(seen) == 3 and clock.waits == [1.5, 3.0]
+    seen.clear()                                             # an address that can't be sent isn't: it never can be
+    http._open = ending_in(InvalidURL("URL can't contain control characters"), "opened", seen)
+    with pytest.raises(Unreachable):
+        http.bytes("https://git.example.org/a b.png")
+    assert len(seen) == 1
+
+
+def half_a_chunk(handler):
+    handler.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n64\r\nhalf of the first chunk")
+
+
+@pytest.mark.parametrize("path", ["/a b.png", "/ä.png", "/截图.png", "/a\tb.png"])
+def test_through_real_sockets_an_address_that_cant_be_sent_and_an_answer_cut_short_are_unreachable(pair, clock, tmp_path, path):
+    # the finding's own runs, with Http's own opener: http.client refuses the address before it connects
+    a, b = pair
+    a.files = {"/cut.png": half_a_chunk}
+    http = Http(timeout=10)
+    with pytest.raises(Unreachable, match="127.0.0.1"):
+        sync._save_image(http, f"https://{a.at}{path}", str(tmp_path / "hero"), token_host=a.at)
+    assert a.seen == [] and clock.waits == []
+    with pytest.raises(Unreachable, match="cut its answer short"):
+        sync._save_image(http, f"https://{a.at}/cut.png", str(tmp_path / "hero"), token_host=a.at)
+    assert [p for p, _ in a.seen] == ["/cut.png"] * 3 and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url, at", [
+    ("a b.png", "/a%20b.png"), ("docs/screen shot.png", "/docs/screen%20shot.png"),
+    ("docs/截图.png", "/docs/%E6%88%AA%E5%9B%BE.png"), ("../img/ä \"1\".png", "/img/%C3%A4%20%221%22.png"),
+    ("docs/screen%20shot.png", "/docs/screen%20shot.png"),                     # written quoted: left as it is
+    ("docs/shot.png?raw=true", "/docs/shot.png?raw=true"), ("/docs/shot.png#gh-dark-mode-only", "/docs/shot.png#gh-dark-mode-only"),
+    ("docs/a+b_(1)~x.png", "/docs/a+b_(1)~x.png"),
+])
+def test_a_readme_images_own_path_is_written_as_an_address_can_be_sent(url, at):
+    base = "https://raw.githubusercontent.com/o/r/main"
+    assert metadata.resolve(url, base, "docs" if url.startswith("..") else "") == base + at
+    http = names(Http(opener=opener({base + at: PNG})))
+    assert http.bytes(metadata.resolve(url, base, "docs" if url.startswith("..") else "")) == PNG
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError(2, "No such file or directory: 'git'"), PermissionError(13, "Permission denied"),
+                                   subprocess.TimeoutExpired(["git"], 120)], ids=lambda e: type(e).__name__)
+def test_git_missing_or_too_slow_is_no_answer_from_it(monkeypatch, error):
+    def run(*a, **k):
+        raise error
+    monkeypatch.setattr(forges._sp, "run", run)
+    assert forges._git_out(["ls-remote", "--tags", "--refs", "https://github.com/o/r"]) == ""
+    # and so the pages' way to a project's tags and files, which is what asks git, has none to show
+    http = Http(opener=opener({"https://api.github.com/": 403}))
+    http.limited["api.github.com"] = time.time() + 60
+    f = forges.forge_for(http, urls.parse("https://github.com/o/r"), "github")
+    assert f.web and f.tags() == [] and f.tree("main") == []
+
+
+def test_with_no_git_on_the_path_there_is_no_answer_from_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))                # the real subprocess call, and nothing to find
+    assert forges._git_out(["--version"]) == ""
+
+
+# ---- a whole Sync
+FORGEJO = {"https://code.example.net:3000/o/r": "https://code.example.net:3000/api/v1/repos/o/r"}
+PLACES = {      # where in an app's sync: what its address ends in
+    "info": ("/repos/o/r", "/projects/o%2Fr"), "releases": ("/releases",), "files": ("/git/trees/main", "/repository/tree"),
+    "readme": ("/README.md",), "metainfo": (".metainfo.xml",), "image": ("/docs/shot-window.png",),
+}
+SHAPES = {      # what a forge can answer that its documentation doesn't say
+    "info": ["a", "list"], "releases": {"message": "an object, where the releases are a list"},
+    "files": [{"type": "blob"}],
+}
+
+
+def catalog(tmp_path, monkeypatch, sources):
+    """A database with these Sources, and no package channels of this machine's to read."""
+    monkeypatch.setattr(channels, "enabled", lambda: False)
+    db = DB(str(tmp_path / "a.db"))
+    for url in sources:
+        db.x("INSERT INTO sources(url, settings, added_at) VALUES(?,?,?)", (url, "{}", now()))
+    return db
+
+
+def rows(db):
+    return {a["url"]: a for a in db.all("SELECT * FROM apps")}
+
+
+def at(routes, source, place, answer):
+    """The routes, with `answer` wherever a request of this Source's sync reaches `place`."""
+    hit = [k for k in routes if k.startswith(OWN[source]) and k.endswith(PLACES[place])]
+    assert hit, (source, place)
+    return {k: answer if k in hit else v for k, v in routes.items()}
+
+
+def synced_but(tmp_path, monkeypatch, routes, source):
+    """A Sync of the three forges' Sources over these routes: it ends, the time of it is kept, every
+    Source has its row, and each one but `source` is stored whole. Returns that one's row."""
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    progress = sync.Progress()
+    sync.sync_all(db, names(Http({}, opener=opener(routes))), progress, root=str(tmp_path))
+    apps = rows(db)
+    assert db.get("last_sync") and sorted(apps) == sorted(ELSEWHERE) and (progress.done, progress.total) == (3, 3)
+    for url, app in apps.items():
+        if url != source:
+            assert app["error_code"] is None and app["releases"] and app["hero"].endswith("hero.png"), (url, app["error"])
+    return apps[source]
+
+
+@pytest.mark.parametrize("source", sorted(ELSEWHERE))
+@pytest.mark.parametrize("place", sorted(PLACES))
+@pytest.mark.parametrize("error", [RuntimeError("anything at all"), KeyError("name"), InvalidURL("can't contain control characters"),
+                                   UnicodeEncodeError("ascii", "ä", 0, 1, "ordinal not in range(128)")],
+                         ids=lambda e: type(e).__name__)
+def test_whatever_one_apps_sync_ends_in_wherever_the_sync_goes_on_and_its_row_says_so(tmp_path, monkeypatch, source, place, error):
+    app = synced_but(tmp_path, monkeypatch, at(three_forges(), source, place, error), source)
+    if isinstance(error, (InvalidURL, UnicodeEncodeError)) and place in ("files", "metainfo", "image"):
+        assert app["error_code"] is None                 # Http's own error for it, which those three pass over
+    else:
+        assert app["error_code"] == "Unreachable" and app["error"] and app["fetched_at"], app
+        if isinstance(error, (RuntimeError, KeyError)):
+            assert f"unexpected error ({type(error).__name__}" in app["error"]
+
+
+@pytest.mark.parametrize("source", sorted(ELSEWHERE))
+@pytest.mark.parametrize("place", sorted(SHAPES))
+def test_a_forges_answer_of_another_shape_is_an_error_on_that_apps_row(tmp_path, monkeypatch, source, place):
+    app = synced_but(tmp_path, monkeypatch, at(three_forges(), source, place, SHAPES[place]), source)
+    assert app["error_code"] == "Unreachable" and "unexpected error (" in app["error"], app
+
+
+def test_an_error_on_an_apps_row_keeps_what_the_last_sync_stored(tmp_path, monkeypatch):
+    source = "https://git.example.org/o/r"
+    db = catalog(tmp_path, monkeypatch, [source])
+    http = names(Http({}, opener=opener(three_forges())))
+    sync.sync_all(db, http, root=str(tmp_path))
+    before = rows(db)[source]
+    assert before["error_code"] is None and before["readme"] and before["icon"] and before["hero"]
+    http._open = opener(at(three_forges(), source, "releases", SHAPES["releases"]))
+    sync.sync_all(db, http, root=str(tmp_path))
+    after = rows(db)[source]
+    assert after["error_code"] == "Unreachable" and "unexpected error (AttributeError" in after["error"]
+    kept = ("name", "readme", "releases", "icon", "hero", "forge", "summary")
+    assert {k: after[k] for k in kept} == {k: before[k] for k in kept}
+
+
+def test_what_sync_app_itself_lets_out_is_passed_over_and_the_rest_are_synced(tmp_path, monkeypatch, caplog):
+    # what is left for sync_all: a Catalog address nothing can parse, a database that can't be written
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    real, bad = sync.sync_app, "https://git.example.org/o/r"
+
+    def sync_app(db_, http_, url, root=None):
+        if url == bad:
+            raise ValueError("URL doesn't name a repository")
+        real(db_, http_, url, root)
+    monkeypatch.setattr(sync, "sync_app", sync_app)
+    progress, items = sync.Progress(), []
+    sync.sync_all(db, names(Http({}, opener=opener(three_forges()))), progress, root=str(tmp_path), workers=1,
+                  on_item=lambda: items.append(progress.done))
+    assert db.get("last_sync") and sorted(rows(db)) == sorted(set(ELSEWHERE) - {bad})
+    assert (progress.done, progress.total) == (3, 3) and items == [1, 2, 3]
+    assert [r for r in caplog.records if r.exc_info and bad in r.getMessage()]         # with its traceback, in the app log
+
+
+def forgejo_project(server, path, files, **info):
+    """A project on the stand-in forge, which answers as Forgejo: its info, a release, its file list and its files."""
+    api = f"/api/v1/repos/{path}"
+    server.files = {**(server.files or {}), "/api/v1/version": {"version": "11.0.1+gitea-1.22.0"},
+                    api: {"name": path.rsplit("/", 1)[-1], "full_name": path, "default_branch": "main", **info},
+                    api + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2026-05-02T00:00:00Z", "assets": []}],
+                    api + "/git/trees/main": {"tree": [{"path": p, "type": "blob"} for p in files]},
+                    **{f"/{path}/raw/branch/main/{urllib.parse.quote(p)}": body for p, body in files.items()}}
+    return f"https://{server.at}/{path}"
+
+
+def test_through_real_sockets_a_readme_image_that_cant_be_sent_as_written_doesnt_end_the_sync(pair, tmp_path, monkeypatch, clock):
+    """The finding's case, with Http's own opener: a README names its images as its author wrote them,
+    with a space and with letters outside ASCII. The Sync ends, both apps are stored, and the image
+    is asked for as an address can be sent."""
+    a, b = pair
+    spaced = forgejo_project(a, "o/spaced", {"README.md": b'# Spaced\n\n<img src="a b.png">\n', "a b.png": PNG})
+    other = forgejo_project(a, "o/other", {"README.md": "# Other\n\n![shot](docs/截图.png)\n".encode(), "docs/截图.png": PNG})
+    db = catalog(tmp_path, monkeypatch, [spaced, other])
+    sync.sync_all(db, Http(timeout=10), root=str(tmp_path))
+    apps = rows(db)
+    assert db.get("last_sync") and sorted(apps) == sorted([spaced, other])
+    for app in apps.values():
+        assert app["error_code"] is None and app["forge"] == "forgejo" and app["hero"].endswith("hero.png"), app["error"]
+    asked = [p for p, _ in a.seen]
+    assert "/o/spaced/raw/branch/main/a%20b.png" in asked and "/o/other/raw/branch/main/docs/%E6%88%AA%E5%9B%BE.png" in asked
+
+
+def test_through_real_sockets_a_source_whose_own_address_cant_be_sent_has_that_on_its_row(pair, tmp_path, monkeypatch, clock):
+    # a row stored with such a path still reaches Sync: its error is its own, and the app after it is stored
+    a, b = pair
+    spaced, other = f"https://{a.at}/o/my app", forgejo_project(a, "o/other", {"README.md": b"# Other\n"})
+    db = catalog(tmp_path, monkeypatch, [spaced, other])
+    sync.sync_all(db, Http(timeout=10), root=str(tmp_path), workers=1)
+    apps = rows(db)
+    assert db.get("last_sync") and apps[other]["error_code"] is None and apps[other]["readme"] == "# Other\n"
+    assert apps[spaced]["error_code"] == "Unreachable" and "127.0.0.1" in apps[spaced]["error"], apps[spaced]
+    assert [p for p, _ in a.seen if "my" in p] == []
+
+
+# ---------------------------------------------------------------- a host that answers slowly (R9.2, R9.2.1)
+# CR1's #296: Http's timeout is for each read of the socket, and the answer was read in one call
+# with no limit on the whole: a host that sent a byte every few seconds held a Sync's worker for as
+# long as it liked, and Cancel, which was looked at only before an app's sync started, couldn't stop
+# it, so the Sync never ended and no later one started. Any project can name such a host for its
+# images. How it slipped past: every stand-in answer was whole at its first read, and no test
+# cancelled a Sync. The class is "how long a request may take is up to the host", so the answers
+# here come a byte a read on a stepped clock, where no read is slow and only the whole is.
+class Dripping(FakeResponse):
+    """An answer that comes a byte a read, each read taking `every` seconds of the clock: none of
+    them is slow enough to time out. `then` is called with the number of reads so far."""
+
+    def __init__(self, url, body, clock, every, then=None):
+        super().__init__(url, body)
+        self.clock, self.every, self.reads, self.then = clock, every, 0, then
+
+    def read1(self, n=-1):
+        self.reads += 1
+        self.clock.now += self.every
+        self.then and self.then(self.reads)
+        return super().read(1)
+
+    read = read1
+
+
+def dripping(clock, every, body=b"x" * 1_000_000, then=None, answers=None):
+    def open_(req, timeout=0):
+        answer = Dripping(req.full_url, body, clock, every, then)
+        answers is not None and answers.append(answer)
+        return answer
+    return open_
+
+
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_an_answer_that_comes_a_byte_at_a_time_ends_at_the_requests_deadline(clock, call):
+    answers = []
+    http = names(Http(opener=dripping(clock, 4.0, answers=answers)))
+    assert (http.timeout, http.deadline) == (20, 120)                 # no read takes as long as the timeout
+    with pytest.raises(Unreachable, match="git.example.org hadn't finished its answer after 120 seconds") as e:
+        getattr(http, call)("https://git.example.org/shot.png")
+    assert e.value.extra["timeout"] is True
+    assert [a.reads for a in answers] == [31]                # 124 seconds of it, and it isn't asked for again
+    assert clock.waits == []
+
+
+def test_the_deadline_counts_the_wait_for_an_answer_to_start(clock):
+    answers = []
+
+    def open_(req, timeout=0):
+        clock.now += 121                                      # redirects, and headers that come slowly
+        return dripping(clock, 0.0, answers=answers)(req, timeout)
+    with pytest.raises(Unreachable, match="hadn't finished its answer"):
+        names(Http(opener=open_)).bytes("https://git.example.org/shot.png")
+    assert [a.reads for a in answers] == [0]
+
+
+def test_an_answer_that_comes_in_pieces_in_time_is_whole_and_the_size_limit_holds(clock):
+    body, answers = PNG * 50, []
+    http = names(Http(opener=dripping(clock, 0.05, body, answers=answers)))
+    assert http.bytes("https://git.example.org/shot.png") == body
+    assert http.bytes("https://git.example.org/shot.png", max_bytes=len(body)) == body
+    assert [a.reads for a in answers] == [len(body) + 1] * 2
+    answers.clear()
+    with pytest.raises(Unreachable, match="too large"):
+        http.bytes("https://git.example.org/shot.png", max_bytes=100)
+    assert [a.reads for a in answers] == [101]               # and no more of it is read than shows that
+
+
+def test_r9_2_1_says_how_long_a_request_is_given_and_that_cancel_stops_one():
+    text = " ".join(reqdocs.item("R9.2.1").split())
+    assert "A request is given two minutes for the whole of its answer" in text and Http().deadline == 120
+    assert "**Cancel** stops the requests under way as well" in text
+
+
+def test_a_cancel_is_its_own_threads_and_its_own_blocks(clock):
+    """The application has one Http for everything: a Sync's Cancel stops that Sync's requests, and
+    isn't left on the client for an install's lookup, or the next Sync, to trip over."""
+    url = "https://git.example.org/shot.png"
+    http = names(Http(opener=opener({url: PNG})))
+    elsewhere = []
+    with http.stopping(lambda: True):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(url)
+        other = threading.Thread(target=lambda: elsewhere.append(http.bytes(url)))       # an install's lookup, meanwhile
+        other.start()
+        other.join()
+        with http.stopping(lambda: False):                   # a block inside a block is its own, too
+            assert http.bytes(url) == PNG
+        with pytest.raises(http_.Cancelled):
+            http.bytes(url)
+    assert elsewhere == [PNG] and http.bytes(url) == PNG
+    assert http.calls == 3                                   # a cancelled request is never sent
+    assert not issubclass(http_.Cancelled, Exception)        # so nothing takes it for a failure of the host
+
+
+def test_a_cancel_stops_a_request_before_it_is_asked_for_again(clock):
+    seen = []
+    http = names(Http(opener=recording({"https://git.example.org/": urllib.error.HTTPError("", 503, "busy", {}, None)}, seen)))
+    with http.stopping(lambda: bool(seen)):
+        with pytest.raises(http_.Cancelled):
+            http.bytes("https://git.example.org/api/x")
+    assert len(seen) == 1 and clock.waits == [1.5]
+
+
+@pytest.mark.parametrize("place", ["releases", "readme", "metainfo", "image"])
+def test_cancel_stops_a_sync_while_an_answer_is_still_being_read(tmp_path, monkeypatch, clock, place):
+    """A Sync, then one that is cancelled as the user would, while an answer of one app's sync drips
+    in: it ends at the next read, that app keeps what the first Sync stored with no error on its row,
+    and the Cancel was that Sync's own."""
+    source, routes = "https://git.example.org/o/r", three_forges()
+    db = catalog(tmp_path, monkeypatch, ELSEWHERE)
+    http = names(Http({}, opener=opener(routes)))
+    sync.sync_all(db, http, root=str(tmp_path))
+    db.x("UPDATE apps SET fetched_at='by the first Sync'")
+    before = rows(db)
+    assert sorted(before) == sorted(ELSEWHERE) and all(app["error_code"] is None for app in before.values())
+
+    slow = tuple(k for k in routes if k.startswith(OWN[source]) and k.endswith(PLACES[place]))
+    progress, answers = sync.Progress(), []
+    drip = dripping(clock, 4.0, answers=answers, then=lambda reads: reads == 5 and setattr(progress, "cancelled", True))
+    http._open = lambda req, timeout=0: (drip if req.full_url.startswith(slow) else opener(routes))(req, timeout)
+    sync.sync_all(db, http, progress, root=str(tmp_path), workers=1)
+    assert [a.reads for a in answers] == [5] and clock.waits == []        # not a read more, and no other request for it
+    after = rows(db)
+    assert after[source] == before[source]                    # as the first Sync left it: no error, no half of an app
+    assert progress.done == len([u for u in after if after[u] != before[u]]) < 3 and progress.total == 3       # the apps before it
+
+    http._open = opener(routes)                               # the next Sync, with the same Http, is a whole one
+    again = sync.Progress()
+    sync.sync_all(db, http, again, root=str(tmp_path))
+    assert (again.done, again.total) == (3, 3) and all(app["error_code"] is None for app in rows(db).values())
+
+
+def a_byte_at_a_time(handler):
+    handler.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
+    try:
+        for _ in range(60):                                   # three seconds of it at most
+            handler.wfile.write(b"x")
+            time.sleep(0.05)
+    except OSError:                                           # its reader has gone
+        pass
+
+
+def test_through_real_sockets_a_byte_at_a_time_ends_at_the_deadline_and_at_cancel(pair):
+    # the finding's own run, with Http's own opener and the real clock: no read meets the two-second timeout
+    a, b = pair
+    a.files = {"/slow.png": a_byte_at_a_time}
+    http = Http(timeout=2.0)
+    http.deadline = 0.4
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="hadn't finished its answer") as e:
+        http.bytes(f"https://{a.at}/slow.png")
+    assert e.value.extra["timeout"] is True and time.monotonic() - started < 2.0 and len(a.seen) == 1
+    http.deadline = 120
+    started = time.monotonic()
+    with http.stopping(lambda: time.monotonic() - started > 0.3):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(f"https://{a.at}/slow.png")
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 2
+
+
+# CR1's #695: #296's deadline and Cancel held an answer's body, and what comes before it was still
+# read inside urllib's call, under the timeout of each read alone: a host that sent its status line
+# and its headers a byte at a time held the request as long as it liked. How it slipped past: the
+# tests of #296 dripped the body, after headers that came whole. The class is "a step of a request
+# that no clock looks at", so each step before the body is dripped here: the status line and the
+# headers, a redirect's (REDIRECTED_TO), and a TLS handshake.
+def headers_a_byte_at_a_time(handler):
+    head = b"HTTP/1.1 200 OK\r\nX-Slow: " + b"x" * 30 + b"\r\nContent-Length: 2\r\n\r\nok"
+    try:
+        for byte in head:                                     # three seconds of it, and a whole answer at the end
+            handler.wfile.write(bytes([byte]))
+            time.sleep(0.05)
+    except OSError:                                           # its reader has gone
+        pass
+
+
+def test_through_real_sockets_headers_a_byte_at_a_time_end_at_the_deadline_and_at_cancel(pair):
+    a, b = pair
+    a.files = {"/slow-headers": headers_a_byte_at_a_time}
+    http = Http(timeout=2.0, deadline=0.4)
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^127.0.0.1 hadn't finished its answer after 0.4 seconds$") as e:
+        http.bytes(f"https://{a.at}/slow-headers")
+    assert e.value.extra == {"timeout": True, "deadline": True, "no_answer": True}
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 1       # and it isn't asked for again
+    http.deadline = 120
+    started = time.monotonic()
+    with http.stopping(lambda: time.monotonic() - started > 0.3):
+        with pytest.raises(http_.Cancelled):
+            http.bytes(f"https://{a.at}/slow-headers")
+    assert time.monotonic() - started < 2.0 and len(a.seen) == 2
+
+
+class Wrapping(ssl.SSLContext):
+    """A TLS context that wraps a socket with another context of its own, as truststore's does where
+    AppKata checks certificates with the operating system's (platform.use_system_certificates: on
+    Windows and macOS): what is set on it for its sockets never reaches the one that makes them."""
+
+    def __new__(cls, protocol=ssl.PROTOCOL_TLS_CLIENT):
+        return super().__new__(cls, protocol)
+
+    def __init__(self, protocol=ssl.PROTOCOL_TLS_CLIENT):
+        self.inner = ssl.SSLContext(protocol)
+
+    def wrap_socket(self, sock, **kw):
+        return self.inner.wrap_socket(sock, **kw)
+
+
+@pytest.mark.parametrize("context", ["pythons-own", "one-that-wraps-with-another"])
+def test_through_real_sockets_a_tls_handshake_a_byte_at_a_time_ends_at_the_deadline(monkeypatch, context):
+    """Http's own https, with no stand-in for it: a host that answers the TLS hello a byte at a time.
+    The handshake is one step of the socket's, which its timeout bounds as a whole; the deadline is
+    less. The TLS context is Python's own, or one like the operating system's, which AppKata uses
+    on Windows and macOS."""
+    if context != "pythons-own":
+        monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: Wrapping())
+    accepted, stop = [], threading.Event()
+    server = socket.create_server(("127.0.0.1", 0))
+    server.settimeout(0.05)
+
+    def drip(conn):
+        with conn:
+            try:
+                conn.sendall(b"\x16\x03\x03\x40\x00")            # a handshake record of 16 KiB, which never comes whole
+                for _ in range(60):
+                    conn.sendall(b"\0")
+                    time.sleep(0.05)
+            except OSError:
+                pass
+
+    def serve():
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            accepted.append(conn)
+            threading.Thread(target=drip, args=(conn,), daemon=True).start()
+    serving = threading.Thread(target=serve, daemon=True)
+    serving.start()
+    try:
+        started = time.monotonic()
+        with pytest.raises(Unreachable, match="^127.0.0.1 hadn't finished its answer after 0.4 seconds$"):
+            Http(timeout=2.0, deadline=0.4).bytes(f"https://127.0.0.1:{server.getsockname()[1]}/")
+        assert time.monotonic() - started < 2.0 and len(accepted) == 1
+    finally:
+        stop.set()
+        serving.join()
+        server.close()
+
+
+# ---------------------------------------------------------------- a host that says when to come back, and one that says nothing (R9.2.1, R2.10)
+# CR1's #277: Retry-After was read on a 403 and a 429 alone. A forge that is overloaded or being
+# maintained answers 503 with it, and was asked again after 1.5 and 3 seconds, whatever it had asked
+# for, by every app on it and by each of four workers. And a host that gave no answer at all was
+# asked four times over by forges.detect, each probe with its retries, four minutes an app, to be
+# told at the end that AppKata couldn't tell which forge it runs. How it slipped past: the stand-in
+# opener sent one kind of error answer, a 403 with both rate-limit headers, and no stand-in host was
+# out of reach. The class is "what a host says about when to ask again is not heard", so the answers
+# here say it in each form on each failing status, and say nothing at all.
+def answering(status, headers, seen):
+    """An opener whose every answer is this error status with these headers."""
+    def open_(req, timeout=0):
+        seen.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+    return open_
+
+
+def in_two_minutes(clock):
+    return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(clock.now + 120))
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+@pytest.mark.parametrize("said", ["120", in_two_minutes], ids=["seconds", "a-date"])
+def test_a_retry_after_on_a_failing_answer_is_the_hosts_limit(clock, status, said):
+    seen = []
+    said = said if isinstance(said, str) else said(clock)
+    http = names(Http(opener=answering(status, {"Retry-After": said}, seen)))
+    with pytest.raises(RateLimited) as e:
+        http.json("https://git.example.org/api/v1/repos/o/r")
+    assert len(seen) == 1 and clock.waits == []               # not asked again after 1.5 seconds, whatever it asked for
+    assert abs(http.limited["git.example.org"] - (clock.now + 120)) <= 1 and e.value.reset == http.limited["git.example.org"]
+    for url in ("https://git.example.org/api/v1/repos/o/s", "https://git.example.org/o/s/raw/branch/main/README.md"):
+        with pytest.raises(RateLimited):                      # the next app on that host is refused at once
+            http.bytes(url)
+    assert len(seen) == 1
+    _ask(http, "https://codeberg.org/api/v1/version")         # another host is still asked
+    assert seen[1:] == ["https://codeberg.org/api/v1/version"]
+    clock.now += 121                                          # and the host itself, once the time it gave has passed
+    _ask(http, "https://git.example.org/api/v1/repos/o/s")
+    assert seen[2] == "https://git.example.org/api/v1/repos/o/s"
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_a_failing_answer_that_says_nothing_is_asked_for_again_as_before(clock, status):
+    seen = []
+    http = names(Http(opener=answering(status, {}, seen)))
+    with pytest.raises(Unreachable, match=f"git.example.org answered HTTP {status}") as e:
+        http.json("https://git.example.org/api/x")
+    assert e.value.extra["status"] == status and http.limited == {}
+    assert (len(seen), clock.waits) == ((1, []) if status == 500 else (3, [1.5, 3.0]))
+
+
+@pytest.mark.parametrize("said, waits", [("2", [2, 3.0]), ("3", [3, 3]), ("1", [1.5, 3.0]), ("0", [1.5, 3.0]),
+                                         ("Wed, 21 Oct 2015 07:28:00 GMT", [1.5, 3.0])])
+def test_a_retry_after_no_longer_than_the_retries_wait_is_waited_out(clock, said, waits):
+    seen = []
+    http = names(Http(opener=answering(503, {"Retry-After": said}, seen)))
+    with pytest.raises(Unreachable, match="answered HTTP 503"):
+        http.json("https://git.example.org/api/x")
+    assert len(seen) == 3 and clock.waits == waits and http.limited == {}
+
+
+@pytest.mark.parametrize("status, error, says", [(404, http_.NotFound, "not found"), (401, Unreachable, "rejected the API token"),
+                                                (410, Unreachable, "answered HTTP 410")])
+def test_a_retry_after_on_another_answer_is_remembered_and_the_answer_means_what_it_did(clock, status, error, says):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=answering(status, {"Retry-After": "120"}, seen)))
+    with pytest.raises(error, match=says) as e:
+        http.json("https://git.example.org/api/x")
+    assert type(e.value) is error and http.limited["git.example.org"] == clock.now + 120
+    with pytest.raises(RateLimited):
+        http.json("https://git.example.org/api/y")
+    assert len(seen) == 1 and clock.waits == []
+
+
+def test_a_sync_asks_a_host_that_said_when_to_come_back_once(tmp_path, monkeypatch, clock):
+    """A forge being maintained, with two Sources: one request, both rows say until when, no waiting."""
+    seen = []
+    sources = ["https://git.example.org/o/r", "https://git.example.org/o/s"]
+    db = catalog(tmp_path, monkeypatch, sources)
+    http = names(Http(opener=answering(503, {"Retry-After": "600"}, seen)))
+    sync.sync_all(db, http, root=str(tmp_path), workers=1)
+    apps = rows(db)
+    assert seen == ["https://git.example.org/api/v1/version"] and clock.waits == []
+    for url in sources:
+        assert apps[url]["error_code"] == "RateLimited" and json.loads(apps[url]["error_extra"])["reset"] == clock.now + 600
+        assert json.loads(apps[url]["error_extra"])["status"] == 503          # both rows: the one answered and the one refused
+
+
+@pytest.mark.parametrize("status, headers, a_limit", [
+    (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "4102444800"}, True), (403, {"Retry-After": "120"}, True),
+    (429, {}, True), (429, {"Retry-After": "120"}, True),
+    (500, {"Retry-After": "120"}, False), (502, {"Retry-After": "120"}, False), (503, {"Retry-After": "120"}, False),
+    (504, {"Retry-After": "120"}, False),
+])
+def test_what_said_when_to_come_back_is_kept_with_the_limit(clock, status, headers, a_limit):
+    """A forge's own rate limit and a forge being maintained are both RateLimited (R2.10), and a
+    token raises only the first: the answer's status goes with the error, for the row to tell them
+    apart, and with the host's limit, so the next app refused there says the same as the first."""
+    seen = []
+    http = names(Http(opener=answering(status, headers, seen)))
+    assert (status in http_.LIMIT_STATUSES) == a_limit
+    for path in ("o/r", "o/s"):                                # the app that was answered, and the next on that host
+        with pytest.raises(RateLimited) as e:
+            http.json(f"https://git.example.org/api/v1/repos/{path}")
+        assert e.value.extra == {"host": "git.example.org", "reset": http.limited["git.example.org"], "status": status}
+        assert ("rate limit reached" in str(e.value)) == a_limit and (f"answered HTTP {status}" in str(e.value)) == (not a_limit)
+    assert len(seen) == 1 and json.dumps(e.value.extra)
+
+
+def test_a_limit_nothing_gave_a_status_for_has_none(clock):
+    http = names(Http(opener=opener({})))
+    http.limited["git.example.org"] = clock.now + 60           # as a test sets one, and as nothing in the application does
+    with pytest.raises(RateLimited, match="rate limit reached") as e:
+        http.json("https://git.example.org/api/x")
+    assert e.value.extra == {"host": "git.example.org", "reset": clock.now + 60} and e.value.status is None
+
+
+NO_ANSWER = [TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out")),
+             urllib.error.URLError(OSError(-2, "Name or service not known")), ConnectionRefusedError(111, "Connection refused"),
+             ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")]
+
+
+@pytest.mark.parametrize("error", NO_ANSWER, ids=lambda e: type(getattr(e, "reason", e)).__name__)
+def test_a_host_that_gives_no_answer_is_unreachable_at_its_first_probe(tmp_path, monkeypatch, clock, error):
+    seen, source = [], "https://git.example.org/o/r"
+    http = names(Http(opener=ending_in(error, "opened", seen)))
+    with pytest.raises(Unreachable, match="couldn't reach git.example.org"):
+        forges.detect(http, "git.example.org")
+    assert set(seen) == {"https://git.example.org/api/v1/version"}        # the first probe, and none of the other three
+    assert (len(seen), clock.waits) == ((3, [1.5, 3.0]) if "timed out" in str(error) else (1, []))
+    db = catalog(tmp_path, monkeypatch, [source])
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[source]
+    assert app["error_code"] == "Unreachable" and "couldn't reach git.example.org" in app["error"]      # R2.10's kind for it
+
+
+@pytest.mark.parametrize("answer", [404, 500, 401, b"<html>a sign-in page</html>", {"message": "another shape"}, ["a", "list"]],
+                         ids=["404", "500", "401", "html", "an-object", "a-list"])
+def test_a_host_that_answers_but_not_as_a_forges_api_is_probed_to_the_end(clock, answer):
+    routes = {f"https://git.example.org/api/{p}": answer for p in ("v1/version", "v3/meta")}
+    routes["https://git.example.org/api/v4/projects"] = answer if answer != ["a", "list"] else {"an": "object"}
+    seen = []
+    plain = opener({**routes, "https://git.example.org/": b'<html><meta name="generator" content="Gitea - Git with a cup of tea">'})
+
+    def open_(req, timeout=0):
+        seen.append(req.full_url)
+        if isinstance(routes.get(req.full_url.split("?")[0]), int):
+            raise urllib.error.HTTPError(req.full_url, routes[req.full_url.split("?")[0]], "err", {}, None)
+        return plain(req, timeout)
+    assert forges.detect(names(Http(opener=open_)), "git.example.org") == "gitea"
+    assert list(dict.fromkeys(seen)) == ["https://git.example.org/api/v1/version", "https://git.example.org/api/v4/projects?per_page=1",
+                                         "https://git.example.org/api/v3/meta", "https://git.example.org/"]
+    seen.clear()
+    with pytest.raises(forges.Unsupported, match="couldn't tell which forge git.example.org runs"):      # and with no page that says
+        forges.detect(names(Http(opener=lambda req, timeout=0: open_(req, timeout) if "/api/" in req.full_url else opener({})(req))),
+                      "git.example.org")
+
+
+def maintenance(handler):
+    handler.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 120\r\nContent-Length: 0\r\n\r\n")
+
+
+def test_through_real_sockets_a_503_that_says_when_and_a_host_with_nothing_listening(pair, clock):
+    a, b = pair
+    a.files = {"/api/v1/version": maintenance}
+    http = Http(timeout=5)
+    for _ in range(2):
+        with pytest.raises(RateLimited):
+            forges.detect(http, a.at)
+    assert [p for p, _ in a.seen] == ["/api/v1/version"] and clock.waits == []
+    assert http.limited == {a.at: clock.now + 120}
+    with socket.socket() as nothing:                          # a port of this machine where nothing listens
+        nothing.bind(("127.0.0.1", 0))
+        closed = nothing.getsockname()[1]
+    with pytest.raises(Unreachable, match="couldn't reach 127.0.0.1"):
+        forges.detect(Http(timeout=5), f"127.0.0.1:{closed}")
+    assert clock.waits == []
+
+
+# ---------------------------------------------------------------- an answer cut off before its declared length (R3.2, R3.3, R9.1)
+# CR1's #626: http.client hands back a short body without an error when a connection ends before
+# the Content-Length it declared, and Http didn't compare the two: a cut-off image that starts as a
+# PNG was saved as the icon, and a cut-off README or file list was stored as the whole one. How it
+# slipped past: no stand-in answer declared a length. The class is "what arrived is taken for what
+# was sent", so the answers here declare one, and each kind of answer that declares a length it
+# rightly doesn't send is held as well.
+def declaring(headers, body, seen=None, method="GET"):
+    def open_(req, timeout=0):
+        seen is not None and seen.append(req.full_url)
+        assert req.get_method() == method
+        return FakeResponse(req.full_url, body, dict(headers))
+    return open_
+
+
+@pytest.mark.parametrize("call", ["bytes", "text", "json", "json_with_headers", "request"])
+def test_an_answer_shorter_than_the_length_it_declared_is_cut_short_and_asked_for_again(clock, call):
+    seen = []
+    http = names(Http(opener=declaring({"Content-Length": "1000"}, b"[" + b"1," * 49 + b"1", seen)))       # 100 bytes of them
+    with pytest.raises(Unreachable, match="git.example.org cut its answer short \\(100 of 1000 bytes\\)") as e:
+        getattr(http, call)("https://git.example.org/api/x")
+    assert e.value.extra["cut"] is True and len(seen) == 3 and clock.waits == [1.5, 3.0]
+    with pytest.raises(Unreachable, match="cut its answer short"):
+        http._request("https://git.example.org/api/x")
+
+
+def test_an_answer_cut_short_once_is_whole_the_second_time(clock):
+    whole, answers = PNG * 10, []
+
+    def open_(req, timeout=0):
+        answers.append(FakeResponse(req.full_url, whole[:100] if not answers else whole, {"content-length": str(len(whole))}))
+        return answers[-1]
+    assert names(Http(opener=open_)).bytes("https://git.example.org/icon.png") == whole
+    assert len(answers) == 2 and clock.waits == [1.5]
+
+
+@pytest.mark.parametrize("headers, body, method", [
+    ({"Content-Length": "100"}, b"x" * 100, "GET"),                              # whole
+    ({}, b"x" * 100, "GET"), ({"Content-Length": "0"}, b"", "GET"),              # none declared; nothing declared, nothing sent
+    ({"Content-Length": "1000"}, b"", "HEAD"),                                   # an answer to HEAD says what a GET would send
+    ({"Content-Length": "1000", "Transfer-Encoding": "chunked"}, b"x" * 100, "GET"),      # the chunks say where it ends, not the length
+    ({"Content-Length": "1000", "Content-Encoding": "gzip"}, b"x" * 100, "GET"),          # not a plain body
+    ({"Content-Length": "a thousand"}, b"x" * 100, "GET"), ({"Content-Length": ""}, b"x" * 100, "GET"),
+    ({"Content-Length": "-5"}, b"x" * 100, "GET"),
+], ids=["whole", "none", "nothing", "head", "chunked", "encoded", "not-a-number", "empty", "negative"])
+def test_an_answer_that_is_whole_or_rightly_declares_what_it_doesnt_send_is_taken(clock, headers, body, method):
+    http = names(Http(opener=declaring(headers, body, method=method)))
+    data, hdr, _ = http.request("https://git.example.org/api/x", method=method)
+    assert data == body and clock.waits == []
+
+
+def cut_off(body, declared=1000):
+    def answer(handler):
+        handler.wfile.write(f"HTTP/1.1 200 OK\r\nContent-Length: {declared}\r\n\r\n".encode() + body)
+    return answer
+
+
+def test_through_real_sockets_a_cut_off_image_isnt_saved_and_a_cut_off_readme_isnt_stored(pair, tmp_path, monkeypatch, clock):
+    """The finding's own run, with Http's own opener: a server on this machine declares 1000 bytes,
+    sends a PNG's first 100 and closes. Then a whole Sync whose README is cut off the same way."""
+    a, b = pair
+    a.files = {"/icon.png": cut_off(PNG + b"\0" * (100 - len(PNG)))}
+    http = Http(timeout=10)
+    with pytest.raises(Unreachable, match="127.0.0.1 cut its answer short \\(100 of 1000 bytes\\)"):
+        sync._save_image(http, f"https://{a.at}/icon.png", str(tmp_path / "icon"), token_host=a.at)
+    assert [p for p, _ in a.seen] == ["/icon.png"] * 3 and list(tmp_path.iterdir()) == []
+    with pytest.raises(Unreachable, match="cut its answer short"):          # where it was "didn't return JSON"
+        http.json(f"https://{a.at}/icon.png")
+
+    readme = b"# Whole\n\nThe whole README, which says what the app is and how it is installed.\n" * 5
+    source = forgejo_project(a, "o/r", {"README.md": readme})
+    db = catalog(tmp_path, monkeypatch, [source])
+    sync.sync_all(db, http, root=str(tmp_path))
+    assert rows(db)[source]["error_code"] is None and rows(db)[source]["readme"] == readme.decode()
+    a.files["/o/r/raw/branch/main/README.md"] = cut_off(readme[:100], len(readme))
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[source]
+    assert app["error_code"] == "Unreachable" and "cut its answer short" in app["error"]
+    assert app["readme"] == readme.decode()                   # the whole one, from the Sync before
+
+
+# ---------------------------------------------------------------- github.com's pages are github.com's alone (R2.4.1)
+# CR1's #265: forges.GitHub is the class of a GitHub Enterprise Source too, and of any host whose
+# forge type is set to GitHub, and the pages that stand in for github.com's API have github.com
+# written into them. A Sync's own calls kept to github.com (_try); sync.ensure_assets, which reads a
+# release's files when it is opened for install, had its own fallback with no such test, on any
+# failure of the API: off the VPN, or with an expired token, an Enterprise release was given the
+# files and the SHA-256 digests of whatever project has its path on github.com. How it slipped
+# past: ensure_assets had one test, on a Forgejo, and no test put a GitHub on another host through a
+# failing API. The class is "github.com answers for a host that isn't github.com", so a project of
+# the same path is there in every test below, ready to answer with a file and its digest, and what
+# is held is that nothing is asked of it: by the file list, by a whole Sync, and by each way to the
+# pages there is, whichever is added next.
+GHE = "https://ghe.corp.example/team/tool"
+GHE_API = "https://ghe.corp.example/api/v3/repos/team/tool"
+DIGEST = "sha256:" + "ab" * 32
+FILE = "/team/tool/releases/download/v1.0.0/tool-1.0.0-x86_64.AppImage"
+THEIR_PAGE = (f'<a href="{FILE}">tool-1.0.0-x86_64.AppImage</a> <span>{DIGEST}</span> <span>5 MB</span>'
+              '<relative-time datetime="2026-01-01T00:00:00Z">').encode()
+THEIRS = {       # github.com's project of the same path: its API and its pages, each of which would answer
+    "https://api.github.com/": {"assets": [{"name": "tool-1.0.0-x86_64.AppImage", "browser_download_url": "https://github.com" + FILE,
+                                            "digest": DIGEST}]},
+    "https://github.com/": THEIR_PAGE,
+}
+FROM_THE_PAGE = [{"name": "tool-1.0.0-x86_64.AppImage", "url": "https://github.com" + FILE, "size": 5000000, "digest": DIGEST,
+                  "content_type": ""}]
+
+
+def _status(code, **headers):
+    return urllib.error.HTTPError("", code, "err", headers, None)
+
+
+API_FAILS = {      # what the API's answer can be when a release's files are asked for
+    "limit-used-up": 403, "429": _status(429), "503-come-back-later": _status(503, **{"Retry-After": "600"}),     # RateLimited
+    "token-expired": _status(401), "no-such-release": _status(404), "500": _status(500),
+    "off-the-vpn": urllib.error.URLError(OSError(-2, "Name or service not known")), "timeout": TimeoutError("timed out"),
+    "a-sign-in-page": b"<html>Sign in to continue</html>",
+}
+SAYS_COME_BACK = ("limit-used-up", "429", "503-come-back-later")
+
+
+def stored_without_files(tmp_path, url, kind):
+    """An app as a Sync left it: its newest release with its files, an older one without."""
+    db = DB(str(tmp_path / "a.db"))
+    db.x("INSERT INTO apps(url, name, forge, releases) VALUES(?,?,?,?)", (url, "Tool", kind, json.dumps(
+        [{"tag": "v2.0.0", "version": "2.0.0", "date": "2026-02-01", "assets": [{"name": "tool-2.0.0-x86_64.AppImage"}]},
+         {"tag": "v1.0.0", "version": "1.0.0", "date": "2025-02-01", "assets": []}])))
+    return db
+
+
+def files_of(db, url, version="1.0.0"):
+    releases = json.loads(db.one("SELECT releases FROM apps WHERE url=?", (url,))["releases"])
+    return next(r for r in releases if r["version"] == version)["assets"]
+
+
+@pytest.fixture
+def git(monkeypatch):
+    """Stands in for git, noting what it was asked."""
+    asked = []
+    monkeypatch.setattr(forges, "_git_out", lambda args: asked.append(args) or "")
+    return asked
+
+
+def off(host, seen):
+    return [url for url, _ in seen if not url.startswith(f"https://{host}/")]
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])            # a GitHub Enterprise, and a host whose forge type is set to GitHub
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_a_github_on_another_host_takes_no_files_from_github_coms_project_of_its_path(tmp_path, clock, git, kind, fails):
+    seen = []
+    db = stored_without_files(tmp_path, GHE, kind)
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording({GHE_API + "/releases/tags/v1.0.0": API_FAILS[fails], **THEIRS}, seen)))
+    with pytest.raises(SourceError):                           # the error is the caller's to show
+        sync.ensure_assets(db, http, GHE, "1.0.0")
+    assert seen and off("ghe.corp.example", seen) == [] and git == []
+    assert files_of(db, GHE) == []                             # and what was stored is as it was
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])
+def test_a_github_on_another_host_has_its_own_apis_files(tmp_path, git, kind):
+    seen = []
+    db = stored_without_files(tmp_path, GHE, kind)
+    own = {"name": "tool-1.0.0.tar.gz", "browser_download_url": "https://ghe.corp.example/f", "size": 7, "digest": "sha256:" + "cd" * 32}
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording({GHE_API + "/releases/tags/v1.0.0": {"assets": [own]}, **THEIRS}, seen)))
+    assert sync.ensure_assets(db, http, GHE, "1.0.0")["assets"] == files_of(db, GHE) == [
+        {"name": "tool-1.0.0.tar.gz", "url": "https://ghe.corp.example/f", "size": 7, "digest": "sha256:" + "cd" * 32, "content_type": ""}]
+    assert [url for url, _ in seen] == [GHE_API + "/releases/tags/v1.0.0"] and tokened(seen) == [url for url, _ in seen]
+
+
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_github_com_itself_reads_its_page_when_its_api_says_to_come_back_and_only_then(tmp_path, clock, git, fails):
+    url, api = "https://github.com/team/tool", "https://api.github.com/repos/team/tool/releases/tags/v1.0.0"
+    page, seen = "https://github.com/team/tool/releases/expanded_assets/v1.0.0", []
+    db = stored_without_files(tmp_path, url, "github")
+    http = names(Http(opener=recording({api: API_FAILS[fails], page: THEIR_PAGE}, seen)))
+    if fails in SAYS_COME_BACK:                                # R2.4.1: the pages, when the API's limit is used up
+        assert sync.ensure_assets(db, http, url, "1.0.0")["assets"] == files_of(db, url) == FROM_THE_PAGE
+        assert [u for u, _ in seen] == [api, page]
+    else:                                                      # any other failure is an error, as it is for a Sync's own calls
+        with pytest.raises(SourceError):
+            sync.ensure_assets(db, http, url, "1.0.0")
+        assert set(u for u, _ in seen) == {api} and files_of(db, url) == []
+
+
+def test_github_com_known_to_be_limited_is_asked_for_its_page_alone(tmp_path, git):
+    url, seen = "https://github.com/team/tool", []
+    db = stored_without_files(tmp_path, url, "github")
+    http = names(Http(opener=recording(THEIRS, seen)))
+    http.limited["api.github.com"] = time.time() + 600
+    assert sync.ensure_assets(db, http, url, "1.0.0")["assets"] == FROM_THE_PAGE
+    assert [u for u, _ in seen] == ["https://github.com/team/tool/releases/expanded_assets/v1.0.0"]
+
+
+WEB_ARGS = {"tag": "v1.0.0", "limit": 30, "ref": "main"}
+
+
+@pytest.mark.parametrize("kind", ["ghe", "github"])
+def test_every_way_to_github_coms_pages_is_refused_for_another_host(git, kind):
+    """Each function that reads github.com's pages or asks git for the project there, found by its
+    name, so the next one written is held too; and each call of a forge that somehow came to think
+    its API's limit is used up."""
+    seen = []
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording(THEIRS, seen)))
+    f = forges.forge_for(http, urls.parse(GHE), kind)
+    assert not f.web
+    ways = sorted(name for name in dir(f) if name.endswith("_web"))
+    assert {"_info_web", "_releases_web", "_release_tags_web", "_bare_tag_web", "_assets_web", "_tags_web", "_tree_web"} <= set(ways)
+    for name in ways:
+        way = getattr(f, name)
+        with pytest.raises(forges.Unsupported, match="ghe.corp.example isn't github.com"):
+            way(*[WEB_ARGS[p] for p in inspect.signature(way).parameters])
+    f.web = True
+    for call in (f.info, f.releases, f.tags, lambda: f.tree("main"), lambda: f.release_assets("v1.0.0")):
+        with pytest.raises(forges.Unsupported, match="ghe.corp.example isn't github.com"):
+            call()
+    assert seen == [] and git == []
+    theirs = forges.forge_for(http, urls.parse("https://github.com/team/tool"), "github")       # and for github.com they are open
+    assert theirs._page("/releases.atom") == "https://github.com/team/tool/releases.atom"
+    assert theirs._assets_web("v1.0.0")[0] == [forges.Asset(a["name"], a["url"], a["size"], a["digest"]) for a in FROM_THE_PAGE]
+
+
+GHE_PLACES = {"info": "", "releases": "/releases", "files": "/git/trees/main", "a-releases-files": "/releases/tags/v1.0.0"}
+
+
+@pytest.mark.parametrize("place", sorted(GHE_PLACES))
+@pytest.mark.parametrize("fails", sorted(API_FAILS))
+def test_a_sync_and_a_file_list_of_an_enterprise_source_ask_nothing_of_github_com(tmp_path, monkeypatch, clock, git, place, fails):
+    """Whatever the Enterprise's API answers, wherever: a whole Sync of the Source, then the files of
+    the release it stored without any, as an install asks for them."""
+    raw = "https://ghe.corp.example/team/tool/raw/main/"
+    routes = {GHE_API: {"name": "tool", "full_name": "team/tool", "default_branch": "main"},
+              GHE_API + "/releases": [{"tag_name": "v1.0.0", "name": "1.0", "published_at": "2025-02-01T00:00:00Z", "assets": []}],
+              GHE_API + "/git/trees/main": {"tree": [{"path": "README.md", "type": "blob"}]},
+              GHE_API + "/releases/tags/v1.0.0": {"assets": []}, raw + "README.md": b"# Tool\n", **THEIRS}
+    routes[GHE_API + GHE_PLACES[place]] = API_FAILS[fails]
+    seen = []
+    db = catalog(tmp_path, monkeypatch, [GHE])
+    db.x("UPDATE sources SET settings=? WHERE url=?", (json.dumps({"forge": "ghe"}), GHE))
+    http = names(Http({"ghe.corp.example": "SECRET"}, opener=recording(dict(sorted(routes.items(), key=lambda kv: -len(kv[0]))), seen)))
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[GHE]
+    assert (app["error_code"] is None) == (place in ("files", "a-releases-files")), (app["error_code"], app["error"])
+    try:
+        sync.ensure_assets(db, http, GHE, "1.0.0")
+    except SourceError:
+        pass
+    assert seen and off("ghe.corp.example", seen) == [] and git == []
+
+
+# ---------------------------------------------------------------- what Http makes of each answer (R9.2.1, R2.10)
+# CR1's #298: one test held Http's handling of a failing answer, a 403 with both of GitHub's
+# rate-limit headers, because the stand-in opener sent no other: both headers on every error status,
+# and a 404 for every address it had no route for. A Retry-After in either form, a 429 that says
+# nothing, the retries and their waits, the 401 of a token, an answer that isn't JSON and a 404 were
+# all unheld, and #269 and #277 were in those gaps. The fixes of #269, #277, #296 and #626 each
+# brought tests of their own branch. This is the whole of it in one table instead, a row for each
+# thing a host can answer and what Http makes of it: the error's kind, its words and its `extra` as
+# a Sync writes them on a row, how many times the address was asked and after which waits, and what
+# is remembered of the host. The stand-in sends exactly what a row says and nothing more. Left to
+# their own tests above: the deadline and Cancel, which need an answer that comes in pieces.
+ASKED = "https://git.example.org/api/x"
+OK = (200, {}, b'{"ok": true}')
+Y2100, Y2100_AS_A_DATE = 4102444800, "Fri, 01 Jan 2100 00:00:00 GMT"
+Y2015, Y2015_AS_A_DATE = 1445412480, "Wed, 21 Oct 2015 07:28:00 GMT"
+USED_UP = {"x-ratelimit-remaining": "0"}
+
+
+def scripted(answers, seen):
+    """A recording opener that answers the first request with the first of `answers`, the second
+    with the second, and every later one with the last. An answer is (status, headers, body), sent
+    as it stands, or what opening the address ends in."""
+    def open_(req, timeout=0):
+        seen.append(req)
+        answer = answers[min(len(seen), len(answers)) - 1]
+        if isinstance(answer, BaseException):
+            raise answer
+        status, headers, body = answer
+        if status >= 400:                                      # as urllib's own opener hands a failing status on
+            raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+        return FakeResponse(req.full_url, body, dict(headers))
+    return open_
+
+
+def answer(id, *answers, call="json", raises=None, says=None, extra=None, gives=None, asked=1, waits=(), limited_in=None,
+           limited_at=None, tokens=None, **kw):
+    return pytest.param(types.SimpleNamespace(answers=answers, call=call, raises=raises, says=says, extra=extra or {}, gives=gives,
+                                              asked=asked, waits=list(waits), limited_in=limited_in, limited_at=limited_at,
+                                              tokens=tokens, kw=kw), id=id)
+
+
+def failing(status, **extra):
+    return dict(raises=Unreachable, says=f"git.example.org answered HTTP {status}", extra={"status": status, **extra})
+
+
+def limit(status, **when):
+    """A RateLimited whose status is `status`, until `limited_in` seconds from now or the time `limited_at`."""
+    says = "rate limit reached" if status in (403, 429) else f"answered HTTP {status} and said when to come back"
+    return dict(raises=RateLimited, says="git.example.org " + says, extra={"host": "git.example.org", "status": status}, **when)
+
+
+NO_ANSWER_AT_ALL = dict(raises=Unreachable, extra={"no_answer": True})
+ANSWERS = [
+    # an answer
+    answer("200", OK, gives={"ok": True}),
+    answer("200-as-text", OK, call="text", gives='{"ok": true}'),
+    answer("200-as-bytes", OK, call="bytes", gives=b'{"ok": true}'),
+    answer("200-with-its-headers", (200, {"ETag": "W/1", "X-RateLimit-Remaining": "59"}, b"[1]"), call="json_with_headers",
+           gives=([1], {"etag": "W/1", "x-ratelimit-remaining": "59"}, ASKED)),
+    answer("200-not-json", (200, {}, b"<html>Sign in</html>"), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-not-json-with-its-headers", (200, {}, b"<html>Sign in</html>"), call="json_with_headers", raises=Unreachable,
+           says="git.example.org didn't return JSON"),
+    answer("200-not-utf-8", (200, {}, b"\xff\xfe{"), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-empty", (200, {}, b""), raises=Unreachable, says="git.example.org didn't return JSON"),
+    answer("200-not-utf-8-as-text", (200, {}, b"caf\xe9"), call="text", gives="caf\ufffd"),
+    answer("200-as-large-as-allowed", (200, {}, b"x" * 100), call="bytes", max_bytes=100, gives=b"x" * 100),
+    answer("200-a-byte-too-large", (200, {}, b"x" * 101), call="bytes", max_bytes=100, raises=Unreachable,
+           says="response from git.example.org too large"),
+    # a failing status that says nothing about when: its own kind, and no retry but for 502, 503 and 504
+    answer("404", (404, {}, b""), raises=http_.NotFound, says=ASKED + " not found"),
+    answer("401-with-the-hosts-token", (401, {}, b""), tokens={"git.example.org": "SECRET"}, raises=Unreachable,
+           says="git.example.org rejected the API token (HTTP 401)"),
+    answer("401-with-no-token", (401, {}, b""), **failing(401)),
+    answer("401-with-another-hosts-token", (401, {}, b""), tokens={"codeberg.org": "SECRET"}, **failing(401)),
+    answer("401-with-a-token-for-another-port-of-it", (401, {}, b""), tokens={"git.example.org:8080": "SECRET"}, **failing(401)),
+    answer("403-that-says-nothing", (403, {}, b""), **failing(403)),
+    answer("403-with-requests-left", (403, {"x-ratelimit-remaining": "12", "x-ratelimit-reset": str(Y2100)}, b""), **failing(403)),
+    answer("410", (410, {}, b""), **failing(410)),
+    answer("500", (500, {}, b""), **failing(500)),
+    answer("502", (502, {}, b""), asked=3, waits=[1.5, 3.0], **failing(502)),
+    answer("503", (503, {}, b""), asked=3, waits=[1.5, 3.0], **failing(503)),
+    answer("504", (504, {}, b""), asked=3, waits=[1.5, 3.0], **failing(504)),
+    answer("503-then-200", (503, {}, b""), OK, gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("502-504-then-200", (502, {}, b""), (504, {}, b""), OK, gives={"ok": True}, asked=3, waits=[1.5, 3.0]),
+    answer("503-then-404", (503, {}, b""), (404, {}, b""), raises=http_.NotFound, says=ASKED + " not found", asked=2, waits=[1.5]),
+    answer("503-then-500", (503, {}, b""), (500, {}, b""), asked=2, waits=[1.5], **failing(500)),
+    # a forge's rate limit: a 403 that says the requests are used up or when to come back, and any 429
+    answer("403-used-up-until", (403, {**USED_UP, "x-ratelimit-reset": str(Y2100)}, b""), **limit(403, limited_at=Y2100)),
+    answer("403-used-up-and-no-time", (403, USED_UP, b""), **limit(403, limited_in=60)),
+    answer("403-retry-after-seconds", (403, {"Retry-After": "30"}, b""), **limit(403, limited_in=30)),
+    answer("403-retry-after-a-short-one", (403, {"Retry-After": "2"}, b""), **limit(403, limited_in=2)),
+    answer("403-retry-after-a-date", (403, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(403, limited_at=Y2100)),
+    answer("429-that-says-nothing", (429, {}, b""), **limit(429, limited_in=60)),
+    answer("429-retry-after-seconds", (429, {"Retry-After": "120"}, b""), **limit(429, limited_in=120)),
+    answer("429-retry-after-zero", (429, {"Retry-After": "0"}, b""), **limit(429, limited_in=0)),
+    answer("429-retry-after-a-date", (429, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(429, limited_at=Y2100)),
+    answer("429-retry-after-a-date-gone-by", (429, {"Retry-After": Y2015_AS_A_DATE}, b""), **limit(429, limited_at=Y2015)),
+    answer("429-retry-after-unreadable", (429, {"Retry-After": "soon"}, b""), **limit(429, limited_in=60)),
+    answer("429-the-reset-time-comes-first", (429, {"x-ratelimit-reset": str(Y2100), "Retry-After": "120"}, b""), **limit(429, limited_at=Y2100)),
+    answer("429-reset-time-unreadable", (429, {"x-ratelimit-reset": "soon", "Retry-After": "120"}, b""), **limit(429, limited_in=120)),
+    answer("429-retry-after-a-digit-that-is-no-number", (429, {"Retry-After": "\u00b2"}, b""), **limit(429, limited_in=60)),
+    answer("429-retry-after-no-time-a-clock-can-show", (429, {"Retry-After": "9" * 30}, b""), **limit(429, limited_in=60)),
+    answer("403-reset-time-no-time-a-clock-can-show", (403, {**USED_UP, "x-ratelimit-reset": "9" * 17}, b""), **limit(403, limited_in=60)),
+    # a Retry-After on any other failing answer (CR1 #277)
+    answer("503-retry-after-long", (503, {"Retry-After": "120"}, b""), **limit(503, limited_in=120)),
+    answer("500-retry-after-a-date", (500, {"Retry-After": Y2100_AS_A_DATE}, b""), **limit(500, limited_at=Y2100)),
+    answer("503-retry-after-short", (503, {"Retry-After": "2"}, b""), asked=3, waits=[2, 3.0], **failing(503, retry_after=2)),
+    answer("503-retry-after-short-then-200", (503, {"Retry-After": "3"}, b""), OK, gives={"ok": True}, asked=2, waits=[3]),
+    answer("500-retry-after-short", (500, {"Retry-After": "2"}, b""), **failing(500, retry_after=2)),
+    answer("404-retry-after-long", (404, {"Retry-After": "120"}, b""), raises=http_.NotFound, says=ASKED + " not found", limited_in=120),
+    answer("404-retry-after-short", (404, {"Retry-After": "3"}, b""), raises=http_.NotFound, says=ASKED + " not found"),
+    answer("401-retry-after-long", (401, {"Retry-After": "120"}, b""), limited_in=120, **failing(401)),
+    # no answer at all: asked again only when it timed out
+    answer("timed-out", TimeoutError("timed out"), asked=3, waits=[1.5, 3.0], says="couldn't reach git.example.org: timed out",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-as-urllib-says-it", urllib.error.URLError(TimeoutError("timed out")), asked=3, waits=[1.5, 3.0],
+           says="couldn't reach git.example.org: timed out", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-in-words-alone", urllib.error.URLError("_ssl.c:1011: The handshake operation timed out"), asked=3, waits=[1.5, 3.0],
+           says="couldn't reach git.example.org: _ssl.c:1011: The handshake operation timed out",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-without-a-word", TimeoutError(), asked=3, waits=[1.5, 3.0], says="couldn't reach git.example.org: ",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": True}}),
+    answer("timed-out-then-200", TimeoutError("timed out"), OK, gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("refused", urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+           says="couldn't reach git.example.org: [Errno 111] Connection refused", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    answer("no-such-name", urllib.error.URLError(OSError(-2, "Name or service not known")),
+           says="couldn't reach git.example.org: [Errno -2] Name or service not known",
+           **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    answer("reset", ConnectionResetError(104, "Connection reset by peer"),
+           says="couldn't reach git.example.org: [Errno 104] Connection reset by peer", **{**NO_ANSWER_AT_ALL, "extra": {"no_answer": True, "timeout": False}}),
+    # an answer that isn't whole, and one that can't be read (CR1 #269, #626)
+    answer("cut-short-in-its-chunks", IncompleteRead(b"half", 96), raises=Unreachable, says="git.example.org cut its answer short",
+           extra={"cut": True}, asked=3, waits=[1.5, 3.0]),
+    answer("cut-short-of-its-length", (200, {"Content-Length": "40"}, b'{"ok": true}'), raises=Unreachable,
+           says="git.example.org cut its answer short (12 of 40 bytes)", extra={"cut": True}, asked=3, waits=[1.5, 3.0]),
+    answer("cut-short-then-whole", (200, {"Content-Length": "40"}, b'{"ok": true}'), (200, {"Content-Length": "12"}, b'{"ok": true}'),
+           gives={"ok": True}, asked=2, waits=[1.5]),
+    answer("an-address-that-cant-be-sent", InvalidURL("URL can't contain control characters"), raises=Unreachable,
+           says=f"couldn't ask git.example.org: the address {ASKED!r} can't be sent (InvalidURL)"),
+    answer("an-answer-that-cant-be-read", BadStatusLine("\x16\x03\x01"), raises=Unreachable,
+           says="couldn't read git.example.org's answer (BadStatusLine: \x16\x03\x01)"),
+]
+
+
+@pytest.mark.parametrize("c", ANSWERS)
+def test_what_http_makes_of_each_answer(clock, c):
+    seen = []
+    http = names(Http(c.tokens, opener=scripted(c.answers, seen)))
+    started = clock.now
+    if c.raises:
+        with pytest.raises(c.raises) as e:
+            getattr(http, c.call)(ASKED, **c.kw)
+        assert type(e.value) is c.raises and str(e.value) == c.says
+        assert {k: e.value.extra.get(k) for k in c.extra} == c.extra and json.dumps(e.value.extra)      # as a row keeps them
+        if c.raises is not RateLimited:
+            assert not {"host", "reset"} & set(e.value.extra)
+    else:
+        assert getattr(http, c.call)(ASKED, **c.kw) == c.gives
+    assert len(seen) == c.asked == http.calls and clock.waits == c.waits
+    until = c.limited_at if c.limited_at is not None else None if c.limited_in is None else started + c.limited_in
+    assert http.limited == ({} if until is None else {"git.example.org": until})
+    if c.raises is RateLimited:
+        assert e.value.reset == e.value.extra["reset"] == until and e.value.host == "git.example.org"
+
+
+def test_the_table_has_a_row_for_each_kind_of_error_and_each_thing_a_retry_turns_on():
+    # the table is only as whole as its rows: every kind Http itself gives, every reason it asks again, each status it tells apart
+    rows_ = [p.values[0] for p in ANSWERS]
+    assert {c.raises for c in rows_ if c.raises} == {Unreachable, http_.NotFound, RateLimited}
+    assert {k for c in rows_ for k in c.extra} == {"status", "retry_after", "timeout", "no_answer", "cut", "host"}
+    statuses = {a[0] for c in rows_ for a in c.answers if isinstance(a, tuple)}
+    assert statuses >= {200, 401, 403, 404, 429, 500, 502, 503, 504}
+    assert {c.call for c in rows_} == {"json", "json_with_headers", "text", "bytes"}
+
+
+@pytest.mark.parametrize("headers, at, after", [
+    ({}, None, 60),
+    ({"x-ratelimit-reset": str(Y2100)}, Y2100, None), ({"x-ratelimit-reset": "1000000000"}, 1000000000, None),
+    ({"x-ratelimit-reset": str(Y2100), "retry-after": "5"}, Y2100, None),               # GitHub's own header first
+    ({"x-ratelimit-reset": "", "retry-after": "5"}, None, 5), ({"x-ratelimit-reset": "soon"}, None, 60),
+    ({"x-ratelimit-reset": "-1"}, None, 60), ({"x-ratelimit-reset": "1.5e9"}, None, 60),
+    ({"retry-after": "0"}, None, 0), ({"retry-after": "1"}, None, 1), ({"retry-after": "86400"}, None, 86400),
+    ({"retry-after": Y2100_AS_A_DATE}, Y2100, None), ({"retry-after": Y2015_AS_A_DATE}, Y2015, None),
+    ({"retry-after": "Friday, 01-Jan-00 00:00:00 GMT"}, 946684800, None),                 # the older form of a date
+    ({"retry-after": ""}, None, 60), ({"retry-after": "soon"}, None, 60), ({"retry-after": "-5"}, None, 60),
+    ({"retry-after": "1.5"}, None, 60), ({"retry-after": "12 seconds"}, None, 60),
+    # a digit to str.isdigit that is no number to int or float: it raised out of Http
+    ({"retry-after": "\u00b2"}, None, 60), ({"x-ratelimit-reset": "\u00b2"}, None, 60), ({"x-ratelimit-reset": "\u00b2", "retry-after": "5"}, None, 5),
+    ({"retry-after": "\u0661\u0662\u0660"}, None, 60),
+    # a number that is no time a clock can show: it raised where the Source's row was shown
+    ({"x-ratelimit-reset": "9" * 17}, None, 60), ({"x-ratelimit-reset": "9" * 400}, None, 60), ({"retry-after": "9" * 30}, None, 60),
+    ({"retry-after": "9" * 400}, None, 60), ({"x-ratelimit-reset": "9" * 17, "retry-after": "5"}, None, 5),
+    ({"retry-after": "Fri, 01 Jan 99999 00:00:00 GMT"}, None, 60),
+])
+def test_when_a_host_may_be_asked_again_is_read_from_its_headers(clock, headers, at, after):
+    """_reset_time: GitHub's reset time, else a Retry-After in seconds or as a date, else a minute."""
+    assert http_._reset_time(headers) == (at if at is not None else clock.now + after)
+
+
+def test_a_limited_host_is_refused_without_being_asked_until_its_time_has_come(clock):
+    seen = []
+    http = names(Http(opener=scripted([(429, {"Retry-After": "120"}, b""), OK], seen)))
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    for call, url in (("json", ASKED), ("bytes", "https://git.example.org/o/r/raw/branch/main/icon.png"),
+                      ("text", "http://git.example.org:443/"), ("json", "https://git.example.org:443/api/x")):
+        with pytest.raises(RateLimited, match="git.example.org rate limit reached") as e:
+            getattr(http, call)(url)
+        assert e.value.reset == clock.now + 120 and e.value.extra["status"] == 429
+    assert len(seen) == 1 == http.calls and clock.waits == []            # refused here: nothing was sent, and nothing waited
+    assert http.json("https://codeberg.org/api/x") == {"ok": True}       # the limit is that host's
+    assert http.json("https://api.git.example.org/x") == {"ok": True}    # and not a host's whose name ends in its name
+    assert http.json("https://git.example.org:3000/x") == {"ok": True}   # nor another port of its name: another host (CR1 #697)
+    assert http.text("http://git.example.org/") == '{"ok": true}'        # port 80 is one too (the owner's decision on P1-2)
+    clock.now += 119.5                                                   # until the time it gave, to the second
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    clock.now += 1
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 6
+
+
+def test_a_time_to_come_back_that_has_gone_by_limits_nothing(clock):
+    seen = []
+    http = names(Http(opener=scripted([(429, {"Retry-After": Y2015_AS_A_DATE}, b""), OK], seen)))
+    with pytest.raises(RateLimited):
+        http.json(ASKED)
+    assert http.json(ASKED) == {"ok": True} and len(seen) == 2
+
+
+# CR1's #697: a host's limit was kept by its name alone, where its token, its forge type and the
+# local-address rule take a host as one address, its name and its port (#297): two forges on one
+# name shared a limit, and the Source of the one that never gave it read "rate limited". How it
+# slipped past: every host of the tests of a limit was on its default port. The class is "a record
+# of a host kept under another notion of a host", so the two servers here share a name.
+def test_through_real_sockets_a_limit_answered_on_one_port_of_a_name_leaves_its_other_ports(pair, clock):
+    a, b = pair
+    a.files, b.files = {"/api/x": saying(429)}, {"/api/x": {"ok": True}}
+    other = f"127.0.0.1:{b.server_address[1]}"                  # B by A's name, on its own port
+    http = Http(timeout=5)
+    with pytest.raises(RateLimited, match=f"^{a.at} rate limit reached$") as e:
+        http.json(f"https://{a.at}/api/x")
+    assert e.value.host == e.value.extra["host"] == a.at and http.limited == {a.at: clock.now + 60}
+    assert http.json(f"https://{other}/api/x") == {"ok": True}
+    with pytest.raises(RateLimited, match=f"^{a.at} "):          # and the host that gave it is still refused
+        http.json(f"https://{a.at}/api/y")
+    assert [p for p, _ in a.seen] == ["/api/x"] and [p for p, _ in b.seen] == ["/api/x"]
+
+
+# CR1's #705: a limit was kept under the host a request was first made to, whichever host answered:
+# a forge's file storage, which its redirect leads to, answering 429 held back the forge's own API
+# for every app, and the storage was asked again at the next redirect. How it slipped past: the
+# tests of a limit asked one host and no redirect. The class is "a record of the host asked first
+# for what another host said" (#683 was its errors), so the limit here comes from the host a
+# redirect led to, as a forge's rate limit and as a forge being maintained.
+def saying_when(status, after=None):
+    def answer(handler):
+        when = f"Retry-After: {after}\r\n" if after else ""
+        handler.wfile.write(f"HTTP/1.1 {status} Said\r\n{when}Content-Length: 0\r\n\r\n".encode())
+    return answer
+
+
+@pytest.mark.parametrize("status, after, until", [(429, None, 60), (403, "120", 120), (503, "120", 120)])
+def test_through_real_sockets_a_limit_from_the_host_a_redirect_led_to_is_that_hosts(pair, clock, monkeypatch, status, after, until):
+    a, b = pair
+    a.redirects["/o/r/releases/download/v1/app.AppImage"] = f"https://{b.at}/storage/app.AppImage"
+    a.files, b.files = {"/api/v1/repos/o/r": {"ok": True}}, {"/storage/app.AppImage": saying_when(status, after)}
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN"}, timeout=5))
+    with pytest.raises(RateLimited, match=f"^{b.at} ") as e:
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert e.value.host == e.value.extra["host"] == b.at and e.value.status == status
+    assert http.limited == {b.at: clock.now + until} and http.limit_status == {b.at: status}
+    assert http.json(f"https://{a.at}/api/v1/repos/o/r") == {"ok": True}         # the forge's own API still goes out
+    with pytest.raises(RateLimited, match=f"^{b.at} "):                           # and the storage isn't asked again until then
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert [p for p, _ in b.seen] == ["/storage/app.AppImage"] and clock.waits == []
+    assert [p for p, _ in a.seen] == ["/o/r/releases/download/v1/app.AppImage", "/api/v1/repos/o/r",
+                                      "/o/r/releases/download/v1/app.AppImage"]
+    clock.now += until + 1                                                         # once its time has come, it is
+    with pytest.raises(RateLimited):
+        http.bytes(f"https://{a.at}/o/r/releases/download/v1/app.AppImage")
+    assert len(b.seen) == 2
+
+
+def test_r9_2_1_says_whose_a_rate_limit_is():
+    text = " ".join(reqdocs.item("R9.2.1").split())
+    assert "A rate limit holds back the requests to the host that gave it and to no other host" in text
+    assert "another port of its name is another host (R9.2.2)" in text
+    assert "where a redirect led there, the host that gave it is the one it led to" in text
+    assert "a redirect to that host isn't followed either" in text
+
+
+@pytest.mark.parametrize("call, kw, accept", [
+    ("json", {}, "application/json"), ("json_with_headers", {}, "application/json"), ("request", {}, "application/json"),
+    ("text", {}, "*/*"), ("bytes", {}, "*/*"),
+    ("json", {"accept": "application/vnd.github+json"}, "application/vnd.github+json"),
+    ("request", {"accept": "text/html"}, "text/html"),
+])
+def test_what_a_request_carries(clock, call, kw, accept):
+    seen = []
+    http = names(Http({"git.example.org": "SECRET"}, opener=scripted([OK], seen)))
+    http.set_forge("git.example.org", "gitlab")
+    getattr(http, call)(ASKED, **kw)
+    (req,) = seen
+    assert (req.full_url, req.get_method(), req.data) == (ASKED, "GET", None)
+    assert {k.lower(): v for k, v in req.header_items()} == {
+        "user-agent": http_.UA, "accept": accept, "private-token": "SECRET"}
+    assert http_.UA.startswith("AppKata/") and "(+https://" in http_.UA
+    assert dict(req.unredirected_hdrs) == {"Private-token": "SECRET"}       # the token: never a header a redirect copies
+
+
+def test_a_request_with_a_method_a_body_and_headers_of_its_own(clock):
+    seen = []
+    http = names(Http(opener=scripted([OK], seen)))
+    assert http.request(ASKED, method="POST", body=b'{"q": 1}', headers={"Content-Type": "application/json", "Accept": "text/plain"}) == (
+        b'{"ok": true}', {}, ASKED)
+    (req,) = seen
+    assert (req.get_method(), req.data) == ("POST", b'{"q": 1}')
+    assert {k.lower(): v for k, v in req.header_items()} == {"user-agent": http_.UA, "accept": "text/plain", "content-type": "application/json"}
+    http.request(ASKED, method="HEAD")
+    assert [r.get_method() for r in seen] == ["POST", "HEAD"]
+
+
+def test_how_large_an_answer_may_be_and_how_long_a_request_is_given():
+    # the numbers themselves: R9.2.1's two minutes, the 64 MiB of an answer and the 8 MiB of an image
+    limits = inspect.signature(Http._request).parameters
+    assert limits["max_bytes"].default == 64 << 20 == 67108864 and sync.MAX_IMAGE == 8 << 20
+    made = inspect.signature(Http.__init__).parameters
+    assert (made["timeout"].default, made["deadline"].default) == (20.0, 120.0) and http_.WAITS == (1.5, 3.0)
+
+
+def test_an_image_larger_than_an_image_may_be_is_passed_over(tmp_path, clock):
+    seen = []
+    http = names(Http(opener=scripted([(200, {}, PNG + b"\0" * sync.MAX_IMAGE)], seen)))
+    with pytest.raises(Unreachable, match="too large"):
+        sync._save_image(http, "https://git.example.org/o/r/raw/branch/main/icon.png", str(tmp_path / "icon"), token_host="git.example.org")
+    assert len(seen) == 1 and list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- what a Sync stores, and how it runs (R9.2, R9.2.1, R9.2.3, R3.2, R3.3)
+# CR1's #293: the forges' parsers were tested, each on its own, and nothing called the function that
+# joins them: no test ran sync_app or sync_all, so what a Sync stores for an app, the order it tries
+# the images in, which apps it syncs, how many at a time and what Cancel does were held by nothing
+# (#263, #266, #269 and #296 were all in there). The fixes of those brought a Sync's tests for
+# their own fault: what it sends where, and that it survives whatever one app's sync ends in. These
+# hold the rest, on one project that has everything a Sync reads, as GitHub, a GitLab and a Forgejo
+# serve it: every column of the row, each image by which address it came from, and the Sync as a
+# whole (the Trusts' apps, the forge type kept, four at a time, Cancel, the channels after it).
+DESCRIPTION = "The forge's own description of Widget"
+WIDGET_PATHS = [
+    "README.md", "src/main.c", "data/org.acme.widget.metainfo.xml",
+    "icon.png", "data/widget.png", "assets/logo-512.png", "assets/icon.svg", "fastlane/metadata/android/en-US/images/icon.png",
+    "docs/screenshot-main.png", "docs/screenshot-other.png", "fastlane/metadata/android/en-US/images/featureGraphic.png",
+    "docs/shot-two.png", "media/demo.png", "media/window.png",
+]
+WIDGET_METAINFO = """<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application"><id>org.acme.widget</id><name>Widget Pro</name><summary>From the metainfo</summary>
+<icon type="remote">https://cdn.example/widget-icon.png</icon>
+<screenshots><screenshot type="default"><image>https://cdn.example/widget-shot.png</image></screenshot></screenshots>
+</component>"""
+WIDGET_README = ("# Widget\n\n[![build](https://img.shields.io/badge/build-passing-green.svg)](https://ci.example/acme/widget)\n\n"
+                 "Widget turns your files into tidy little boxes, quickly and offline.\n\nIt has more to say further down.\n\n"
+                 "![the window](media/window.png)\n\n<img src=\"https://cdn.example/readme.png\">\n\n"
+                 "![a demo](media/demo.png)\n\n![shot](docs/shot-two.png)\n")
+SUMMARY = "Widget turns your files into tidy little boxes, quickly and offline."
+# R3.2 and R3.3, as addresses: the metainfo's first, then the repository's files, best first and at
+# most four and two of them, then the owner's avatar for the icon and three of the README's images
+# for the hero (a screenshot before another picture). The rest are never asked for.
+ICON_FILES = ["fastlane/metadata/android/en-US/images/icon.png", "assets/icon.svg", "assets/logo-512.png", "data/widget.png"]
+HERO_FILES = ["fastlane/metadata/android/en-US/images/featureGraphic.png", "docs/screenshot-main.png",
+              "media/demo.png", "docs/shot-two.png", "media/window.png"]
+NEVER_FILES = ["icon.png", "docs/screenshot-other.png"]
+WIDGET_RELEASES = [      # as the forge lists them, in no order: (tag, name, date, marked a prerelease, files)
+    ("v1.2.0", "1.2", "2026-03-01T00:00:00Z", False, ["widget-1.2.0-x86_64.AppImage", "widget-1.2.0.tar.gz"]),
+    ("nightly", "Nightly build", "2026-06-01T00:00:00Z", False, ["widget-nightly-x86_64.AppImage"]),
+    ("v1.10.0", "Widget 1.10", "2026-05-01T00:00:00Z", False, ["widget-1.10.0-x86_64.AppImage"]),
+    ("v1.3.0-rc1", "", "2026-04-01T00:00:00Z", True, []),
+]
+STORED = [      # as a Sync keeps them, the newest first: (tag, name, version, prerelease); a tag that is no version is a prerelease
+    ("nightly", "Nightly build", "nightly", True), ("v1.10.0", "Widget 1.10", "1.10.0", False),
+    ("v1.3.0-rc1", "v1.3.0-rc1", "1.3.0-rc1", True), ("v1.2.0", "1.2", "1.2.0", False),
+]
+WIDGETS = {
+    "github": dict(source="https://github.com/acme/widget", api="https://api.github.com/repos/acme/widget",
+                   raw="https://raw.githubusercontent.com/acme/widget/trunk/", tree="/git/trees/trunk", tags="/tags",
+                   avatar="https://avatars.githubusercontent.com/u/7", probe=None, file=dict(size=1234, digest=DIGEST, content_type="application/x-iso9660-appimage")),
+    "gitlab": dict(source="https://git.example.org/acme/widget", api="https://git.example.org/api/v4/projects/acme%2Fwidget",
+                   raw="https://git.example.org/acme/widget/-/raw/trunk/", tree="/repository/tree", tags="/repository/tags",
+                   avatar="https://git.example.org/uploads/-/system/project/avatar/7/widget", probe="https://git.example.org/api/v4/projects?per_page=1",
+                   file=dict(size=0, digest="", content_type="")),
+    "forgejo": dict(source="https://code.example.net:3000/acme/widget", api="https://code.example.net:3000/api/v1/repos/acme/widget",
+                    raw="https://code.example.net:3000/acme/widget/raw/branch/trunk/", tree="/git/trees/trunk", tags="/tags",
+                    avatar="https://code.example.net:3000/avatars/7", probe="https://code.example.net:3000/api/v1/version",
+                    file=dict(size=1234, digest="", content_type="")),
+}
+PROBE_ANSWERS = {"gitlab": [], "forgejo": {"version": "11.0.1+gitea-1.22.0"}}
+
+
+def picture(address):
+    """An image that says which address it came from, so what was kept can be read from the file."""
+    if address.endswith(".svg"):
+        return b'<svg xmlns="http://www.w3.org/2000/svg"><!-- ' + address.encode() + b" --></svg>"
+    return PNG + address.encode()
+
+
+def longest_first(routes):
+    return dict(sorted(routes.items(), key=lambda kv: -len(kv[0])))      # opener() takes the first prefix
+
+
+def widget(forge, paths=WIDGET_PATHS, **info):
+    """The Widget project as this forge serves it: its Source, its routes, and the addresses of its
+    images in the order R3.2 and R3.3 give."""
+    w = types.SimpleNamespace(kind=forge, **WIDGETS[forge])
+    w.host = urls.parse(w.source).host
+    w.info = {"name": "widget", "full_name": "acme/widget", "path_with_namespace": "acme/widget", "description": DESCRIPTION,
+              "default_branch": "trunk", "avatar_url": w.avatar, "owner": {"avatar_url": w.avatar}, "html_url": w.source,
+              "web_url": w.source, "archived": True, **info}
+    w.releases = []
+    for tag, name, date, pre, files in WIDGET_RELEASES:
+        links = [(f, f"{w.source}/releases/download/{tag}/{f}") for f in files]
+        page = f"{w.source}/releases/tag/{tag}"
+        if forge == "gitlab":
+            w.releases.append({"tag_name": tag, "name": name, "released_at": date, "upcoming_release": pre, "description": f"Notes of {tag}",
+                               "_links": {"self": page}, "assets": {"links": [{"name": f, "direct_asset_url": u} for f, u in links]}})
+        else:
+            w.releases.append({"tag_name": tag, "name": name, "published_at": date, "prerelease": pre, "draft": False,
+                               "body": f"Notes of {tag}", "html_url": page,
+                               "assets": [{"name": f, "browser_download_url": u, "size": 1234, "digest": DIGEST,
+                                           "content_type": "application/x-iso9660-appimage"} for f, u in links]})
+    if forge != "gitlab":
+        w.releases.insert(1, {"tag_name": "v2.0.0", "name": "Not out yet", "published_at": "2026-07-01T00:00:00Z", "draft": True, "assets": []})
+    blobs = [{"path": p, "type": "blob"} for p in paths] + [{"path": "docs", "type": "tree"}]
+    w.icons = ["https://cdn.example/widget-icon.png"] + [w.raw + p for p in ICON_FILES] + [w.avatar]
+    w.heroes = ["https://cdn.example/widget-shot.png"] + [w.raw + p for p in HERO_FILES]
+    w.never = [w.raw + p for p in NEVER_FILES] + ["https://cdn.example/readme.png"]
+    files = {"README.md": WIDGET_README.encode(), "data/org.acme.widget.metainfo.xml": WIDGET_METAINFO.encode(), "src/main.c": b"int main;"}
+    w.routes = {w.api: w.info, w.api + "/releases": w.releases, w.api + w.tree: blobs if forge == "gitlab" else {"tree": blobs},
+                **{w.raw + p: files.get(p) or picture(w.raw + p) for p in paths},
+                **{u: picture(u) for u in ("https://cdn.example/widget-icon.png", "https://cdn.example/widget-shot.png",
+                                           "https://cdn.example/readme.png", w.avatar)}}
+    if w.probe:
+        w.routes[w.probe] = PROBE_ANSWERS[forge]
+    return w
+
+
+def sync_of(tmp_path, monkeypatch, w, routes=None, seen=None, db=None, **kw):
+    """A whole Sync of the Catalog over these routes. Returns the database and what was asked for, in order."""
+    seen = [] if seen is None else seen
+    db = db or catalog(tmp_path, monkeypatch, [w.source])
+    http = names(Http({}, opener=recording(longest_first(w.routes if routes is None else routes), seen)))
+    sync.sync_all(db, http, root=str(tmp_path), **kw)
+    return db, [url for url, _ in seen]
+
+
+def kept(tmp_path, app, which):
+    """The image file a row names, or None where it names none."""
+    if not app[which]:
+        return None
+    assert not os.path.isabs(app[which]) and os.path.basename(os.path.dirname(app[which])) == os.path.basename(sync.cache_dir(app["url"], str(tmp_path)))
+    with open(os.path.join(str(tmp_path), app[which]), "rb") as f:
+        return f.read()
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_what_a_sync_stores_for_an_app(tmp_path, monkeypatch, forge):
+    w = widget(forge)
+    before = now()
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert {k: app[k] for k in ("name", "description", "summary", "readme", "raw_base", "forge", "host", "repo", "archived", "error",
+                                "error_code", "error_extra")} == {
+        "name": "Widget Pro",                                   # the metainfo's, before the repository's
+        "description": DESCRIPTION, "summary": SUMMARY,         # R3.4.1: the README's first prose, before the metainfo's and the forge's
+        "readme": WIDGET_README, "raw_base": w.raw.rstrip("/"), "forge": forge, "host": w.host, "repo": "acme/widget", "archived": 1,
+        "error": None, "error_code": None, "error_extra": "{}"}
+    assert before <= app["fetched_at"] <= now()
+    assert kept(tmp_path, app, "icon") == picture(w.icons[0]) and kept(tmp_path, app, "hero") == picture(w.heroes[0])
+    assert os.path.basename(app["icon"]) == "icon.png" and os.path.basename(app["hero"]) == "hero.png"
+    stored = json.loads(app["releases"])
+    assert [(r["tag"], r["name"], r["version"], r["prerelease"]) for r in stored] == STORED        # no draft among them
+    by_tag = {tag: (date, files) for tag, _, date, _, files in WIDGET_RELEASES}
+    for r in stored:
+        date, files = by_tag[r["tag"]]
+        assert r == {"tag": r["tag"], "name": r["name"], "version": r["version"], "prerelease": r["prerelease"], "date": date,
+                     "notes": f"Notes of {r['tag']}", "html_url": f"{w.source}/releases/tag/{r['tag']}",
+                     "assets": [{"name": f, "url": f"{w.source}/releases/download/{r['tag']}/{f}", **w.file} for f in files]}
+    assert db.one("SELECT forge FROM sources WHERE url=?", (w.source,))["forge"] == forge        # found once, kept for the next Sync
+    assert db.one("SELECT appstream_id FROM app_meta WHERE url=?", (w.source,))["appstream_id"] == "org.acme.widget"
+    assert db.get("last_sync") >= before
+    assert len(asked) == len(set(asked))                        # and nothing was asked for twice
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_the_images_are_tried_in_r3_2s_and_r3_3s_order_and_no_others(tmp_path, monkeypatch, forge):
+    """Every image address answers 404: each is asked for once, in the order of the two lists, then
+    the app is stored without an icon or a hero, and with no error. The files past the fourth icon,
+    the second hero and the third README image are never asked for."""
+    w = widget(forge)
+    images = w.icons + w.heroes + w.never
+    db, asked = sync_of(tmp_path, monkeypatch, w, {k: v for k, v in w.routes.items() if k not in images})
+    assert [url for url in asked if url in images] == w.icons + w.heroes
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["icon"], app["hero"], app["name"]) == (None, "", "", "Widget Pro")
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+@pytest.mark.parametrize("which, n", [(which, n) for which in ("icon", "hero") for n in range(6)])
+def test_the_first_image_that_answers_is_the_one_kept(tmp_path, monkeypatch, forge, which, n):
+    """The first n addresses of R3.2's list, or of R3.3's, give no image, each in another way: the next one is kept, and none after it is asked for."""
+    w = widget(forge)
+    wanted = w.icons if which == "icon" else w.heroes
+    no_image = [_status(404), _status(500), urllib.error.URLError(OSError(111, "Connection refused")), b"x" * (sync.MAX_IMAGE + 1)]
+    db, asked = sync_of(tmp_path, monkeypatch, w, {**w.routes, **{url: no_image[i % len(no_image)] for i, url in enumerate(wanted[:n])}})
+    app = rows(db)[w.source]
+    assert app["error_code"] is None and kept(tmp_path, app, which) == picture(wanted[n])
+    assert [url for url in asked if url in wanted] == wanted[:n + 1]
+    other = "hero" if which == "icon" else "icon"
+    assert kept(tmp_path, app, other) == picture((w.heroes if which == "icon" else w.icons)[0])
+
+
+def test_an_app_keeps_the_icon_it_had_when_none_answers(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    db, _ = sync_of(tmp_path, monkeypatch, w)
+    first = rows(db)[w.source]
+    db, asked = sync_of(tmp_path, monkeypatch, w, {k: v for k, v in w.routes.items() if k not in w.icons}, db=db)
+    app = rows(db)[w.source]
+    assert [url for url in asked if url in w.icons] == w.icons
+    assert app["error_code"] is None and app["icon"] == first["icon"] and kept(tmp_path, app, "icon") == picture(w.icons[0])
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_a_project_that_says_nothing_of_itself_is_stored_as_its_forge_describes_it(tmp_path, monkeypatch, forge):
+    # no README, no metainfo, no image in the repository: the forge's name and description, and the owner's avatar
+    w = widget(forge, paths=["src/main.c"])
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["name"], app["summary"], app["readme"], app["hero"]) == (None, "widget", DESCRIPTION, "", "")
+    assert kept(tmp_path, app, "icon") == picture(w.avatar)
+    assert db.one("SELECT appstream_id FROM app_meta WHERE url=?", (w.source,)) is None
+    assert [url for url in asked if url.startswith(w.raw)] == []
+
+
+def test_a_metainfo_whose_name_is_a_placeholder_leaves_the_forges_name(tmp_path, monkeypatch):
+    w = widget("gitlab")
+    w.routes[w.raw + "data/org.acme.widget.metainfo.xml"] = WIDGET_METAINFO.replace("Widget Pro", "@@APP_NAME@@").encode()
+    db, _ = sync_of(tmp_path, monkeypatch, w)
+    assert rows(db)[w.source]["name"] == "widget" and rows(db)[w.source]["summary"] == SUMMARY
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+def test_a_project_that_moved_has_where_to_on_its_row(tmp_path, monkeypatch, forge):
+    w = widget(forge, full_name="acme/gadget", path_with_namespace="acme/gadget",
+               html_url=WIDGETS[forge]["source"].replace("widget", "gadget"), web_url=WIDGETS[forge]["source"].replace("widget", "gadget"))
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    app = rows(db)[w.source]
+    assert app["error_code"] == "Renamed" and json.loads(app["error_extra"]) == {"new_url": w.source.replace("widget", "gadget")}
+    assert asked[-1] == w.api and asked.count(w.api) == 1                  # and nothing more is read under the old name
+
+
+@pytest.mark.parametrize("forge", sorted(WIDGETS))
+@pytest.mark.parametrize("track_only", [True, False])
+def test_tags_stand_in_for_releases_only_where_the_source_tracks_them(tmp_path, monkeypatch, forge, track_only):
+    w = widget(forge)
+    w.routes[w.api + "/releases"] = []
+    w.routes[w.api + w.tags] = [{"name": "v1.2.0", "commit": {"created": "2026-03-01T00:00:00Z", "created_at": "2026-03-01T00:00:00Z"}},
+                                {"name": "v1.3.0", "commit": {"created": "2026-04-01T00:00:00Z", "created_at": "2026-04-01T00:00:00Z"}}]
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    db.x("UPDATE sources SET settings=? WHERE url=?", (json.dumps({"track_only": track_only}), w.source))
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    app = rows(db)[w.source]
+    assert app["error_code"] is None and (w.api + w.tags in [url.split("?")[0] for url in asked]) == track_only
+    assert sorted((r["tag"], r["version"], r["assets"]) for r in json.loads(app["releases"])) == (
+        [("v1.2.0", "1.2.0", []), ("v1.3.0", "1.3.0", [])] if track_only else [])
+
+
+# ---- which forge type a Sync takes a host for (R2.4.2, R2.6.5, R10.3.1)
+def own_reviews(tmp_path, db, *listed, settings=""):
+    """The user's own review file, which lists these apps: a Trust that is always applied."""
+    path = tmp_path / "AppKata.md"
+    table = "".join(f"| App {n} | {url} | foss | 4 | 4 |\n" for n, url in enumerate(listed, 1))
+    path.write_text("# Mine\n\n| App | Source | Tags | Trust | Rating |\n|---|---|---|---|---|\n" + table + settings, encoding="utf-8")
+    return sync.own_trust(db, str(path))
+
+
+def test_a_hosts_forge_type_is_found_once_and_kept_for_the_next_sync(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    db, asked = sync_of(tmp_path, monkeypatch, w)
+    assert asked[0] == w.probe and asked.count(w.probe) == 1
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert w.probe not in asked and asked[0] == w.api and rows(db)[w.source]["error_code"] is None
+
+
+def test_an_app_a_trust_lists_keeps_the_forge_type_found_for_it_too(tmp_path, monkeypatch):
+    # it has no Source to keep the type on: its own row does
+    w = widget("gitlab")
+    db = catalog(tmp_path, monkeypatch, [])
+    own_reviews(tmp_path, db, w.source)
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert asked.count(w.probe) == 1 and rows(db)[w.source]["forge"] == "gitlab"
+    db, asked = sync_of(tmp_path, monkeypatch, w, db=db)
+    assert w.probe not in asked and rows(db)[w.source]["error_code"] is None
+
+
+@pytest.mark.parametrize("own, trusts, kept_on_source, taken_for", [
+    ("forgejo", "gitlab", "gitlab", "forgejo"),          # the Source's own setting first (R2.6.5)
+    (None, "forgejo", "gitlab", "forgejo"),              # then what a Trust recommends (R10.3.1)
+    (None, None, "forgejo", "forgejo"),                  # then what an earlier Sync found
+])
+def test_the_forge_type_is_the_sources_setting_then_a_trusts_then_the_one_found(tmp_path, monkeypatch, own, trusts, kept_on_source, taken_for):
+    """A Forgejo on a host whose name says GitLab, and no probe that answers: each way the type is known without asking."""
+    w = widget("forgejo")
+    source = "https://gitlab.example.org/acme/widget"
+    routes = {k.replace("https://code.example.net:3000/", "https://gitlab.example.org/"): v for k, v in w.routes.items() if k != w.probe}
+    db = catalog(tmp_path, monkeypatch, [source])
+    db.x("UPDATE sources SET settings=?, forge=? WHERE url=?", (json.dumps({"forge": own} if own else {}), kept_on_source, source))
+    if trusts:
+        own_reviews(tmp_path, db, source, settings=f"\n# App 1\n\nFine.\n\n## App 1::Settings\n\n- Forge: {forges.LABELS[trusts]}\n")
+    w.source = source
+    db, asked = sync_of(tmp_path, monkeypatch, w, routes, db=db)
+    app = rows(db)[source]
+    assert (app["error_code"], app["forge"], app["name"]) == (None, taken_for, "Widget Pro"), app["error"]
+    assert asked[0] == "https://gitlab.example.org/api/v1/repos/acme/widget"
+    assert db.one("SELECT forge FROM sources WHERE url=?", (source,))["forge"] == kept_on_source
+
+
+# ---- which apps a Sync syncs, and how it runs (R9.2, R9.2.1, R9.2.3)
+def test_a_sync_reads_the_trusts_first_and_syncs_every_app_of_the_catalog_once(tmp_path, monkeypatch):
+    """R9.2.3: a Source, an app only a Trust lists, and one that is both; an app only a disabled
+    Trust lists is left out. The user's own review file is read by this very Sync, before its apps."""
+    github, gitlab, forgejo = widget("github"), widget("gitlab"), widget("forgejo")
+    left_out = "https://codeberg.org/acme/left-out"
+    db = catalog(tmp_path, monkeypatch, [gitlab.source, forgejo.source])
+    own_reviews(tmp_path, db, github.source, forgejo.source)
+    off = db.x("INSERT INTO trusts(url, name, path, enabled, added_at) VALUES(?,?,?,0,?)",
+               ("https://example.org/reviews", "Switched off", "AppKata.md", now())).lastrowid
+    db.x("INSERT INTO reviews(trust_id, url, app) VALUES(?,?,?)", (off, left_out, "Left out"))
+    assert db.all("SELECT url FROM reviews WHERE trust_id!=?", (off,)) == []          # the file hasn't been read yet
+    progress, items, seen = sync.Progress(), [], []
+    http = names(Http({}, opener=recording(longest_first({**github.routes, **gitlab.routes, **forgejo.routes}), seen)))
+    sync.sync_all(db, http, progress, root=str(tmp_path), on_item=lambda: items.append((progress.done, progress.total)))
+    apps = rows(db)
+    assert sorted(apps) == sorted([github.source, gitlab.source, forgejo.source])
+    assert all(app["error_code"] is None and app["name"] == "Widget Pro" for app in apps.values())
+    assert [url for url, _ in seen if "left-out" in url] == []
+    assert [[url for url, _ in seen].count(w.api) for w in (github, gitlab, forgejo)] == [1, 1, 1]       # the one that is both, once
+    assert (progress.done, progress.total) == (4, 4)            # the Trust, then the three apps
+    assert items[0] == (1, 1) and sorted(items[1:]) == [(2, 4), (3, 4), (4, 4)]
+    assert db.one("SELECT synced_at FROM trusts WHERE own=1")["synced_at"] and db.get("last_sync")
+
+
+@pytest.mark.parametrize("workers", [None, 2, 1])
+def test_at_most_four_apps_are_fetched_at_the_same_time(tmp_path, monkeypatch, workers):
+    """R9.2.1. Eight Sources on eight hosts. The first requests wait for one another: that as many as
+    are allowed do run together is certain, and a request more than that is seen if it ever starts."""
+    allowed = workers or 4
+    sources = [f"https://forge{i}.example.org/acme/widget" for i in range(8)]
+    db = catalog(tmp_path, monkeypatch, sources)
+    db.x("UPDATE sources SET forge='forgejo'")
+    together, lock, state = threading.Barrier(allowed, timeout=10), threading.Lock(), {"now": 0, "most": 0, "met": False}
+
+    def open_(req, timeout=0):
+        with lock:
+            state["now"] += 1
+            state["most"] = max(state["most"], state["now"])
+            first = not state["met"]
+        try:
+            if first:
+                together.wait()                               # until `allowed` requests are under way at once
+                state["met"] = True
+            time.sleep(0.002)
+            raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+        finally:
+            with lock:
+                state["now"] -= 1
+    sync.sync_all(db, names(Http({}, opener=open_)), root=str(tmp_path), **({"workers": workers} if workers else {}))
+    assert state["met"] and state["most"] == allowed
+    assert sorted(rows(db)) == sorted(sources) and all(app["error_code"] == "NotFound" for app in rows(db).values())
+
+
+def test_a_sync_cancelled_before_it_starts_asks_for_nothing(tmp_path, monkeypatch):
+    w, seen, after = widget("forgejo"), [], []
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http, progress=None: after.append("channels"))
+    for with_a_trust in (False, True):
+        folder = tmp_path / ("with-a-trust" if with_a_trust else "without")
+        folder.mkdir()
+        db = catalog(folder, monkeypatch, [w.source])
+        if with_a_trust:
+            own_reviews(folder, db, widget("gitlab").source)
+        progress = sync.Progress(cancelled=True)
+        sync.sync_all(db, names(Http({}, opener=recording(longest_first(w.routes), seen))), progress, root=str(folder))
+        assert seen == [] and rows(db) == {} and after == [] and progress.done == 0
+        assert db.all("SELECT * FROM reviews") == []           # nor was the Trust read
+
+
+def test_a_sync_cancelled_between_two_apps_leaves_the_rest_as_they_were(tmp_path, monkeypatch):
+    widgets = [widget("github"), widget("gitlab"), widget("forgejo")]
+    seen, after = [], []
+    monkeypatch.setattr(sync, "sync_channels", lambda db, http, progress=None: after.append("channels"))
+    db = catalog(tmp_path, monkeypatch, [w.source for w in widgets] + ["nostr://naddr1widget"])     # one whose sync asks for nothing
+    progress = sync.Progress()
+    http = names(Http({}, opener=recording(longest_first({k: v for w in widgets for k, v in w.routes.items()}), seen)))
+    sync.sync_all(db, http, progress, root=str(tmp_path), workers=1, on_item=lambda: setattr(progress, "cancelled", True))
+    (done,) = rows(db).values()                                # the one app that was synced before the Cancel, whole
+    assert done["error_code"] is None and done["name"] == "Widget Pro"
+    assert (progress.done, progress.total) == (1, 4) and after == []          # nor are the package channels read
+    assert [url for url, _ in seen if url.startswith(tuple(w.api for w in widgets if w.source != done["url"]))] == []
+
+
+# The review's pass 1, P1-B5: R9.2.1 says Cancel stops the requests under way, and #296's Cancel
+# reached only each app's sync. A Trust's key lookup (keys.openpgp.org) and the link checks of the
+# package channels (R16.1.5), a request or more for each app of the Catalog, ran to their end: a
+# Cancel in the channels step, with the ring still showing, waited for every check. How it slipped
+# past: every Cancel test cancelled an app's sync. The class is "a step of a Sync that Cancel doesn't
+# reach", so a Cancel here comes in each step that asks a host for something.
+def cancelling(clock, progress, answers):
+    """An opener whose answers drip in, and the user pressing Cancel at the fifth read of the first."""
+    return dripping(clock, 4.0, answers=answers, then=lambda reads: reads == 5 and setattr(progress, "cancelled", True))
+
+
+def test_cancel_stops_a_trusts_key_lookup_and_the_trust_keeps_what_the_last_sync_stored(tmp_path, monkeypatch, clock):
+    """A Trust whose new change is signed by an OpenPGP key it doesn't publish: its sync looks the
+    key up (R10.8). Git stands in, and the Trust's repository is never read."""
+    db = catalog(tmp_path, monkeypatch, [widget("forgejo").source])          # an app after it, which the Sync doesn't reach
+    tid = db.x("INSERT INTO trusts(url, name, path, verified_commit, verified_at, synced_at, added_at) VALUES(?,?,?,?,?,?,?)",
+               ("https://git.example.org/o/reviews", "Reviews", "AppKata.md", "a" * 40, "before", "before", now())).lastrowid
+    stopped = gitsig.Check("b" * 40, "nokey", gitsig.Signer("gpg", "C" * 40))
+    monkeypatch.setattr(gitsig, "fetch", lambda loc, dest: "b" * 40)
+    monkeypatch.setattr(gitsig, "advance", lambda *a: gitsig.Advance("a" * 40, [stopped], stopped, "unknown-signer"))
+    monkeypatch.setattr(gitsig, "repo_gpg_keys", lambda repo, commit: [])
+    progress, answers = sync.Progress(), []
+    sync.sync_all(db, names(Http({}, opener=cancelling(clock, progress, answers))), progress, root=str(tmp_path))
+    assert [(a.geturl(), a.reads) for a in answers] == [("https://keys.openpgp.org/vks/v1/by-fingerprint/" + "C" * 40, 5)]
+    assert clock.waits == [] and progress.done == 0 and rows(db) == {}
+    trust = db.one("SELECT * FROM trusts WHERE id=?", (tid,))
+    assert (trust["verified_commit"], trust["synced_at"], trust["problem"]) == ("a" * 40, "before", "")
+    assert "in each step of the Sync: a Trust's key lookup, an app's sync and the link checks" in " ".join(
+        reqdocs.item("R9.2.1").split())
+
+
+def link_checks(monkeypatch, check):
+    """The machine's package channels, standing in: apt, no Flatpak, each app of the Catalog linked
+    to a package, and `check` as its link check (channels.check_package, R16.1.5)."""
+    from appkata_core import appstream, autoupdate, flatpak, pkgbackend
+    monkeypatch.setattr(channels, "enabled", lambda: True)
+    monkeypatch.setattr(autoupdate, "detect", lambda: types.SimpleNamespace(as_dict=lambda: {}))
+    monkeypatch.setattr(sync, "track_channel_installs", lambda db, http=None: None)
+    monkeypatch.setattr(appstream, "load_cached", lambda: None)
+    monkeypatch.setattr(channels, "manager", lambda: "apt")
+    monkeypatch.setattr(flatpak, "available", lambda: False)
+    monkeypatch.setattr(pkgbackend, "package_version_available", lambda name, mgr=None: "1.0")
+    monkeypatch.setattr(channels, "links", lambda db, url, cat=None, mgr=None: {"package": channels.Link("package", "widget")})
+    monkeypatch.setattr(channels, "check_package", check)
+
+
+@pytest.mark.parametrize("when", ["while a check's answer is read", "between two apps' checks"])
+def test_cancel_stops_the_link_checks_of_a_sync(tmp_path, monkeypatch, clock, when):
+    apps = ["nostr://naddr1one", "nostr://naddr1two"]                       # apps whose own sync asks for nothing
+    db = catalog(tmp_path, monkeypatch, apps)
+    progress, answers, checked = sync.Progress(), [], []
+
+    def check(db_, http, url, *a):
+        checked.append(url)
+        if when == "between two apps' checks":
+            progress.cancelled = True                                      # once this one's check is done
+        else:
+            http.text("https://sources.debian.org/api/src/widget/")         # as the Debian check asks
+    link_checks(monkeypatch, check)
+    sync.sync_all(db, names(Http({}, opener=cancelling(clock, progress, answers))), progress, root=str(tmp_path))
+    assert checked == apps[:1] and clock.waits == []
+    assert [a.reads for a in answers] == ([5] if when == "while a check's answer is read" else [])
+    assert progress.done == 2
+
+
+def test_the_package_channels_are_read_once_after_the_apps_and_never_end_a_sync(tmp_path, monkeypatch):
+    w, after = widget("forgejo"), []
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    monkeypatch.setattr(sync, "sync_channels", lambda db_, http_, progress=None: after.append(sorted(rows(db_))))
+    sync_of(tmp_path, monkeypatch, w, db=db)
+    assert after == [[w.source]]                               # the apps were stored by then
+    monkeypatch.undo()
+
+    def fails(db_, http_=None, progress=None):
+        raise RuntimeError("the package manager isn't answering")
+    monkeypatch.setattr(channels, "enabled", lambda: True)
+    monkeypatch.setattr(sync, "track_channel_installs", fails)
+    monkeypatch.setattr(sync, "check_links", fails)
+    from appkata_core import autoupdate
+    monkeypatch.setattr(autoupdate, "detect", fails)
+    db.put("last_sync", "")
+    sync.sync_all(db, names(Http({}, opener=opener(longest_first(w.routes)))), root=str(tmp_path))
+    assert db.get("last_sync") and rows(db)[w.source]["error_code"] is None
+
+
+def test_a_source_that_is_no_forges_project_has_that_on_its_row(tmp_path, monkeypatch):
+    db = catalog(tmp_path, monkeypatch, ["nostr://naddr1widget"])
+    sync.sync_all(db, names(Http({}, opener=opener({}))), root=str(tmp_path))
+    app = rows(db)["nostr://naddr1widget"]
+    assert app["error_code"] == "Unsupported" and "ngit" in app["error"]
+
+
+# ---- each probe of forges.detect (R2.4.2)
+P1, P2, P3, P4 = ("https://git.example.org/api/v1/version", "https://git.example.org/api/v4/projects?per_page=1",
+                  "https://git.example.org/api/v3/meta", "https://git.example.org/")
+
+
+@pytest.mark.parametrize("answers, kind", [
+    ({P1: {"version": "1.22.0"}}, "gitea"),
+    ({P1: {"version": "11.0.1+gitea-1.22.0"}}, "forgejo"),                       # Forgejo, as it gives its version
+    ({P1: {"version": "9.0.3", "name": "Forgejo"}}, "forgejo"),
+    ({P1: {"message": "no version here"}, P2: []}, "gitlab"),                    # the first isn't a Gitea's answer: the next is asked
+    ({P1: ["a", "list"], P2: [{"id": 7, "path_with_namespace": "o/r"}]}, "gitlab"),
+    ({P2: {"message": "401 Unauthorized"}, P3: {"installed_version": "3.14.0"}}, "ghe"),
+    ({P3: {"verifiable_password_authentication": False}}, "ghe"),
+    ({P3: {"message": "another API"}, P4: b'<html><head><meta name="generator" content="Forgejo"></head>'}, "forgejo"),
+    ({P4: b'<META NAME="generator" CONTENT="Gitea - Git with a cup of tea">'}, "gitea"),
+    ({P4: b'<meta content="GitLab" property="og:site_name">'}, "gitlab"),
+    ({P4: b'<meta property="og:site_name" content="GitLab">'}, "gitlab"),
+    ({P4: b"<html>A page that says nothing</html>"}, None),
+    ({}, None),
+])
+def test_each_probe_of_a_hosts_forge_type_in_its_order(clock, answers, kind):
+    """R2.4.2: the probes are asked in their order, each is passed over unless its answer is that
+    forge's own, and the first that is ends the asking."""
+    seen = []
+    http = names(Http(opener=recording(longest_first(answers), seen)))
+    if kind is None:
+        with pytest.raises(forges.Unsupported, match="couldn't tell which forge git.example.org runs; set the forge type in Source settings"):
+            forges.detect(http, "git.example.org")
+        assert [url for url, _ in seen] == [P1, P2, P3, P4]
+    else:
+        assert forges.detect(http, "git.example.org") == kind
+        last = [p for p in (P1, P2, P3, P4) if p in answers][-1]
+        assert [url for url, _ in seen] == [P1, P2, P3, P4][:[P1, P2, P3, P4].index(last) + 1]
+    assert clock.waits == [] and all("authorization" not in h and "private-token" not in h for _, h in seen)
+
+
+@pytest.mark.parametrize("host", sorted(forges.KNOWN))
+def test_a_host_appkata_knows_is_never_probed(host):
+    seen = []
+    http = names(Http(opener=recording({}, seen)))
+    assert forges.detect(http, host) == forges.KNOWN[host] and forges.KNOWN[host] in forges.LABELS
+    assert forges.forge_for(http, urls.parse(f"https://{host}/o/r")).label == forges.LABELS[forges.KNOWN[host]] and seen == []
+
+
+# ---- github.com's own pages and git, the whole way (R2.4.1)
+def test_a_whole_sync_of_a_github_project_by_its_pages_and_git(tmp_path, monkeypatch):
+    """The API's limit is used up, so nothing is asked of it: the project's page, the releases feed,
+    each release's files with their digests, and git for the default branch and the file list."""
+    w = widget("github")
+    web = "https://github.com/acme/widget"
+    asked_of_git = []
+
+    def git_out(args):
+        asked_of_git.append(args)
+        if args[:2] == ["ls-remote", "--symref"]:
+            return "ref: refs/heads/trunk\tHEAD\n8a1f3c\tHEAD\n"
+        if args[0] == "-C" and "ls-tree" in args:
+            return "\n".join(WIDGET_PATHS) + "\n"
+        return ""
+    monkeypatch.setattr(forges, "_git_out", git_out)
+    entry = ('<entry><updated>{d}</updated><link rel="alternate" href="' + web + '/releases/tag/{t}"/><title>{n}</title>'
+             '<content type="html">&lt;p&gt;Notes of {t}&lt;/p&gt;</content></entry>')
+    feed = '<feed xmlns="http://www.w3.org/2005/Atom">' + "".join(
+        entry.format(t=tag, n=name or tag, d=date.replace("T00:00", "T09:30")) for tag, name, date, _, _ in WIDGET_RELEASES) + "</feed>"
+    label = '<span class="Label Label--warning Label--large">Pre-release</span>'
+    listing = "".join(f'<a href="/acme/widget/releases/tag/{tag}">{name}</a>{label if pre else ""}' for tag, name, _, pre, _ in WIDGET_RELEASES)
+    routes = {k: v for k, v in w.routes.items() if not k.startswith("https://api.github.com/")}
+    routes.update({
+        web: (f'<html><head><meta name="description" content="{DESCRIPTION} - acme/widget"></head>'
+              "<p>This repository has been archived by the owner.</p></html>").encode(),
+        web + "/releases.atom": feed.encode(), web + "/releases": listing.encode(),
+        "https://github.com/acme.png?size=256": picture(w.avatar),
+        **{f"{web}/releases/expanded_assets/{tag}": ("".join(
+            f'<a href="/acme/widget/releases/download/{tag}/{f}">{f}</a><span>{DIGEST}</span><span>1.5 MB</span>' for f in files)
+            + f'<relative-time datetime="{date}">').encode() for tag, _, date, _, files in WIDGET_RELEASES}})
+    seen = []
+    db = catalog(tmp_path, monkeypatch, [w.source])
+    http = names(Http({}, opener=recording(longest_first(routes), seen)))
+    http.limited["api.github.com"] = time.time() + 600
+    sync.sync_all(db, http, root=str(tmp_path))
+    app = rows(db)[w.source]
+    assert (app["error_code"], app["name"], app["description"], app["summary"], app["archived"], app["raw_base"]) == (
+        None, "Widget Pro", DESCRIPTION, SUMMARY, 1, w.raw.rstrip("/")), app["error"]
+    assert [url for url, _ in seen if "api.github.com" in url] == []
+    stored = json.loads(app["releases"])
+    published = {tag: date if files else date.replace("T00:00", "T09:30") for tag, _, date, _, files in WIDGET_RELEASES}
+    assert [(r["tag"], r["version"], r["prerelease"], r["date"]) for r in stored] == [      # a release's own date, where its files' page gave one
+        (tag, version, pre, published[tag]) for tag, _, version, pre in STORED]
+    assert {r["tag"]: r["assets"] for r in stored} == {
+        tag: [{"name": f, "url": f"{web}/releases/download/{tag}/{f}", "size": 1500000, "digest": DIGEST, "content_type": ""} for f in files]
+        for tag, _, _, _, files in WIDGET_RELEASES}
+    assert stored[1]["notes"] == "Notes of v1.10.0"
+    assert kept(tmp_path, app, "icon") == picture(w.icons[0]) and kept(tmp_path, app, "hero") == picture(w.heroes[0])
+    assert [a[:2] for a in asked_of_git if a[0] == "ls-remote"] == [["ls-remote", "--symref"]]
+    assert all(web in a for a in asked_of_git if a[0] in ("ls-remote", "clone"))       # git was given the project's own address, and no other
+
+
+def test_by_the_pages_a_projects_tags_come_from_git_newest_version_first(monkeypatch):
+    monkeypatch.setattr(forges, "_git_out", lambda args: "".join(f"{n:040x}\trefs/tags/{t}\n" for n, t in enumerate(
+        ["v1.9.0", "v1.10.0", "v1.2.0", "v2.0.0-rc1"])))
+    http = names(Http(opener=opener({})))
+    http.limited["api.github.com"] = time.time() + 600
+    tags = forges.forge_for(http, urls.parse("https://github.com/acme/widget"), "github").tags(limit=3)
+    assert [(t.tag, t.version, t.date) for t in tags] == [("v2.0.0-rc1", "2.0.0-rc1", ""), ("v1.10.0", "1.10.0", ""), ("v1.9.0", "1.9.0", "")]
+
+
+def test_by_the_pages_a_project_that_moved_is_renamed(monkeypatch):
+    monkeypatch.setattr(forges, "_git_out", lambda args: "")
+    http = names(Http(opener=lambda req, timeout=0: FakeResponse("https://github.com/acme/gadget", b"<html></html>")))
+    http.limited["api.github.com"] = time.time() + 600
+    with pytest.raises(forges.Renamed) as e:
+        forges.forge_for(http, urls.parse("https://github.com/acme/widget"), "github").info()
+    assert e.value.new_url == "https://github.com/acme/gadget"
+
+
+# ---------------------------------------------------------------- whose answer an error is, after a redirect (R2.10, R9.2.2)
+# CR1's #683: Http named the host it asked first in every error, and called a 401 the token's
+# whenever the first address had carried one. Since a redirect to another host goes on without the
+# token (#264), a 401 can come from a host that was sent none: the row said the first host had
+# rejected the user's API token, and sent them to Settings to replace a token that was fine. How it
+# slipped past: a stand-in opener never redirects, and the tests of a redirect looked at what was
+# sent, not at what an error said. The class is "an answer after a redirect is taken for the first
+# host's", so each failing answer here comes from the last of two or three hosts' hops, through
+# Http's own opener, and its error is held to that host and to what that host was sent.
+def saying(status):
+    def answer(handler):
+        handler.wfile.write(f"HTTP/1.1 {status} Said\r\nContent-Length: 0\r\n\r\n".encode())
+    return answer
+
+
+@pytest.mark.parametrize("path, status, says", [
+    ("/direct", 401, "127.0.0.1 rejected the API token (HTTP 401)"),              # the token's own host, asked first
+    ("/moved-on-the-host", 401, "127.0.0.1 rejected the API token (HTTP 401)"),   # a redirect on the host keeps the token: still the token's
+    ("/to-another-host", 401, "localhost answered HTTP 401"),                     # the finding: that host was sent no token
+    ("/there-and-back", 401, "127.0.0.1 answered HTTP 401"),                      # back on the first host, without the token it lost on the way
+    ("/to-another-host", 403, "localhost answered HTTP 403"),
+    ("/to-another-host", 500, "localhost answered HTTP 500"),
+    ("/direct", 500, "127.0.0.1 answered HTTP 500"),
+], ids=["direct-401", "moved-on-the-host-401", "to-another-host-401", "there-and-back-401", "to-another-host-403", "to-another-host-500",
+        "direct-500"])
+def test_through_real_sockets_an_error_after_a_redirect_is_the_last_hosts_and_the_tokens_only_if_it_went_there(pair, clock, monkeypatch, path, status, says):
+    a, b = pair
+    a.redirects.update({"/moved-on-the-host": "/api/new", "/to-another-host": f"https://{b.at}/elsewhere", "/there-and-back": f"https://{b.at}/back"})
+    b.redirects["/back"] = f"https://{a.at}/again"
+    a.files = {p: saying(status) for p in ("/direct", "/api/new", "/again")}
+    b.files = {"/elsewhere": saying(status)}
+    http = elsewhere(monkeypatch, Http({a.at: "SECRET-TOKEN", b.at: "ANOTHER-HOSTS"}, timeout=10))       # B's own token isn't sent on a redirect to B either
+    with pytest.raises(Unreachable) as e:
+        http.json(f"https://{a.at}{path}")
+    assert str(e.value) == says and e.value.extra == ({"status": status} if "answered" in says else {})
+    last = (b if "localhost" in says else a).seen[-1]
+    assert ("authorization" in last[1]) == ("rejected the API token" in says or path == "/direct")      # what the answering host was sent
+    assert [k for _, h in b.seen for k in h if k in http_.TOKEN_HEADERS] == []
+
+
+def test_a_401_with_no_token_sent_is_never_the_tokens(pair, clock):
+    a, b = pair
+    a.files = {"/direct": saying(401)}
+    for tokens in ({}, {b.at: "ANOTHER-HOSTS"}, {"127.0.0.1": "ITS-DEFAULT-PORT"}):
+        with pytest.raises(Unreachable, match="^127.0.0.1 answered HTTP 401$"):
+            names(Http(tokens, timeout=10)).json(f"https://{a.at}/direct")
+    assert _secrets(a.seen) == [] and len(a.seen) == 3
+
+
+@pytest.fixture
+def zone(monkeypatch):
+    """Sets this process's time zone, where the platform lets a process set its own, and puts it back."""
+    def set_(name):
+        if hasattr(time, "tzset"):
+            monkeypatch.setenv("TZ", name)
+            time.tzset()
+    yield set_
+    monkeypatch.undo()
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+@pytest.mark.parametrize("tz", ["UTC", "Asia/Tokyo", "Pacific/Kiritimati", "America/Chicago", "Pacific/Pago_Pago"])
+@pytest.mark.parametrize("headers", [
+    {"retry-after": "Fri, 31 Dec 9999 23:59:59 GMT"},          # the year 10000 east of Greenwich, which no clock there shows
+    {"retry-after": "Fri, 31 Dec 9999 00:00:00 GMT"}, {"retry-after": "Thu, 01 Jan 1970 00:00:00 GMT"},
+    {"retry-after": "Mon, 01 Jan 0001 00:00:00 GMT"}, {"retry-after": "253402300800"}, {"x-ratelimit-reset": "253402300799"},
+    {"x-ratelimit-reset": "253402300800"}, {"retry-after": "9" * 12}, {"retry-after": Y2100_AS_A_DATE}, {},
+], ids=lambda h: "-".join(h.values()).replace(" ", "_") or "nothing")
+def test_whatever_a_host_says_and_wherever_the_clock_is_the_time_to_come_back_is_one_a_clock_shows(zone, tz, headers):
+    import datetime
+    zone(tz)
+    at = http_._reset_time(headers)
+    assert datetime.datetime.fromtimestamp(at).strftime("%H:%M")           # as a Source's row shows it
+    if headers == {"retry-after": Y2100_AS_A_DATE}:
+        assert at == Y2100
+
+
+def test_a_time_no_clock_can_show_never_reaches_a_sources_row(tmp_path, monkeypatch, clock):
+    """Found beside #683: a host's Retry-After of thirty nines was kept as the time to come back,
+    which the Sources list then failed to show. Whatever a host says, what a Sync writes is a time."""
+    import datetime
+    source = "https://git.example.org/o/r"
+    for said in ({"Retry-After": "9" * 30}, {"x-ratelimit-reset": "9" * 17}, {"x-ratelimit-reset": "9" * 400}, {"Retry-After": "\u00b2"}):
+        db = catalog(tmp_path, monkeypatch, [source])
+        sync.sync_all(db, names(Http(opener=answering(429, said, []))), root=str(tmp_path))
+        app = rows(db)[source]
+        assert app["error_code"] == "RateLimited" and json.loads(app["error_extra"])["reset"] == clock.now + 60
+        assert datetime.datetime.fromtimestamp(json.loads(app["error_extra"])["reset"])
+        db.x("DELETE FROM sources")
+        db.x("DELETE FROM apps")
+
+
+# ---------------------------------------------------------------- a README's link to a file's page on github.com (R3.4)
+# CR1's #681: metadata.resolve turns a link to a file's page on github.com into the address of the
+# file itself, and it knew such a link by its text: "github.com/" and "/blob/" anywhere in it. An
+# address on another host that held both, in its host's name or in a query, was rewritten into one
+# its README never named. How it slipped past: resolve was tested for a relative path alone. The
+# class is "an address read as text", so the two pieces of text are put in every part of an address
+# here, and only github.com's own page of a file is turned into anything.
+RAW = "https://raw.githubusercontent.com/o/r/main"
+
+
+@pytest.mark.parametrize("url", [
+    "https://notgithub.com/o/r/blob/main/shot.png",                       # the finding's: ends in the same letters
+    "https://other.example/x?u=github.com/o/r/blob/main/shot.png",        # the finding's: in its query
+    "https://github.com.evil.example/o/r/blob/main/shot.png", "https://evil.example/github.com/o/r/blob/main/shot.png",
+    "https://github.com@evil.example/o/r/blob/main/shot.png",             # the host is evil.example
+    "https://evil.example/shot.png#github.com/o/r/blob/main/shot.png",
+    "https://gist.github.com/o/r/blob/main/shot.png", "https://raw.github.com/o/r/blob/main/shot.png",       # GitHub's, and no page of a file
+    "https://github.com:8443/o/r/blob/main/shot.png",                     # another port is another host (R9.2.2)
+    "https://github.com/o/r/raw/main/shot.png", "https://github.com/o/r/tree/main/blob/shot.png",            # github.com, and no page of a file
+    "https://github.com/o/blob/shot.png", "https://github.com/blob/main/shot.png", "https://github.com/o/r/blob/",
+    "https://raw.githubusercontent.com/o/r/main/blob/shot.png",
+    "ftp://github.com/o/r/blob/main/shot.png", "data:image/png;base64,github.com/o/r/blob/main/shot.png",
+    "http://[github.com/o/r/blob/main/shot.png",                          # no address at all: as it was written
+])
+def test_an_address_that_is_no_github_page_of_a_file_is_asked_for_as_its_readme_wrote_it(url):
+    assert metadata.resolve(url, RAW, "docs") == url
+
+
+@pytest.mark.parametrize("url, becomes", [
+    ("https://github.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("https://github.com/o/r/blob/main/docs/img/shot.png?raw=true#readme", RAW + "/docs/img/shot.png?raw=true#readme"),
+    ("https://www.github.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("HTTPS://GitHub.com/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("https://github.com:443/o/r/blob/main/shot.png", RAW + "/shot.png"),
+    ("http://github.com/o/r/blob/main/shot.png", "http://raw.githubusercontent.com/o/r/main/shot.png"),      # as it was: the scheme is the README's
+    ("https://github.com/o/r/blob/release/blob/docs/blob/shot.png", "https://raw.githubusercontent.com/o/r/release/blob/docs/blob/shot.png"),
+    ("https://github.com/o/r/blob/main/screen shot.png", RAW + "/screen%20shot.png"),
+    ("https://github.com/o/r/blob/main/截图.png", RAW + "/%E6%88%AA%E5%9B%BE.png"),
+])
+def test_a_github_page_of_a_file_becomes_the_address_of_the_file(url, becomes):
+    assert metadata.resolve(url, "https://code.example.net/o/r/raw/branch/main", "docs") == becomes
+
+
+@pytest.mark.parametrize("url, sent, asked", [
+    ("https://cdn.example/a b.png", "https://cdn.example/a%20b.png", "https://cdn.example/a%20b.png"),
+    ("https://cdn.example/docs/截图.png?v=ä 1#top", "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top",
+     "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top"),
+    ("https://cdn.example/a%20b.png?x=1&y=a+b", "https://cdn.example/a%20b.png?x=1&y=a+b",          # written quoted: left as it is
+     "https://cdn.example/a%20b.png?x=1&y=a+b"),
+    ("https://user:pw@cdn.example:8443/a b.png", "https://user:pw@cdn.example:8443/a%20b.png", None),
+    ("HTTP://CDN.example/Shot.PNG", "HTTP://CDN.example/Shot.PNG",                                   # nothing to quote: not a letter of it changes
+     "HTTP://cdn.example/Shot.PNG"),                                                                  # Http sends its host in lower case
+])
+def test_a_whole_address_is_written_as_an_address_can_be_sent_too(url, sent, asked):
+    assert metadata.resolve(url, RAW) == sent
+    seen = []
+    _ask(names(Http(opener=recording({}, seen))), metadata.resolve(url, RAW))
+    # and Http asks for it, where it refused the address as written, with its host as it is sent
+    # (the review's pass 6, P6-B1); one with a user part it refuses whatever its spelling (the
+    # review's pass 3, P3-1)
+    assert [u for u, _ in seen] == ([] if asked is None else [asked])
+
+
+def test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written(tmp_path, monkeypatch):
+    w = widget("forgejo")
+    theirs = ["https://notgithub.com/o/r/blob/main/demo-1.png", "https://other.example/demo.png?u=github.com/o/r/blob/main/x.png",
+              "https://github.com/acme/widget/blob/trunk/media/demo-3.png"]
+    readme = "# Widget\n\n" + "".join(f"![demo]({url})\n\n" for url in theirs)
+    images = set(w.icons + w.heroes + w.never)
+    routes = {**{k: v for k, v in w.routes.items() if k not in images}, w.raw + "README.md": readme.encode()}
+    db, asked = sync_of(tmp_path, monkeypatch, w, routes)
+    assert rows(db)[w.source]["error_code"] is None
+    assert [url for url in asked if "demo" in url] == theirs[:2] + ["https://raw.githubusercontent.com/acme/widget/trunk/media/demo-3.png"]
+    assert [url for url in asked if "notraw" in url or "u=raw." in url] == []
+
+
+def garbage(handler):
+    handler.wfile.write(b"\x16\x03\x01 this is no HTTP at all\r\n\r\n")
+
+
+REDIRECTED_TO = {       # what the host a redirect led to does: the error's kind, and its words about that host
+    "/not-found": (saying(404), http_.NotFound, "https://{b}/not-found not found"),
+    "/cut-short": (cut_off(b'{"half": ', 1000), Unreachable, "localhost cut its answer short (9 of 1000 bytes)"),
+    "/half-a-chunk": (half_a_chunk, Unreachable, "localhost cut its answer short"),
+    "/garbage": (garbage, Unreachable, "couldn't read localhost's answer (BadStatusLine: "),
+    "/not-json": (cut_off(b"<html>Sign in</html>", 20), Unreachable, "localhost didn't return JSON"),
+    "/too-large": (cut_off(b"x" * 2000, 2000), Unreachable, "response from localhost too large"),
+    "/a-byte-at-a-time": (a_byte_at_a_time, Unreachable, "localhost hadn't finished its answer after 0.3 seconds"),
+    "/headers-a-byte-at-a-time": (headers_a_byte_at_a_time, Unreachable, "localhost hadn't finished its answer after 0.3 seconds"),
+}
+
+
+@pytest.mark.parametrize("path", sorted(REDIRECTED_TO))
+def test_through_real_sockets_whatever_a_request_ends_in_after_a_redirect_is_said_of_the_host_it_led_to(pair, clock, monkeypatch, path):
+    """The class of #683, past a failing status: an answer that is cut short, too large, too slow,
+    no JSON or no HTTP at all. Each was said of the host asked first, which had only redirected."""
+    a, b = pair
+    answer, kind, says = REDIRECTED_TO[path]
+    a.redirects["/api/x"] = f"https://{b.at}{path}"
+    a.files, b.files = {path: answer}, {path: answer}
+    monkeypatch.setattr(http_.time, "monotonic", time.monotonic)        # the real clock for the deadline, and no waiting between retries
+    http = elsewhere(monkeypatch, Http(timeout=10, deadline=0.3 if "a-byte-at-a-time" in path else 120))
+    started = time.monotonic()
+    with pytest.raises(kind) as e:
+        http.json(f"https://{a.at}/api/x", max_bytes=1000)
+    assert type(e.value) is kind and str(e.value).startswith(says.format(b=b.at)), str(e.value)
+    assert time.monotonic() - started < 2.0                    # a slow one too: it ends at its deadline, not when the host is done
+    assert [p for p, _ in a.seen] == ["/api/x"] * len(b.seen) and b.seen
+    with pytest.raises(kind) as e:                             # and the same answer from the host itself is said of it
+        http.json(f"https://{a.at}{path}", max_bytes=1000)
+    assert str(e.value).startswith(says.format(b=a.at).replace("localhost", "127.0.0.1")), str(e.value)
+
+
+def test_through_real_sockets_a_redirect_to_where_nothing_listens_is_that_hosts_failure(pair, clock, monkeypatch):
+    a, b = pair
+    with socket.socket() as nothing:
+        nothing.bind(("127.0.0.1", 0))
+        closed = nothing.getsockname()[1]
+    a.redirects["/api/x"] = f"https://localhost:{closed}/elsewhere"
+    with pytest.raises(Unreachable, match="^couldn't reach localhost: ") as e:
+        elsewhere(monkeypatch, Http(timeout=5)).json(f"https://{a.at}/api/x")
+    assert e.value.extra["no_answer"] is True and len(a.seen) == 1

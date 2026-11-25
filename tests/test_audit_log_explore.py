@@ -7,6 +7,7 @@ import logging
 import os
 import socket
 import sqlite3
+import stat
 import struct
 import threading
 
@@ -16,6 +17,7 @@ from appkata_core import applog, audit, explore, nostr
 from appkata_core.db import DB
 from appkata_core.http import Http
 
+import reqdocs
 from test_forges import opener
 
 
@@ -59,6 +61,61 @@ def test_combined_log(tmp_path, monkeypatch):
     (tmp_path / "AppKata.log").write_text("newer\n")
     with open(applog.combined()) as f:
         assert f.read() == "older\nnewer\n"
+
+
+# ---------------------------------------------------------------- who can read what AppKata keeps (R11.1.6, R1.8)
+# CR1's #434: the API tokens are plain text in appkata.db, and the data folder, the database and the
+# log folder were made with whatever the umask gave: 0755 and 0644 under the usual 022, so wherever
+# the home folder lets other accounts in, any of them could read the tokens. No test looked at a
+# mode, and pytest's own tmp_path is 0700, which hides what a folder below it is made as. The class
+# is "a file that holds a secret is made as wide as the umask allows", so the test sets the usual
+# umask itself and looks at everything the two folders hold once AppKata has started.
+def mode(path):
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes; on Windows %LOCALAPPDATA% is the user's own")
+@pytest.mark.parametrize("already", [False, True], ids=["new", "made-wider-earlier"])
+def test_the_data_and_log_folders_and_the_database_are_the_users_alone(tmp_path, monkeypatch, already):
+    data, logs = tmp_path / "share" / "appkata", tmp_path / "state" / "appkata"
+    monkeypatch.setenv("APPKATA_DATA", str(data))
+    monkeypatch.setenv("APPKATA_LOG_DIR", str(logs))
+    before = os.umask(0o022)
+    earlier = None
+    try:
+        if already:      # both folders, the database with its -wal and -shm, and the log, as the umask made them
+            data.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            (logs / "AppKata.log").write_text("older\n")
+            (logs / "AppKata-prev.log").write_text("oldest\n")
+            earlier = sqlite3.connect(str(data / "appkata.db"))
+            earlier.execute("PRAGMA journal_mode = WAL")
+            earlier.execute("CREATE TABLE IF NOT EXISTS earlier(x)")
+            assert mode(data) == mode(logs) == 0o755 and mode(logs / "AppKata.log") == 0o644
+            assert {mode(data / ("appkata.db" + end)) for end in ("", "-wal", "-shm")} == {0o644}
+        db = DB(str(data / "appkata.db"))
+        db.put("tokens", {"github.com": "ghp_SECRET"})
+        h = applog.TwoFileHandler(applog.log_dir(), limit=40)
+        for line in ("a first line, which fills the file", "a second, which starts a new one"):
+            h.emit(logging.LogRecord("test", logging.INFO, __file__, 1, line, None, None))
+        h.close()
+        # the folders, which keep other accounts from everything they hold (gui.json, the Trust clones, an app's log)
+        assert mode(data) == 0o700 and mode(logs) == 0o700
+        assert mode(tmp_path / "share") == 0o755 and mode(tmp_path / "state") == 0o755      # theirs alone: nothing above
+        kept = [data / "appkata.db", data / "appkata.db-wal", data / "appkata.db-shm", logs / "AppKata.log", logs / "AppKata-prev.log"]
+        assert [(p.name, oct(mode(p))) for p in kept] == [(p.name, "0o600") for p in kept]
+        # a database anywhere else is the user's alone too, and its folder is left as it is
+        other = DB(str(tmp_path / "elsewhere" / "other.db"))
+        assert mode(tmp_path / "elsewhere" / "other.db") == 0o600 and mode(tmp_path / "elsewhere") == 0o755
+        other.c.close()
+        db.c.close()
+        r11 = " ".join(reqdocs.item("R11.1.6").split())           # and the requirement says so
+        assert "the user's own account's alone (mode 0700), and so is the database file (0600)" in r11
+        assert "narrowed when AppKata starts" in r11
+    finally:
+        os.umask(before)
+        if earlier:
+            earlier.close()
 
 
 # ---------------------------------------------------------------- explore
