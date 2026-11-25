@@ -1203,6 +1203,54 @@ def test_a_name_whose_idna_form_is_more_than_a_name_is_refused(host):
     assert "or whose IDNA form has an empty part" in " ".join(reqdocs.item("R3.1.1").split())
 
 
+# The review's pass 8, P8-B1: Python's idna codec makes a part's IDNA form before it measures it, in a
+# time that grows as the square of the part's length, and the rule above asked it of a host of any
+# length. A README's image on a host of one part of 8,000 characters of CJK held a Sync for ten
+# seconds before it was refused, past the request's deadline and its Cancel, which only a request's
+# steps are held to; one of a million characters would hold it for hours. How it slipped past: no
+# host in the tests was longer than 70 characters, and no test timed a refusal. The class is "work
+# that grows faster than what it is given, done before any bound", so each way a host reaches the
+# codec is given a host of one long part, or a long name of short parts, and timed.
+LONG_PART = "".join(chr(0x4E00 + i * 7919 % 20000) for i in range(8000))     # 8,000 characters of CJK, few of them alike
+
+
+@pytest.mark.parametrize("url", [
+    pytest.param(f"https://{LONG_PART}.example/screenshot.png", id="a-long-part"),
+    pytest.param(f"https://{urllib.parse.quote(LONG_PART)}.example/screenshot.png", id="escaped"),
+    pytest.param("https://" + "ü." * 100_000 + "example/screenshot.png", id="a-long-name-of-short-parts"),
+    pytest.param(f"https://git.example.org@{LONG_PART}.example/screenshot.png", id="after-a-user-part"),    # named by its refusal, if at all (_named)
+    pytest.param(f"ftp://{LONG_PART}.example/screenshot.png", id="no-http-address"),                       # the same
+])
+def test_a_readme_image_on_a_host_longer_than_any_is_refused_at_once(tmp_path, url):
+    [image] = metadata.readme_images(f"# App\n\n![screenshot]({url})\n")
+    seen = []
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^an address (whose host part is more than a host and its port|with a user part before its host"
+                                          "|that isn't an http or https one) isn't asked for$"):
+        sync._save_image(names(Http(opener=recording({}, seen))), image, str(tmp_path / "shot"), token_host="git.example.org")
+    assert time.monotonic() - started < 1 and seen == []
+    assert "all of it at most 300 characters" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_a_redirect_to_a_host_longer_than_any_is_refused_at_once(pair):
+    a, b = pair
+    a.redirects["/o/r/avatar"] = f"https://{LONG_PART}.example/avatar.png".encode().decode("latin-1")    # the bytes a forge sends
+    started = time.monotonic()
+    with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+        names(Http(timeout=5)).bytes(f"https://{a.at}/o/r/avatar")
+    assert time.monotonic() - started < 1 and [p for p, _ in a.seen] == ["/o/r/avatar"]
+
+
+def test_a_token_typed_for_a_host_longer_than_any_is_kept_at_once():
+    # the tokens are read when Http is made, at the application's start, and each Forge names its
+    # Source's host when it is made (set_forge): both are kept as every rule compares hosts (_one_host)
+    host = f"{LONG_PART}.example"
+    started = time.monotonic()
+    http = Http({host: "SECRET"})
+    http.set_forge(host, "gitea")
+    assert time.monotonic() - started < 1 and list(http.tokens) == list(http.forges) == [host]
+
+
 # The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host
 # as written: in the Host header, which http.client writes in Latin-1, so a name outside it couldn't
 # be sent at all ("can't be sent (UnicodeEncodeError)"), and over plain http through a proxy, in an

@@ -182,6 +182,25 @@ def _is_for(parts, whose: str) -> bool:
 # (_a_name_as_sent).
 _HOST_PART = re.compile(r"(\[[^\]]*\]|[^:\[\]]*)(?::[0-9]*)?")
 _AN_IPV6_ADDRESS = re.compile(r"\[[0-9a-f:.]+\]")
+# The most a host part is, its escapes decoded: more than any host and its port, since a name is at
+# most 253 characters in the form it is sent, an IPv6 address 47 with its brackets, and a port 6
+# with its `:` (the review's pass 8, P8-B1).
+_LONGEST_HOST_PART = 300
+# Where Python's idna codec ends a name's parts: at a `.` and at IDNA's own dots (the review's pass 6, P6-1).
+_IDNA_DOTS = re.compile("[.\u3002\uff0e\uff61]")
+
+
+def _idna(name: str) -> str:
+    """A name's IDNA form, which is ASCII, by Python's idna codec, or UnicodeError where it has none.
+    A part of more than 63 characters has none, and is refused before the codec is asked: the codec
+    makes a part's form before it measures it, in a time that grows as the square of the part's
+    length, so a README's image on a host of one part of 8,000 characters of CJK held a Sync for ten
+    seconds, past its deadline and its Cancel, and one of a million would hold it for hours (the
+    review's pass 8, P8-B1). A part the codec would bring to 63 by leaving out what it maps to
+    nothing, a soft hyphen or a zero-width space, is refused with them: no address names one."""
+    if any(len(part) > 63 for part in _IDNA_DOTS.split(name)):
+        raise UnicodeError("a part of the name is more than 63 characters")
+    return name.encode("idna").decode("ascii")
 
 
 def _a_name_as_sent(name: str) -> bool:
@@ -197,8 +216,8 @@ def _a_name_as_sent(name: str) -> bool:
     a name whose IDNA form changes with its case: with a letter Unicode 3.2 hadn't, such as `Ⱥ`, the
     name written and the one sent are two names, with two addresses."""
     try:
-        sent = name.encode("idna").decode("ascii").lower()
-        looked_up = name.lower().encode("idna").decode("ascii").lower()
+        sent = _idna(name).lower()
+        looked_up = _idna(name.lower()).lower()
     except UnicodeError:                     # an empty part, one longer than 63, or what IDNA has no form for
         return False
     return sent == looked_up and re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?", sent) is not None
@@ -206,7 +225,12 @@ def _a_name_as_sent(name: str) -> bool:
 
 def _a_host_and_port(text: str) -> bool:
     """Whether a host part is a host and its port and nothing else (_HOST_PART): an IPv6 address in
-    brackets as they are written, or a name in the form it is sent (_a_name_as_sent)."""
+    brackets as they are written, or a name in the form it is sent (_a_name_as_sent). One longer
+    than any host and its port, its escapes decoded (_LONGEST_HOST_PART), isn't, and is read no
+    further: a long name of short parts, each through the idna codec, was a long wait too, and was
+    asked for (the review's pass 8, P8-B1)."""
+    if len(unquote(text)) > _LONGEST_HOST_PART:
+        return False
     host = _HOST_PART.fullmatch(text)
     return host is not None and bool(_AN_IPV6_ADDRESS.fullmatch(host[1].lower()) or _a_name_as_sent(unquote(host[1])))
 
@@ -295,8 +319,8 @@ def _sent(host: str) -> str:
     (the review's pass 6, P6-B1). urllib sent the host as written, and http.client writes a Host
     header in Latin-1: a name in another script couldn't be sent at all, a Latin-1 one couldn't be
     sent to a proxy over http, and `übung.example` was sent to its server so, where its lookup and a
-    tunnel's CONNECT had `xn--bung-zra.example`."""
-    return host.encode("idna").decode("ascii")
+    tunnel's CONNECT had `xn--bung-zra.example`. A name's IDNA form is _idna's."""
+    return _idna(host)
 
 
 def _as_sent(url: str, parts) -> str:

@@ -16,7 +16,8 @@ proxy are sent, is ASCII letters, digits, `-`, `_` and dots, and doesn't change 
 written in lower case, so a name in any script is asked for, and one with no IDNA form (an empty
 part, as in `a..b`, or a part of more than 63 characters), or whose IDNA form has an empty part
 (`a‥b`'s is `a..b`), isn't, though a name's one final dot is its own; or an IPv6 address in brackets, as
-they are written and not escaped; then a `:` and the port where it names one. So none with a user part
+they are written and not escaped; then a `:` and the port where it names one; all of it at most 300
+characters, its escapes decoded, which no host and its port is more than. So none with a user part
 before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, escaped brackets
 (`%5b127.0.0.1%5d`), or a `?` or `#` right after its host with no path
 (`images.example.com?@10.0.0.5`) is asked for: a proxy is sent all of a host part, and may read
