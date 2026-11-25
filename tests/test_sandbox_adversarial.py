@@ -18,6 +18,7 @@ folder a launcher's PATH may hold beside the system's is that of a bwrap the sys
 one an app is.
 """
 
+import json
 import os
 import re
 import shlex
@@ -480,9 +481,59 @@ def test_what_appkata_says_of_bwrap_is_about_the_install_folder_a_launcher_is_wr
     # "bubblewrap (bwrap) isn't installed". What AppKata says and decides for the system is asked of
     # a launcher in the install folder Settings names, and for an installed app of its own launcher:
     # where that finds no bwrap, bubblewrap is missing, as on a system without one.
+    be, home, URL = _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch)
+    bwrap_here = {home / "bin" / "apps": True, home / "bin": False}          # the default install folder, and the bwrap's own
+    for folder, runs in bwrap_here.items():                                  # Settings → Sandbox, and a new install
+        be.setPref("installDir", str(folder))
+        assert (shutil.which("bwrap", path=sb.host_path(str(folder))) is not None) is runs     # what a launcher there finds
+        st = be.sandboxSupport
+        assert (st["status"], "bubblewrap" in st["missing"]) == (("ok", False) if runs else ("unsupported", True)), st
+        assert (be._sandbox_for_install(URL) is not None) is runs            # sandboxed only where its launcher starts
+    be.setPref("installDir", str(home / "bin" / "apps"))
+    be.setPref("commandLinks", False)                                        # ~/bin/demo is the second app's folder
+    be._app = lambda url: {"url": URL, "name": "Demo", "installed": "1.0"}
+    for root, runs in bwrap_here.items():                                    # an app installed there before
+        target = _installed_off_in(be, URL, root)
+        support = be.sandboxInfo(URL)["support"]                             # its App Detail
+        assert (support["status"] == "ok") is runs and ("bubblewrap" in support["appToolsHint"]) is not runs, support
+        assert be._heal_launchers() == ([URL] if runs else [])               # AppKata's start sandboxes it where it can start
+        rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+        assert (rec.get("launcher") == str(target / "run")) is runs and os.path.exists(target / "run") is runs, rec
+        be.db.x("DELETE FROM installs")
+
+
+def test_the_apps_the_setup_is_said_to_sandbox_are_the_ones_it_sandboxes(tmp_path, monkeypatch):
+    # #689's review, P3-B1: AppKata's start gives no launcher to an app that has none where a launcher
+    # in its install folder would find no bwrap (it runs Off there, R17.4), and the note said before
+    # the setup's password prompt, in Settings → Sandbox and the install's prompt, still named it:
+    # with no bwrap in the system's folders, the user's own in ~/bin, user namespaces restricted until
+    # the setup, and an app installed Off in ~/bin, "Setting it up sandboxes Demo, which runs
+    # unsandboxed until then", and after the setup it ran unsandboxed, still on that list. The note
+    # and the start ask one question, so the apps said are the apps sandboxed.
+    be, home, URL = _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch)
+    set_up = []
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: bool(set_up))     # restricted until the setup
+    be.setPref("installDir", str(home / "bin" / "apps"))                     # Settings' folder, where a launcher finds it
+    be.setPref("commandLinks", False)
+    be._app = lambda url: {"url": URL, "name": "Demo", "installed": "1.0"}
+    for root, sandboxed in {home / "bin" / "apps": True, home / "bin": False}.items():
+        set_up.clear()
+        _installed_off_in(be, URL, root)
+        st = be.sandboxSupport
+        assert st["status"] == "setup-needed", st
+        said = st.get("waitingNote", "")
+        assert ("Setting it up sandboxes Demo, which runs unsandboxed until then." in said) is sandboxed, said
+        assert ([n for _, n, _ in be._waiting_for_sandbox()] == ["Demo"]) is sandboxed
+        set_up.append(True)                                                  # the setup worked
+        assert be._heal_launchers() == ([URL] if sandboxed else [])          # and sandboxed what it was said to
+        assert be._waiting_for_sandbox() == []
+        be.db.x("DELETE FROM installs")
+
+
+def _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch):
+    """A Backend on a system whose folders hold no bwrap, with the user's own in ~/bin first on
+    AppKata's PATH, and Demo reviewed Strict by a Trust: (the backend, the home, Demo's URL)."""
     pytest.importorskip("PySide6")
-    import json
-    from appkata_core.db import now
     tmp = tmp_path.resolve()
     system = _system_without_bwrap(tmp, monkeypatch)
     home = tmp / "home"
@@ -499,26 +550,17 @@ def test_what_appkata_says_of_bwrap_is_about_the_install_folder_a_launcher_is_wr
     be._sandbox_kind = lambda url: "tarball"
     _review(be, "strict")
     be._app = lambda url: {"url": URL, "name": "Demo"}
-    bwrap_here = {home / "bin" / "apps": True, home / "bin": False}          # the default install folder, and the bwrap's own
-    for folder, runs in bwrap_here.items():                                  # Settings → Sandbox, and a new install
-        be.setPref("installDir", str(folder))
-        assert (shutil.which("bwrap", path=sb.host_path(str(folder))) is not None) is runs     # what a launcher there finds
-        st = be.sandboxSupport
-        assert (st["status"], "bubblewrap" in st["missing"]) == (("ok", False) if runs else ("unsupported", True)), st
-        assert (be._sandbox_for_install(URL) is not None) is runs            # sandboxed only where its launcher starts
-    be.setPref("installDir", str(home / "bin" / "apps"))
-    be.setPref("commandLinks", False)                                        # ~/bin/demo is the second app's folder
-    be._app = lambda url: {"url": URL, "name": "Demo", "installed": "1.0"}
-    for root, runs in bwrap_here.items():                                    # an app installed there before
-        target = root / "demo"
-        _program(target / "1.0" / "bin" / "demo")
-        rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/demo"}, "root": str(root),
-               "target": str(target), "links": [], "files": [], "exec": str(target / "1.0" / "bin" / "demo")}
-        be.db.x("INSERT OR REPLACE INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
-                (URL, "Demo", "1.0", "tarball", json.dumps(rec), now()))
-        support = be.sandboxInfo(URL)["support"]                             # its App Detail
-        assert (support["status"] == "ok") is runs and ("bubblewrap" in support["appToolsHint"]) is not runs, support
-        assert be._heal_launchers() == ([URL] if runs else [])               # AppKata's start sandboxes it where it can start
-        rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
-        assert (rec.get("launcher") == str(target / "run")) is runs and os.path.exists(target / "run") is runs, rec
-        be.db.x("DELETE FROM installs")
+    return be, home, URL
+
+
+def _installed_off_in(be, url, root):
+    """Record Demo installed in the install folder `root`, with no launcher (it runs Off); returns
+    its folder."""
+    from appkata_core.db import now
+    target = root / "demo"
+    _program(target / "1.0" / "bin" / "demo")
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/demo"}, "root": str(root),
+           "target": str(target), "links": [], "files": [], "exec": str(target / "1.0" / "bin" / "demo")}
+    be.db.x("INSERT OR REPLACE INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
+            (url, "Demo", "1.0", "tarball", json.dumps(rec), now()))
+    return target

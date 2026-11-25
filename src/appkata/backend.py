@@ -1986,18 +1986,29 @@ class Backend(QObject):
 
     def _waiting_for_sandbox(self) -> list[tuple[str, str, bool]]:
         """(url, name, starts fresh) of each installed app that would run sandboxed but has no launcher
-        yet: what a setup, or tools installed since, will sandbox (R17.10, R17.13)."""
+        yet, and would get one that starts (:meth:`_launcher_can_start`): what a setup, or tools
+        installed since, will sandbox (R17.10, R17.13)."""
         out = []
-        for row in self.db.all("SELECT url, name FROM installs ORDER BY name"):
+        for row in self.db.all("SELECT url, name, record FROM installs ORDER BY name"):
             a = self._app(row["url"])
             if row["url"] == APPKATA_REPO or not a or a.get("foreign"):
                 continue
             r = self._resolved_sandbox(row["url"])
-            if r and sandbox.level_of(r["grants"]) != "off":
+            if r and sandbox.level_of(r["grants"]) != "off" and self._launcher_can_start(row["url"], json.loads(row["record"] or "{}")):
                 launcher, fresh = self._sandbox_state(row["url"])
                 if not launcher:
                     out.append((row["url"], a["name"], fresh))
         return out
+
+    def _launcher_can_start(self, url: str, rec: dict) -> bool:
+        """Whether the app at `url` (its install record `rec`, {} before a first install) has a
+        launcher, or one written for it now would start: a launcher in its install folder finds the
+        bwrap AppKata's answers are about (R17.4). One that has none and whose launcher wouldn't runs
+        Off whatever this system can do. Asked by AppKata's start before it gives an app a launcher,
+        by an install deciding to sandbox, and by what the setup is said to sandbox, so what is said
+        is what is done (#689's review, P3-B1: Settings said the setup sandboxes an app in ~/bin that
+        the start then left unsandboxed)."""
+        return bool(rec.get("launcher")) or sandbox.bwrap_answers_hold(self._app_options(url).root)
 
     @staticmethod
     def _sandboxed_note(items: list[tuple[str, bool]], waiting: bool) -> str:
@@ -2055,11 +2066,12 @@ class Backend(QObject):
         if not r or sandbox.level_of(r["grants"]) == "off":
             return r["grants"] if r else None
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
-        if row and json.loads(row["record"] or "{}").get("launcher"):
+        rec = json.loads(row["record"] or "{}") if row else {}
+        if rec.get("launcher"):
             return r["grants"]
         if not sandbox.have_tools() or sandbox.support_status()["status"] in ("setup-needed", "conflict"):
             return None            # can't sandbox here yet: run Off (the UI warns, R17.10, R17.10.2)
-        if not sandbox.bwrap_answers_hold(self._app_options(url).root):
+        if not self._launcher_can_start(url, rec):
             return None            # nor in its install folder, where its launcher would find no bwrap (R17.4)
         return r["grants"]
 
@@ -2360,7 +2372,7 @@ class Backend(QObject):
             r = self._resolved_sandbox(row["url"])
             if not r or sandbox.level_of(r["grants"]) == "off":
                 continue
-            if not rec.get("launcher") and not sandbox.bwrap_answers_hold(self._app_options(row["url"]).root):
+            if not self._launcher_can_start(row["url"], rec):
                 continue           # in a folder whose launcher would find no bwrap: it runs Off (R17.4)
             if not install.launcher_is_current(rec, {**a, "sandbox": r["grants"]}, self._app_options(row["url"])):
                 todo.append(row["url"])

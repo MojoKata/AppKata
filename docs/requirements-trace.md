@@ -221,7 +221,7 @@ differ from its list (review 3, harness B).
 | R17.13 | Enabling a sandbox after install warns that the | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.13 | AppKata doesn't import the app's configuration (R17.18). | deferred |
 | R17.13 | The warning comes before the change: the Sandbox | test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save |
-| R17.13 | Every way to set up system support (the | test_every_setup_entry_point_names_the_apps_it_will_sandbox, test_apps_sandboxed_by_appkata_are_named_before_and_after, test_the_waiting_note_tells_fresh_homes_from_kept_ones |
+| R17.13 | Every way to set up system support (the | test_every_setup_entry_point_names_the_apps_it_will_sandbox, test_apps_sandboxed_by_appkata_are_named_before_and_after, test_the_waiting_note_tells_fresh_homes_from_kept_ones, test_the_apps_the_setup_is_said_to_sandbox_are_the_ones_it_sandboxes |
 | R17.13 | When AppKata itself sandboxes an installed app (at | test_apps_sandboxed_by_appkata_are_named_before_and_after, test_an_update_that_first_sandboxes_an_app_says_so, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.14 | Uninstalling a sandboxed app offers to remove its | test_uninstall_leaves_only_what_it_promises_to_keep, test_uninstall_keeps_the_private_home_until_the_app_is_really_gone, test_the_uninstall_dialog_offers_to_delete_the_sandbox_home_but_the_listed |
 | R17.14 | A kept home remains that app's alone (R17.6). | test_a_later_app_with_the_same_name_never_inherits_a_kept_private_home |
