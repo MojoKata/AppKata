@@ -794,7 +794,7 @@ class Backend(QObject):
                               "templates": self.sandboxTemplates,
                               "isCli": self._is_cli(url), "appImage": chosen_card["kind"] == "appimage",
                               "recommendedBy": self._sandbox_reviewer(url),
-                              "support": self._sb_support(), "sessionWarning": self._sb_session_warning(),
+                              "support": self._sb_support(self._app_options(url).root), "sessionWarning": self._sb_session_warning(),
                               "freshWarning": self._fresh_warning(url),
                               "extractMb": round(img_mb * 2.5) if chosen_card["kind"] == "appimage" and sandbox.level_of(gs) != "off" else 0}
             # the app's kind (R17.3.3, review 2 F4): what the download showed, the user's own choice, and
@@ -1785,10 +1785,12 @@ class Backend(QObject):
             return {}                              # a session nothing leaks from (GNOME on Wayland)
         return sandbox.session_warning()
 
-    def _sb_support(self) -> dict:
+    def _sb_support(self, root: str | None = None) -> dict:
         # `declined`: "Not now" was answered at an install, so installs don't ask (R17.10); `waitingNote`:
-        # what the setup will sandbox, said before its password prompt (R17.13; review 2, F13)
-        st = {**sandbox.support_status(), "declined": bool(self._prefs.get("sandboxSetupDeclined"))}
+        # what the setup will sandbox, said before its password prompt (R17.13; review 2, F13). Asked
+        # of a launcher in `root`, an app's install folder, or the one Settings names (R17.4; #689's
+        # review, P2-B3)
+        st = {**sandbox.support_status_in(root or self.portable().root), "declined": bool(self._prefs.get("sandboxSetupDeclined"))}
         if getattr(self, "_demo_sandbox", "") == "setup":
             st = {**st, "status": "setup-needed", "tools": True}
         if st.get("status") == "setup-needed":
@@ -2057,6 +2059,8 @@ class Backend(QObject):
             return r["grants"]
         if not sandbox.have_tools() or sandbox.support_status()["status"] in ("setup-needed", "conflict"):
             return None            # can't sandbox here yet: run Off (the UI warns, R17.10, R17.10.2)
+        if not sandbox.bwrap_answers_hold(self._app_options(url).root):
+            return None            # nor in its install folder, where its launcher would find no bwrap (R17.4)
         return r["grants"]
 
     @Property("QVariant", notify=prefsChanged)
@@ -2121,7 +2125,7 @@ class Backend(QObject):
                 "sound": sorted(sandbox.normalize(gs)["sound"]), "devices": sorted(sandbox.normalize(gs)["devices"]),
                 "caps": sorted(sandbox.normalize(gs)["caps"]), "execDeny": sandbox.normalize(gs)["exec_deny"],
                 "capLabels": sandbox.CAP_LABELS, "deviceLabels": sandbox.DEVICE_LABELS, "soundLabels": sandbox.SOUND_LABELS,
-                "templates": self.sandboxTemplates, "support": self._sb_support(),
+                "templates": self.sandboxTemplates, "support": self._sb_support(root),
                 "freshWarning": self._fresh_warning(url), "launcherHash": self._launcher_hash(url),
                 "sessionWarning": self._sb_session_warning(),
                 # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
@@ -2356,6 +2360,8 @@ class Backend(QObject):
             r = self._resolved_sandbox(row["url"])
             if not r or sandbox.level_of(r["grants"]) == "off":
                 continue
+            if not rec.get("launcher") and not sandbox.bwrap_answers_hold(self._app_options(row["url"]).root):
+                continue           # in a folder whose launcher would find no bwrap: it runs Off (R17.4)
             if not install.launcher_is_current(rec, {**a, "sandbox": r["grants"]}, self._app_options(row["url"])):
                 todo.append(row["url"])
         for url in undo:
@@ -2411,7 +2417,7 @@ class Backend(QObject):
         r = self._resolved_sandbox(url, kind=(choice or {}).get("kind") or None)
         if not r or sandbox.level_of(r["grants"]) == "off":
             return False
-        return sandbox.have_tools() and self._sb_support()["status"] == "setup-needed"
+        return sandbox.have_tools() and self._sb_support(self._app_options(url).root)["status"] == "setup-needed"
 
     @Slot("QVariant", bool)
     def answerSandboxSetup(self, info, now: bool) -> None:

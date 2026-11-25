@@ -156,13 +156,14 @@ def _ships_a_display_library(folder: str) -> bool:
     return False
 
 
-def kind_of_appimage(img: str, timeout: float = 60) -> str | None:
+def kind_of_appimage(img: str, timeout: float = 60, apps_root: str | None = None) -> str | None:
     """An AppImage's kind from the Terminal key of the .desktop at its root, read by its own runtime
     inside a bwrap that can write only a staging folder and has no network (the launcher's unpacking,
     R17.7). None where bwrap can't run or the runtime gives no .desktop. The bwrap is the one the
-    launchers run (sandbox.host_which), which the AppArmor profile names (R17.10)."""
+    launchers run (sandbox.host_which), which the AppArmor profile names (R17.10): the launcher of an
+    app in `apps_root`, the AppImage's install folder."""
     from .sandbox import host_which
-    bwrap = host_which("bwrap")
+    bwrap = host_which("bwrap", apps_root)
     if not bwrap or not os.path.isfile(img):
         return None
     with tempfile.TemporaryDirectory(prefix="appkata-kind-") as stg:
@@ -191,7 +192,7 @@ def detect(kind: str, current: dict, target: str) -> str | None:
     `current` the install record's {path, exec}, `target` the app's folder."""
     path = current.get("path", "")
     if kind == "appimage" or path.lower().endswith(".appimage"):
-        return kind_of_appimage(path)
+        return kind_of_appimage(path, apps_root=os.path.dirname(target) or None)
     if kind == "tarball" and os.path.isdir(path):
         return kind_of_folder(path, os.path.relpath(os.path.join(target, current.get("exec", "")), path))
     return None
