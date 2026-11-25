@@ -204,16 +204,42 @@ def _a_name_as_sent(name: str) -> bool:
     return sent == looked_up and re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?", sent) is not None
 
 
-def _named(text: str, host_part: str) -> str:
-    """How a refusal names an address: by its host and its port alone, its escapes decoded, at most
-    200 characters. That is what follows the last `@` in `text`, written or escaped (`%40`, which
-    the rule for a user part reads as an `@`), up to the first `/`, `?` or `#` after it; or, where
-    `text` has none, `host_part`. `text` is all that may be read as a user part and the host after
-    it: the host part, or the whole address where urlsplit can't read it or reads another host part
-    than the one written. So no refusal says any part of a user part, which may be a password,
-    however it is spelled (the review's passes 5 and 6, P5-B2 and P6-B2)."""
-    *before, after = re.split(r"@|%40", text, flags=re.IGNORECASE)
-    return unquote(re.split(r"[/?#]", after if before else host_part, maxsplit=1)[0])[:200]
+def _a_host_and_port(text: str) -> bool:
+    """Whether a host part is a host and its port and nothing else (_HOST_PART): an IPv6 address in
+    brackets as they are written, or a name in the form it is sent (_a_name_as_sent)."""
+    host = _HOST_PART.fullmatch(text)
+    return host is not None and bool(_AN_IPV6_ADDRESS.fullmatch(host[1].lower()) or _a_name_as_sent(unquote(host[1])))
+
+
+# An address's host part, as urlsplit reads it once it has dropped the address's tabs and line breaks,
+# and as a proxy ends it, at the first `/`: only an address with a `//` right after its scheme has one.
+_ITS_HOST_PART = re.compile(r"[a-z][a-z0-9+.-]*://([^/]*)", re.IGNORECASE)
+
+
+def _named(url: str) -> str:
+    """How a refusal names an address: by what follows the last `@` of its host part, written or
+    escaped (`%40`, which the rule for a user part reads as an `@`), its escapes decoded, at most 200
+    characters; and only where that is a host and its port in the form an address Http asks for has
+    (_a_host_and_port), read alike from the host part as a proxy may end it, at the first `/`, and
+    as urlsplit ends it, at a `?` or `#` before that; else not at all, "". So no refusal says any
+    part of a user part, which may be a password, however it is spelled, nor any of a path or a
+    query: a host part is read alone, and what isn't a host's name by both readings is never said.
+    Read for an `@` alone, a user part spelled with a full-width `＠` or `%2540` was said whole, and
+    the whole address was read where urlsplit can't read it, so the name after an `@` in its path or
+    query was said as its host: `(2x.png)` for `.../secret-name@2x.png` (the review's passes 5 to 7,
+    P5-B2, P6-B2 and P7-B4)."""
+    part = _ITS_HOST_PART.match(re.sub(r"[\t\r\n]", "", url))
+    as_a_proxy_reads = part[1] if part else ""
+    as_urlsplit_reads = re.split(r"[?#]", as_a_proxy_reads, maxsplit=1)[0]
+    named = {re.split(r"@|%40", text, flags=re.IGNORECASE)[-1] for text in (as_a_proxy_reads, as_urlsplit_reads)}
+    return unquote(named.pop())[:200] if len(named) == 1 and _a_host_and_port(*named) else ""
+
+
+def _refused(what: str, url: str) -> Unreachable:
+    """The refusal of an address that `what` says, `an address with a user part before its host`,
+    naming its host and port where it can (_named)."""
+    named = _named(url)
+    return Unreachable(f"{what} ({named}) isn't asked for" if named else f"{what} isn't asked for")
 
 
 def _http_address(url: str):
@@ -243,9 +269,8 @@ def _http_address(url: str):
       host part as written is held to be urlsplit's, up to a `?` or `#`, and is read once (P5-B1).
     No address Http asks for needs any of these: an image's address has a path, and the host of one
     with a user part is found by no lookup. A user part isn't said, since it may be a password: a
-    refusal names an address by its host and port alone (_named), and nothing before the last `@`,
-    written or escaped, of the host part, or of the whole address where urlsplit can't read it or
-    reads another host part (the review's passes 5 and 6, P5-B2 and P6-B2)."""
+    refusal names an address by a host and its port alone, or not at all (_named; the review's
+    passes 5 to 7, P5-B2, P6-B2 and P7-B4)."""
     try:
         parts = urlsplit(url)
         parts.port
@@ -253,14 +278,13 @@ def _http_address(url: str):
         parts = None
     written = url.partition("//")[2].partition("/")[0]        # the host part: up to the first `/`, as a proxy may read it
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
-        raise Unreachable(f"{_named(url, written if '//' in url else url)!r} isn't an http or https address")
+        raise _refused("an address that isn't an http or https one", url)
     if re.split(r"[?#]", written, maxsplit=1)[0] != parts.netloc:      # and urlsplit's, up to a `?` or `#` (P5-B1)
-        raise Unreachable(f"an address whose host part is more than a host and its port ({_named(url, parts.netloc)}) isn't asked for")
+        raise _refused("an address whose host part is more than a host and its port", url)
     if "@" in unquote(written):
-        raise Unreachable(f"an address with a user part before its host ({_named(written, written)}) isn't asked for")
-    host = _HOST_PART.fullmatch(written)
-    if host is None or not (_AN_IPV6_ADDRESS.fullmatch(host[1].lower()) or _a_name_as_sent(unquote(host[1]))):
-        raise Unreachable(f"an address whose host part is more than a host and its port ({_named(written, written)}) isn't asked for")
+        raise _refused("an address with a user part before its host", url)
+    if not _a_host_and_port(written):
+        raise _refused("an address whose host part is more than a host and its port", url)
     return parts
 
 

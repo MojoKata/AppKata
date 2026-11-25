@@ -602,7 +602,7 @@ def test_a_redirect_to_a_local_address_is_refused(pair):
     assert Http(timeout=10).json(f"https://{a.at}/z") == {"ok": True}
 
 
-@pytest.mark.parametrize("to, says", [("ftp://127.0.0.1:1/x", "isn't an http or https address"),    # urllib would follow it
+@pytest.mark.parametrize("to, says", [("ftp://127.0.0.1:1/x", r"isn't an http or https one \(127.0.0.1:1\)"),   # urllib would follow it
                                       ("file:///etc/hostname", "HTTP 302")])                      # urllib's own refusal
 def test_a_redirect_to_anything_but_http_and_https_is_refused(pair, to, says):
     a, b = pair
@@ -953,26 +953,52 @@ def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pai
 # `https:/\t/%2fSECRET%40h.example/x`'s host part. The class is "a refusal says a user part", however
 # it is spelled, so every refusal names an address by its host and port alone: what follows its last
 # `@`, written or escaped, its escapes decoded, and nothing of its path.
+#
+# The review's pass 7, P7-B4: a user part spelled with a full-width `＠` or `%2540` has no `@` or
+# `%40`, so the refusal said it whole; and where it read the whole address it named what followed an
+# `@` in its path or query (`(2x.png)` for `.../secret-name@2x.png`, the `AAAA` of a data: address).
+# The class is still "a refusal says a user part", and listing its spellings can't end it, so a
+# refusal says a host and its port only where they are in the form an address Http asks for has,
+# read from the host part alone, and else names no part of the address.
+NOT_HTTP = "an address that isn't an http or https one ({}) isn't asked for"
+MORE = "an address whose host part is more than a host and its port ({}) isn't asked for"
+USER = "an address with a user part before its host ({}) isn't asked for"
+
+
+def unnamed(said):
+    """A refusal that names no part of its address."""
+    return said.replace(" ({})", "")
+
+
 @pytest.mark.parametrize("url, said", [
-    ("https://user:pw@images.example.com:99999/x", "images.example.com:99999"),
-    ("https://user:pw@images.example.com:8x/x", "images.example.com:8x"),
-    ("http://user:p/w@images.example.com/x", "images.example.com"),           # urlsplit's port: "p"
-    ("http://user:pw@/x", ""),
-    ("ftp://user:pw@images.example.com/x", "images.example.com"),
-    ("https://user:SECRET%40images.example.com:8x/x", "images.example.com:8x"),    # a user part spelled with %40 (P6-B2)
-    ("ftp://user:SECRET%40images.example.com/x", "images.example.com"),
-    ("https:/\n/user:SECRET%40images.example.com/x", "images.example.com"),        # a line break in its `//` too
-    ("https://images.example.com:8x/x?u=a", "images.example.com:8x"),              # no user part: its host part, and no more
+    ("https://user:pw@images.example.com:99999/x", NOT_HTTP.format("images.example.com:99999")),
+    ("ftp://user:pw@images.example.com/x", NOT_HTTP.format("images.example.com")),
+    ("ftp://user:SECRET%40images.example.com/x", NOT_HTTP.format("images.example.com")),    # a user part spelled with %40 (P6-B2)
+    ("https:/\n/user:SECRET%40images.example.com/x", NOT_HTTP.format("images.example.com")),  # a line break in its `//` too
+    ("https://user:SECRET%40images.example.com:8x/x", unnamed(NOT_HTTP)),     # what follows the `@` isn't a host and its port
+    ("https://user:pw@images.example.com:8x/x", unnamed(NOT_HTTP)),
+    ("https://images.example.com:8x/x?u=a", unnamed(NOT_HTTP)),
+    ("http://user:p/w@images.example.com/x", unnamed(NOT_HTTP)),             # urlsplit's port: "p", and the rest a path
+    ("http://user:pw@/x", unnamed(NOT_HTTP)),
+    # a user part in another spelling (P7-B4)
+    ("https://user:SECRET＠images.example.com/x", unnamed(NOT_HTTP)),         # a full-width @, which urlsplit refuses
+    ("https://SECRET＠images.example.com/x", unnamed(NOT_HTTP)),
+    ("https://user:SECRET%EF%BC%A0images.example.com/x", unnamed(NOT_HTTP)),  # the same, escaped
+    ("https://user:SECRET%2540images.example.com/x", unnamed(NOT_HTTP)),      # %40, escaped once more
+    # no host part: nothing of the address (P7-B4)
+    ("file:///home/me/SECRET/path@x.png", unnamed(NOT_HTTP)),
+    ("data:image/png;base64,SECRET@AAAA", unnamed(NOT_HTTP)),
+    ("file:C:\\Users\\me\\SECRET.png", unnamed(NOT_HTTP)),
+    ("mailto:SECRET@images.example.com", unnamed(NOT_HTTP)),
+    ("https:x//SECRET@images.example.com/x", unnamed(NOT_HTTP)),             # a `//` in its path isn't a host part's
+    ("ftp://images.example.com?q=SECRET@b/x", unnamed(NOT_HTTP)),            # a query's `@`, before any path
 ])
 def test_the_refusal_of_an_address_that_isnt_an_http_one_says_no_user_part(url, said):
     seen = []
     with pytest.raises(Unreachable) as refused:
         names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
-    assert str(refused.value) == f"{said!r} isn't an http or https address" and seen == []
-
-
-MORE = "an address whose host part is more than a host and its port ({}) isn't asked for"
-USER = "an address with a user part before its host ({}) isn't asked for"
+    assert str(refused.value) == said and seen == []
+    assert not {"SECRET", "user", "pw", "AAAA", "x.png"} & set(re.findall(r"[\w.]+", str(refused.value)))
 
 
 @pytest.mark.parametrize("url, said", [
@@ -981,17 +1007,32 @@ USER = "an address with a user part before its host ({}) isn't asked for"
     ("https:/\t/user:SECRET@images.example.com/x", MORE.format("images.example.com")),
     ("http:/\n/10.0.0.5@images.example.com/x//y", MORE.format("images.example.com")),
     ("https:/\t/images.example.com:8443/x", MORE.format("images.example.com:8443")),
+    # and an `@` in its path or query is the path's or the query's (P7-B4)
+    ("https:/\n/images.example.com/u/secret-name@2x.png", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com/a?token=SECRET@b", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com/avatars/me@example.com/a.png", MORE.format("images.example.com")),
     # a user part before the host, written or escaped
     ("https://%2fSECRET%40images.example.com/x", USER.format("images.example.com")),
-    ("https://user:SECRET@images.example.com?x/y", USER.format("images.example.com")),
-    # a host part with what no host has: an `@` after it is the path's
-    ("https://a⑴b.example:8443/@x/shot.png", MORE.format("a⑴b.example:8443")),
+    ("https://user:SECRET%2540@images.example.com/x", USER.format("images.example.com")),
+    # a `?` or `#` in the host part: urlsplit's host part ends there, a proxy's at the `/`, and what
+    # isn't a host by both readings isn't said (P7-B4)
+    ("https://user:SECRET@images.example.com?x/y", unnamed(USER)),
+    ("https://images.example.com?@10.0.0.5/x", unnamed(USER)),
+    ("https://images.example.com?token=SECRET@b/x", unnamed(USER)),
+    ("https://user:SECRET@x.example?a@b/x", unnamed(USER)),
+    ("https://SECRET#Z﹫images.example.com/x", unnamed(MORE)),             # a small @, which a reader that applies NFKC takes for one
+    ("https://SECRET?Z%25%34%30images.example.com/x", unnamed(MORE)),       # %40, its every character escaped
+    # a host part with what no host has: none of it is a host's (P7-B4), and an `@` after it is the path's
+    ("https://a⑴b.example:8443/@x/shot.png", unnamed(MORE)),
+    ("https://SECRET%2540images.example.com/x", unnamed(MORE)),             # %40, escaped once more
+    ("https://127.0.0.1%5cSECRET.images.example.com/x", unnamed(MORE)),
 ])
 def test_a_refusal_of_a_host_part_names_its_host_alone(url, said):
     seen = []
     with pytest.raises(Unreachable) as refused:
         names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
     assert str(refused.value) == said and seen == []
+    assert not {"SECRET", "secret", "2x.png", "b", "example.com", "x"} & set(re.findall(r"[\w.-]+", str(refused.value)))
 
 
 # The review's pass 4, P4-1: the check above refused an `@` in what urlsplit reads as the host part,
