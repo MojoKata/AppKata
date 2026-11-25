@@ -2546,7 +2546,8 @@ _GUARD_FN = """guard() {
 # them to a grant, with its two exceptions, a folder of the home and what is under /run/media;
 # CR1.5-6: a tool run from /tmp or /dev/shm got that whole folder read-write, bound after the
 # sandbox's own and over it, with every other program's sockets). There the tool runs in
-# its private home instead and says why. Paths are compared physically
+# its private home instead and says why: in its own words where the system's places alone refuse
+# the directory ($cwdsys is 1: nothing before them had). Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
 # be shared (round three, R3-3: it always counted "$PWD", so a file named from a refused folder was
@@ -2568,12 +2569,14 @@ done
 for d in {protected}; do
   case "$here/" in "$d"/*) share=0 ;; esac
 done
+cwdsys=0
 case "$here/" in "$hm"/*|{media}) ;; *)
   for d in {system}; do
-    case "$here/" in "$d"/*) share=0 ;; esac
-    case "$d/" in "$here"/*) share=0 ;; esac
+    case "$here/" in "$d"/*) cwdsys=1 ;; esac
+    case "$d/" in "$here"/*) cwdsys=1 ;; esac
   done ;;
 esac
+if [ "$cwdsys" = 1 ]; then cwdsys=$share; share=0; fi
 cwdvis=
 [ "$share" = 1 ] && cwdvis=$here
 """
@@ -2583,7 +2586,10 @@ _CWD_WORDS = """if [ "$share" = 1 ]; then
 else
   set -- --chdir "$HOME" "$@"
   if [ "${{busok:-1}}" = 1 ]; then
-    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
+    case "$cwdsys" in
+      1) printf "%s runs sandboxed and isn't given %s to work in: it is one of the system's own folders ({places}), or in or above one, and those are never shared.\\n" {name} "$here" >&2 ;;
+      *) printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2 ;;
+    esac
     echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
   else
     printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\\n" {name} "$here" "$upstream" >&2
@@ -2663,7 +2669,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append(_INNER_BLOCK)
     if cli:
         bind = "--bind" if gs["folders"]["$cwd"] == "rw" else "--ro-bind"
-        out.append(_CWD_WORDS.format(name=q(name), bind=bind))
+        out.append(_CWD_WORDS.format(name=q(name), bind=bind, places=", ".join(SYSTEM_PLACES)))
     # A folder grant is judged when the launcher is written, by AppKata's own session bus (a grant
     # that holds its socket is refused above), and this session's bus can be elsewhere: one started
     # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket

@@ -170,6 +170,35 @@ def test_cli_tool_sees_and_writes_the_project_folder_it_is_run_in(env):
     assert (proj / "out.txt").read_text() == "out\n"
     assert "id_ed25519" not in r.stdout                   # the rest of the home stays hidden
     assert "bwrap" not in r.stderr                        # no warnings (e.g. two --chdir options)
+    _a_tool_run_in_a_system_place_has_the_sandboxes_own(env)
+
+
+def _a_tool_run_in_a_system_place_has_the_sandboxes_own(env):
+    # CR1.5-6 (#381): ...and the folder it is run in is not the tool's where it is one of the system's
+    # own places. Run from /tmp, /var/tmp or /dev/shm the tool got the whole folder read-write, bound
+    # after the sandbox's own /tmp and /dev and over them, with what other programs keep there (tmux's
+    # server socket, an ssh agent's). Now it runs in its private home, with the sandbox's own /tmp,
+    # /dev and /proc, and says why. (Part of the test above, not one of its own, as the #380 run is.)
+    lp = _cli(env)
+    work = env.home.parent / "work"                        # a folder of /tmp that is not above this test's home
+    work.mkdir()
+    mark = f"appkata-cr1-5-6-{os.getpid()}"
+    theirs = [str(work / mark), f"/var/tmp/{mark}", f"/dev/shm/{mark}"]
+    mine = [t + "-mine" for t in theirs]
+    try:
+        for t in theirs:
+            with open(t, "w") as f:
+                f.write("x")
+        for cwd in (str(work), "/var/tmp", "/dev/shm", "/proc", "/sys", "/etc", "/usr/share", "/var"):
+            r = env.run(lp, f'pwd; [ -e {cwd}/{mark} ] && echo THEIRS; (echo x > {cwd}/{mark}-mine) 2>/dev/null; cat /proc/1/comm; true', cwd=cwd)
+            assert r.returncode == 0 and r.stdout.split() == [str(env.home), "bwrap"], (cwd, r.stdout, r.stderr)   # in its private home, with its own /proc
+            assert f"Tool runs sandboxed and isn't given {cwd} to work in: it is one of the system's own folders" in r.stderr, (cwd, r.stderr)
+            assert "A file you name on the command line is handed over either way." in r.stderr and "bwrap" not in r.stderr, (cwd, r.stderr)
+            assert not [m for m in mine if os.path.exists(m)], (cwd, mine)                                        # and nothing it wrote landed outside
+    finally:
+        for left in theirs + mine:
+            if os.path.exists(left):
+                os.unlink(left)
 
 
 @pytest.mark.parametrize("where", ["home", "root", "parent", "symlink-to-home", "install-root", "sandboxes",
@@ -1823,11 +1852,22 @@ def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(
                                capture_output=True, text=True, timeout=60)
             r2 = subprocess.run([lp, snippet, "in.txt", str(docs / "notes.txt")], cwd=str(proj), env=e,
                                 capture_output=True, text=True, timeout=60)
+            # CR1.5-6 (#381): a folder of /tmp is no tool's to work in, and a file named there, by
+            # either path, is handed over like any other
+            work = env.home.parent / "work"
+            work.mkdir()
+            (work / "draft.txt").write_text("DRAFT\n")
+            r3 = subprocess.run([lp, snippet, "draft.txt", str(work / "draft.txt")], cwd=str(work), env=e,
+                                capture_output=True, text=True, timeout=60)
         finally:
             portal.close()
     finally:
         bus.close()
     doc = str(env.rt / "doc") + "/"
+    args = [l[4:] for l in r3.stdout.splitlines() if l.startswith("ARG ")]
+    assert r3.returncode == 0 and f"isn't given {work} to work in" in r3.stderr, (r3.stdout, r3.stderr)
+    assert len(args) == 2 and all(a.startswith(doc) and a.endswith("/draft.txt") for a in args), args
+    assert r3.stdout.count("DRAFT") == 2, r3.stdout
     args = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
     assert r.returncode == 0 and "can't see" in r.stderr, (r.stdout, r.stderr)        # refused, as before
     assert len(args) == 2 and all(a.startswith(doc) and a.endswith("/notes.txt") for a in args), args

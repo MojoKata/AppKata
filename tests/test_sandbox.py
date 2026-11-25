@@ -971,6 +971,54 @@ def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, mo
         assert _binds(app)[run_in] == ("--bind", run_in) and "can't see" not in r.stderr, (app, r.stderr)
 
 
+# CR1.5-6 (#381, the owner's decision of 2026-11-24): a command-line tool's working directory was
+# refused when it was the home, a folder above it, or in or above a never-shared folder, and that
+# list knew no system place. Run from /tmp, /var/tmp or /dev/shm (`cd /tmp && tool x`), the tool got
+# the whole folder read-write, bound after the sandbox's own /tmp and /dev and over them, with
+# every other program's sockets in it: tmux's server, an ssh agent's. Now the tool's rule is the
+# grant's (sb.SYSTEM_PLACES): it runs in its private home and says why, in words of its own. How it
+# slipped past: the refused directories the tests ran a tool from were the home's and AppKata's
+# own; none was a place of the system. Each is here, with a folder of /tmp that is not above this
+# test's home, as the launcher itself decides it (a stand-in bwrap records the words).
+SYSTEM_RUNS = ["a folder of /tmp", "/var/tmp", "/dev/shm", "/dev", "/proc", "/sys", "/etc", "/usr/share", "/var", "/run"]
+
+
+@pytest.mark.parametrize("where", SYSTEM_RUNS)
+def test_a_tool_run_in_a_system_place_is_not_given_it_and_says_why(tmp_path, monkeypatch, where):
+    import tempfile
+    made = tempfile.mkdtemp(prefix="appkata-cr1-5-6-", dir="/tmp") if where == "a folder of /tmp" else None
+    run_in = os.path.realpath(made or where)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))              # AppKata's own, as the tool's: /run is not above it
+    try:
+        proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, template="cli-tool", cwd=run_in)
+    finally:
+        if made:
+            os.rmdir(made)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _binds(app).get(run_in, ("",))[0] != "--bind", app                 # not the tool's (the launcher's own /etc is read-only)
+    assert app[app.index("--chdir") + 1] == str(tmp_path / "home") and app.count("--chdir") == 1, app
+    if str(tmp_path).startswith(run_in + os.sep):                             # above this test's home: refused for that, as before
+        assert f"Demo runs sandboxed and can't see {run_in} (your home folder or a folder above it" in r.stderr, r.stderr
+        return
+    assert (f"Demo runs sandboxed and isn't given {run_in} to work in: it is one of the system's own folders "
+            f"({', '.join(sb.SYSTEM_PLACES)}), or in or above one, and those are never shared.\n"
+            "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). "
+            "A file you name on the command line is handed over either way.\n") in r.stderr, r.stderr
+    assert "can't see" not in r.stderr, r.stderr
+
+
+def test_a_tool_run_where_a_disk_is_mounted_or_in_its_users_folders_is_still_given_the_folder(tmp_path, monkeypatch, tmp_path_factory):
+    # ...and what the grant check leaves alone the tool's rule does too: the mount roots (a stick or a
+    # disk under /media, /mnt or /run/media, R17.3.1), and a folder of the home, wherever the home is.
+    project = tmp_path / "home" / "tmp" / "project"                           # named like a system place, and the user's own
+    project.mkdir(parents=True)
+    for n, run_in in enumerate([str(project)] + [d for d in ("/mnt", "/media", "/run/media") if os.path.isdir(d)]):
+        run_in = os.path.realpath(run_in)
+        proxy, app, r, rt = _launched(tmp_path if n == 0 else tmp_path_factory.mktemp("again"), monkeypatch, None, template="cli-tool", cwd=run_in)
+        assert r.returncode == 0 and _binds(app)[run_in] == ("--bind", run_in), (run_in, app, r.stderr)
+        assert app[app.index("--chdir") + 1] == run_in and "runs sandboxed and" not in r.stderr, (run_in, r.stderr)
+
+
 @pytest.mark.parametrize("address", ["unix:path=relative/dbus-MZ8lHbtZ8K", "unix:path=/tmp/dbus-%zz", "unix:abstract=/tmp/x;unix:path=/tmp/a%0Ab"])
 def test_a_tool_is_shown_no_folder_where_the_session_bus_names_a_file_it_cannot_read(tmp_path, monkeypatch, address):
     # ...and an address that names a socket file the launcher can't read (a relative path, a broken

@@ -247,6 +247,13 @@ def _folders(env: Env) -> dict[str, str]:
         if not link.exists():
             link.symlink_to(target)
         corpus[name] = str(link)
+    # The system's own places, which neither shares (R17.3.1, R17.3.3; CR1.5-5, CR1.5-6), a folder in
+    # one and the folder above two of them, and where a stick or a disk is mounted, which both do.
+    # /etc and /usr themselves are not asked: every launcher binds them read-only itself, which the
+    # reading of its words below can't tell from a share (tests/test_sandbox.py tells them apart).
+    for p in ("/tmp", "/var/tmp", "/dev/shm", "/dev", "/proc", "/sys", "/usr/share", "/var", "/run", "/boot", "/mnt", "/media", "/run/media"):
+        if os.path.isdir(p) and os.access(p, os.X_OK):
+            corpus[p] = p
     return corpus
 
 
