@@ -774,10 +774,14 @@ def _run_by_name(src=None):
     helper such as autoupdate._out that runs what it is given), or what `which("name")` looks for.
     Given to what runs a program (subprocess's calls, or a function of AppKata's that gives its
     first parameter to one), the list may also be built first and given by name (`cmd =
-    [...]`, then `Popen(cmd)`, in the same function), chosen by a conditional (both its lists), or
-    added to (`["git"] + args`): #689's review, P2-4, the form gio came in by. A wrapper that puts
-    its own program before its caller's words (flatpak.run: ["flatpak", *args]) gives that program,
-    and its callers' first words are that program's, not programs."""
+    [...]`, then `Popen(cmd)`, in the same function or at the module's top), chosen by a
+    conditional (both its lists), added to (`["git"] + args`), started with a starred list
+    (`[*BASE, x]`), grown with `+=` from an empty one, held on an attribute (`self.cmd`), given by
+    keyword (`args=[...]`), or be a string (`run("tool -x")`): #689's review, P2-4, the form gio came
+    in by, and P3-3. A program os runs (`os.execvp("tool", ...)`, `os.spawnlp(mode, "tool", ...)`,
+    `os.system("tool ...")`) or asyncio does (`create_subprocess_exec("tool", ...)`) is one too. A
+    wrapper that puts its own program before its caller's words (flatpak.run: ["flatpak", *args])
+    gives that program, and its callers' first words are that program's, not programs."""
     import ast
     src = src or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
     trees = {}
@@ -793,33 +797,59 @@ def _run_by_name(src=None):
             return node.elts[0].value
         return None
 
+    def held(node):
+        """The name a value is held by: `cmd`, or `self.cmd` for an attribute."""
+        if isinstance(node, ast.Name):
+            return node.id
+        return f"{node.value.id}.{node.attr}" if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) else None
+
+    def empty(node):
+        return isinstance(node, (ast.List, ast.Tuple)) and not node.elts
+
+    def first_word(text):
+        """A command line's first word, as a shell splits it."""
+        try:
+            return shlex.split(text)[:1]
+        except ValueError:
+            return []
+
     def firsts(node, assigned, seen=()):
-        """The first words of every list `node` can be: a list, either list of a conditional, the
-        left of a `+`, or a name's lists where its function assigns them."""
+        """The first words of every list `node` can be: a list (or the first words of the starred
+        list it starts with), either list of a conditional, the left of a `+` (its right where the
+        left is empty), a string's first word, or the lists a name or an attribute is assigned,
+        with what `+=` adds to one assigned an empty list."""
         if isinstance(node, ast.IfExp):
             return firsts(node.body, assigned, seen) + firsts(node.orelse, assigned, seen)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-            return firsts(node.left, assigned, seen)
-        if isinstance(node, ast.Name) and node.id not in seen:
-            return [w for v in assigned.get(node.id, []) for w in firsts(v, assigned, seen + (node.id,))]
+            return firsts(node.right if empty(node.left) else node.left, assigned, seen)
+        if isinstance(node, (ast.List, ast.Tuple)) and node.elts and isinstance(node.elts[0], ast.Starred):
+            return firsts(node.elts[0].value, assigned, seen)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return first_word(node.value)
+        if (key := held(node)) and key not in seen:
+            values = assigned.get(key, [])
+            grown = assigned.get(key + " +=", []) if any(empty(v) for v in values) else []
+            return [w for v in values + grown for w in firsts(v, assigned, seen + (key,))]
         return [w] if (w := first(node)) else []
 
-    def assignments(scope):
-        """{name: [the values assigned to it]} in a function (or a module's own statements)."""
+    def assignments(scope, nodes=None):
+        """{name: [the values assigned to it]} in a function (or a module's own statements), with
+        what `+=` adds to a name under "<name> +="."""
         out = {}
-        for n in (ast.walk(scope) if not isinstance(scope, ast.Module) else scope.body):
-            if isinstance(n, ast.Assign):
-                for t in n.targets:
-                    if isinstance(t, ast.Name):
-                        out.setdefault(t.id, []).append(n.value)
-            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
-                out.setdefault(n.target.id, []).append(n.value)
+        for n in nodes if nodes is not None else (ast.walk(scope) if not isinstance(scope, ast.Module) else scope.body):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target] if isinstance(n, ast.AnnAssign) and n.value else []
+            for t in targets:
+                if key := held(t):
+                    out.setdefault(key, []).append(n.value)
+            if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and (key := held(n.target)):
+                out.setdefault(key + " +=", []).append(n.value)
         return out
 
     def calls(node, assigned):
-        """(call, what its function assigns) for every call under `node`, in its innermost function."""
+        """(call, what its function assigns, and its module) for every call under `node`, in its
+        innermost function."""
         for child in ast.iter_child_nodes(node):
-            inner = assignments(child) if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else assigned
+            inner = {**assigned, **assignments(child)} if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else assigned
             if isinstance(child, ast.Call):
                 yield child, inner
             yield from calls(child, inner)
@@ -830,18 +860,29 @@ def _run_by_name(src=None):
             return module, f.id
         return (f.value.id, f.attr) if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else None
 
+    def given(call, keyword):
+        """What a call gives a runner: its first argument, else the keyword its runner takes it by."""
+        return call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == keyword), None)
+
     module = lambda p: os.path.splitext(os.path.basename(p))[0]       # noqa: E731
-    runners = {("subprocess", f) for f in ("run", "Popen", "call", "check_call", "check_output")}
+    # what runs a list of words, by the keyword it takes it by; and os's and asyncio's, by where the
+    # program is among the arguments
+    runners = {("subprocess", f): "args" for f in ("run", "Popen", "call", "check_call", "check_output")}
+    by_program = {**{("os", f): 0 for f in ("execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+                                            "posix_spawn", "posix_spawnp", "system", "popen")},
+                  **{("os", f): 1 for f in ("spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe")},
+                  ("asyncio", "create_subprocess_exec"): 0, ("asyncio", "create_subprocess_shell"): 0}
     while True:                                 # and AppKata's own functions that run what they are given
-        more = set()
+        more = {}
         for p, tree in trees.items():
             for fn in ast.walk(tree):
-                given = [a.arg for a in fn.args.args if a.arg not in ("self", "cls")][:1] \
+                param = [a.arg for a in fn.args.args if a.arg not in ("self", "cls")][:1] \
                     if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) else []
-                if given and (module(p), fn.name) not in runners and any(
-                        isinstance(c, ast.Call) and c.args and isinstance(c.args[0], ast.Name) and c.args[0].id == given[0]
-                        and callee(c, module(p)) in runners for c in ast.walk(fn)):
-                    more.add((module(p), fn.name))
+                if param and (module(p), fn.name) not in runners and any(
+                        isinstance(c, ast.Call) and callee(c, module(p)) in runners
+                        and isinstance(g := given(c, runners[callee(c, module(p))]), ast.Name) and g.id == param[0]
+                        for c in ast.walk(fn)):
+                    more[(module(p), fn.name)] = param[0]
         if not more:
             break
         runners |= more
@@ -856,12 +897,23 @@ def _run_by_name(src=None):
                         wrappers.add((module(p), fn.name))
     found = {}
     for p, tree in trees.items():
-        for c, assigned in calls(tree, assignments(tree)):
-            if not c.args or callee(c, module(p)) in wrappers:
+        # a module's own names, and what its code holds on an attribute anywhere in it
+        top = {**assignments(tree), **{k: v for k, v in assignments(tree, list(ast.walk(tree))).items() if "." in k}}
+        for c, assigned in calls(tree, top):
+            who = callee(c, module(p))
+            if who in wrappers:
                 continue
-            words = [first(c.args[0])] if first(c.args[0]) else firsts(c.args[0], assigned) if callee(c, module(p)) in runners else []
-            if not words and (callee(c, module(p)) or ("", ""))[1] == "which" and isinstance(c.args[0], ast.Constant):
-                words = [c.args[0].value]
+            if who in by_program:
+                at = by_program[who]
+                arg = c.args[at] if len(c.args) > at else None
+                words = [w for v in ([arg] if not isinstance(arg, ast.Name) else assigned.get(arg.id, []))
+                         if isinstance(v, ast.Constant) and isinstance(v.value, str) for w in first_word(v.value)]
+            elif (lst := given(c, runners[who]) if who in runners else c.args[0] if c.args else None) is None:
+                continue
+            else:
+                words = [first(lst)] if first(lst) else firsts(lst, assigned) if who in runners else []
+                if not words and (who or ("", ""))[1] == "which" and isinstance(lst, ast.Constant):
+                    words = [lst.value]
             for name in words:
                 if isinstance(name, str) and re.fullmatch(r"[a-z0-9]([a-z0-9._+-]*[a-z0-9])?", name):     # a program's name
                     found.setdefault(name, []).append(f"{os.path.relpath(p, src)}:{c.lineno}")
@@ -902,6 +954,72 @@ def not_run(path):
     return ", ".join(words)
 """, {"built-first", "chosen-by-apt", "chosen-by-rpm", "chosen-a", "chosen-b", "added-to"})
 
+# More of them (#689's review, P3-3): a module's own list, a list given by keyword, a starred list
+# first, a list grown with += from an empty one, a list held on self, and the os and asyncio calls
+# that run a program; a program run by its path, and a word added after a program's, are not
+# programs run by name
+_RUN_FORMS_MORE = ("""
+import asyncio
+import os
+import subprocess
+
+MODULE_LEVEL = ["module-level", "-x"]
+BASE = ["starred-first", "-q"]
+
+
+def module_constant():
+    subprocess.run(MODULE_LEVEL, check=True)
+
+
+def by_keyword(path):
+    subprocess.run(args=["by-keyword", path], check=True)
+
+
+def starred(path):
+    subprocess.run([*BASE, path], check=True)
+
+
+def grown(args):
+    cmd = []
+    cmd += ["grown-from-empty"]
+    subprocess.run(cmd + args, check=True)
+
+
+def grown_after_a_program():
+    cmd = ["grown-after"]
+    cmd += ["not-a-program-either"]
+    subprocess.run(cmd, check=True)
+
+
+class Held:
+    def __init__(self):
+        self.cmd = ["held-on-self", "--flag"]
+
+    def go(self):
+        return subprocess.check_output(self.cmd, text=True)
+
+
+def replaced(args):
+    os.execvp("exec-p", ["exec-p", *args])
+
+
+def replaced_by_path(args):
+    os.execv("/usr/bin/exec-by-path", ["exec-by-path", *args])
+
+
+def spawned(args):
+    return os.spawnlp(os.P_WAIT, "spawned", "spawned", *args)
+
+
+async def asynchronous(args):
+    return await asyncio.create_subprocess_exec("async-exec", *args)
+
+
+def through_a_shell():
+    os.system("shell-word --flag")
+""", {"module-level", "by-keyword", "starred-first", "grown-from-empty", "grown-after", "held-on-self", "exec-p",
+      "spawned", "async-exec", "shell-word"})
+
 
 def test_the_harness_finds_a_program_however_its_list_reaches_what_runs_it(tmp_path):
     # #689's review, P2-4: _run_by_name took a list only where it was given straight to a call (or a
@@ -909,9 +1027,13 @@ def test_the_harness_finds_a_program_however_its_list_reaches_what_runs_it(tmp_p
     # conditional, as _package_entries' dpkg-query or rpm, got past it; gio was found only through
     # the which() beside it. A list given by name, chosen or added to counts where what it is given
     # to runs a program (subprocess's, or a function of AppKata's such as _out here that gives it to
-    # one), and not where it is printed or joined.
+    # one), and not where it is printed or joined. P3-3: nor did it follow a module's own list into
+    # its functions, a list given by keyword, a starred list first, a list grown with +=, one held
+    # on self, or a program run by os's exec, spawn or system calls or asyncio's.
     (tmp_path / "forms.py").write_text(_RUN_FORMS[0])
     assert set(_run_by_name(str(tmp_path))) == _RUN_FORMS[1]
+    (tmp_path / "forms.py").write_text(_RUN_FORMS_MORE[0])
+    assert set(_run_by_name(str(tmp_path))) == _RUN_FORMS_MORE[1]
     import inspect
 
     def where(fn, text):                        # the line of `fn` holding `text`, as the harness names it
