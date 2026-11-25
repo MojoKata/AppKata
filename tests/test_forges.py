@@ -1625,6 +1625,24 @@ def test_a_name_with_any_of_the_four_in_any_form_is_refused_and_said(address):
     assert seen == []
 
 
+# The refusal above says why, and a Source whose forge type isn't known yet had it on no row: the
+# forge probes (forges.detect) pass over a refused request for the next probe, and each was refused
+# alike, so the row said AppKata couldn't tell which forge the host runs, and to set its type. A
+# refusal of such a name is one that gets no answer, which ends the probing with its own error.
+@pytest.mark.parametrize("kind", [None, "gitea"])
+@pytest.mark.parametrize("name, twin, held", DEVIATING)
+def test_a_source_on_a_name_idna_2003_and_2008_read_apart_has_why_on_its_row(tmp_path, monkeypatch, name, twin, held, kind):
+    source = f"https://{name}/o/r"
+    db = catalog(tmp_path, monkeypatch, [source])
+    if kind:
+        db.x("UPDATE sources SET settings=?", (json.dumps({"forge": kind}),))
+    seen = []
+    sync.sync_all(db, names(Http({name: "SECRET"}, opener=recording({}, seen))), root=str(tmp_path), workers=1)
+    app = rows(db)[urls.normalize(source)]
+    assert app["error_code"] == "Unreachable" and re.match(two_hosts(name, held), app["error"]), app
+    assert seen == []
+
+
 @pytest.mark.parametrize("name, twin, held", DEVIATING)
 def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_is_kept_as_written_and_sent_nowhere(name, twin, held):
     assert http_.token_key(name) == name == http_.token_key(f"https://{urllib.parse.quote(name)}/o/r")

@@ -331,7 +331,10 @@ def _http_address(url: str):
     passes 5 to 7, P5-B2, P6-B2 and P7-B4).
 
     Nor one whose host is a name IDNA 2003 and IDNA 2008 read apart (two_hosts), which is two hosts,
-    and was sent as the other one (the review's pass 7, P7-1): its refusal says so."""
+    and was sent as the other one (the review's pass 7, P7-1): its refusal says so, and is one that
+    gets no answer (`no_answer`), as every request for that host would be, so the forge probes of
+    a Source on it end with it (forges.detect): they passed it over, each refused alike, and the
+    Source's row said AppKata couldn't tell which forge the host runs."""
     try:
         parts = urlsplit(url)
         parts.port
@@ -348,7 +351,8 @@ def _http_address(url: str):
         raise _refused("an address whose host part is more than a host and its port", url)
     reason = two_hosts(unquote(parts.hostname))
     if reason:
-        raise Unreachable(f"{_named(url) or 'an address'} isn't asked for: {reason}; in its IDNA 2008 form (xn--…), it is")
+        raise Unreachable(f"{_named(url) or 'an address'} isn't asked for: {reason}; in its IDNA 2008 form (xn--…), it is",
+                          no_answer=True)
     return parts
 
 
@@ -752,7 +756,8 @@ class Http:
         host = unquote(parts.hostname).lower()     # as it is judged: the host alone here (_http_address)
         reason = whose is not None and two_hosts(token_key(whose))
         if reason:
-            raise Unreachable(f"nothing is asked for a Source on {token_key(whose)[:200]}: {reason}; written in its IDNA 2008 form (xn--…), it is")
+            raise Unreachable(f"nothing is asked for a Source on {token_key(whose)[:200]}: {reason}; written in its IDNA 2008 form "
+                              "(xn--…), it is", no_answer=True)
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         sent = _sent(host)                         # as it is sent, the lookup's and the proxy's
