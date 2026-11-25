@@ -241,6 +241,21 @@ def test_whatever_the_helper_prints_is_read_as_arguments_and_never_run(answer, t
     assert back == ["one", "two"] or answer.count("\n=") == 1 and answer.startswith("="), back
 
 
+def test_a_line_of_the_answer_that_says_why_is_printed_as_text_and_is_no_argument(tmp_path):
+    # ...and a line with "!" first is why an argument was not handed over (CR1.5-38): printed after
+    # the app's name on stderr, as text (no format, no shell, no escape read), and counted as no
+    # argument; a line that is neither is nothing. R17.4 says so, and no hostile answer above had one.
+    ran = tmp_path / "ran"
+    why = f"%s%n\\c\\0101 $(touch {ran}) `touch {ran}`; touch {ran} 'x' \"y\""
+    helper = tmp_path / "hostile.py"
+    answer = ("!" + why + "\n=one\njunk\n!second\n=two\n").encode()
+    helper.write_text(f"import sys\nsys.stdout.buffer.write({answer!r})\n")
+    back, err = _through_the_launchers_own_lines(helper, ["a", "b"], tmp_path)
+    assert back == ["one", "two"] and err == f"App {why}\nApp second\n" and not ran.exists(), (back, err)
+    helper.write_text("import sys\nsys.stdout.write('!x\\n!y\\n')\n")           # two lines that say why are not two arguments
+    assert _through_the_launchers_own_lines(helper, ["a", "b"], tmp_path) == (["a", "b"], "")
+
+
 @pytest.mark.parametrize("name", ["My App", "it's", 'say "hi"', "a;b", "a&b", "$HOME", "`id`", "glob*", "--help", "-", "",
                                   "7zip", "ünïcødé", "a/b", "a\\b", "x" * 100])
 def test_a_hostile_app_name_gives_a_valid_launcher_and_identity(name, tmp_path, monkeypatch):
