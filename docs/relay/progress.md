@@ -13,8 +13,11 @@ b912a42, and each batch first merges U04's pushed tip in.
 The system places refused to every grant and to a tool's working directory: #380, #381, #189.
 Fable 5.2, high effort. Nothing was taken over: the worktree was clean at the start.
 
-**The merge of U04's tip**: up to date (`origin/cr1-u04-downloads-checksums` was still b912a42, this
-branch's own start, at the start and at the end of the batch); no merge commit.
+**The merge of U04's tip**: up to date when the batch started (`origin/cr1-u04-downloads-checksums`
+was b912a42, this branch's own start, and still was when #189 was committed); no merge commit.
+U04's batch 1 was pushed after that (4ce5d38): it is not in this batch, touches none of this
+batch's files, and merges with conflicts in `docs/relay/` alone (`git merge-tree`), which the
+brief's `restore` line settles. Batch 2 takes it in.
 
 **Counts**: fixed 3, no defect 0, remedy changed 0, set aside 0, still left 0, new 0.
 
