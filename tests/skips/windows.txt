@@ -19,12 +19,13 @@ tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs1-gui]  # the Linux install layout
 tests/test_install_review.py::test_an_app_named_after_a_command_is_installed_without_a_command_link  # the Linux install layout
-tests/test_install_review.py::test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes  # the Linux install layout
+tests/test_install_review.py::test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes_at_the_next_update  # the Linux install layout
 tests/test_install_review.py::test_an_archive_with_nothing_but_helpers_has_no_program  # the Linux install layout
 tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_no_download  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_entry_away  # the Linux install layout
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
+tests/test_install_review.py::test_appkatas_start_makes_a_command_link_once_its_name_is_free_and_removes_one_whose_name_became_a_command  # the Linux install layout
 tests/test_install_review.py::test_command_link_never_replaces_a_real_file  # the Linux install layout
 tests/test_install_review.py::test_each_version_of_an_appimage_released_under_one_name_is_kept_as_its_own_file  # the Linux install layout
 tests/test_install_review.py::test_install_options_on_windows_show_the_folder_an_installed_app_is_in  # could not import 'PySide6': No module named 'PySide6'
