@@ -154,10 +154,26 @@ def _is_for(parts, whose: str) -> bool:
 
 
 # An address's host part as it is written (_http_address): a host, then a `:` and a port where it
-# names one. And the host, its escapes decoded: a name of letters, digits, `-`, `_` and dots (one
-# outside ASCII is sent in its IDNA form, which its lookup makes too), or an IPv6 address in brackets.
+# names one. And the host: an IPv6 address in brackets as they are written, not escaped, or a name
+# (_a_name_as_sent).
 _HOST_PART = re.compile(r"(\[[^\]]*\]|[^:\[\]]*)(?::[0-9]*)?")
-_A_HOST = re.compile(r"[\w.-]+|\[[0-9a-f:.]+\]")
+_AN_IPV6_ADDRESS = re.compile(r"\[[0-9a-f:.]+\]")
+
+
+def _a_name_as_sent(name: str) -> bool:
+    """Whether a host, its escapes decoded, is a name in the form it is sent, its IDNA form: ASCII
+    letters, digits, `-`, `_` and dots. A tunnel's CONNECT sends a name in that form, and its lookup
+    does too (_allowed's, of the name in lower case), so a name in any script is one, its marks too
+    (the review's pass 5, P5-1), and one whose IDNA form holds what no name does isn't: `a⑴b` is
+    sent as `a(1)b`, and `%5b127.0.0.1%5d` as `[127.0.0.1]`, which a proxy reads as an address
+    (P5-2). Nor is a name whose IDNA form changes with its case: a letter Unicode 3.2 hadn't, such
+    as `Ⱥ`, is sent as written and looked up in lower case, two names with two addresses."""
+    try:
+        sent = name.encode("idna").decode("ascii").lower()
+        looked_up = name.lower().encode("idna").decode("ascii").lower()
+    except UnicodeError:                     # an empty part, one longer than 63, or what IDNA has no form for
+        return False
+    return sent == looked_up and re.fullmatch(r"[a-z0-9_.-]+", sent) is not None
 
 
 def _http_address(url: str):
@@ -166,10 +182,11 @@ def _http_address(url: str):
     on Windows can name a host to log in to over SMB, or ftp: or data:.
 
     Nor one whose host part, all that comes between its `//` and the first `/` after them, is more
-    than a host and its port (_HOST_PART, _A_HOST), the Source's own host's too. urllib sends a proxy
-    all of it: the host it asks for, decoded, in the Host header and a tunnel's CONNECT, and over
-    http the whole address. The check reads one host out of that, and a proxy may read another (the
-    review's passes 3 and 4):
+    than a host and its port (_HOST_PART), the Source's own host's too: an IPv6 address in brackets
+    as they are written (_AN_IPV6_ADDRESS), or a name in the form it is sent (_a_name_as_sent).
+    urllib sends a proxy all of it: the host it asks for, decoded, in the Host header and a tunnel's
+    CONNECT, and over http the whole address. The check reads one host out of that, and a proxy may
+    read another (the review's passes 3 to 5):
     - a user part (`user@`, `10.0.0.5%2f@`), where the check read the host after the `@` and a proxy
       may read 10.0.0.5 out of `10.0.0.5/@images.example.com` (P3-1);
     - a `\\`, which this computer's lookup takes for an escape and a browser's reading of an address
@@ -177,7 +194,9 @@ def _http_address(url: str):
       which a project's own domain can answer with a public address (P4-1);
     - a `?` or `#` right after the host, with no path before it: urlsplit's host part ends there,
       and a proxy that ends it only at the first `/` reads 10.0.0.5 out of
-      `images.example.com?@10.0.0.5` (P4-1).
+      `images.example.com?@10.0.0.5` (P4-1);
+    - escaped brackets, which the check reads as a name, `[127.0.0.1]`, and http.client as the
+      brackets of an address, 127.0.0.1, which a proxy is sent (P5-2).
     No address Http asks for needs any of these: an image's address has a path, and the host of one
     with a user part is found by no lookup. A user part isn't said, since it may be a password: the
     refusal names what comes after its last `@`."""
@@ -193,7 +212,7 @@ def _http_address(url: str):
     if "@" in said:
         raise Unreachable(f"an address with a user part before its host ({said.rpartition('@')[2][:200]}) isn't asked for")
     host = _HOST_PART.fullmatch(written)
-    if host is None or _A_HOST.fullmatch(unquote(host[1]).lower()) is None:
+    if host is None or not (_AN_IPV6_ADDRESS.fullmatch(host[1].lower()) or _a_name_as_sent(unquote(host[1]))):
         raise Unreachable(f"an address whose host part is more than a host and its port ({parts.hostname[:200]}) isn't asked for")
     return parts
 

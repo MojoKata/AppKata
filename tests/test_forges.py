@@ -914,6 +914,9 @@ HOST_PARTS = [
     "images.example.com?@10.0.0.5",                      # the query, before any path
     "images.example.com#@10.0.0.5",                      # the fragment, which urllib sends a proxy too
     "images.example.com?x@169.254.169.254:80",           # any address, on any port
+    "%5b127.0.0.1%5d",                                   # escaped brackets: judged a name, and a proxy is sent 127.0.0.1 (review pass 5, P5-2)
+    "%5b%3a%3a1%5d",                                     # [::1]
+    "%5b10.0.0.5%5d:8080",                               # [10.0.0.5], on a port
 ]
 
 
@@ -964,11 +967,48 @@ def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_
     "https://[2606:4700::1111]/shot.png",                      # an IPv6 address
     "https://bücher.example/shot.png",                         # a name outside ASCII
     "https://b%C3%BCcher.example/shot.png",                    # the same, escaped
+    # names whose letters hold marks (review pass 5, P5-1)
+    "https://हिन्दी.example/shot.png",                          # Devanagari: its vowel signs and its virama are marks
+    "https://example.भारत/shot.png",                            # India's own top-level name
+    "https://தமிழ்.example/shot.png",                            # Tamil
+    "https://เว็บ.example/shot.png",                             # Thai, with a tone mark
+    "https://İstanbul.example/shot.png",                       # a capital İ, which lower() makes an i and a mark
+    "https://%E0%A4%AD%E0%A4%BE%E0%A4%B0%E0%A4%A4.example/shot.png",  # भारत, escaped
 ])
 def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url):
     seen = []
     _ask(names(Http(opener=recording({}, seen))), url, token_host="git.example.org")
     assert [u for u, _ in seen] == [url]
+
+
+# The review's pass 5, P5-1 and P5-2: the rule above judged a name by Python's \w, after .lower(),
+# and \w is letters and digits without Unicode's marks. A name in Devanagari, Tamil or Thai, whose
+# vowels and tone marks are marks, was refused, and so was İstanbul, whose İ lower() makes an i and a
+# mark; a Source on such a host couldn't be synced at all. And `⑴` and `ͺ` are \w, though a name's
+# IDNA form, the one its lookup and a proxy are sent, makes `(1)` and a space of them. Its brackets
+# were matched with the escapes decoded, so `%5b127.0.0.1%5d` passed as a name, and a proxy is sent
+# it as the address 127.0.0.1 (in HOST_PARTS above). How it slipped past: the one name outside ASCII
+# in the tests was a Latin one, and every bracket in them was written. The class is "the host judged
+# isn't the host sent", so a name is judged in the form that is sent: names in other scripts, the
+# Source's own too, must be asked for, and names whose IDNA form is more than a name mustn't.
+def test_a_source_on_a_host_whose_name_has_marks_is_asked_for_with_its_token():
+    seen = []
+    _ask(names(Http({"गिट.example": "SECRET"}, opener=recording({}, seen))), "https://गिट.example/api/v1/repos/o/r", token_host="गिट.example")
+    assert tokened(seen) == ["https://गिट.example/api/v1/repos/o/r"]
+    assert "whose IDNA form, the one its lookup and a proxy are sent" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.mark.parametrize("host", [
+    "a⑴b.example",              # its IDNA form: a(1)b.example
+    "a%E2%91%B4b.example",      # the same, escaped
+    "aͺb.example",              # its IDNA form holds a space
+    "Ⱥb.example",               # a letter Unicode 3.2 hadn't: its IDNA form isn't its lower case's, which the lookup is sent
+])
+def test_a_name_whose_idna_form_is_more_than_a_name_is_refused(host):
+    seen = []
+    with pytest.raises(Unreachable, match="more than a host and its port"):
+        names(Http(opener=recording({}, seen))).bytes(f"https://{host}/shot.png", token_host="git.example.org")
+    assert seen == []
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)

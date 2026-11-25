@@ -11,11 +11,15 @@ R3.1.1. **Where an image is fetched from.** The icon and the hero image come fro
 project or its forge names: its metainfo's icon and screenshot, its README's images, the owner's
 avatar. Only http and https addresses are asked for, and only those whose host part, all that
 comes between the `//` and the first `/` after it, is a host and its port and nothing else, the
-Source's own host's too: with its escapes decoded, a name of letters, digits, `-`, `_` and dots, or
-an IPv6 address in brackets, then a `:` and the port where it names one. So none with a user part
-before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, or a `?` or `#` right after its host
-with no path (`images.example.com?@10.0.0.5`) is asked for: a proxy is sent all of a host part, and
-may read another host out of it. None is asked for whose host stands for a
+Source's own host's too: a name, with its escapes decoded, whose IDNA form, the one its lookup and a
+proxy are sent, is ASCII letters, digits, `-`, `_` and dots, and doesn't change when the name is
+written in lower case, so a name in any script is asked for, and one with no IDNA form (an empty
+part, as in `a..b`, or a part of more than 63 characters) isn't; or an IPv6 address in brackets, as
+they are written and not escaped; then a `:` and the port where it names one. So none with a user part
+before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, escaped brackets
+(`%5b127.0.0.1%5d`), or a `?` or `#` right after its host with no path
+(`images.example.com?@10.0.0.5`) is asked for: a proxy is sent all of a host part, and may read
+another host out of it. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
 Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
 port is the one its host names, or https's 443 where it names none; an address is on the port it is
