@@ -1,5 +1,6 @@
 """App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
+import fnmatch
 import json
 import os
 import re
@@ -505,9 +506,14 @@ def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alon
 # its PATH has none, /usr/bin:/bin as before (the inventory's and the persona tests' launchers in
 # tier 1, where no machine's proxy is, among them).
 @pytest.mark.parametrize("found,runs", [("/usr/local/bin/xdg-dbus-proxy", True), ("/usr/bin/xdg-dbus-proxy", True), (None, True),
-                                        ("/opt/xdp/bin/xdg-dbus-proxy", False), ("/usr/libexec/xdp/dbus-proxy-0.1.8", False)])
+                                        ("/usr/lib/xdp/0.1.8/xdg-dbus-proxy", True),
+                                        ("/opt/xdp/bin/xdg-dbus-proxy", False), ("/usr/libexec/xdp/dbus-proxy-0.1.8", False),
+                                        ("/usr/xdg-dbus-proxy", False), ("/usrlocal/bin/xdg-dbus-proxy", False),
+                                        ("/home/kata/.local/bin/xdg-dbus-proxy", False), ("/usr/bin/xdg-dbus-proxy.real", False)])
 def test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can(tmp_path, monkeypatch, found, runs):
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, proxy_at=found, app=runs, hide=() if found else ("xdg-dbus-proxy",))
+    # the launcher keeps the rule AppKata's own check keeps (bus_filter: PR #694's review, P3-B1)
+    assert found is None or fnmatch.fnmatchcase(found, sb.BUS_FILTER_AT) is runs
     if runs:
         words = proxy[:proxy.index("--")]
         assert r.returncode == 0 and r.stderr == "", (words, r.stderr)
@@ -517,6 +523,46 @@ def test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbo
         assert proxy is None and r.returncode == 1, (r.returncode, r.stderr)
         assert r.stderr == (f"AppKata: the session-bus filter this PATH finds, {found}, is not an xdg-dbus-proxy under /usr, the one tree "
                             "its own sandbox holds, so Demo cannot run sandboxed here.\n"), r.stderr
+
+
+# PR #694's review, P3-B1: AppKata's own check was `shutil.which` alone, so a PATH that finds an
+# xdg-dbus-proxy outside /usr first (Linuxbrew, nix-env, a build in ~/.local/bin) read as "the bus
+# filter is here": no hint in Settings or App Detail, and a launcher with a proxy, which the launcher
+# refuses (P2-B4), so every Standard app exited 1 -- where with no proxy at all it runs with no bus
+# and says why. How it slipped past: P2-B4's test held the launcher to its rule, and nothing held
+# AppKata's own check to the same one. Both keep BUS_FILTER_AT now (bus_filter), so such a proxy
+# counts as none, and the hint names the file in place of "isn't installed".
+def test_a_bus_filter_the_launcher_would_refuse_counts_as_none_and_the_hint_names_it(monkeypatch, tmp_path):
+    _apparmor_dir(tmp_path, monkeypatch, {})
+    monkeypatch.setattr(sb, "OS", "linux")
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
+    monkeypatch.setattr("appkata_core.platform.linux_family", lambda: "debian")
+    own = tmp_path / "bin"
+    own.mkdir()
+    for tool in ("bwrap", "xdg-dbus-proxy"):
+        (own / tool).write_text("#!/bin/sh\nexit 1\n")
+        (own / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{own}:{os.environ['PATH']}")
+    found = str(own / "xdg-dbus-proxy")
+    st = sb.support_status()
+    assert st["status"] == "ok" and st["busFilter"] is False and st["missing"] == ["xdg-dbus-proxy"], st
+    assert sb.bus_filter() == (found, False) and not sb.have_bus_filter()
+    assert st["toolsHint"] == (f"The xdg-dbus-proxy this PATH finds, {found}, is outside /usr, where the bus filter's own sandbox can't run "
+                               "it, so sandboxed apps get no desktop services: they can't notify, open links or files on this computer, or "
+                               "show a tray icon. Install xdg-dbus-proxy (sudo apt install xdg-dbus-proxy), have the PATH find /usr/bin's "
+                               "first, and restart AppKata."), st["toolsHint"]
+    assert st["appToolsHint"].startswith(f"Runs without desktop services: the xdg-dbus-proxy this PATH finds, {found}, is outside /usr, "
+                                         "where the bus filter's own sandbox can't run it, so it can't notify"), st["appToolsHint"]
+    # ...and the launcher AppKata writes starts no proxy: the app runs with no session bus, as with none
+    text = sb.launcher_text("chat", "Chat", "/apps", "/apps/chat/1", "bin/chat", sb.resolve_template("online-app"))
+    assert 'xdg-dbus-proxy "$upstream"' not in text and "--setenv APPKATA_NO_BUS no-filter" in text
+    # beside a missing bubblewrap, named with it
+    assert sb.tools_hints(["bubblewrap", "xdg-dbus-proxy"], found)["system"] == (
+        f"bubblewrap isn't installed, nor xdg-dbus-proxy under /usr (this PATH finds {found}), so apps run without a sandbox. "
+        "Install them (sudo apt install bubblewrap xdg-dbus-proxy) and restart AppKata.")
+    # a PATH that finds none, or the one the launcher runs, is as before; #711 asks the launcher's own PATH
+    assert sb.bus_filter(str(tmp_path / "none")) == ("", False) and sb.bus_filter(f"{tmp_path / 'none'}:{own}") == (found, False)
 
 
 def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():

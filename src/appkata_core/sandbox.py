@@ -19,6 +19,7 @@ The launcher/proxy shape matches A1.2.3 and the commands validated by
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import logging
 import os
 import re
@@ -942,9 +943,32 @@ def have_tools() -> bool:
     return bool(shutil.which("bwrap"))
 
 
+# The xdg-dbus-proxy the launcher runs (R17.5): the one its PATH finds, every link followed, where
+# that is under /usr, the one tree the proxy's own sandbox holds, and named xdg-dbus-proxy, so the
+# folder it is run from by name holds that file. The launcher's start_proxy matches this pattern in
+# a `case`, whose `*` matches across slashes as fnmatch's does, so AppKata's own check and the
+# launcher keep one rule (PR #694's review, P3-B1: AppKata counted whatever proxy its PATH found,
+# the launcher refused one outside /usr, and every Standard app exited 1 where none would have run
+# with no bus and said why).
+BUS_FILTER_AT = "/usr/*/xdg-dbus-proxy"
+
+
+def bus_filter(path: str | None = None) -> tuple[str, bool]:
+    """The xdg-dbus-proxy `path` finds first (AppKata's own PATH when None), every link followed, and
+    whether the launcher runs it (:data:`BUS_FILTER_AT`); ("", False) where it finds none. One the
+    launcher wouldn't run counts as none: a Standard app runs with no session bus, and Settings and
+    App Detail name the file (:func:`tools_hints`)."""
+    found = shutil.which("xdg-dbus-proxy") if path is None else shutil.which("xdg-dbus-proxy", path=path)
+    if not found:
+        return "", False
+    real = os.path.realpath(found)
+    return real, fnmatch.fnmatchcase(real, BUS_FILTER_AT)
+
+
 def have_bus_filter() -> bool:
-    """Whether xdg-dbus-proxy is here to give a Standard app its filtered session bus (R17.5)."""
-    return bool(shutil.which("xdg-dbus-proxy"))
+    """Whether an xdg-dbus-proxy the launcher runs is here to give a Standard app its filtered session
+    bus (R17.5; :func:`bus_filter`)."""
+    return bus_filter()[1]
 
 
 # each tool the sandbox uses -> the package that brings it (the same name on apt and dnf)
@@ -952,28 +976,38 @@ TOOL_PACKAGES = {"bwrap": "bubblewrap", "xdg-dbus-proxy": "xdg-dbus-proxy"}
 
 
 def missing_tools() -> list[str]:
-    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order."""
-    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not shutil.which(exe)]
+    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order: xdg-dbus-proxy
+    where none the launcher runs is here (:func:`have_bus_filter`)."""
+    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not (have_bus_filter() if exe == "xdg-dbus-proxy" else shutil.which(exe))]
 
 
-def tools_hints(missing: list[str]) -> dict:
+def tools_hints(missing: list[str], elsewhere: str = "") -> dict:
     """What Settings → Sandbox ("system") and App Detail say about missing tools (R17.10): every
     sandbox needs bubblewrap; a Standard app's desktop services need xdg-dbus-proxy. Each names only
     what is missing, with the command that installs it. "app" is for an app that runs unsandboxed
     for it, "broken" for one that keeps its launcher and so can't start (review 2, F16). Empty when
-    nothing is missing."""
+    nothing is missing. `elsewhere`: the xdg-dbus-proxy the PATH finds where the launcher won't run
+    it (:func:`bus_filter`), named in place of "isn't installed" (PR #694's review, P3-B1)."""
     if not missing:
         return {"system": "", "app": "", "broken": ""}
     from .platform import linux_family
     cmd = ("sudo dnf install " if linux_family() == "fedora" else "sudo apt install ") + " ".join(missing)
+    elsewhere = elsewhere if "xdg-dbus-proxy" in missing else ""
     if "bubblewrap" in missing:
-        what = "bubblewrap isn't installed" if len(missing) == 1 else "bubblewrap and xdg-dbus-proxy aren't installed"
+        what = ("bubblewrap isn't installed" if len(missing) == 1 else
+                f"bubblewrap isn't installed, nor xdg-dbus-proxy under /usr (this PATH finds {elsewhere})" if elsewhere else
+                "bubblewrap and xdg-dbus-proxy aren't installed")
         it = "it" if len(missing) == 1 else "them"
         return {"system": f"{what}, so apps run without a sandbox. Install {it} ({cmd}) and restart AppKata.",
                 "app": f"Running unsandboxed: {what}. Install {it} ({cmd}) and restart AppKata to sandbox it.",
                 "broken": f"Can't start: {what}, and it runs sandboxed. Install {it} ({cmd}), "
                           "or set its sandbox to Off to run it unsandboxed."}
     services = "notify, open links or files on this computer, or show a tray icon"
+    if elsewhere:
+        why = f"the xdg-dbus-proxy this PATH finds, {elsewhere}, is outside /usr, where the bus filter's own sandbox can't run it"
+        fix = f"Install xdg-dbus-proxy ({cmd}), have the PATH find /usr/bin's first, and restart AppKata."
+        return {"system": f"{why[0].upper()}{why[1:]}, so sandboxed apps get no desktop services: they can't {services}. {fix}",
+                "app": f"Runs without desktop services: {why}, so it can't {services}. {fix}", "broken": ""}
     return {"system": f"xdg-dbus-proxy isn't installed, so sandboxed apps get no desktop services: they can't {services}. "
                       f"Install it ({cmd}) and restart AppKata.",
             "app": f"Runs without desktop services: xdg-dbus-proxy isn't installed, so it can't {services}. "
@@ -1084,7 +1118,8 @@ def support_status() -> dict:
     tools = have_tools()
     works = userns_works()
     missing = missing_tools()
-    hints = tools_hints(missing)
+    found, runs = bus_filter()
+    hints = tools_hints(missing, found if found and not runs else "")
     base = {"tools": tools, "restricted": userns_restricted(), "profile": is_profile_installed(),
             "otherProfiles": other_bwrap_profiles(), "busFilter": have_bus_filter(), "missing": missing,
             "toolsHint": hints["system"], "appToolsHint": hints["app"], "brokenHint": hints["broken"]}
@@ -2345,8 +2380,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
 
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:
-        out.append("# No session bus: xdg-dbus-proxy isn't installed here, so this Standard app gets none,\n"
-                   "# and no desktop services, until it is (R17.10).\n")
+        out.append("# No session bus: xdg-dbus-proxy isn't installed here, or not under /usr, where its own sandbox can\n"
+                   "# run it (bus_filter), so this Standard app gets none, and no desktop services, until it is (R17.5, R17.10).\n")
     if bus:
         # Password service's own, decided at launch (_PROVIDE_CHECK): the rest of the rules are baked
         provide = "secrets-provide" in gs["caps"]
@@ -2386,7 +2421,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '  pbin=$(command -v xdg-dbus-proxy 2>/dev/null || true)\n'
             '  [ -z "$pbin" ] || pbin=$(readlink -f "$pbin" 2>/dev/null || true)\n'
             '  case "$pbin" in\n'
-            '    /usr/*/xdg-dbus-proxy) ppath=${pbin%/*} ;;\n'
+            f'    {BUS_FILTER_AT}) ppath=${{pbin%/*}} ;;\n'      # the rule AppKata's own check keeps (bus_filter)
             "    '') ppath=/usr/bin:/bin ;;\n"
             f"    *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\\n' \"$pbin\" {q(name)} >&2; exit 1 ;;\n"
             '  esac\n'
@@ -2628,7 +2663,7 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and three facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
-    run inside, R17.10.2, and whether xdg-dbus-proxy is here, R17.10) -- and, for a folder grant that
+    run inside, R17.10.2, and whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10) -- and, for a folder grant that
     holds it, where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
