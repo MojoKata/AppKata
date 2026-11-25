@@ -156,7 +156,15 @@ def _is_for(parts, whose: str) -> bool:
 def _http_address(url: str):
     """An address in its parts, or Unreachable when it isn't an http or https one with a host: the
     only addresses Http opens, whoever asks (CR1 #266). A project's icon address can say file:, which
-    on Windows can name a host to log in to over SMB, or ftp: or data:."""
+    on Windows can name a host to log in to over SMB, or ftp: or data:.
+
+    Nor one with a user part before its host (`user@`, `10.0.0.5%2f@`), the Source's own host's
+    too: urllib sends that part with the host, decoded, as the host it asks for (a proxy's Host
+    header and tunnel's CONNECT, a connection's lookup), and a proxy may read a host out of it, such
+    as 10.0.0.5 out of `10.0.0.5/@images.example.com`, where the check reads only the host after the
+    `@` (the review's pass 3, P3-1). No address Http asks for needs one: without a proxy too, the
+    whole of it is taken for the host, and no such host is found. The part isn't said, since it may
+    be a password."""
     try:
         parts = urlsplit(url)
         parts.port
@@ -164,6 +172,8 @@ def _http_address(url: str):
         parts = None
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
         raise Unreachable(f"{url[:200]!r} isn't an http or https address")
+    if "@" in parts.netloc:
+        raise Unreachable(f"an address with a user part before its host ({parts.hostname}) isn't asked for")
     return parts
 
 
@@ -457,9 +467,11 @@ class Http:
         Host header and a tunnel's CONNECT. Only a plain name (_a_name) is left to a proxy (the
         review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`, `127.0.0.1.` or
         `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as a name, and
-        the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone."""
+        the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone. An address
+        with a user part, which urllib sends as part of the host, is refused before any of this, by
+        _http_address (the review's pass 3, P3-1)."""
         parts = _http_address(url)
-        host = unquote(parts.hostname).lower()     # as it is sent: Request.host
+        host = unquote(parts.hostname).lower()     # as it is sent: Request.host, which has no user part here (_http_address)
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:

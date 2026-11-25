@@ -9,7 +9,9 @@ R3.1. For each app, AppKata reads the following from the project and caches it (
 
 R3.1.1. **Where an image is fetched from.** The icon and the hero image come from addresses the
 project or its forge names: its metainfo's icon and screenshot, its README's images, the owner's
-avatar. Only http and https addresses are asked for. None is asked for whose host stands for a
+avatar. Only http and https addresses are asked for, and none with a user part before its host
+(`user@` or `10.0.0.5%2f@`, the Source's own host's too), which is sent along with the host, and
+which a proxy may read as the host. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
 Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
 port is the one its host names, or https's 443 where it names none; an address is on the port it is

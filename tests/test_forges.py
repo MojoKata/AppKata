@@ -246,7 +246,7 @@ def _ask(http, url, **kw):
     ("https://evil.example/screenshot.png", False),
     ("https://notgithub.com/o/r", False),                            # ends in the same letters
     ("https://api.github.com.evil.example/repos/o/r", False),        # starts with them
-    ("https://github.com@evil.example/o/r", False),                  # the host is evil.example
+    ("https://github.com@evil.example/o/r", False),                  # the host is evil.example, and it isn't asked at all (P3-1)
     ("http://github.com/o/r", False),                                # plain http: never
     ("http://api.github.com/repos/o/r", False),
     ("http://raw.githubusercontent.com/o/r/main/icon.png", False),
@@ -255,7 +255,7 @@ def test_the_github_token_goes_to_its_named_hosts_over_https_and_nowhere_else(ur
     seen = []
     http = names(Http({"github.com": "ghp_SECRET", "evil.example": ""}, opener=recording({}, seen)))
     _ask(http, url, token_host="github.com")
-    assert [u for u, _ in seen] == [url]
+    assert [u for u, _ in seen] == ([] if "@" in url else [url])     # an address with a user part is refused (review pass 3, P3-1)
     assert tokened(seen) == ([url] if sent else []), seen
     if sent:
         assert seen[0][1]["authorization"] == "Bearer ghp_SECRET"
@@ -832,6 +832,63 @@ def test_behind_a_proxy_a_name_only_it_knows_is_asked_for_over_https_through_its
     assert [p for p, _ in a.seen] == ["CONNECT images.example.com:443", "/shot.png",
                                       "CONNECT img_1.cdn-example.com.:443", "/shot.png"]
     assert "only a plain name is left to the proxy" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+# The review's pass 3, P3-1: the check reads the host after an address's `@`, and urllib sends all
+# that comes before the path, the user part too and decoded, as the host: a proxy is sent
+# `10.0.0.5/@images.example.com` in the Host header and a tunnel's CONNECT, and one that reads a
+# host out of it its own way connects to 10.0.0.5 (tinyproxy ends a CONNECT's host at its first
+# `/`; a browser's reading of an address ends it at a `\`). How it slipped past: P2-1's spellings
+# were all of the host itself, and the one address in the tests with a user part was asked of a
+# stand-in opener, which sends nothing. The class is "a part of the address that is sent and isn't
+# read", so a local address is written in the user part in each way a proxy may read it as the
+# host, over http and https, with the name after the `@` a public one and one only the proxy knows,
+# and the Source's own: none reaches the proxy.
+USER_PARTS = [
+    "127.0.0.1\\@images.example.com",                    # a `\`, which a browser's reading takes for a `/`
+    "127.0.0.1:9200\\@images.example.com",               # the same, with a port
+    "10.0.0.5%2f@images.example.com",                    # 10.0.0.5/@images.example.com: tinyproxy's 10.0.0.5
+    "169.254.169.254%2flatest%2f@images.example.com",
+    "127.0.0.1%23@images.example.com",                   # 127.0.0.1#@images.example.com
+    "%5b::1%5d%2f@images.example.com",                   # [::1]/@images.example.com: an IPv6 address, bracketed
+    "user:pw@images.example.com",                        # a plain user part: no address Http asks for has one
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("user_part", USER_PARTS)
+def test_behind_a_proxy_an_address_with_a_user_part_is_refused(pair, monkeypatch, tmp_path, user_part, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="user part"):
+        sync._save_image(http, f"{scheme}://{user_part}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_behind_a_proxy_a_user_part_before_the_sources_own_host_is_refused_too(pair, monkeypatch, tmp_path, scheme):
+    # the Source's own host may be local, and is asked for without a look at its addresses: the
+    # user part is refused before that
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable, match="user part"):
+        sync._save_image(names(Http({"git.example.org": "SECRET"}, timeout=5)), f"{scheme}://10.0.0.5%2f@git.example.org/shot.png",
+                         str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "none with a user part before its host" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pair, monkeypatch):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a)
+    http = knows_only(Http(timeout=5), {"localhost": ["127.0.0.1"]})        # B's name: a Source's host, asked directly
+    b.redirects["/o/r/avatar"] = "http://10.0.0.5%2f@avatars.example.com/avatar.png"
+    with pytest.raises(Unreachable, match="user part"):
+        http.bytes(f"https://{b.at}/o/r/avatar")
+    assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
@@ -3265,7 +3322,9 @@ def test_a_whole_address_is_written_as_an_address_can_be_sent_too(url, sent):
     assert metadata.resolve(url, RAW) == sent
     seen = []
     _ask(names(Http(opener=recording({}, seen))), metadata.resolve(url, RAW))
-    assert [u for u, _ in seen] == [sent]                     # and Http asks for it, where it refused the address as written
+    # and Http asks for it, where it refused the address as written; one with a user part it
+    # refuses whatever its spelling (the review's pass 3, P3-1)
+    assert [u for u, _ in seen] == ([] if "@" in sent else [sent])
 
 
 def test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written(tmp_path, monkeypatch):
