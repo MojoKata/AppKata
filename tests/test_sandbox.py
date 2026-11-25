@@ -377,7 +377,7 @@ if "xdg-dbus-proxy" in argv:
 
 
 def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
-              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None):
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None, home=None):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
@@ -387,9 +387,12 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     is a test's). The
     rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them.
     `forward`: the file-argument helper the launcher calls, and `args` its arguments. `before`, where
-    given, is called once the launcher is written and before it runs."""
-    home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
-    for d in (home, rt, fake):
+    given, is called once the launcher is written and before it runs. `home`: the user's home folder,
+    tmp_path's own "home" unless given: a folder a test grants is one of the home, since everything
+    else a test can make is under /tmp, which no grant shares (R17.3.1)."""
+    home, rt, fake, log = home or tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
+    home.mkdir(exist_ok=True)
+    for d in (rt, fake):
         d.mkdir()
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
     monkeypatch.setenv("HOME", str(home))
@@ -955,7 +958,7 @@ def _bus_form(form, path):
 @pytest.mark.parametrize("form", BUS_FORMS)
 @pytest.mark.parametrize("where", ["the socket's folder", "a folder beside it"])
 def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, monkeypatch, where, form):
-    sock, path = _a_bus_socket(tmp_path / "tmp")
+    sock, path = _a_bus_socket(tmp_path / "home" / "tmp")      # in the user's own folders: a tool is never given one under /tmp (CR1.5-6)
     run_in = os.path.realpath(path.parent if where == "the socket's folder" else path.parent / "project")
     os.makedirs(run_in, exist_ok=True)
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), template="cli-tool", cwd=run_in)
@@ -994,9 +997,10 @@ def test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot
     # now, a granted socket file covered, a granted file left as it is, the app told why, and a file
     # named in a granted folder handed over rather than given as a path the app can't see.
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")      # AppKata's own: the grants stand
-    folder, notes = tmp_path / "project", tmp_path / "notes.txt"
+    home = tmp_path / "home"                     # every folder here is the user's own: /tmp is no grant's (CR1.5-5)
+    folder, notes = home / "project", home / "notes.txt"
     sock, deep = _a_bus_socket(folder / "deep")
-    other, single = _a_bus_socket(tmp_path / "sockets")
+    other, single = _a_bus_socket(home / "sockets")
     notes.write_text("x")
     granted = {str(folder): "rw", str(single): "rw", str(notes): "ro"}
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{p}": m for p, m in granted.items()}})
@@ -1297,9 +1301,10 @@ def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp
     # started another way can put its bus inside that folder later. The run covers the file, however
     # the session's address names it (P2-1, above), and however the grant shows it (P5-B1).
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
-    sock, path = _a_bus_socket(tmp_path / "up" / "tmp")
-    (tmp_path / "links").mkdir()
-    folder, then = _granted(grant, path, tmp_path / "links")
+    home = tmp_path / "home"                     # every folder here is the user's own: /tmp is no grant's (CR1.5-5)
+    sock, path = _a_bus_socket(home / "up" / "tmp")
+    (home / "links").mkdir()
+    folder, then = _granted(grant, path, home / "links")
     shown = GRANT_FORMS[grant] and GRANT_FORMS[grant].format(tmp=path.parent, grant=folder)
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}})
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), gs=gs, before=then)
@@ -1312,8 +1317,8 @@ def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp
     if shown:
         assert at("--ro-bind", "/dev/null", shown) > at("--bind-try", folder, folder)     # after the folder's own bind
     # where this session's bus is elsewhere, nothing is covered
-    _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs)
-    assert "/dev/null" not in app and r.returncode == 0, (app, r.stderr)
+    _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs, home=home)
+    assert at("--bind-try", folder, folder) is not None and "/dev/null" not in app and r.returncode == 0, (app, r.stderr)
 
 
 def test_proxy_args_map_capabilities():
@@ -2152,6 +2157,109 @@ def test_launcher_and_summary_refuse_protected_folders(fake_home):
     chips = sb.summary(gs, custom)
     assert "~/Apps/x · refused: AppKata's installed apps" in chips and "~/bin/apps" in chips
     assert "~/bin/apps · refused: AppKata's installed apps" in sb.summary(gs)       # the default root, as before
+
+
+# CR1.5-5 (#380, the owner's decision of 2026-11-24): the never-shared check knew the home, what is
+# above it, and places under the home and the runtime folder. A system path was an ordinary folder to
+# it, whoever asked, and a grant is bound after the sandbox's own /proc, /dev and /tmp: one line of a
+# review, `Sandbox folders: /proc:ro`, put the host's process table over the sandbox's own, and with
+# it every file of the user's (/proc/<pid>/root); /run/docker.sock, /tmp and /etc passed the same way.
+# How it slipped past: every folder the tests granted was under a test's home or a made-up /mnt/data,
+# and a test's home is under /tmp, which made /tmp "above the home" and hid that it was allowed. So
+# the home here is where a user's is, and the class's test is the list itself, each place with what
+# is inside and above it, beside the places outside the home that must still be shared.
+@pytest.fixture
+def a_users_home(monkeypatch, tmp_path):
+    """A home where a user has one, outside every system place (nothing is written there), and
+    AppKata running in a folder that is no part of it."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", "/home/kata")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPKATA_APPS", "APPKATA_DATA", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    return "/home/kata"
+
+
+SYSTEM_REFUSED = {
+    "/proc": "/proc", "/proc/1/environ": "/proc", "/proc/self/cwd": "/proc", "/sys": "/sys", "/sys/kernel/debug": "/sys",
+    "/dev": "/dev", "/dev/shm": "/dev", "/run/dbus": "/run", "/run/dbus/system_bus_socket": "/run",
+    "/run/docker.sock": "/run", "/run/podman": "/run", "/run/libvirt": "/run", "/run/snapd.socket": "/run",
+    "/run/systemd": "/run", "/var/run/docker.sock": "/var/run", "/tmp": "/tmp", "/tmp/ssh-XXXXab12cd/agent.4242": "/tmp",
+    "/tmp/tmux-1000/default": "/tmp", "/var/tmp": "/var/tmp", "/var/tmp/build": "/var/tmp", "/etc": "/etc",
+    "/etc/ssl/private": "/etc", "/usr": "/usr", "/usr/share/fonts": "/usr", "/boot": "/boot", "/boot/efi": "/boot",
+    # however it is written: the path as written is where the grant is mounted in the sandbox
+    "//proc": "/proc", "/proc/": "/proc", "/./tmp/x": "/tmp", "/run/media/../docker.sock": "/run", "/mnt/../dev/shm": "/dev",
+}
+SYSTEM_ABOVE = ["/var"]                # above /var/run and /var/tmp
+# /run and /var/run themselves were refused before, as folders above the runtime folder, and still are
+SYSTEM_SHARED = ["/media", "/media/usb", "/mnt", "/mnt/data", "/run/media", "/run/media/kata", "/run/media/kata/disk",
+                 "/var/run/media/kata/disk", "/opt/data", "/srv/share", "~/Projects", "~/tmp", "~/etc/x", "~/proc"]
+
+
+@pytest.mark.parametrize("path", list(SYSTEM_REFUSED) + SYSTEM_ABOVE + ["/run", "/var/run"] + SYSTEM_SHARED)
+def test_a_system_place_is_never_granted_nor_what_is_inside_or_above_it(a_users_home, path):
+    why = sb.protected_folder(path)
+    if path in SYSTEM_SHARED:
+        assert why == "", (path, why)
+    elif path in SYSTEM_REFUSED:
+        assert why == f"the system's own {SYSTEM_REFUSED[path]}", (path, why)
+        assert sb.system_folder(path) == why
+    else:
+        assert why.startswith("a folder above "), (path, why)
+    # ...and the same answer for the user's picker as for a review: one check, whoever asks
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: "ro"}})
+    kept, refused = sb.strip_protected(gs)
+    assert (path in kept["folders"]) is (path in SYSTEM_SHARED) and [p for p, _ in refused] == ([] if path in SYSTEM_SHARED else [path])
+
+
+def test_a_review_cannot_grant_a_system_place_and_the_user_cannot_pick_one(a_users_home):
+    # the finding's own case, as it was run: a review's line through config_from_review and choose
+    asked = ["/proc", "/run/docker.sock", "/tmp", "/dev/shm", "/etc", "/var/tmp"]
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": ", ".join(p + ":ro" for p in asked) + ", /media/usb:ro, ~/Notes"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    assert source == "reviews" and set(asked) <= set(gs["folders"])           # a review's line is kept as written...
+    chips = sb.summary(gs)
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", gs, apps_root="/home/kata/bin/apps")
+    for p in asked:
+        place = sb.SYSTEM_PLACES[[p == s or p.startswith(s + "/") for s in sb.SYSTEM_PLACES].index(True)]
+        assert f"{p} · refused: the system's own {place}" in chips, chips    # ...shown as refused...
+        assert f"# Refused folder grant {p}: the system's own {place} (R17.3.1)." in text
+        assert f"bind-try {p} {p}" not in text                                # ...and never bound
+    assert "/media/usb · read-only" in chips and "--ro-bind-try /media/usb /media/usb" in text
+    assert "~/Notes" in chips and "--bind-try /home/kata/Notes /home/kata/Notes" in text
+    # the sandbox's own /proc, /dev and /tmp are the only ones in the launcher
+    assert "--proc /proc --dev /dev --dev-bind-try /dev/dri /dev/dri --tmpfs /tmp" in text
+    # the user's own pick, as the Sandbox dialog saves it (Backend.setSandbox): dropped, with the same reason
+    kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {p: "rw" for p in asked + ["~/Notes"]}})
+    assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == sorted(asked)
+
+
+def test_a_folder_of_the_home_is_the_homes_wherever_the_home_is(tmp_path, monkeypatch):
+    # A home inside a system place (every test's is under /tmp; a throwaway HOME=$(mktemp -d)) is
+    # still a home: its folders are judged as the home's, and nothing else of the place is shared,
+    # by the path as written or by where it leads. Shown with this test's own folder as the place.
+    place = tmp_path / "place"
+    home, other = place / "home", place / "other"
+    (home / "Projects").mkdir(parents=True)
+    other.mkdir()
+    (home / "out").symlink_to(other)                     # written in the home, leads into the place
+    (place / "in").symlink_to(home / "Projects")         # written in the place, leads into the home
+    places = sb.SYSTEM_PLACES
+    monkeypatch.setattr(sb, "SYSTEM_PLACES", (str(place),))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    for v in ("XDG_DATA_HOME", "APPKATA_APPS", "APPKATA_DATA", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    assert sb.protected_folder("~/Projects") == "" and sb.protected_folder(str(home / "Projects" / "x")) == ""
+    for path in (str(other), str(other / "x"), "~/out", "~/out/x", str(place / "in")):
+        assert sb.protected_folder(path) == f"the system's own {place}", path
+    assert sb.protected_folder(str(place)) == "everything, your home folder included"
+    # a home that is `/` (a bare container's) makes nothing a folder of the home
+    monkeypatch.setattr(sb, "SYSTEM_PLACES", places)
+    monkeypatch.setenv("HOME", "/")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for path, place in (("/proc", "/proc"), ("/tmp/x", "/tmp"), ("/dev/shm", "/dev")):
+        assert sb.protected_folder(path) == f"the system's own {place}", path
 
 
 def test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder(fake_home):

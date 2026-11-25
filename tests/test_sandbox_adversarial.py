@@ -110,6 +110,43 @@ def test_a_folder_not_named_from_the_root_or_home_is_refused_and_never_bound(pat
     assert path not in kept["folders"] and [p for p, _ in refused] == [path]
 
 
+# CR1.5-5 (#380): a system place was an ordinary folder to the never-shared check, so a review's
+# `Sandbox folders: /proc:ro` was bound as asked, after the sandbox's own /proc, and over it. The
+# corpora above name folders from `~` or from nowhere; none named a place outside the home. These
+# are the system's own places (sb.SYSTEM_PLACES), what an app would want inside them, a folder above
+# two of them, and each written the ways a line can write a path: all refused, none ever a bind.
+SYSTEM = ["/proc", "/proc/1/environ", "/proc/self/root", "/proc/self/cwd", "/sys", "/dev", "/dev/shm", "/run", "/run/dbus/system_bus_socket",
+          "/run/docker.sock", "/run/user", "/var/run", "/var/run/docker.sock", "/var", "/tmp", "/tmp/.X11-unix", "/tmp/ssh-XXXXab12cd/agent.4242",
+          "/var/tmp", "/etc", "/etc/passwd", "/usr", "/usr/lib", "/boot", "//proc", "/proc/", "/./proc", "/proc/.", "/tmp//", "/mnt/../proc",
+          "/run/media/../docker.sock", "/usr/../tmp", "/dev/shm/my folder", "/tmp/it's", "/tmp/new\nline", "/tmp/$(id)"]
+
+
+@pytest.mark.parametrize("path", SYSTEM, ids=[repr(p) for p in SYSTEM])
+def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")                        # where a user's home is: /tmp is not above it
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps = "/home/kata/bin/apps"
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+/media/usb": mode}})
+        assert sb.protected_folder(path, apps), path                 # refused, with a reason
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        block = text[text.rindex("bwrap \\\n"):]
+        words = shlex.split(block[:block.index('"$@" || status=$?')].replace("\\\n", " "), posix=True)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/media/usb", "/media/usb") in grants               # the folder beside it, as asked
+        mine = {path, os.path.normpath(path), os.path.realpath(path)}
+        assert not [g for g in grants if set(g) & mine], grants     # and this one never, by any of its names
+        assert "# Refused folder grant" in text
+        chips = sb.summary(gs, apps)
+        assert any(c.startswith(path + " · refused") for c in chips), chips
+        kept, refused = sb.strip_protected(gs, apps)
+        assert path not in kept["folders"] and [p for p, _ in refused] == [path]
+
+
 def test_parse_folders_keeps_every_hostile_path_whole():
     for path in HOSTILE:
         if "," in path or "\n" in path:

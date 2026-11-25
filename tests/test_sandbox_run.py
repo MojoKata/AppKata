@@ -1224,16 +1224,17 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
     # command-line tool run in its folder shared it, and so did a grant of that folder, and the app
     # connected to it past the filter. Now the tool runs in its private home and says why, and the
     # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
-    # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
+    # socket covered. The bus's folder is one of the user's own here: /tmp itself is no tool's and no
+    # grant's (CR1.5-5, CR1.5-6), and a bus can be put anywhere (`dbus-daemon --address`).
     # And a grant of the socket file itself, or of a link to it, which the cover matched no part of
     # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it. And an
     # address with its key's name escaped, `pa%74h=`, which is GIO's `path=` and which the launcher
     # read as written, so it covered nothing and shared the tool's folder (P6-1).
-    folder = env.home.parent / "shared"
+    folder = env.home / "shared"
     folder.mkdir()
     bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
     sock = str(folder / "dbus-MZ8lHbtZ8K")
-    link = env.home.parent / "bus-link"
+    link = env.home / "bus-link"
     link.symlink_to(sock)
     probe = lambda at, said="": (f'[ -S {at} ] && echo SEEN{said}; gdbus call --address unix:path={at} --dest org.freedesktop.DBus '   # noqa: E731
                                  f'--object-path /org/freedesktop/DBus --method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED{said}; ')
@@ -1524,6 +1525,47 @@ def test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them(env):
     assert r.returncode == 0 and "done" in r.stdout, (r.stdout, r.stderr)
     assert "SECRET-KEY" not in r.stdout
     assert (env.home / ".bashrc").read_text() == "# real bashrc\n"
+    _a_review_that_grants_a_system_place_leaves_the_sandbox_its_own(env)
+
+
+def _a_review_that_grants_a_system_place_leaves_the_sandbox_its_own(env):
+    # CR1.5-5 (#380): a system place was an ordinary folder to the never-shared check, and a grant is
+    # bound after the sandbox's own /proc, /dev and /tmp: a review's `Sandbox folders: /proc:ro` put
+    # the host's process table over the sandbox's (and with it every file of the user's, through
+    # /proc/<pid>/root), and /dev/shm or a folder of /tmp the host's own, with what other programs
+    # keep there. Refused now, whoever asks: the app runs with the sandbox's own, and the folder of
+    # the home on the same line is still its. (Part of the test above, not one of its own: a run test
+    # is named in tests/skips/tier1.txt, which is another unit's file while this is written.)
+    from appkata_core import trustfile
+    beside = env.home.parent / "beside-the-home"                 # a folder of /tmp that isn't above this test's home
+    beside.mkdir()
+    (beside / "theirs.sock").write_text("x")
+    shm, probe = f"/dev/shm/appkata-cr1-5-5-{os.getpid()}", f"/var/tmp/appkata-cr1-5-5-{os.getpid()}"
+    (env.home / "Notes").mkdir()
+    (env.home / "Notes" / "n.txt").write_text("a note\n")
+    parsed, _ = trustfile.parse_section("Demo", "## Demo::Settings\n\n- Trust: 4\n- Sandbox (linux): standard\n"
+                                                f"- Sandbox folders (linux): /proc:ro, /dev/shm, {beside}, /var/tmp, /etc:ro, /sys:ro, ~/Notes\n")
+    gs = sb.grants_from_config(sb.config_from_review(trustfile.resolve_settings(parsed["opts"], "linux")))
+    assert {"/proc", "/dev/shm", str(beside), "/var/tmp", "/etc", "/sys", "~/Notes"} <= set(gs["folders"])      # the line, as written
+    lp = env.app("grabby", gs)
+    with open(shm, "w") as f:
+        f.write("x")
+    try:
+        r = env.run(lp, 'echo "pid1=$(cat /proc/1/comm)"; echo "procs=$(ls /proc | grep -c "^[0-9]")"; '
+                        f'[ -e {shm} ] && echo HOST-SHM; [ -e {beside}/theirs.sock ] && echo HOST-TMP; '
+                        f'echo probe > {probe} 2>/dev/null; cat "$HOME/Notes/n.txt"; echo done')
+        wrote = os.path.exists(probe)
+    finally:
+        for left in (shm, probe):
+            if os.path.exists(left):
+                os.unlink(left)
+    assert r.returncode == 0 and "done" in r.stdout and "a note" in r.stdout, (r.stdout, r.stderr)
+    assert "pid1=bwrap" in r.stdout, r.stdout                         # the sandbox's own /proc: its first process is bwrap
+    assert int(re.search(r"procs=(\d+)", r.stdout).group(1)) < 10, r.stdout
+    assert not {"HOST-SHM", "HOST-TMP"} & set(r.stdout.split()) and not wrote, r.stdout      # nor the host's /dev/shm, /tmp and /var/tmp
+    text = open(lp).read()                                           # and the launcher says what it refused, and why
+    for place, of in (("/proc", "/proc"), ("/dev/shm", "/dev"), (str(beside), "/tmp"), ("/var/tmp", "/var/tmp"), ("/etc", "/etc"), ("/sys", "/sys")):
+        assert f"# Refused folder grant {place}: the system's own {of} (R17.3.1)." in text, place
 
 
 # ---------------------------------------------------------------- the field test itself (review 2, D1)

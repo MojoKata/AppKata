@@ -232,14 +232,18 @@ def _folders(env: Env) -> dict[str, str]:
         "the install root": f"{h}/apps", "an installed app": f"{h}/apps/other/1.0", "~/.ssh": f"{h}/.ssh",
         "inside ~/.ssh": f"{h}/.ssh/sub", "~/.cache": f"{h}/.cache", "~/Documents": f"{h}/Documents",
         "Firefox's profiles (a secret)": f"{h}/.mozilla/firefox/x.default", "the runtime folder": str(env.rt),
-        "inside the runtime folder": f"{env.rt}/sub", "/tmp's own folder": str(env.home.parent / "elsewhere"),
+        "inside the runtime folder": f"{env.rt}/sub", "a folder under /tmp, outside the home": str(env.home.parent / "elsewhere"),
     }
     for p in corpus.values():
         if p != "/":
             os.makedirs(p, exist_ok=True)
+    # A link written in the home: where it leads decides, for both. (One written under /tmp is
+    # refused to a grant by its own name, which is where a grant is mounted, R17.3.1, while a tool
+    # run through it is in the folder it leads to: not the same question, so none is asked here.)
+    os.makedirs(f"{h}/links", exist_ok=True)
     for name, target in (("a link to ~/.ssh", f"{h}/.ssh"), ("a link to a project", f"{h}/src/proj"),
-                         ("a link to the home folder", h)):
-        link = env.home.parent / name.replace(" ", "-").replace("/", "_").replace("~", "home")
+                         ("a link to the home folder", h), ("a link out of the home, into /tmp", str(env.home.parent / "elsewhere"))):
+        link = env.home / "links" / name.replace(" ", "-").replace("/", "_").replace("~", "home").replace(",", "")
         if not link.exists():
             link.symlink_to(target)
         corpus[name] = str(link)

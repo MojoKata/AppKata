@@ -617,6 +617,60 @@ def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     return files, readable
 
 
+# The system's own places (R17.3.1): no grant shares one, nor anything inside or above one, whoever
+# asks. A grant is bound after the sandbox's own /proc, /dev and /tmp, so one of those put the
+# host's back over them, and the host's /proc leads to every file of the user's (/proc/<pid>/root);
+# /run and /var/run hold the system bus and the container and VM managers' sockets, /tmp and /var/tmp
+# other programs' (an ssh agent's, tmux's), and /etc, /usr and /boot are the system itself. CR1.5-5
+# (the owner's decision of 2026-11-24): the never-shared list knew the home and the runtime folder
+# alone, so a review's `Sandbox folders: /proc:ro` was an ordinary folder, bound as asked. How it
+# slipped past: every path the tests granted was under a test's home, and that is under /tmp.
+SYSTEM_PLACES = ("/proc", "/sys", "/dev", "/run", "/var/run", "/tmp", "/var/tmp", "/etc", "/usr", "/boot")
+# ...but where the desktop mounts a stick or a disk for the user, which is under /run
+SYSTEM_MEDIA = ("/run/media", "/var/run/media")
+
+
+def _as_written_and_real(path: str) -> list[str]:
+    """A full path as it is written, normalized, and as it resolves here: one path, or two."""
+    written = "/" + os.path.normpath(path).lstrip("/")
+    return list(dict.fromkeys((written, os.path.realpath(path))))
+
+
+def _system_roots() -> list[tuple[str, str]]:
+    """(folder, the system place it is) for each of SYSTEM_PLACES, as written and as it resolves on
+    this machine (/var/run is a link to /run on most): the launcher's list for a command-line
+    tool's working directory too (R17.3.3)."""
+    roots: dict[str, str] = {}
+    for place in SYSTEM_PLACES:
+        for r in _as_written_and_real(place):
+            roots.setdefault(r, place)
+    return list(roots.items())
+
+
+def system_folder(path: str) -> str:
+    """Why a folder grant for the full path `path` is refused as one of the system's places
+    (SYSTEM_PLACES), or "": the place itself, anything inside it and anything above it, judged by
+    the path as it is written, which is where the grant is mounted in the sandbox, and by where it
+    leads, which is what the app is shown (`/proc/self/cwd` leads to AppKata's own working
+    directory, and is in /proc all the same). Two things are not refused: what is under /run/media,
+    and a folder of the home, which is judged as the home's wherever the home is (a home under
+    /tmp, as every test's is, is still a home; one that is `/` is none)."""
+    full = os.path.expanduser(path)
+    if not os.path.isabs(full):
+        return ""
+    homes = [h for h in _as_written_and_real(os.path.expanduser("~")) if h != os.sep]
+    within = lambda p, roots: any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in roots)      # noqa: E731
+    for p in _as_written_and_real(full):
+        if within(p, homes) or within(p, [m for media in SYSTEM_MEDIA for m in _as_written_and_real(media)]):
+            continue
+        for root, place in _system_roots():
+            if within(p, [root]):
+                return f"the system's own {place}"
+            if within(root, [p]):
+                return f"a folder above the system's own {place}"
+    return ""
+
+
 # Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
 BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
@@ -624,7 +678,8 @@ BUS_UNREADABLE = "a folder the session bus's socket could be in (its address nam
 def protected_folder(path: str, apps_root: str | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
-    since sharing a parent shares everything beneath it — and the session bus's own socket file and
+    since sharing a parent shares everything beneath it — the system's own places the same way
+    (:func:`system_folder`), and the session bus's own socket file and
     anything above it, wherever it is (a folder beside it may be shared), and every folder where
     the address names a socket file AppKata can't read, which could be in any (the launcher shares
     no folder then either; PR #694's review, P3-2): both are :func:`bus_files`'s. Reviews
@@ -651,6 +706,8 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
             return what
         if r.startswith(p + os.sep):
             return f"a folder above {what}"
+    if why := system_folder(path):
+        return why
     return "" if readable else BUS_UNREADABLE
 
 
@@ -2483,8 +2540,12 @@ _GUARD_FN = """guard() {
 # The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
 # home, or the whole filesystem at /), AppKata's own areas (installed apps, other apps' private
-# homes), or a folder that holds a socket file of the session bus ($bussocks, wherever the session's
-# address puts them; any folder, where it names one the launcher can't read). There the tool runs in
+# homes), a folder that holds a socket file of the session bus ($bussocks, wherever the session's
+# address puts them; any folder, where it names one the launcher can't read), or one of the system's
+# own places, a folder in one or a folder above one (SYSTEM_PLACES, as protected_folder() refuses
+# them to a grant, with its two exceptions, a folder of the home and what is under /run/media;
+# CR1.5-6: a tool run from /tmp or /dev/shm got that whole folder read-write, bound after the
+# sandbox's own and over it, with every other program's sockets). There the tool runs in
 # its private home instead and says why. Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
@@ -2507,6 +2568,12 @@ done
 for d in {protected}; do
   case "$here/" in "$d"/*) share=0 ;; esac
 done
+case "$here/" in "$hm"/*|{media}) ;; *)
+  for d in {system}; do
+    case "$here/" in "$d"/*) share=0 ;; esac
+    case "$d/" in "$here"/*) share=0 ;; esac
+  done ;;
+esac
 cwdvis=
 [ "$share" = 1 ] && cwdvis=$here
 """
@@ -2568,7 +2635,10 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         # after the proxy socket's and put the unfiltered bus back.
         roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]
         protected = " ".join(q(os.path.realpath(r)) for r in roots) + ' "$rt"'
-        cwd = _CWD_DECIDE.format(protected=protected)
+        # ...and the system's own places, with what is under the media mounts left to the tool
+        system = " ".join(q(r) for r, _ in _system_roots())
+        media = "|".join(q(m) + "/*" for m in dict.fromkeys(m for media in SYSTEM_MEDIA for m in _as_written_and_real(media)))
+        cwd = _CWD_DECIDE.format(protected=protected, system=system, media=media)
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it

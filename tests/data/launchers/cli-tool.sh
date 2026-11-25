@@ -121,6 +121,12 @@ done
 for d in /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
   case "$here/" in "$d"/*) share=0 ;; esac
 done
+case "$here/" in "$hm"/*|/run/media/*|/var/run/media/*) ;; *)
+  for d in /proc /sys /dev /run /var/run /tmp /var/tmp /etc /usr /boot; do
+    case "$here/" in "$d"/*) share=0 ;; esac
+    case "$d/" in "$here"/*) share=0 ;; esac
+  done ;;
+esac
 cwdvis=
 [ "$share" = 1 ] && cwdvis=$here
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
