@@ -4,3 +4,4 @@
 
 #400  medium CR1.5-25 Document-portal grants outlive an app's uninstall, so another Source's app later installed under that name can use those files.
 #395  medium CR1.5-20 Uninstall silently leaves the private-home folders it can't delete and removes the owner record anyway, orphaning the data.
+#736  medium  CR1.5-52 A folder handed over as a file argument lets the app plant a link in it, and a later file argument inside that folder hands the app the link's target. (Added by the coordinator after batch 2: found by batch 2; High; beside #400, the same portal records. #379 closes with this road shut.)

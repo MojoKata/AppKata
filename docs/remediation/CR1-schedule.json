@@ -199,7 +199,8 @@
     400,
     401,
     666,
-    701
+    701,
+    736
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -11486,6 +11487,25 @@
    "size": "small",
    "proof": "The document checks.",
    "note": "Found by U05's first batch (2026-11-25) after #380's fix, and filed by the coordinator; U13 holds the file."
+  },
+  {
+   "finding": 736,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md"
+   ],
+   "depends_on": [
+    379,
+    400
+   ],
+   "related": [
+    651
+   ],
+   "size": "medium",
+   "proof": "A folder argument, a link planted in it through the document portal, then a file argument through the link: the target is not handed over (tier 1, and tier 2 with the real portal in both containers).",
+   "note": "Found by U05's second batch (2026-11-25) on its branch after #379's fix, and filed by the coordinator; taken in U05's fifth batch beside #400 (the same portal records), so #379 closes with its road shut."
   }
  ],
  "shared_files": [
