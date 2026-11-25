@@ -3,7 +3,7 @@
 R4.1. AppKata manages only the apps it installed. Each install is recorded with:
 
 - Its Source and version.
-- The asset it came from.
+- The asset it came from, and the SHA-256 of that file as it was downloaded.
 - Its install type (R4.3).
 - Everything needed to uninstall it.
 

@@ -551,10 +551,9 @@ class Backend(QObject):
         # the file or Flatpak commit a reviewer had is the one here (R10.3.4)
         mine_sha = mine_commit = ""
         if a["installed"] and a["state"] != "foreign":
-            irow2 = self.db.one("SELECT asset FROM installs WHERE url=?", (url,)) or {}
-            rel_i = next((r for r in releases if r["version"] == a["installed"]), None) or {}
-            ast = next((x for x in rel_i.get("assets") or [] if x.get("name") == irow2.get("asset")), None) or {}
-            mine_sha, mine_commit = (ast.get("digest") or "").removeprefix("sha256:"), irec.get("commit", "")
+            # the installed file's own digest, from its install record: the release's file of that
+            # name can have been replaced since (CR1, #467)
+            mine_sha, mine_commit = install.installed_sha256(irec, a["installed"]), irec.get("commit", "")
         else:
             mine_sha = (asset.get("digest") or "").removeprefix("sha256:")
         same_as = [t for t, sha, com, _ in same if (sha and _same_digest(sha, mine_sha)) or (com and _same_digest(com, mine_commit))]
@@ -1662,14 +1661,13 @@ class Backend(QObject):
         details = []
         irow = self.db.one("SELECT * FROM installs WHERE url=?", (url,)) if inst else None
         if irow:
-            rel = next((r for r in releases if r["version"] == irow["version"]), {})
-            asset = next((x for x in rel.get("assets") or [] if x.get("name") == irow["asset"]), {})
             forge = {"github": "GitHub", "gitlab": "GitLab", "forgejo": "Forgejo", "gitea": "Gitea"}.get(a.get("forge", ""), "")
             details = [["Date", now()[:10]], ["Platform", f"{OS} {arch()}"], ["Channel", f"{forge} release".strip()]]
             if irow["asset"]:
                 details.append(["File", irow["asset"]])
-            if (asset.get("digest") or "").startswith("sha256:"):
-                details.append(["SHA-256", asset["digest"].split(":", 1)[1]])
+            sha = install.installed_sha256(json.loads(irow["record"] or "{}"), irow["version"])     # the file that was installed (CR1, #467)
+            if sha:
+                details.append(["SHA-256", sha])
         pref = self._prefs.get("includeDetails")
         return {"versionChoices": choices, "versionReviews": load, "defaultVersion": default, "installedVersion": inst,
                 "details": details, "includeDetails": bool(irow) if pref is None else bool(pref)}

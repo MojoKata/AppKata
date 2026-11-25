@@ -64,6 +64,7 @@ tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linu
 tests/test_install_review.py::test_the_install_notice_says_why_no_command_was_added_and_says_it_once  # could not import 'PySide6': No module named 'PySide6'
 tests/test_install_review.py::test_the_menu_entry_starts_the_app_through_its_script_whatever_the_install_folder_holds  # the Linux install layout
 tests/test_install_review.py::test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says  # the Linux install layout
+tests/test_install_review.py::test_the_record_keeps_the_sha256_of_each_versions_own_download  # the Linux install layout
 tests/test_install_review.py::test_the_sweep_removes_only_what_a_stopped_change_or_write_left_beside_an_apps_files  # the Linux install layout
 tests/test_install_review.py::test_the_versions_an_app_has_are_there_until_the_new_one_is_installed  # the Linux install layout
 tests/test_install_review.py::test_uninstalling_says_what_it_did_not_remove  # the Linux install layout

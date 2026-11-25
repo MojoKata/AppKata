@@ -207,6 +207,39 @@ def test_versions_kept_side_by_side(env, server, tmp_path):
 
 
 @linux_only
+def test_the_record_keeps_the_sha256_of_each_versions_own_download(env, server, tmp_path):
+    """R10.3.4, R8.4.5.1 (CR1, #467): the install hashed the download, logged the digest and kept it
+    nowhere, so "the installed file's SHA-256" was whatever the forge said later of a file of that
+    name. It is in the record, under its version: a kept version made current again has its own,
+    and a version that is no longer kept has none."""
+    root, base = server
+    p = install.Portable(folder=str(tmp_path / "apps"), app_menu=False, keep=1)
+    digest = {}
+
+    def stored():
+        return json.loads(env.one("SELECT record FROM installs")["record"])
+
+    for v, has in (("1.0", ["1.0"]), ("1.1", ["1.0", "1.1"]), ("1.2", ["1.1", "1.2"])):
+        data = f"the program, {v}".encode()
+        (root / f"Tool-{v}-x86_64.AppImage").write_bytes(data)
+        a = Asset(f"Tool-{v}-x86_64.AppImage", f"{base}/Tool-{v}-x86_64.AppImage")       # the forge gives no digest
+        rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=p)
+        digest[v] = hashlib.sha256(data).hexdigest()
+        assert rec["verified"] == "unverified" and rec == stored() and rec.get("sha256") == {x: digest[x] for x in has}
+        assert install.installed_sha256(stored(), v) == digest[v]
+    install.switch_to(env, {**APP}, "1.1", p)                                             # no download: 1.1's own file again
+    assert stored()["current"]["version"] == "1.1" and install.installed_sha256(stored(), "1.1") == digest["1.1"]
+    assert install.installed_sha256(stored(), "1.0") == ""
+
+
+def test_a_record_has_no_sha256_for_a_copy_appkata_didnt_download():
+    assert install.installed_sha256({"sha256": {"1.0": "aa", "1.1": "bb"}}, "1.1") == "bb"
+    assert install.installed_sha256({"sha256": {"1.0": "aa"}}, "1.1") == ""
+    assert install.installed_sha256({"current": {"version": "1.0", "path": "p", "exec": "e", "external": True}, "verified": "adopted"}, "1.0") == ""
+    assert install.installed_sha256({"channel": "flatpak", "commit": "c0ffee"}, "1.0") == ""
+
+
+@linux_only
 def test_tarball_versions_and_current_link(env, server, tmp_path):
     root, base = server
     p = install.Portable(folder=str(tmp_path / "apps"), app_menu=False, keep=1)
