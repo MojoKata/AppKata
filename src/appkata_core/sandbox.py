@@ -1866,6 +1866,10 @@ def write_seccomp_filter() -> str | None:
 # name lies, got the folder handed over, read-write, and a path where its word was. `./build` or
 # `build/` names the folder. And in its shared folder a tool's relative path stays as typed only
 # while it stays in that folder: `../notes.txt` passed unchanged and reached nothing inside.
+# What is handed over is the file or folder the argument leads to, opened by that path and named by
+# it: the portal names a document after the file its descriptor reaches, so a link to a file
+# outside every grant (~/notes.txt -> ~/sync/notes-2024.txt) reached the app under the link's own
+# name, a path that isn't there (CR1.5-41).
 # argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
 #       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
@@ -1979,7 +1983,7 @@ def export_dir(path):
         "org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
         "AddFull", GLib.Variant("(ahusas)", ([i], 1 | 8, ident, perms)), GLib.VariantType("(asa{sv})"),
         Gio.DBusCallFlags.NONE, 5000, fdl, None)
-    return os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(os.path.realpath(path)))
+    return os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(path))
 
 
 def hand(path, uri):
@@ -2008,7 +2012,7 @@ def hand(path, uri):
                 if line not in said:
                     said.append(line)
                 return None
-            new = export(path) if os.path.isfile(path) else export_dir(path) if os.path.isdir(path) else None
+            new = export(real) if os.path.isfile(real) else export_dir(real) if os.path.isdir(real) else None
         except Exception:
             return None
     if new is None:

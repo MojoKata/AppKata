@@ -2761,6 +2761,29 @@ def test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_o
     assert all(w.startswith(doc) for w in words) and [c[2] for c in calls if c[2]] == [[str(private / "taxes.txt")], [str(private)]], (words, calls)
 
 
+def test_a_link_to_a_file_outside_every_grant_is_handed_over_under_the_files_own_name(tmp_path):
+    # CR1.5-41: the document portal names a document after the file its descriptor reaches (shown
+    # with the real one, tests/test_sandbox_run.py), and the helper named the path it handed after
+    # the argument, so a link reached the app as a path that isn't there. A linked folder was named
+    # rightly already. How it slipped past: the hand-over tests passed regular files alone.
+    home = tmp_path / "home"
+    sync = home / "sync"
+    (sync / "project").mkdir(parents=True)
+    for f in (sync / "notes-2024.txt", sync / "plain.txt"):
+        f.write_text("x")
+    (home / "notes.txt").symlink_to(sync / "notes-2024.txt")
+    (home / "rel-notes.txt").symlink_to("sync/notes-2024.txt")
+    (home / "first").symlink_to("notes.txt")                               # a link to a link
+    (home / "proj-link").symlink_to(sync / "project")
+    doc = str(tmp_path / "run" / "doc" / "DOC")
+    args = [str(home / "notes.txt"), "rel-notes.txt", "file://" + str(home / "notes.txt"), "--file=first", str(sync / "plain.txt"),
+            str(home / "proj-link"), "proj-link/"]
+    words, said, calls = _handed(tmp_path, home, args, home=home)
+    assert words == [f"{doc}/notes-2024.txt", f"{doc}/notes-2024.txt", f"file://{doc}/notes-2024.txt", f"--file={doc}/notes-2024.txt",
+                     f"{doc}/plain.txt", f"{doc}/project", f"{doc}/project/"], words
+    assert [c[2] for c in calls if c[2]] == [[str(sync / "notes-2024.txt")]] * 4 + [[str(sync / "plain.txt")]] + [[str(sync / "project")]] * 2, calls
+
+
 def test_a_grant_reached_through_a_linked_home_maps_to_where_the_launcher_mounts_it(tmp_path):
     # Fedora Silverblue: /home links to /var/home. The grant is mounted at the path as written, so a
     # file named by its real path becomes that path, never the other way round

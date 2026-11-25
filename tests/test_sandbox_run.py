@@ -1787,6 +1787,31 @@ def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
     assert "TAXES" not in r.stdout and (docs / "taxes.txt").read_text() == "TAXES\n" and "MINE" in r.stdout, (r.stdout, r.stderr)
 
 
+def _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, e):
+    """CR1.5-41 (#666), the finding's own run with the real document portal: an absolute and a
+    relative link to a file outside every grant, as a path and as a file:// URI. The portal names
+    the document after the file the link leads to, and the app was handed the link's name, a path
+    that isn't there. A regular file and a linked folder as before. A part of the test below,
+    which tests/skips/tier1.txt names."""
+    sync = env.home / "sync"
+    (sync / "project").mkdir(parents=True)
+    for f, text in ((sync / "notes-2024.txt", "NOTES-2024\n"), (sync / "plain.txt", "PLAIN\n"), (sync / "project" / "inproj.txt", "x")):
+        f.write_text(text)
+    (env.home / "notes.txt").symlink_to(sync / "notes-2024.txt")
+    (env.home / "rel-notes.txt").symlink_to("sync/notes-2024.txt")
+    (env.home / "proj-link").symlink_to(sync / "project")
+    args = [str(env.home / "notes.txt"), "rel-notes.txt", "file://" + str(env.home / "notes.txt"), str(sync / "plain.txt"), str(env.home / "proj-link")]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$2" "${3#file://}" "$4"; ls "$5"; echo APPENDED >> "$2"; true')
+    r = subprocess.run([lp, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    got = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
+    doc = str(env.rt / "doc") + "/"
+    assert r.returncode == 0 and len(got) == 5 and all(g.startswith(doc) for g in got[:2] + got[3:]), (r.stdout, r.stderr)
+    assert got[0].endswith("/notes-2024.txt") and got[1] == got[0] and got[2] == "file://" + got[0], got       # one document, by the file's name
+    assert got[3].endswith("/plain.txt") and got[4].endswith("/project"), got
+    assert r.stdout.count("NOTES-2024") == 3 and "PLAIN" in r.stdout and "inproj.txt" in r.stdout, (r.stdout, r.stderr)
+    assert (sync / "notes-2024.txt").read_text() == "NOTES-2024\nAPPENDED\n"                                    # and it is the file the app writes
+
+
 @needs_proxy
 def test_a_file_argument_is_handed_over_to_a_standard_app(env):
     # Regression (round two, R7): the desktop entry's %U, "Open with", a drop on the entry and
@@ -1825,6 +1850,7 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert (docs / "picked.txt").read_text() == "PICKED\nEDITED\n"          # the app's edit reached the real file
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
             _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()
     finally:
