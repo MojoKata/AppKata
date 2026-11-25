@@ -122,6 +122,8 @@ class Backend(QObject):
     _refresh = Signal()
     _synced = Signal(object)                     # a sync's worker is done: what was to follow the sync (a callable, or None)
     _toast = Signal(str, str)
+    passwordServiceNoteChanged = Signal()
+    _passwordServiceAnswered = Signal(int, str)  # an opening's number, and its ask's answer: from its worker (R17.5.1)
 
     def __init__(self, db_path: str | None = None, heal: bool = True):
         super().__init__()
@@ -138,6 +140,10 @@ class Backend(QObject):
         self._sync = sync.Progress()
         self._syncing = False
         self._previews: dict[str, sync.Preview] = {}
+        # what the screens add where a launch here starts an app without Password service (R17.5.1):
+        # the answer to the latest opening's ask of the bus, the openings' count, and the one answered
+        self._provide_note, self._provide_opening, self._provide_answered = "", 0, 0
+        self._passwordServiceAnswered.connect(self._password_service_answered)
         self._refresh.connect(self.reload)
         self._synced.connect(self._after_sync)
         self._toast.connect(self.toast)
@@ -1807,8 +1813,9 @@ class Backend(QObject):
             st["waitingNote"] = self._sandboxed_note([(n, f) for _, n, f in self._waiting_for_sandbox()], waiting=True)
         if getattr(self, "_demo_sandbox", "") in ("x11", "ok"):         # the tour's sandboxed state: a working system
             st = {**st, "status": "ok", "tools": True}
-        if getattr(self, "_demo_sandbox", "") in ("x11", "setup", "ok"):  # the tour: a machine with both tools
-            st = {**st, "busFilter": True, "missing": [], "toolsHint": "", "appToolsHint": "", "brokenHint": ""}
+        if getattr(self, "_demo_sandbox", "") in ("x11", "setup", "ok"):  # the tour: a machine with both tools,
+            st = {**st, "busFilter": True, "missing": [], "toolsHint": "", "appToolsHint": "", "brokenHint": "",
+                  "passwordServiceWithheld": ""}      # and no other program that provides saved passwords (R17.5.1)
         return st
 
     def _is_cli(self, url: str, eff: install.Portable | None = None) -> bool:
@@ -2150,6 +2157,46 @@ class Backend(QObject):
         root = self._app_options(url).root if url else None
         return sandbox.summary_chips(dict(grants) if grants else {}, root, template or None)
 
+    @Property(str, notify=passwordServiceNoteChanged)
+    def passwordServiceNote(self) -> str:
+        """What the Sandbox dialog's Password service hint adds, and App Detail for an app that has
+        it, where a launch here starts the app without it (R17.5.1): the answer to the latest
+        opening's ask of the bus (askPasswordService). "" where the app would own the name, and
+        until that answer comes."""
+        return self._provide_note
+
+    @Slot()
+    def askPasswordService(self) -> None:
+        """Ask this session's bus what a launch here decides for Password service, as the launcher
+        asks it (sandbox.password_service_withheld; PR #694's review, P3-1): the Sandbox dialog as it
+        opens, App Detail as it opens on an app that has it. On a worker (P8-1): a bus that takes the
+        connection and never answers holds the ask its five seconds, and held the window as long, at
+        every opening and at every reload of App Detail, whose binding asked again. The note is empty
+        until the answer comes, through a queued signal with the opening's number, so a late answer
+        to an earlier opening is dropped; a reload reads the note and asks nothing. The tour's support
+        status (_sb_support) is a working system's rather than the machine running it: its answer
+        is taken here, and nothing is asked."""
+        self._provide_opening += 1
+        opening = self._provide_opening
+        st = self._sb_support()
+        if "passwordServiceWithheld" in st:
+            self._password_service_answered(opening, st["passwordServiceWithheld"])
+            return
+        self._show_password_service_note("")
+        threading.Thread(target=lambda: self._passwordServiceAnswered.emit(opening, sandbox.password_service_withheld()),
+                         name="password service ask", daemon=True).start()
+
+    def _password_service_answered(self, opening: int, why: str) -> None:
+        if opening != self._provide_opening:        # an earlier opening's: the latest one's is on its way
+            return
+        self._provide_answered = opening
+        self._show_password_service_note(sandbox.PROVIDE_NOTES.get(why, ""))
+
+    def _show_password_service_note(self, note: str) -> None:
+        if note != self._provide_note:
+            self._provide_note = note
+            self.passwordServiceNoteChanged.emit()
+
     @Slot(str, result="QVariant")
     def sandboxInfo(self, url: str):
         """Everything App Detail and the Sandbox dialog need for one app (R17.3, R17.9, R17.11)."""
@@ -2188,12 +2235,14 @@ class Backend(QObject):
                 # raises it again. Without that, a user who deliberately chose otherwise had it forever.
                 # With "Follow reviewers' suggestions" off there is nothing to act on, so no badge; the
                 # dialog still shows what they suggest, and "Use theirs" stays an explicit choice (R17.15).
+                # Both are decided on what runs, not on the chips: no chip shows the MPRIS name, and a
+                # review that named only that was never offered (the review of PR #694, P1-1).
                 "reviewBadge": bool(self._prefs.get("sandboxReviewBadge", True)
                                     and self._prefs.get("followReviewerSandbox", True) and suggested is not None
-                                    and sandbox.summary(suggested, root) != sandbox.summary(gs, root)
-                                    and sandbox.summary(suggested, root) != self._install_settings(url).get("sandboxReviewSeen")),
+                                    and sandbox.differs(gs, suggested)
+                                    and sandbox.grant_terms(suggested) != self._install_settings(url).get("sandboxReviewSeen")),
                 # a suggestion that differs from what's in force: the dialog offers to adopt it
-                "hasSuggestion": suggested is not None and sandbox.summary(suggested, root) != sandbox.summary(gs, root),
+                "hasSuggestion": suggested is not None and sandbox.differs(gs, suggested),
                 "reviewBy": self._sandbox_reviewer(url),
                 # the badge's words: what the suggestion adds and removes, and what that means (R17.11)
                 "reviewBadgeText": sandbox.suggestion_text(gs, suggested, self._sandbox_reviewer(url) or "A reviewer")
@@ -2309,9 +2358,10 @@ class Backend(QObject):
         self.reload()
 
     def _review_suggestion_summary(self, url: str) -> list | None:
-        """The merged reviews' suggestion as summary labels, or None when no review says anything."""
+        """The merged reviews' suggestion in the terms the badge compares (sandbox.grant_terms), or None
+        when no review says anything."""
         suggested, _ = self._suggestion(url)
-        return sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else None
+        return sandbox.grant_terms(suggested) if suggested is not None else None
 
     @Slot(str)
     def useSuggestion(self, url: str) -> None:
@@ -2332,8 +2382,9 @@ class Backend(QObject):
         saved["sandboxReviewSeen"] = self._review_suggestion_summary(url)
         self._set_install_settings(url, saved)
         a = self._app(url)
+        suggested, _ = self._suggestion(url)
         self._audit("you", "app", "kept the sandbox of", a["name"] if a else url, url,
-                    {"suggested": ", ".join(saved["sandboxReviewSeen"] or [])})
+                    {"suggested": ", ".join(sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else [])})
         self.reload()
 
     def _regenerate_launcher(self, url: str) -> Exception | None:
@@ -2758,6 +2809,8 @@ class Backend(QObject):
         screen, so none shows the machine running the tour), or "" (none)."""
         if getattr(self, "_demo_sandbox", "") != mode:
             self._demo_sandbox = mode
+            self._provide_opening += 1          # what this machine's bus said, or will, stays off its screens
+            self._show_password_service_note("")
             self.reload()               # the Apps list's R17.12 rule asks _runs_sandboxed too
             self.prefsChanged.emit()
             self.changed.emit()

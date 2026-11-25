@@ -33,7 +33,9 @@ CASES = {
     "messenger-camera": dict(gs=sb.resolve_template("messenger"), appimage=None),
     "cli-tool": dict(gs=sb.resolve_template("cli-tool"), appimage=None),
     "standard-writable-no-x11": dict(gs=sb.apply_overrides(sb.resolve_template("standard"), {"write_app": True, "devices": []}), appimage=None),
-    "developer-every-capability": dict(gs=sb.apply_overrides(sb.resolve_template("developer"), {"caps": sorted(sb.CAP_LABELS), "sound": ["play", "record"]}), appimage=None),
+    # every capability, Media keys under the app's own MPRIS name, as a review gives it (R17.5.1)
+    "developer-every-capability": dict(gs=sb.apply_overrides(sb.resolve_template("developer"), {
+        "caps": sorted(sb.CAP_LABELS), "sound": ["play", "record"], "mpris_name": "org.mpris.MediaPlayer2.app"}), appimage=None),
 }
 
 
@@ -48,7 +50,8 @@ def fixed_host(monkeypatch):
     monkeypatch.setattr(sb, "host_path", lambda apps_root=None: sb.HOST_PATH)     # bwrap is in the system's folders
     monkeypatch.setenv("HOME", HOME)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
+    # and AppKata's own session bus, which a folder grant holding its socket is judged by (R17.3.1)
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: f"{HOME}/.local/share/appkata/sandboxes")
     monkeypatch.setattr(sb, "seccomp_filter", lambda machine=None: b"\0")

@@ -29,6 +29,12 @@ WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eigh
 # Facts the documents still state wrongly, and the finding that keeps each
 STILL_WRONG: dict = {}
 
+# The flaws upstream has published in the bus filter's filtering, and the version that fixes each
+# (`gh api repos/flatpak/xdg-dbus-proxy/security-advisories`, read 2026-11-24): R17.17 names each.
+# PR #694's review, P2-4: R17.17 and R17.5 said calls are filtered "on every version" while two of
+# these let an app past the filter; a new advisory joins this list and R17.17 together.
+BUS_FILTER_FLAWS = {"CVE-2026-34080": "0.1.7", "CVE-2026-93676": "0.1.8", "CVE-2026-94422": "0.1.9"}
+
 
 def _read(rel):
     if rel == REQ:
@@ -46,6 +52,16 @@ def _req(rid: str) -> str:
 def _labels_to_keys(text: str) -> set:
     by_label = {v.lower(): k for k, v in sb.TEMPLATE_LABELS.items()}
     return {by_label[p.strip().lower()] for p in re.split(r"[·,]", text) if p.strip().lower() in by_label}
+
+
+def _named(cell: str) -> dict:
+    """A "Named elsewhere" cell of A1.2.3.14's table as {where: name}: "R17.5.1 and R17.3: tray; the
+    dialog: Tray icon" is {"R17.5.1": "tray", "R17.3": "tray", "dialog": "Tray icon"}."""
+    out = {}
+    for part in cell.split("; "):
+        where, _, name = part.partition(": ")
+        out.update({w.removeprefix("the "): name for w in where.split(" and ")})
+    return out
 
 
 def _audit_actions() -> dict:
@@ -79,6 +95,10 @@ def _facts() -> dict:
     row = re.search(r"^\| Sandbox \| a template name \((.*?)\) or `off`", _req("R10.3.1"), re.M)
     f["R10.3.1: the templates a review may name"] = (set(re.findall(r"`([a-z-]+)`", row.group(1))) if row else set(),
                                                     set(trustfile.SANDBOX_TEMPLATES))
+    # every option a review's Settings may hold has its row in R10.3.1's table, and no row is of none
+    # (CR1.5-36 added one, `Sandbox MPRIS name`; Trust, Rating and Tags are the review's own values)
+    options = set(re.findall(r"^\| ([A-Z][A-Za-z ]+?) \|", _req("R10.3.1"), re.M)) - {"Option", "Trust", "Rating", "Tags"}
+    f["R10.3.1: the options in its table"] = (options, set(trustfile.SETTINGS_LABELS.values()))
     hint = re.search(r'label: "Built-in templates"\s*hint: "([^"]*)\. Each app', _read("src/appkata/qml/SettingsDialog.qml"))
     f["Settings: the built-in templates row"] = (_labels_to_keys(hint.group(1)) if hint else set(), set(sb.TEMPLATE_ORDER))
     # every count of the templates, wherever a document states one (found fixing review 2: R17.3.4 and
@@ -94,10 +114,42 @@ def _facts() -> dict:
 
     m = re.search(r"allow (.*?) \(and the Request", re.sub(r"\s+", " ", _req("R17.5")))
     f["R17.5: the portal interfaces every app may call"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.PORTAL_INTERFACES))
-    others = {re.search(r"=org\.freedesktop\.(?:portal\.)?([A-Za-z.]+)\.\*@", r).group(1) for r in sb.portal_rules() if r.startswith("--call=")}
-    others -= set(sb.PORTAL_INTERFACES) | {"Request", "Session"}
+    # ...and the two that come with the network grant alone (CR1.5-28: R17.5 listed them for every
+    # app, while R17.4 withholds the proxy settings they answer with from an app without it)
+    m = re.search(r"for every app on the bus, (.*?) only with the network grant", re.sub(r"\s+", " ", _req("R17.5")))
+    f["R17.5: the portal interfaces that come with the network grant"] = (set(re.split(r", | and ", m.group(1))) if m else set(), set(sb.NETWORK_PORTAL_INTERFACES))
+    others = {re.search(r"=org\.freedesktop\.(?:portal\.)?([A-Za-z.]+)\.\*@", r).group(1) for r in sb.portal_rules(network=True) if r.startswith("--call=")}
+    others -= set(sb.PORTAL_INTERFACES) | set(sb.NETWORK_PORTAL_INTERFACES) | {"Request", "Session"}
     said = {o for o in others if o.split(".")[-1] in _req("R17.5")}
     f["R17.5: nothing else on the portal's name"] = (said, others)
+    limits = re.sub(r"\s+", " ", _req("R17.17"))
+    named = {cve: re.search(rf"{cve}, fixed in (\d+\.\d+\.\d+)", limits) for cve in BUS_FILTER_FLAWS}
+    f["R17.17: the bus filter's published flaws, each with the version that fixes it"] = (
+        {cve: m.group(1) if m else None for cve, m in named.items()}, BUS_FILTER_FLAWS)
+    # ...and no sentence of R17.5 or R17.17 says the filter holds on every version without them
+    versions = re.sub(r"\s+", " ", _req("R17.5") + _req("R17.5.1") + _req("R17.17"))
+    unqualified = [m.group(0) for m in re.finditer(r"(?:on every|on any|by any) version(?: of the filter)?", versions)
+                   if not versions[m.end():].startswith(" without a known flaw")]
+    f["R17.5 and R17.17: the filter's versions, said without its flaws"] = (unqualified, [])
+    # ...and R17.5's list is the one list (CR1.11-86): the design had three more, in A1.2.3.6,
+    # A1.2.3.12 and A1.9, written out by hand, and two of them had lost ProxyResolver on the way.
+    # The facts above hold R17.5's to the code; a copy is held by nobody. So no sentence of the
+    # requirements or the design outside R17.5 names three of the interfaces: it says "the portals
+    # R17.5 lists".
+    listed = [i.lower() for i in (*sb.PORTAL_INTERFACES, *sb.NETWORK_PORTAL_INTERFACES)]
+
+    def lists(text):
+        """The sentences of a text that name three or more of the portal interfaces (open-URI is OpenURI)."""
+        sentences = re.split(r"(?<=[.;:])\s+", re.sub(r"\s+", " ", text))
+        return {s[:60] for s in sentences if sum(bool(re.search(rf"\b{i}\b", s.lower().replace("-", ""))) for i in listed) >= 3}
+    f["R17.5: the one list of the portal interfaces"] = ((lists(_read(REQ)) | lists(_read(A1))) - lists(_req("R17.5")), set())
+    # CR1.11-85: what GTK4 does when it is refused the file chooser depends on which GTK4 it is: 4.14
+    # fell back to its own dialog, 4.18 shows none at all (R17.6.3; round six, R6-4), which is why
+    # the launcher tells GTK4 not to ask. A1.2.3.6 still said it "falls back cleanly", of every
+    # GTK4. So wherever the requirements or the design say GTK4 falls back, they say which one.
+    unversioned = {s[:60] for s in re.split(r"(?<=[.;])\s+", re.sub(r"\s+", " ", _read(REQ) + " " + _read(A1)))
+                   if re.search(r"\bGTK ?4", s) and re.search(r"\bf(?:alls?|ell) back\b", s) and "4.14" not in s}
+    f["R17.6.3: which GTK4 falls back to its own dialog"] = (unversioned, set())
     caps17 = {"notifications": "notifications", "screensaver inhibit": "inhibit", "tray": "tray", "media keys": "mpris", "secrets": "secrets"}
     bold = {b.lower() for b in re.findall(r"\*\*([^*]+)\*\*", _req("R17.5.1"))}
     f["R17.5.1: the capabilities"] = ({caps17[b] for b in bold if b in caps17}, set(sb.CAP_PROXY_ARGS) - {"secrets-provide"})
@@ -106,12 +158,42 @@ def _facts() -> dict:
     stated = {k for k, lab in sb.CAP_LABELS.items() if lab in rows and all(a.split("=", 1)[-1].split("@")[0].split(".")[-1].rstrip("*").rstrip(".")
                                                                            in rows[lab] for a in sb.CAP_PROXY_ARGS[k][:1])}
     f["A1.2.3.14: the capability table"] = (stated, set(sb.CAP_LABELS))
+    # ...and the one table of each capability's names (CR1.11-80: the requirement, the template table,
+    # the review lines and the dialog each had their own, and only the code held the mapping): its
+    # word in a review, then what R17.5.1, R17.3's table and the dialog's switch call it; the summary's
+    # chip has no name of its own (CR1.9-32: two had, and the table recorded both spellings)
+    table = plan[plan.index("### A1.2.3.14. Capability → proxy arguments"):]
+    cells = {r[0]: r for r in (tuple(c.strip() for c in line.strip("|").split(" | ")) for line in table.splitlines() if line.startswith("| "))
+             if len(r) == 5}
+    names = {k: _named(cells[lab][3]) for k, lab in sb.CAP_LABELS.items() if lab in cells}
+    word = {k: m.group(1) for k, lab in sb.CAP_LABELS.items() if lab in cells and (m := re.match(r"`([a-z-]+)`", cells[lab][2]))}
+    f["A1.2.3.14: each capability's word in a review"] = (word, sb.LINE_WORDS["caps"])
+    switch = {k: n.get("dialog", "") for k, n in names.items()}
+    qml = _read("src/appkata/qml/SandboxDialog.qml")
+    f["A1.2.3.14: each capability's switch in the dialog"] = (
+        switch, {k: lab for lab, k in re.findall(r'SbxToggle \{ label: "([^"]+)"; ic: "[a-z]+";(?: warn: true;)? on: root\.has\(root\.gs\.caps, "([a-z-]+)"\)', qml)})
+    f["A1.2.3.14: each capability's chip in the summary"] = (switch, {k: v[0] for k, v in sb._CAP_CHIP.items()})
+    f["A1.2.3.14: the names R17.5.1 gives the capabilities"] = ({n.get("R17.5.1", "").split(",")[0] for n in names.values()}, bold & set(caps17))
+    services = {m.group(1): {w for w in m.group(2).split(", ") if w != "—"}
+                for m in re.finditer(r"^\| `([a-z-]+)` \|(?:[^|]*\|){5} ([^|]+) \|", _req("R17.3"), re.M)}
+    f["A1.2.3.14: the words of R17.3's table"] = ({t: {names.get(c, {}).get("R17.3") for c in sb.TEMPLATES[t]["caps"]} for t in sb.TEMPLATES}, services)
+    f["A1.2.3.14: the names R17.3.1 gives the keyring's two"] = (
+        {k: n["R17.3.1"] for k, n in names.items() if "R17.3.1" in n and n["R17.3.1"] in re.sub(r"\s+", " ", _req("R17.3.1"))},
+        {"secrets": "saved passwords", "secrets-provide": "the password service"})
+    f["R17.5.1: where the capabilities' names are"] = ("review" in re.sub(r"\s+", " ", _req("R17.5.1")).split("The full mapping table is A1.2.3.14")[-1], True)
     text = re.sub(r"\s+", " ", _req("R17.17"))
     old = re.search(r"process (\d+) \(or (\d+)\)", text)                # the wording review 2 found
     new = re.search(r"processes (\d+) to (\d+)", text)
     pids = ({int(old.group(1)), int(old.group(2))} if old else set(range(int(new.group(1)), int(new.group(2)) + 1)) if new else set())
     f["R17.17: the tray item's process ids"] = (pids,
                                                {int(re.search(r"-(\d+)-\d+$", o).group(1)) for o in sb._TRAY_OWNS})
+    # CR1.5-29: "No network" is no promise that nothing leaves. The OpenURI and Email portals are open
+    # to every app on the bus, the network grant or not, and the limits say so, for as long as the
+    # filter has it so: with a switch of its own for either portal the sentence would be that switch's
+    roads = {i for i in ("OpenURI", "Email") if sb._portal_call(i) in sb.proxy_args(sb.resolve_template("offline-editor"), "demo")}
+    said = re.search(r"without the network grant can still ask the desktop to open a link or to start an email \(the (\w+) and (\w+) portals", text)
+    f["R17.17: what an app without the network grant can still ask the desktop for"] = (set(said.groups()) if said else set(), roads)
+    f["A1.9: the same limit"] = ("**No network is not no way out.**" in plan, bool(roads))
     order = [tuple(int(x) for x in n.split(".")) for n in re.findall(r"^R(17\.[\d.]*\d)\. ", _read(REQ), re.M)]
     f["17: its sub-sections in order"] = (order, sorted(order))
     uninst = re.search(r"^(R\d+\.\d+)\. \*\*Uninstalling\*\*", _read(REQ), re.M).group(1)

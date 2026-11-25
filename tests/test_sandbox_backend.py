@@ -591,6 +591,35 @@ def test_the_install_dialogs_sandbox_card_is_what_planfor_computes(be, monkeypat
     assert _plan_with(be, monkeypatch, ["demo_1.0_amd64.deb", "demo-1.0-1.x86_64.rpm"])["sandbox"] == {"applicable": False}
 
 
+def test_a_review_that_changes_only_the_mpris_name_raises_the_badge_and_offers_it(be):
+    # The review of PR #694, P1-1: the badge and the dialog's "Use theirs" rose only where the
+    # suggestion's chips differed from the app's, and no chip shows the MPRIS name (the chip is the
+    # capability's, CR1.9-32). An app pinned with every player's name, whose Trust then named its own,
+    # kept every player and was never offered the narrowing (CR1.5-36); nor was a review that dropped
+    # a name the user's own set had. The badge's own words said it, under a badge that never showed.
+    # How it slipped past: the chips stood for the grant set there, and the test of the named player
+    # (test_dialog_contract) read the badge's words, never whether the badge was up.
+    name = "org.mpris.MediaPlayer2.demo"
+    be._app = lambda url: {"url": URL, "name": "Demo", "installed": "1.0"}
+    _review(be, "media-player")
+    _installed(be)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL, kind="appimage"))         # installed while no review named it
+    _review_lines(be, f"- Sandbox (linux): media-player\n- Sandbox MPRIS name (linux): {name}\n")
+    info = be.sandboxInfo(URL)
+    assert info["source"] == "pinned" and info["reviewBadge"] is True and info["hasSuggestion"] is True, info
+    assert f"removing media-player names other than {name}" in info["reviewBadgeText"]
+    be.keepSandbox(URL)                                                       # "Keep mine": this suggestion is seen
+    assert be.sandboxInfo(URL)["reviewBadge"] is False and be.sandboxInfo(URL)["hasSuggestion"] is True
+    be.useSuggestion(URL)                                                     # "Use theirs"
+    info = be.sandboxInfo(URL)
+    assert info["grants"]["mpris_name"] == name and info["reviewBadge"] is False and info["hasSuggestion"] is False, info
+    # the other way: the user's own set names it, and the review drops the name
+    be.setSandbox(URL, {"template": "media-player", "overrides": {"mpris_name": name}})
+    _review(be, "media-player")
+    info = be.sandboxInfo(URL)
+    assert info["reviewBadge"] is True and info["hasSuggestion"] is True and "adding every media-player name" in info["reviewBadgeText"], info
+
+
 def test_resaving_install_options_keeps_the_pin_the_seen_marker_and_the_users_choice(be, monkeypatch):
     # Regression (A1.12.5, R17.11): installWith rewrote app_settings.install from the dialog's fields
     # alone, so "Install options…" saved without touching the Sandbox card dropped the pin, the "seen"

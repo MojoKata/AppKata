@@ -19,6 +19,7 @@ The launcher/proxy shape matches A1.2.3 and the commands validated by
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import logging
 import os
 import re
@@ -47,9 +48,23 @@ def stricter(a: str, b: str) -> str:
     return a if LEVELS.index(a) >= LEVELS.index(b) else b
 
 
+# The app's own MPRIS name (R17.5.1): one bus name below org.mpris.MediaPlayer2, which is where a
+# media player is found (`org.mpris.MediaPlayer2.vlc`), or, with a `.*` suffix, that name and every
+# name below it (`org.mpris.MediaPlayer2.chromium.*`, for an app that takes a name per instance).
+# Never the prefix itself with `.*`, which is every player's name. Each element as xdg-dbus-proxy
+# takes one (it exits on a name it refuses, and the app then has no bus): no leading digit.
+_MPRIS_NAME = re.compile(r"org\.mpris\.MediaPlayer2(\.[A-Za-z_-][A-Za-z0-9_-]*)+(\.\*)?")
+
+
+def mpris_name(value) -> str | None:
+    """`value` as an app's own MPRIS name, or None when it isn't one."""
+    ok = isinstance(value, str) and len(value) <= 255 and _MPRIS_NAME.fullmatch(value)
+    return value if ok else None
+
+
 def blank_grants(level: str = "standard") -> dict:
     return dict(level=level, folders={}, network=False, ports=None, sound=set(),
-                devices=set(), caps=set(), exec_deny=True, write_app=False)
+                devices=set(), caps=set(), mpris_name=None, exec_deny=True, write_app=False)
 
 
 def normalize(gs: dict) -> dict:
@@ -70,6 +85,9 @@ def normalize(gs: dict) -> dict:
     out["sound"] = set() if strict else set(gs.get("sound") or [])
     out["devices"] = set(gs.get("devices") or []) & ({"x11"} if strict else set(gs.get("devices") or []))
     out["caps"] = set() if strict else set(gs.get("caps") or [])
+    # the one MPRIS name Media keys may own, where a review named it; a name is no capability, so
+    # without Media keys the set has none
+    out["mpris_name"] = mpris_name(gs.get("mpris_name")) if "mpris" in out["caps"] else None
     out["exec_deny"] = bool(gs.get("exec_deny", True))
     out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (R17.7.1)
     return out
@@ -80,7 +98,7 @@ def to_json(gs: dict) -> dict:
     gs = normalize(gs)
     return dict(level=gs["level"], folders=gs["folders"], network=gs["network"], ports=gs["ports"],
                 sound=sorted(gs["sound"]), devices=sorted(gs["devices"]), caps=sorted(gs["caps"]),
-                exec_deny=gs["exec_deny"], write_app=gs["write_app"])
+                mpris_name=gs["mpris_name"], exec_deny=gs["exec_deny"], write_app=gs["write_app"])
 
 
 # -------------------------------------------------------------------------- templates (R17.3)
@@ -135,7 +153,7 @@ def resolve_template(name: str) -> dict:
     return normalize(TEMPLATES[name])
 
 
-GRANT_KEYS = ("level", "folders", "network", "ports", "sound", "devices", "caps", "exec_deny", "write_app")
+GRANT_KEYS = ("level", "folders", "network", "ports", "sound", "devices", "caps", "mpris_name", "exec_deny", "write_app")
 
 
 def as_overrides(template: str, gs: dict) -> dict:
@@ -189,6 +207,8 @@ def as_review(template: str, gs: dict) -> tuple[dict, list[tuple[str, str]]]:
             words = LINE_WORDS[grant]
             out[key] = ", ".join([f"+{words[x]}" for x in sorted(kept[grant] - base[grant])] +
                                  [f"-{words[x]}" for x in sorted(base[grant] - kept[grant])])
+    if ov.get("mpris_name"):
+        out["sandboxMprisName"] = ov["mpris_name"]
     if "write_app" in ov:
         out["sandboxAppFolder"] = bool(ov["write_app"])
     return out, refused
@@ -220,9 +240,35 @@ def changes(before: dict, after: dict) -> tuple[list[str], list[str]]:
     for grant in ("sound", "devices", "caps"):
         added += [_PHRASES.get((grant, x), x) for x in sorted(b[grant] - a[grant])]
         removed += [_PHRASES.get((grant, x), x) for x in sorted(a[grant] - b[grant])]
+    # the MPRIS name, where both have Media keys (the capability coming or going is said above): a
+    # name takes every other name away, so naming one is less access and dropping it is more
+    if "mpris" in a["caps"] & b["caps"] and a["mpris_name"] != b["mpris_name"]:
+        if a["mpris_name"] is None:
+            removed.append(f"media-player names other than {b['mpris_name']}")
+        elif b["mpris_name"] is None:
+            added.append("every media-player name")
+        else:
+            added.append(f"the media-player name {b['mpris_name']}")
+            removed.append(f"the media-player name {a['mpris_name']}")
     if a["write_app"] != b["write_app"]:
         (added if b["write_app"] else removed).append("changing its own files")
     return added, removed
+
+
+def differs(a: dict, b: dict) -> bool:
+    """Whether grant set `b` runs differently from `a`: another level, or anything :func:`changes`
+    says, the MPRIS name included. What the review badge and "Use theirs" are offered on (R17.11):
+    they compared the chips, and no chip shows the MPRIS name (it is the capability's, CR1.9-32), so a
+    review that named or changed only that was never offered (the review of PR #694, P1-1)."""
+    return level_of(a) != level_of(b) or changes(a, b) != ([], [])
+
+
+def grant_terms(gs: dict) -> list[str]:
+    """A grant set in :func:`changes`' words: its level, everything it grants as against nothing, and
+    its MPRIS name. Two sets have the same terms exactly where :func:`differs` says they don't: what
+    the review badge remembers of a suggestion the user acted on (R17.11)."""
+    n = normalize(gs)
+    return [n["level"], *changes(blank_grants(n["level"]), n)[0]] + ([f"the media-player name {n['mpris_name']}"] if n["mpris_name"] else [])
 
 
 def _and(xs: list[str]) -> str:
@@ -376,6 +422,8 @@ def config_from_review(opts: dict) -> dict | None:
     for key, grant in (("sandboxSound", "sound"), ("sandboxDevices", "devices"), ("sandboxServices", "caps")):
         if opts.get(key):
             overrides[grant] = parse_set(grant, opts[key])
+    if mpris_name(opts.get("sandboxMprisName")):
+        overrides["mpris_name"] = opts["sandboxMprisName"]
     if "sandboxAppFolder" in opts:
         overrides["write_app"] = bool(opts["sandboxAppFolder"])
     return {"template": name, "overrides": overrides}
@@ -444,7 +492,8 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a grant may never share, nor anything inside or above
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
-    runtime folder (the real, unfiltered session bus lives there)."""
+    runtime folder (the real, unfiltered session bus lives there, in a login session; where else
+    it can be is :func:`bus_files`'s)."""
     from .platform import apps_dir
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
@@ -498,11 +547,89 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     return roots
 
 
+def _bus_keys(address: str):
+    """Each key=value of every `unix:` entry of the session bus `address`, in order: the one way
+    AppKata reads an address, as libdbus, GIO and sd-bus do and as the launcher's shell does
+    (_BUS_BLOCK). A list's entries are split at `;`, an entry's keys at `,`, and a key counts in
+    any place among them (PR #694's review, P4-B1b: bus_warning() took `abstract=` as an entry's
+    first key alone, so `unix:guid=…,abstract=…`, which the clients connect to, went unwarned). A
+    key is named as GDBus names it, unescaped (_bus_key)."""
+    for entry in address.split(";"):
+        transport, _, keys = entry.partition(":")
+        if transport == "unix":
+            for key, eq, value in (kv.partition("=") for kv in keys.split(",")):
+                if eq:
+                    yield _bus_key(key), value
+
+
+def _bus_key(key: str) -> str:
+    """An address's key as GDBus reads it, each %XX unescaped once, and as written where it can't
+    unescape one (a `%` not followed by two hex digits, or `%00`: it refuses the entry). GDBus, GIO's
+    and so the proxy's and every GTK program's, unescapes a key's name as it unescapes a value, while
+    libdbus and sd-bus take it as written: `unix:pa%74h=<socket>` is `path=` to GIO and to no other
+    client, and a raw `path=` is `path=` to all three, so the files the unescaped keys name are every
+    file a client connects to (PR #694's review, P6-1: matched as written, that socket was in no
+    reader's list, and a granted folder showed it). The match after is exact: `PA%54H` isn't `path`."""
+    raw = os.fsencode(key)
+    if b"%" not in raw or not re.fullmatch(rb"(?:[^%]|%[0-9A-Fa-f]{2})*", raw):
+        return key
+    name = re.sub(rb"%([0-9A-Fa-f]{2})", lambda m: bytes([int(m.group(1), 16)]), raw)
+    return key if b"\0" in name else os.fsdecode(name)
+
+
+def bus_files(address: str | None = None) -> tuple[list[str], bool]:
+    """The socket files the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS when
+    None), and whether it names none AppKata can't read: the rule the launcher's shell reads an
+    address by too (_BUS_BLOCK). Each `unix:` entry of a list and every `path=` key in it (GIO takes
+    the last of two, libdbus the first; the key's name unescaped, as GIO reads it, _bus_key), each
+    %XX unescaped as the byte it is (a byte that isn't UTF-8 kept as the file system keeps it: PR #694's review, P2-1) before the path is judged, and a
+    path ending at an escaped NUL, where the clients that take one end it (libdbus, sd-bus; GIO
+    refuses the address). PR #694's review, P3-2: the leading `/` was looked for before the
+    unescaping, so `%2F` there dropped the file; P3-B5: a NUL was kept, and every folder check
+    raised. A broken escape, a path that isn't absolute and a newline name a file AppKata can't
+    read (it can't tell where such a file is). The bus is where its socket is, and that need not
+    be the runtime folder: dbus-run-session and dbus-launch put it under /tmp (R17.5), where a
+    grant of /tmp, or a tool run there, showed the app the unfiltered bus (the review of PR #694,
+    P1-2). An abstract socket has no file, and with no address the bus is the runtime folder's,
+    which is protected already."""
+    addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "") if address is None else address
+    files, readable = [], True
+    for key, value in _bus_keys(addr):
+        if key != "path":
+            continue
+        path, rest = b"", os.fsencode(value)
+        while rest:
+            head, pct, rest = rest.partition(b"%")
+            path += head
+            if not pct:
+                break
+            code, rest = rest[:2], rest[2:]
+            if not re.fullmatch(rb"[0-9A-Fa-f]{2}", code):
+                path = None
+                break
+            if code == b"00":
+                break
+            path += bytes([int(code, 16)])
+        if path is None or not path.startswith(b"/") or b"\n" in path:
+            readable = False
+        else:
+            files.append(os.fsdecode(path))
+    return files, readable
+
+
+# Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
+BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
+
+
 def protected_folder(path: str, apps_root: str | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
-    since sharing a parent shares everything beneath it. Reviews and the Customize picker both go
-    through this; the CLI tool's `$cwd` has its own run-time rule (R17.3.3)."""
+    since sharing a parent shares everything beneath it — and the session bus's own socket file and
+    anything above it, wherever it is (a folder beside it may be shared), and every folder where
+    the address names a socket file AppKata can't read, which could be in any (the launcher shares
+    no folder then either; PR #694's review, P3-2): both are :func:`bus_files`'s. Reviews
+    and the Customize picker both go through this; the CLI tool's `$cwd` has its own run-time rule
+    (R17.3.3)."""
     if path == "$cwd":
         return ""
     # bwrap resolves a bind source from the host's root, realpath() below from AppKata's own working
@@ -517,13 +644,14 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
         return "your whole home folder"
     if p == "/" or home.startswith(p + os.sep):
         return "everything, your home folder included"
-    for root, what in _protected_roots(apps_root):
+    sockets, readable = bus_files()
+    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in sockets]:
         r = os.path.realpath(root)
         if p == r or p.startswith(r + os.sep):
             return what
         if r.startswith(p + os.sep):
             return f"a folder above {what}"
-    return ""
+    return "" if readable else BUS_UNREADABLE
 
 
 # -------------------------------------------------------------------------- secrets (R17.3.1, review 2 F8)
@@ -611,10 +739,26 @@ def _intersect_ports(ap, bp):
     return sorted(set(ap) & set(bp))
 
 
+def _narrower_mpris(a: str | None, b: str | None) -> tuple[bool, str | None]:
+    """Two sets' MPRIS names as (whether any name is left to both, the name): None is every name, so
+    the other's stands; of two names the one the other covers (`….chromium.*` covers `….chromium`
+    and `….chromium.instance7`, as the proxy reads the suffix); and two that name different players
+    leave none."""
+    if a is None or b is None or a == b:
+        return True, a if b is None else b
+    covers = lambda wide, narrow: wide.endswith(".*") and (narrow == wide[:-2] or narrow.startswith(wide[:-1]))      # noqa: E731
+    if covers(a, b):
+        return True, b
+    if covers(b, a):
+        return True, a
+    return False, None
+
+
 def intersect(a: dict, b: dict) -> dict:
     """The least-privilege combination of two grant sets, across Trusts (R17.3.2): strictest level; a
     folder only if both grant it (read-write only if both do); network/sound/devices/caps the
-    intersection; execute-deny if either denies.
+    intersection, and of two MPRIS names the narrower, with no media keys where they name different
+    players; execute-deny if either denies.
 
     `off` means no sandbox — everything allowed — so it adds no limit of its own: off ∩ X is X. (Its
     grant set is empty only because Off has nothing to configure; taking that literally made a review
@@ -627,6 +771,10 @@ def intersect(a: dict, b: dict) -> dict:
     folders = {}
     for p in set(a["folders"]) & set(b["folders"]):
         folders[p] = "rw" if a["folders"][p] == "rw" and b["folders"][p] == "rw" else "ro"
+    caps = a["caps"] & b["caps"]
+    named, name = _narrower_mpris(a["mpris_name"], b["mpris_name"])
+    if not named:
+        caps = caps - {"mpris"}
     return dict(
         level=stricter(a["level"], b["level"]),
         folders=folders,
@@ -634,7 +782,8 @@ def intersect(a: dict, b: dict) -> dict:
         ports=_intersect_ports(a["ports"], b["ports"]),
         sound=a["sound"] & b["sound"],
         devices=a["devices"] & b["devices"],
-        caps=a["caps"] & b["caps"],
+        caps=caps,
+        mpris_name=name if "mpris" in caps else None,
         exec_deny=a["exec_deny"] or b["exec_deny"],
         write_app=a["write_app"] and b["write_app"],
     )
@@ -704,10 +853,12 @@ def choose(user: dict | None, pinned: dict | None, reviews: list[dict], default:
 
 # -------------------------------------------------------------------------- UI summaries
 
-# capability/device → (chip label, icon name from the app's icon set) for the summary chips
-_CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep screen awake", "clock"),
+# capability/device → (chip label, icon name from the app's icon set) for the summary chips. A
+# chip says what the Sandbox dialog's switch for it says, word for word: one capability, one name
+# on every screen (CR1.9-32: two chips had words of their own, "Secrets" and "Keep screen awake")
+_CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep the screen awake", "clock"),
              "tray": ("Tray icon", "panel"), "mpris": ("Media keys", "play"),
-             "secrets": ("Secrets", "key"), "secrets-provide": ("Password service", "key")}
+             "secrets": ("Saved passwords", "key"), "secrets-provide": ("Password service", "key")}
 _DEVICE_CHIP = {"camera": ("Camera", "panel")}
 
 
@@ -815,9 +966,32 @@ def have_tools() -> bool:
     return bool(host_which("bwrap"))
 
 
+# The xdg-dbus-proxy the launcher runs (R17.5): the one its PATH finds, every link followed, where
+# that is under /usr, the one tree the proxy's own sandbox holds, and named xdg-dbus-proxy, so the
+# folder it is run from by name holds that file. The launcher's start_proxy matches this pattern in
+# a `case`, whose `*` matches across slashes as fnmatch's does, so AppKata's own check and the
+# launcher keep one rule (PR #694's review, P3-B1: AppKata counted whatever proxy its PATH found,
+# the launcher refused one outside /usr, and every Standard app exited 1 where none would have run
+# with no bus and said why).
+BUS_FILTER_AT = "/usr/*/xdg-dbus-proxy"
+
+
+def bus_filter(path: str | None = None) -> tuple[str, bool]:
+    """The xdg-dbus-proxy `path` finds first (AppKata's own PATH when None), every link followed, and
+    whether the launcher runs it (:data:`BUS_FILTER_AT`); ("", False) where it finds none. One the
+    launcher wouldn't run counts as none: a Standard app runs with no session bus, and Settings and
+    App Detail name the file (:func:`tools_hints`)."""
+    found = shutil.which("xdg-dbus-proxy") if path is None else shutil.which("xdg-dbus-proxy", path=path)
+    if not found:
+        return "", False
+    real = os.path.realpath(found)
+    return real, fnmatch.fnmatchcase(real, BUS_FILTER_AT)
+
+
 def have_bus_filter() -> bool:
-    """Whether xdg-dbus-proxy is here to give a Standard app its filtered session bus (R17.5)."""
-    return bool(shutil.which("xdg-dbus-proxy"))
+    """Whether an xdg-dbus-proxy the launcher runs is here to give a Standard app its filtered session
+    bus (R17.5; :func:`bus_filter`)."""
+    return bus_filter()[1]
 
 
 # each tool the sandbox uses -> the package that brings it (the same name on apt and dnf)
@@ -826,28 +1000,38 @@ TOOL_PACKAGES = {"bwrap": "bubblewrap", "xdg-dbus-proxy": "xdg-dbus-proxy"}
 
 def missing_tools() -> list[str]:
     """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order, as
-    :func:`have_tools` and :func:`have_bus_filter` say."""
+    :func:`have_tools` and :func:`have_bus_filter` say: xdg-dbus-proxy where none the launcher runs
+    is here."""
     return [pkg for exe, pkg in TOOL_PACKAGES.items() if not (have_tools() if exe == "bwrap" else have_bus_filter())]
 
 
-def tools_hints(missing: list[str]) -> dict:
+def tools_hints(missing: list[str], elsewhere: str = "") -> dict:
     """What Settings → Sandbox ("system") and App Detail say about missing tools (R17.10): every
     sandbox needs bubblewrap; a Standard app's desktop services need xdg-dbus-proxy. Each names only
     what is missing, with the command that installs it. "app" is for an app that runs unsandboxed
     for it, "broken" for one that keeps its launcher and so can't start (review 2, F16). Empty when
-    nothing is missing."""
+    nothing is missing. `elsewhere`: the xdg-dbus-proxy the PATH finds where the launcher won't run
+    it (:func:`bus_filter`), named in place of "isn't installed" (PR #694's review, P3-B1)."""
     if not missing:
         return {"system": "", "app": "", "broken": ""}
     from .platform import linux_family
     cmd = ("sudo dnf install " if linux_family() == "fedora" else "sudo apt install ") + " ".join(missing)
+    elsewhere = elsewhere if "xdg-dbus-proxy" in missing else ""
     if "bubblewrap" in missing:
-        what = "bubblewrap isn't installed" if len(missing) == 1 else "bubblewrap and xdg-dbus-proxy aren't installed"
+        what = ("bubblewrap isn't installed" if len(missing) == 1 else
+                f"bubblewrap isn't installed, nor xdg-dbus-proxy under /usr (this PATH finds {elsewhere})" if elsewhere else
+                "bubblewrap and xdg-dbus-proxy aren't installed")
         it = "it" if len(missing) == 1 else "them"
         return {"system": f"{what}, so apps run without a sandbox. Install {it} ({cmd}) and restart AppKata.",
                 "app": f"Running unsandboxed: {what}. Install {it} ({cmd}) and restart AppKata to sandbox it.",
                 "broken": f"Can't start: {what}, and it runs sandboxed. Install {it} ({cmd}), "
                           "or set its sandbox to Off to run it unsandboxed."}
     services = "notify, open links or files on this computer, or show a tray icon"
+    if elsewhere:
+        why = f"the xdg-dbus-proxy this PATH finds, {elsewhere}, is outside /usr, where the bus filter's own sandbox can't run it"
+        fix = f"Install xdg-dbus-proxy ({cmd}), have the PATH find /usr/bin's first, and restart AppKata."
+        return {"system": f"{why[0].upper()}{why[1:]}, so sandboxed apps get no desktop services: they can't {services}. {fix}",
+                "app": f"Runs without desktop services: {why}, so it can't {services}. {fix}", "broken": ""}
     return {"system": f"xdg-dbus-proxy isn't installed, so sandboxed apps get no desktop services: they can't {services}. "
                       f"Install it ({cmd}) and restart AppKata.",
             "app": f"Runs without desktop services: xdg-dbus-proxy isn't installed, so it can't {services}. "
@@ -959,7 +1143,8 @@ def support_status() -> dict:
     tools = have_tools()
     works = userns_works()
     missing = missing_tools()
-    hints = tools_hints(missing)
+    found, runs = bus_filter()
+    hints = tools_hints(missing, found if found and not runs else "")
     base = {"tools": tools, "restricted": userns_restricted(), "profile": is_profile_installed(),
             "otherProfiles": other_bwrap_profiles(), "busFilter": have_bus_filter(), "missing": missing,
             "toolsHint": hints["system"], "appToolsHint": hints["app"], "brokenHint": hints["broken"]}
@@ -1112,11 +1297,13 @@ def bus_warning() -> dict:
     The network grant shares the host's network namespace, and an abstract-namespace socket belongs
     to it: where dbus is 1.12 (Mint 21.3, Ubuntu 22.04, RHEL 9), a session bus started with
     dbus-run-session or dbus-launch is one, and an app with the network grant reaches it directly,
-    past the filtering proxy (R17.5). A desktop's own login uses systemd's user bus, a path."""
+    past the filtering proxy (R17.5). A desktop's own login uses systemd's user bus, a path. An
+    `abstract=` key counts in any place among an entry's keys, as the clients read it (_bus_keys;
+    PR #694's review, P4-B1b), and an entry the clients don't read (` unix:…`) not at all."""
     if OS != "linux":
         return {}
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
-    if not any(a.strip().startswith("unix:abstract=") for a in addr.split(";")):
+    if not any(key == "abstract" for key, _ in _bus_keys(addr)):
         return {}
     return {"text": "This session's bus listens on an abstract socket, which an app with network access can reach "
                     "directly: for such apps the bus filter doesn't hold. A session started by the desktop's own login "
@@ -1356,18 +1543,80 @@ def _portal_call(interface: str, obj: str = _PORTAL_PATH) -> str:
     return f"--call={_PORTAL}=org.freedesktop.portal.{interface}.*@{obj}"
 
 
+def _service_rules(name: str, *paths: str, members: tuple[str, ...] = ("*",), also: tuple[str, ...] = (),
+                   signals: bool = True) -> list[str]:
+    """xdg-dbus-proxy rules that open a desktop service by its direct name the way the portal is
+    opened: the service's own interface (named as its bus name is) on its own objects, and nothing
+    else on that name. Never `--talk=NAME`, which is no grant of one service: the proxy gives it to
+    the connection that owns NAME -- every object and interface that connection serves, by its
+    unique name too, and every signal it broadcasts -- and on Cinnamon the owner of
+    org.freedesktop.Notifications is the desktop's own shell. A `standard` app's "Notifications"
+    chip reached org.Cinnamon.Eval that way, which ran a command as the user, outside the sandbox
+    (CR1.5-3, shown on the Mint 22.3 desktop).
+
+    Beside the interface: Introspectable on the same objects, which `gdbus call` and dbus-python
+    type a call's arguments from (without it neither got a Notify to dunst: an int32 guessed for
+    its uint32, no guess for its empty list) and Qt's QDBusInterface reads before it gives a
+    property; the `also` calls; and the service's own broadcast signals (NotificationClosed,
+    ActionInvoked), where `--talk` let every broadcast of the owner in.
+
+    `members` narrows the interface to the calls a capability means, and `signals=False` leaves
+    its broadcasts out, where the interface does more than that (the ScreenSaver's, below)."""
+    rules = []
+    for path in paths:
+        rules += [f"--call={name}={name}.{member}@{path}" for member in members]
+        rules.append(f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}")
+        rules += [f"--call={name}={method}@{path}" for method in also]
+        rules += [f"--broadcast={name}={name}.*@{path}"] if signals else []
+    return rules
+
+
+# What a tray library reads of the watcher before it registers its icon, as real ones were seen to
+# (dbus-monitor on a test bus, then each behind a generated launcher): Qt 5.15 and 6.4 Introspect
+# the watcher and ask for IsStatusNotifierHostRegistered through Properties.Get, and register no
+# icon when either is refused; libayatana-appindicator 0.5.93 makes neither call. GetAll is what a
+# GDBus proxy loads its properties with.
+_WATCHER_PROPERTIES = ("org.freedesktop.DBus.Properties.Get", "org.freedesktop.DBus.Properties.GetAll")
+
 # capability → the extra xdg-dbus-proxy arguments it adds (A1.2.3.14). Where a portal
 # covers the need, the capability opens *both* roads -- the portal interface, which GLib/GTK apps
 # take when they see /.flatpak-info, and the direct name the others use -- so the capability is the
 # one switch, and an app without it has neither (round three, R3-6: the Notification and Inhibit
 # portals were open to every Standard app, so an offline-editor with no "Notifications" chip still
-# notified through GLib). Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix).
+# notified through GLib). A direct name is opened for its service alone (_service_rules).
+# Wildcard owns use xdg-dbus-proxy's `.*` suffix (names below a prefix). Media keys' is what an
+# app nobody named gets; a named one owns its own name alone (proxy_args).
+#
+# Keep the screen awake opens the ScreenSaver interface's inhibit pair alone, on both of the objects
+# it is on, and none of its signals (CR1.5-44). The same interface has Lock, SetActive,
+# SimulateUserActivity, GetActive, GetActiveTime, GetSessionIdleTime, Throttle and ActiveChanged:
+# KDE's screen locker serves them (kwin 6.3, where Lock from a sandboxed app with the capability
+# locked the screen), and GNOME's and Cinnamon's screensaver proxies declare them and answer
+# NotSupported to all but the pair. An app keeping the screen awake makes those two calls alone.
+_INHIBIT_MEMBERS = ("Inhibit", "UnInhibit")
+
+# Saved passwords opens the Secret Service alone (CR1.5-43): its five interfaces on its object tree
+# (the service at /org/freedesktop/secrets, and below it, as the specification puts them, the
+# collections and their aliases, the items, sessions and prompts), the property calls clients make
+# (libsecret reads every property through Properties and sets an item's label with Set), the listing,
+# and the service's broadcast signals: a changed collection or item, and a prompt's Completed for a
+# service that broadcasts it (gnome-keyring sends it to the caller alone, which always passes). Not
+# `--talk=org.freedesktop.secrets`: gnome-keyring's connection also serves its own daemon interface
+# (the session's SSH agent socket and control folder), its master-password interface on the
+# service's own object, and the Secret portal's backend, which an app reached through that word.
+_SECRETS, _SECRETS_TREE = "org.freedesktop.secrets", "/org/freedesktop/secrets/*"
+_SECRET_INTERFACES = tuple(f"org.freedesktop.Secret.{i}" for i in ("Service", "Collection", "Item", "Session", "Prompt"))
+_SECRET_SERVICE_RULES = [*(f"--call={_SECRETS}={i}.*@{_SECRETS_TREE}" for i in _SECRET_INTERFACES),
+                         *(f"--call={_SECRETS}=org.freedesktop.DBus.{i}.*@{_SECRETS_TREE}" for i in ("Properties", "Introspectable")),
+                         *(f"--broadcast={_SECRETS}={i}.*@{_SECRETS_TREE}" for i in _SECRET_INTERFACES if not i.endswith(("Item", "Session"))),
+                         f"--broadcast={_SECRETS}=org.freedesktop.DBus.Properties.PropertiesChanged@{_SECRETS_TREE}"]
 CAP_PROXY_ARGS = {
-    "notifications": [_portal_call("Notification"), "--talk=org.freedesktop.Notifications"],
-    "inhibit": [_portal_call("Inhibit"), "--talk=org.freedesktop.ScreenSaver"],
-    "tray": ["--talk=org.kde.StatusNotifierWatcher", *_TRAY_OWNS],
+    "notifications": [_portal_call("Notification"), *_service_rules("org.freedesktop.Notifications", "/org/freedesktop/Notifications")],
+    "inhibit": [_portal_call("Inhibit"), *_service_rules("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "/ScreenSaver",
+                                                         members=_INHIBIT_MEMBERS, signals=False)],
+    "tray": [*_service_rules("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", also=_WATCHER_PROPERTIES), *_TRAY_OWNS],
     "mpris": ["--own=org.mpris.MediaPlayer2.*"],
-    "secrets": ["--talk=org.freedesktop.secrets"],
+    "secrets": _SECRET_SERVICE_RULES,
     "secrets-provide": ["--own=org.freedesktop.secrets"],
 }
 
@@ -1381,7 +1630,8 @@ CAP_PROXY_ARGS = {
 # the app's own dialog is used instead, showing exactly what the sandbox sees (R17.6.3). What
 # remains acts on the caller's behalf only, with the user in the loop where it matters, and is what
 # a Flatpak app gets too -- except Notification and Inhibit, which come with their capabilities
-# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep screen awake" chips are the truth.
+# (CAP_PROXY_ARGS), so the summary's "Notifications" and "Keep the screen awake" chips are the truth,
+# and NetworkMonitor and ProxyResolver, which come with the network grant (below).
 # Properties (version probes) are not allowed either. What keeps each toolkit on its own file
 # dialog, as shown with real apps behind generated launchers (scripts/test-sandbox.sh filedialogs,
 # round four R4-5): GTK3 and Qt up to 6.4 never ask -- they take $XDG_RUNTIME_DIR/flatpak-info or
@@ -1391,20 +1641,32 @@ CAP_PROXY_ARGS = {
 # so the launcher sets GDK_DEBUG=no-portals and GTK4 never asks.
 # Chromium/Electron reads `version` first and cancels its dialog when OpenFile then fails, so for it
 # the Properties denial is the one that matters -- keep both denied; nothing here needs `version`.
-PORTAL_INTERFACES = ("OpenURI", "Settings", "Print", "Email", "NetworkMonitor", "ProxyResolver", "MemoryMonitor")
+#
+# Two of them tell of the host's network, and come with the network grant alone (CR1.5-28):
+# NetworkMonitor says whether and how the host is connected, and ProxyResolver answers Lookup(uri)
+# with the desktop's proxy for it -- GIO's resolver writes the proxy's user name and password into
+# that answer where the desktop's setting has them. The launcher withholds the proxy variables from
+# an app without the grant for that reason (_PROXY_PASSTHROUGH; R17.4), and to such an app the
+# portal was the same settings by another road, with nothing else to gain from asking. GLib asks
+# all the same, before every connection: build_launcher points it at its own resolver instead.
+_PORTALS = ("OpenURI", "Settings", "Print", "Email", "NetworkMonitor", "ProxyResolver", "MemoryMonitor")    # as the filter lists them
+NETWORK_PORTAL_INTERFACES = ("NetworkMonitor", "ProxyResolver")
+PORTAL_INTERFACES = tuple(i for i in _PORTALS if i not in NETWORK_PORTAL_INTERFACES)                         # for every app on the bus
 # the broadcast signals those interfaces emit (replies and the Request/Session signals, which are
 # sent to the caller alone, always pass the proxy)
 PORTAL_SIGNALS = ("Settings.SettingChanged", "NetworkMonitor.changed", "MemoryMonitor.LowMemoryWarning")
 
 
-def portal_rules() -> list[str]:
+def portal_rules(network: bool = False) -> list[str]:
     """xdg-dbus-proxy `--call`/`--broadcast` rules for the Desktop portal: the interfaces above on
-    the portal object, plus Request and Session objects (cancel, close), nothing else on that name."""
-    rules = [_portal_call(i) for i in PORTAL_INTERFACES]
+    the portal object -- the two of the host's network only for an app with the network grant --
+    plus Request and Session objects (cancel, close), nothing else on that name."""
+    opened = [i for i in _PORTALS if network or i not in NETWORK_PORTAL_INTERFACES]
+    rules = [_portal_call(i) for i in opened]
     rules += [_portal_call("Request", f"{_PORTAL_PATH}/request/*"), _portal_call("Session", f"{_PORTAL_PATH}/session/*"),
               # the interface listing: `gdbus call` (xdg-open and the shim) types its arguments from it
               f"--call={_PORTAL}=org.freedesktop.DBus.Introspectable.*@{_PORTAL_PATH}"]
-    rules += [f"--broadcast={_PORTAL}=org.freedesktop.portal.{s}@{_PORTAL_PATH}" for s in PORTAL_SIGNALS]
+    rules += [f"--broadcast={_PORTAL}=org.freedesktop.portal.{s}@{_PORTAL_PATH}" for s in PORTAL_SIGNALS if s.split(".")[0] in opened]
     return rules
 
 
@@ -1415,11 +1677,16 @@ INPUT_METHOD_PORTALS = ("org.freedesktop.portal.IBus", "org.freedesktop.portal.F
 
 
 def proxy_args(gs: dict, app_id: str) -> list[str]:
-    """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal, the
-    input-method portals and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
-    args = ["--filter", *portal_rules(), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
-    for cap in sorted(normalize(gs)["caps"]):
-        args += CAP_PROXY_ARGS.get(cap, [])
+    """The xdg-dbus-proxy filter arguments for a grant set: the safe part of the Desktop portal
+    (with the network grant, what it says of the host's network too), the input-method portals
+    and the app's own name, plus each granted capability (R17.5, R17.5.1)."""
+    gs = normalize(gs)
+    args = ["--filter", *portal_rules(gs["network"]), *[f"--talk={n}" for n in INPUT_METHOD_PORTALS], f"--own={app_identity(app_id)}"]
+    for cap in sorted(gs["caps"]):
+        # Media keys: to the proxy an own is a talk too, on every name the pattern covers, whoever
+        # owns it. So the app's own MPRIS name alone where a review gave it; every player's name,
+        # and so every other player, only where nobody did (CR1.5-36)
+        args += [f"--own={gs['mpris_name']}"] if cap == "mpris" and gs["mpris_name"] else CAP_PROXY_ARGS.get(cap, [])
     return args
 
 
@@ -1652,7 +1919,11 @@ XDG_OPEN_SHIM = """#!/bin/sh
 set -u
 case "${1:-}" in ""|-*) exec /usr/bin/xdg-open "$@" ;; esac
 if [ ! -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then      # no bus: its address leads nowhere (R3-33)
-  echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2
+  case "${APPKATA_NO_BUS:-}" in                                 # a Standard app has none only where the launcher says why
+    no-filter) echo "AppKata: the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services and can't open $1 on this computer (install xdg-dbus-proxy to give it them)." >&2 ;;
+    address) echo "AppKata: this session's bus is at an address AppKata's bus filter can't reach (the launcher named it when the app started), so this app has no desktop services and can't open $1 on this computer." >&2 ;;
+    *) echo "AppKata: this app runs Strict, with no desktop services, so it can't open $1 on this computer (App Detail > Sandbox to change that)." >&2 ;;
+  esac
   exit 3
 fi
 case "$1" in
@@ -1741,7 +2012,8 @@ _ENV_PASSTHROUGH = (
     "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE",
 )
 # The proxy settings, passed only to an app with the network grant: they can carry the proxy's
-# credentials, and only an app that has the network uses them (review 2, F15)
+# credentials, and only an app that has the network uses them (review 2, F15). The ProxyResolver
+# portal is the same settings by another road, and follows the same grant (NETWORK_PORTAL_INTERFACES).
 _PROXY_PASSTHROUGH = ("http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy",
                       "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY")
 # DBUS_SESSION_BUS_ADDRESS is deliberately NOT passed through: the sandboxed app must reach the
@@ -1759,7 +2031,8 @@ HOST_PATH = "/usr/local/bin:/usr/bin:/bin"
 # names (install.RESERVED_COMMANDS); tests/test_sandbox_adversarial.py runs launchers with these
 # alone to be found, so a command added to the launcher's text is added here.
 HOST_COMMANDS = ("bwrap", "xdg-dbus-proxy", "python3", "id", "mkdir", "stat", "mv", "date", "cat", "flock", "mktemp", "rm",
-                 "dirname", "sleep", "readlink", "printf", "echo", "kill", "test", "[", "pwd", "true")
+                 "dirname", "sleep", "readlink", "printf", "echo", "kill", "test", "[", "pwd", "true",
+                 "timeout", "gdbus", "busctl")       # Password service's ask of the session bus (_PROVIDE_ASK, R17.5.1)
 
 
 def host_path(apps_root: str | None = None) -> str:
@@ -1818,6 +2091,11 @@ def support_status_in(apps_root: str | None) -> dict:
             "toolsHint": hints["system"], "appToolsHint": hints["app"], "brokenHint": hints["broken"]}
 
 
+# The session's runtime folder and its bus, as the launcher finds them, and as AppKata's own ask of
+# that bus finds them (password_service_withheld): the same words in both
+_RT = 'rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"'
+_UPSTREAM = 'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"'
+
 _LAUNCHER_HEADER = """#!/bin/sh
 # Generated by AppKata for {name}. Do not edit — regenerated on update / settings change (R17.4).
 set -eu
@@ -1825,7 +2103,7 @@ set -eu
 # sandbox: each command is the system's own, whatever PATH this was started with (R17.4).
 PATH={path}; export PATH
 id={id}
-rt="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+{rt}
 home={home}
 info={info}
 appdir={appdir}
@@ -1856,21 +2134,129 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || {{ printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\\n" {qname} >&2; exit 1; }}
-{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
+{bus}{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
 set -- -- "$appdir/$exe" "$@"
 """
 
+# The session bus (R17.5), read first, Standard apps only: the proxy filters it, and the working
+# directory and the folder grants must never show the app its socket file, wherever that lies
+# (R17.3.1): dbus-run-session and dbus-launch put it under /tmp, and a tool run in /tmp, or a grant
+# of /tmp, showed the app the unfiltered bus (the review of PR #694, P1-2). $bussocks holds every
+# socket file the address names, by bus_files()'s rule (PR #694's review, P2-1: the launcher read a
+# plain `unix:path=` alone, so a list, `guid=` first or an escaped byte left the file shown): each
+# `unix:` entry of a list, every `path=` among its keys (P3-B4: the first alone, and GIO takes the
+# last of two), a key's name unescaped first, as GDBus reads it, and matched exactly (_bus_key; P6-1:
+# matched as written, `pa%74h=`, which is GIO's `path=`, named no file, and a granted folder or a
+# tool's working folder showed its socket), %XX unescaped as a byte, a path ending at an escaped NUL
+# as libdbus and sd-bus end it (P3-B4: it counted as unreadable, and the cover never asked); each as `pwd -P` names folders, the
+# way the working directory is compared, and a link as its target too; one a line. $busok is 0
+# where an entry names a file the launcher can't read (a path that isn't absolute, a broken escape,
+# a newline): no working directory and no granted folder is shown then. An abstract socket has no file;
+# $busabs is 1 where an entry has an `abstract=` key, as bus_warning() reads it (_bus_keys). $busat is
+# the bus the proxy is shown (R17.5), decided from the same keys, so in any order of them (PR #694's
+# review, P4-B1a: a case on the whole address took `path=` or `abstract=` as the first key alone, and
+# `unix:guid=…,path=…`, which libdbus and GIO read, got no proxy): "file" for one entry with one
+# `path=`, absolute, with no escaped byte, and no `abstract=` ($busfile, bound alone for the proxy);
+# "abstract" for one entry with `abstract=` and no `path=`; "" for any other, which the proxy can't be
+# shown (a list, two paths, of which its GDBus takes the last, an escaped or relative path, a path
+# with an abstract name, which no client takes, another transport). $busbare is 1 where a key has no
+# `=` (a trailing or doubled comma leaves an empty one, a comma inside a path the rest of it) or
+# nothing before it: the key loop skips such a key, as _bus_keys() does, but the proxy's GDBus refuses
+# the entry whole, so it is shown nothing (PR #694's review, P5-1: it was given the path and failed
+# every connection the app made, with no word; libdbus takes a trailing comma, so the file the path
+# names stays in $bussocks). $busesc is 1 where a key's name or value has an escape GDBus can't read
+# (a `%` not followed by two hex digits, or an escaped NUL), in whichever key it is: GDBus unescapes
+# every name and value, and refuses the entry whole for one (PR #694's review, P5-1's harness:
+# `guid=%zz` beside a path, or an abstract name with one, got a proxy that failed every connection,
+# with no word; P6-2: so did `g%zz=1` beside a path, the name read alone was the value). libdbus
+# takes such a name as written and connects to the path beside it, so its file stays in $bussocks.
+_BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+""" + _UPSTREAM + """
+# Every socket file the address names, one a line: no working directory or folder of the app's may
+# show one, wherever it lies (R17.3.1).
+nl='
+'
+bussocks= busok=1 busabs= busbare= busesc= paths=0 busfile= rest="$upstream;"
+while [ -n "$rest" ]; do
+  e=${rest%%;*}; rest=${rest#*;}
+  case "$e" in unix:*) ;; *) continue ;; esac
+  keys="${e#unix:},"
+  while [ -n "$keys" ]; do
+    p=${keys%%,*}; keys=${keys#*,}
+    for v in "${p%%=*}" "${p#*=}"; do
+      case "$v" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    done
+    case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
+    # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
+    # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it
+    # can't unescape is neither.
+    k=${p%%=*}
+    case "$k" in *%*)
+      n=$k; k=
+      while [ -n "$n" ]; do
+        case "$n" in
+          %[0-9A-Fa-f][0-9A-Fa-f]*) x=${n#%}; x=${x%"${x#??}"}; n=${n#%??}
+            case "$x" in 00) k=; break ;; 0[aA]) k="$k%" ;; *) k="$k$(printf "\\\\$(printf %o "$((0x$x))")")" ;; esac ;;
+          %*) k=; break ;;
+          *%*) k="$k${n%%"%"*}"; n=%${n#*%} ;;
+          *) k="$k$n"; n= ;;
+        esac
+      done ;;
+    esac
+    case "$k" in
+      abstract) busabs=1; continue ;;
+      path) p=${p#*=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
+    esac
+    f=
+    while [ -n "$p" ]; do
+      case "$p" in
+        %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+          case "$x" in 00) break ;; 0[aA]) busok=0; f=; break ;; esac
+          f="$f$(printf "\\\\$(printf %o "$((0x$x))")")" ;;
+        %*) busok=0; f=; break ;;
+        *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+        *) f="$f$p"; p= ;;
+      esac
+    done
+    case "$f" in /*) ;; *) busok=0; continue ;; esac
+    case "$f" in *"$nl"*) busok=0; continue ;; esac
+    if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+    bussocks="$bussocks$f$nl"
+    if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
+  done
+done
+# What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name, and
+# no key or value its GDBus refuses the entry for.
+busat=
+case "$upstream" in
+  *";"*) ;;
+  *) [ -n "$busbare$busesc" ] || case "$paths$busabs:$busfile" in
+       1:/*%*) ;;
+       1:/*) busat=file ;;
+       01:) busat=abstract ;;
+     esac ;;
+esac
+"""
+
 # File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
 # {visible}: the granted folders (and, for a CLI tool, the directory it runs in), where a file is
-# already in view and keeps its real path.
-_FORWARD_BLOCK = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
+# already in view and keeps its real path; the granted folders only where the launcher shows them,
+# which it doesn't where the session bus's address names a file it can't read ($busok 0, the cover
+# below; PR #694's review, P3-B4), so a file there is handed over instead. build_launcher puts the
+# line that decides that ($folders) between the note and the lines that run; _FORWARD_BLOCK is the
+# two without it, as tests/test_sandbox_adversarial.py runs them, its folders named outright.
+_FORWARD_NOTE = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
-if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
+"""
+_FORWARD_RUN = """if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
   if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then
     n=0
     while IFS= read -r w; do
@@ -1891,6 +2277,7 @@ EOF
   fi
 fi
 """
+_FORWARD_BLOCK = _FORWARD_NOTE + _FORWARD_RUN
 
 # Lazy, sandboxed AppImage extraction (R17.7): run the publisher's own runtime inside a Strict bwrap
 # that can write only a staging dir. Redone when $appdir (the derived cache) is missing or was made from
@@ -1988,6 +2375,95 @@ def _launcher_env(net: bool = False) -> list[str]:
 # source side: a link the app plants at the outer grant lands on the host, but bwrap resolves the
 # *source* on the host too, where /oldroot does not exist, so --bind-try skips the mount, and a link
 # to a path that resolves on both sides mounts inside the private home. Checked in round two.
+# Password service (R17.5.1) owns org.freedesktop.secrets only where no other program holds it at
+# launch. To the filter a name an app may own is one it may call, whoever holds it, so with the
+# keyring (or another password manager) holding the name the app reached that program's whole
+# connection, every unlocked password included (CR1.5-46, #707; the owner's decision of 2026-11-24).
+# Asked of the session's own bus as the host's tools ask it (gdbus, else busctl), in the proxy's
+# start. A name the bus can start a program for counts as held too: the app, which may call the name
+# it may own, would start it itself (a call to it, or StartServiceByName), and gnome-keyring installs
+# such a file wherever it is installed, running or not (PR #694's review, P2-3). The name counts as
+# free only on two answers read as the tool writes them: no owner, and a list of the names the bus
+# can start (it always holds the bus's own) without it. Anything else counts as held: a failed ask
+# kept the own (P2-2), and so do an answer it can't read and no tool to ask with. `timeout 5` bounds
+# each ask whole, the connecting too, which the tools' own --timeout doesn't: a bus that took the
+# connection and never spoke held the launch for good (P2-B3); a timeout counts as held. A program
+# that takes the name after the launch otherwise is not seen. The ask leaves $why: held, start, ask,
+# or empty where the app owns the name. AppKata asks it too, in these words, so the Sandbox dialog
+# and App Detail say what a launch here decides (password_service_withheld; PR #694's review, P3-1,
+# the owner's decision of 2026-11-25): one rule, as BUS_FILTER_AT is for the proxy.
+_PROVIDE_ASK = """  owned= startable= qt= why=ask
+  if command -v timeout >/dev/null 2>&1 && command -v gdbus >/dev/null 2>&1; then
+    qt="'"
+    owned=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
+      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "(true,)") owned=true ;; "(false,)") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus \\
+      --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null) || startable=
+  elif command -v timeout >/dev/null 2>&1 && command -v busctl >/dev/null 2>&1; then
+    qt='"'
+    owned=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
+      NameHasOwner s org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "b true") owned=true ;; "b false") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus \\
+      org.freedesktop.DBus ListActivatableNames 2>/dev/null) || startable=
+  fi
+  case "$owned" in
+    true) why=held ;;
+    false) case "$startable" in
+             *"$qt"org.freedesktop.secrets"$qt"*) why=start ;;
+             *"$qt"org.freedesktop.DBus"$qt"*) why= ;;
+           esac ;;
+  esac
+"""
+_PROVIDE_CHECK = "  provide=--own=org.freedesktop.secrets\n" + _PROVIDE_ASK + """  case "$why" in
+    held) provide=
+      printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\\n' {qname} >&2 ;;
+    start) provide=
+      printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\\n' {qname} >&2 ;;
+    ask) provide=
+      printf 'AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter could reach such a program and the passwords it holds.\\n' {qname} >&2 ;;
+  esac
+"""
+
+# What the Sandbox dialog's Password service hint and App Detail add where a launch here starts the
+# app without it (R17.5.1), by the launcher's reason ($why, _PROVIDE_ASK). A running copy of the app
+# that holds the name is a holder like any other to the ask, and a second launch goes without it.
+PROVIDE_NOTES = {
+    "held": "Not offered here: another program, or a running copy of this app, already provides saved passwords on this "
+            "computer, so the app starts without Password service, which would reach that program and every password it holds.",
+    "start": "Not offered here: another program that provides saved passwords is installed (such as gnome-keyring) and starts "
+             "when an app asks for it, so the app starts without Password service, which could start that program and reach "
+             "every password it holds.",
+    "ask": "Not offered here: AppKata couldn't ask this session's bus (with gdbus or busctl) whether another program provides "
+           "saved passwords, so the app starts without Password service.",
+}
+
+
+def password_service_withheld() -> str:
+    """Why a launch here would start an app without Password service (R17.5.1), as its launcher
+    decides it: "held" (another program holds org.freedesktop.secrets, or a running copy of the app
+    does), "start" (the session bus can start one for it), "ask" (the bus couldn't be asked, or its
+    answer couldn't be read), or "" (the name is free, and the app owns it). The launcher's own words
+    (_PROVIDE_ASK), run by the system's `sh` on AppKata's own session bus, found as the launcher finds
+    it (_RT, _UPSTREAM), with the tools the launcher's PATH finds (:func:`host_path`), not AppKata's
+    own: one rule in both places, as :data:`BUS_FILTER_AT` is for the proxy (PR #694's review, P3-1;
+    the owner's decision of 2026-11-25: the Sandbox dialog and App Detail say it, not only the app's
+    log). Each ask is bounded by `timeout 5`, as at the launch, so a bus that never answers holds
+    this ten seconds at most: AppKata asks on a worker, never on the window's thread
+    (Backend.askPasswordService; P8-1). "" off Linux, where nothing is sandboxed."""
+    if OS != "linux":
+        return ""
+    from .platform import apps_dir
+    script = "set -eu\n" + _RT + "\n" + _UPSTREAM + "\n" + _PROVIDE_ASK + 'printf %s "$why"\n'
+    try:
+        r = subprocess.run(["/bin/sh", "-c", script], env={**os.environ, "PATH": host_path(apps_dir())},
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return "ask"
+    return r.stdout if r.returncode == 0 and r.stdout in ("held", "start", "ask", "") else "ask"
+
+
 _GUARD_FN = """guard() {
   case "$1" in "$HOME"/*) ;; *) return 0 ;; esac
   rel=${1#"$HOME"/}; p=$home
@@ -2006,8 +2482,10 @@ _GUARD_FN = """guard() {
 
 # The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
-# home, or the whole filesystem at /), or AppKata's own areas (installed apps, other apps' private
-# homes). There the tool runs in its private home instead and says why. Paths are compared physically
+# home, or the whole filesystem at /), AppKata's own areas (installed apps, other apps' private
+# homes), or a folder that holds a socket file of the session bus ($bussocks, wherever the session's
+# address puts them; any folder, where it names one the launcher can't read). There the tool runs in
+# its private home instead and says why. Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
 # be shared (round three, R3-3: it always counted "$PWD", so a file named from a refused folder was
@@ -2018,6 +2496,12 @@ hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
 for d in "$hm" {protected}; do
+  case "$d/" in "$here"/*) share=0 ;; esac
+done
+[ "${{busok:-1}}" = 1 ] || share=0
+rest=${{bussocks:-}}
+while [ -n "$rest" ]; do
+  d=${{rest%%"$nl"*}}; rest=${{rest#*"$nl"}}
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in {protected}; do
@@ -2031,8 +2515,12 @@ _CWD_WORDS = """if [ "$share" = 1 ]; then
   set -- {bind} "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, or a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder).\\n" {name} "$here" >&2
-  echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  if [ "${{busok:-1}}" = 1 ]; then
+    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  else
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\\n" {name} "$here" "$upstream" >&2
+  fi
 fi
 """
 
@@ -2049,7 +2537,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     program, relative to `appdir`. `appimage_path`: the kept `.AppImage` (sets APPIMAGE), or None.
     `apps_root`: the install root, which a CLI tool's working-directory grant must never expose.
     `seccomp`: the terminal-injection filter (:func:`write_seccomp_filter`); without one the program
-    runs in a new session instead, safe but cut off from its terminal. `log_path`: the app's log
+    runs in a new session instead, safe but cut off from its terminal, and so does the bus proxy,
+    which takes the same filter. `log_path`: the app's log
     (:func:`applog.app_log_path`), where the launcher sends its stderr when no terminal shows it.
     `forward`: the file-argument helper (:func:`write_forward_helper`); without one, file arguments
     are passed through as they are. `shims`: the folder of programs the app finds first on its PATH
@@ -2083,17 +2572,19 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it
-        visible = [q(os.path.expanduser(p)) for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        visible = ["${folders:+" + q(os.path.expanduser(p)) + "}" for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
-        fwd = _FORWARD_BLOCK.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
+        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731
     note = _STRICT_NOTE.format(qname=q(name)) if strict else ""
     out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), path=q(path or HOST_PATH), id=app_identity(app_id), home=q(home),
-                                   info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
-                                   log=q(log_path or applog.app_log_path(app_id)), cwd=cwd, forward=fwd, note=note), _GUARD_FN]
+                                   rt=_RT, info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
+                                   log=q(log_path or applog.app_log_path(app_id)), bus=_BUS_BLOCK if standard else "",
+                                   cwd=cwd, forward=fwd, note=note), _GUARD_FN]
     for path, why in refused:            # said in the launcher itself, which App Detail can show
         out.append(f"# Refused folder grant {c(path)}: {c(why)} (R17.3.1).")
     if appimage_path is not None:
@@ -2103,44 +2594,134 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     if cli:
         bind = "--bind" if gs["folders"]["$cwd"] == "rw" else "--ro-bind"
         out.append(_CWD_WORDS.format(name=q(name), bind=bind))
+    # A folder grant is judged when the launcher is written, by AppKata's own session bus (a grant
+    # that holds its socket is refused above), and this session's bus can be elsewhere: one started
+    # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket
+    # is inside a granted folder all the same, or is what a grant names, the file is covered, after
+    # that grant's bind, so the app never sees the unfiltered bus (R17.3.1). Each grant as the app sees
+    # it, and as it really is at the launch: `readlink -f`, which follows a link as bwrap's bind then
+    # follows it (where it can't, as it was when the launcher was written); each socket file the
+    # address names, but a link, which the folder shows pointing at a file it doesn't (its target is in
+    # $bussocks too, and covered where a grant shows it). PR #694's review, P5-B1: the match was on
+    # what lies under a grant alone ("$r"/*), so a grant of the socket file itself, or of a link to it
+    # (a "folder" grant binds a file as readily as a folder), showed the app the live socket; and the
+    # grant's path was resolved when the launcher was written, so a link pointed at the socket's
+    # folder later showed it too. Where the
+    # address names a file the launcher can't read ($busok 0), that file could be in any of them, at
+    # any depth, so each granted folder is shown empty and read-only (a tmpfs over its bind), and a
+    # granted socket file is covered, as the working directory is refused then, with a line (PR
+    # #694's review, P3-B4: the cover never asked $busok, and an address the clients read past the
+    # launcher left a live socket in sight). A file or a folder not there is left as its bind left it.
+    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
+    if standard and granted:
+        cover = ["# A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).",
+                 'if [ "${busok:-1}" = 1 ]; then',
+                 '  rest=$bussocks',
+                 '  while [ -n "$rest" ]; do',
+                 '    s=${rest%%"$nl"*}; rest=${rest#*"$nl"}',
+                 '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
+        for p in granted:
+            dest = os.path.expanduser(p)
+            cover.append(f'      r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
+                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+        cover += ["    fi", "  done", "else",
+                  "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
+        for p in granted:
+            d = q(os.path.expanduser(p))
+            cover.append(f'  if [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
+        cover.append(f"  printf \"%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file "
+                     f"AppKata can't read, which could be in one of them.\\n\" {q(name)} {q(', '.join(granted))} \"$upstream\" >&2")
+        out.append("\n".join(cover + ["fi"]) + "\n")
 
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:
-        out.append("# No session bus: xdg-dbus-proxy isn't installed here, so this Standard app gets none,\n"
-                   "# and no desktop services, until it is (R17.10).\n")
+        out.append("# No session bus: xdg-dbus-proxy isn't installed here, or not under /usr, where its own sandbox can\n"
+                   "# run it (bus_filter), so this Standard app gets none, and no desktop services, until it is (R17.5, R17.10).\n")
     if bus:
-        pargs = " ".join(shlex.quote(a) for a in proxy_args(gs, app_id))
+        # Password service's own, decided at launch (_PROVIDE_CHECK): the rest of the rules are baked
+        provide = "secrets-provide" in gs["caps"]
+        pargs = " ".join(shlex.quote(a) for a in proxy_args(gs, app_id) if not (provide and a in CAP_PROXY_ARGS["secrets-provide"]))
         # The socket is named by a hash of the id: a Unix socket path holds 107 bytes, and an id is the
         # app name's slug, of any length (review 3, R3-12: an id past ~60 characters couldn't start).
         tag = hashlib.sha256(app_id.encode()).hexdigest()[:16]
+        # the proxy's bwrap takes the terminal-injection filter as the app's does, on a descriptor
+        # opened for that command alone; where there is none, a session of its own
+        psession, pfilter = ("--seccomp 3", f" 3< {q(seccomp)}") if seccomp else ("--new-session", "")
         out.append(
             f'sock="$rt/appkata/bus-{tag}.$$"\n'
             'rm -f "$sock"\n'
-            '# Read the host bus with a default so `set -u` can\'t abort the launcher when it is unset.\n'
-            'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"\n'
-            '# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the\n'
-            '# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*\n'
-            '# /.flatpak-info: the portals judge the caller by the proxy\'s root, and xdg-desktop-portal\n'
-            '# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the\n'
-            '# app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'
+            '# The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so\n'
+            '# it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,\n'
+            '# its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what\n'
+            '# reaching this session\'s bus takes. Nothing else of the runtime folder, which holds the\n'
+            '# ssh and gpg agents\' sockets and the document portal\'s mount; no pid, IPC, UTS or\n'
+            '# cgroup namespace of the host\'s, nor its network where the bus can be reached without;\n'
+            '# none of the launcher\'s environment, which a terminal can fill with tokens and keys (its\n'
+            '# address and socket are arguments: PATH alone, for bwrap to find it; PR #694\'s review, P1-B2);\n'
+            '# and the app\'s own guard against typing into the terminal (R17.4).\n'
+            '# The proxy is the one this PATH finds, as AppKata\'s own check finds it, run from its folder\n'
+            '# (the PATH it is given). Its sandbox holds /usr alone, so one elsewhere is refused, with a\n'
+            '# line that says so (PR #694\'s review, P2-B4: a PATH of /usr/bin:/bin failed one in\n'
+            '# /usr/local/bin, or ran the distribution\'s beside it). Where this PATH has none, /usr/bin:/bin.\n'
+            '# What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).\n'
+            '# It carries *no* /.flatpak-info: the portals judge the caller by the proxy\'s root, and\n'
+            '# xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),\n'
+            '# so the app is a host caller to them and the proxy allows only the portal interfaces safe for one.\n'
             '# Its own pid namespace ends it with bwrap: killing bwrap kills the namespace\'s first\n'
             '# process (bwrap\'s, which keeps --die-with-parent), and with it everything inside. The\n'
             '# proxy\'s own death signal is not enough: the kernel clears it at an exec that changes\n'
             '# the security domain, as entering Ubuntu 25.04+\'s unpriv_bwrap does, and every launch\n'
             '# there left its proxy running (review 2, F2; R17.10.2).\n'
-            'bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
-            '  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
-            '  --bind "$rt" "$rt" --unshare-pid --die-with-parent -- \\\n'
-            '  xdg-dbus-proxy "$upstream" "$sock" ' + pargs + ' &\n'
-            'proxy=$!\n'
-            '# Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n'
-            '# blocking for the full timeout.\n'
-            'i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done\n'
-            '# Said plainly when it didn\'t start, rather than left to bwrap ("Can\'t find source path").\n'
-            'if [ ! -S "$sock" ]; then\n'
-            '  kill "$proxy" 2>/dev/null || true\n'
-            f"  printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\\n' {q(name)} >&2\n"
-            '  exit 1\n'
+            'start_proxy() {   # "$@": the bwrap words that put this session\'s bus in the proxy\'s sight\n'
+            '  pbin=$(command -v xdg-dbus-proxy 2>/dev/null || true)\n'
+            '  [ -z "$pbin" ] || pbin=$(readlink -f "$pbin" 2>/dev/null || true)\n'
+            '  case "$pbin" in\n'
+            f'    {BUS_FILTER_AT}) ppath=${{pbin%/*}} ;;\n'      # the rule AppKata's own check keeps (bus_filter)
+            "    '') ppath=/usr/bin:/bin ;;\n"
+            f"    *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\\n' \"$pbin\" {q(name)} >&2; exit 1 ;;\n"
+            '  esac\n'
+            + (_PROVIDE_CHECK.format(qname=q(name)) if provide else '') +
+            '  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
+            '    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
+            '    --bind "$rt/appkata" "$rt/appkata" "$@" \\\n'
+            '    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "$ppath" \\\n'
+            f'    --die-with-parent {psession} -- \\\n'
+            '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + (' ${provide:+"$provide"}' if provide else '') + f'{pfilter} &\n'
+            '  proxy=$!\n'
+            '}\n'
+            '# The proxy connects to the bus once for each connection the app makes, from inside its own\n'
+            '# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies,\n'
+            '# alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the\n'
+            '# runtime folder, and the proxy then made its socket and failed every connection without a\n'
+            '# word (CR1.5-18). An abstract socket has no file: it is in the host\'s network namespace,\n'
+            '# so the proxy stays in that only then, and has a network of its own otherwise. Either is\n'
+            '# read from the address\'s keys in any order ($busat, above: `guid=` can come first). Any\n'
+            '# other address is one the launcher can\'t read (a list of addresses, a path with an escaped\n'
+            '# byte or a relative one, two paths, of which GDBus takes the last, a path with an abstract\n'
+            '# name, which no client takes, another transport), so the proxy couldn\'t be shown its bus:\n'
+            '# no proxy then.\n'
+            'proxy=\n'
+            'case "$busat" in\n'
+            '  file) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
+            '  abstract) start_proxy ;;\n'
+            'esac\n'
+            'if [ -z "$proxy" ]; then\n'
+            '  # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata\'s\n'
+            '  # xdg-open is told why, and says it (PR #694\'s review, P1-B3: it said "runs Strict").\n'
+            '  set -- --setenv APPKATA_NO_BUS address "$@"\n'
+            f"  printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\\n' \"$upstream\" {q(name)} >&2\n"
+            'else\n'
+            '  # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of\n'
+            '  # blocking for the full timeout.\n'
+            '  i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done\n'
+            '  # Said plainly when it didn\'t start, rather than left to bwrap ("Can\'t find source path").\n'
+            '  if [ ! -S "$sock" ]; then\n'
+            '    kill "$proxy" 2>/dev/null || true\n'
+            f"    printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\\n' {q(name)} >&2\n"
+            '    exit 1\n'
+            '  fi\n'
+            '  # The app\'s bus is the proxy\'s socket. The word lands in "$@", after every baked bind.\n'
+            '  set -- --bind "$sock" "$rt/bus" "$@"\n'
             'fi\n')
 
     # Display: the Wayland socket if present, else X11 with XAUTHORITY (R17.9), decided at run time.
@@ -2270,8 +2851,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # Qt 6.5+ and Chromium read this one and then ask the FileChooser portal, which the proxy denies,
     # so each keeps its own dialog (R17.6.3, PORTAL_INTERFACES).
     parts.append('  --ro-bind "$info" /.flatpak-info \\')
-    if bus:
-        parts.append('  --bind "$sock" "$rt/bus" \\')
     if shims:
         # xdg-open that asks the host through the OpenURI portal (R17.6.3), first on PATH below. At
         # every level: a Strict app has no bus and so nothing to ask, and the shim says so and fails --
@@ -2285,6 +2864,12 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     path_in = (SHIMS_MOUNT + ":" if shims else "") + "/usr/bin:/bin:/usr/sbin:/sbin"
     parts.append(f'  --clearenv --setenv HOME "$HOME" --setenv PATH {path_in} \\')
     parts.append('  --setenv XDG_RUNTIME_DIR "$rt" \\')
+    # Why a Standard app has no session bus, where it has none, for AppKata's xdg-open to say (R17.6.3):
+    # it took "no bus" for Strict, and a Standard app has none without xdg-dbus-proxy, or in a session
+    # whose bus the filter can't reach (the proxy's block says so at run time; PR #694's review, P1-B3).
+    # A Strict app is told nothing: no word and no bus is Strict.
+    if standard and not bus:
+        parts.append('  --setenv APPKATA_NO_BUS no-filter \\')
     # GTK4 reads /.flatpak-info and takes the portal road for its file dialog; the proxy denies the
     # FileChooser portal (for a host caller it returns paths the sandbox can't open, R17.6.3). GTK 4.14
     # fell back to its own dialog when refused; GTK 4.18 shows *no dialog at all* (round six, R6-4,
@@ -2294,6 +2879,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # handler is in view, notifications) read the marker, not this, and are unchanged. The cost is
     # GTK4's other portal dialogs (print, colour) -- the in-sandbox versions instead.
     parts.append('  --setenv GDK_DEBUG no-portals \\')
+    # A Standard app without the network grant is refused the ProxyResolver portal (CR1.5-28), and
+    # GLib asks that portal for a proxy before every connection it makes -- one to a server of the
+    # app's own on its loopback too -- and fails the connection when the answer is a refusal (shown
+    # with GLib 2.80 and 2.84: Gio.SocketClient to 127.0.0.1 inside an offline-editor, AccessDenied).
+    # For a sandbox without the network GLib's answer is "direct://" whatever the portal said, so
+    # it is told to give that without asking: its built-in resolver, which knows no proxy.
+    if standard and not net:
+        parts.append('  --setenv GIO_USE_PROXY_RESOLVER dummy \\')
     # Point the app at the filtered proxy, set *after* --clearenv (and keepenv) so bwrap keeps it.
     # Emitted before --clearenv it was wiped; via the env passthrough it took the host bus address.
     # GTK_USE_PORTAL is deliberately not set either: the portal file chooser would answer a host
@@ -2313,7 +2906,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
 
     # 3. Tear down the proxy (only when there is one), and exit as the program did.
     if bus:
-        out.append('\nkill "$proxy" 2>/dev/null || true\nrm -f "$sock"')
+        out.append('\nif [ -n "$proxy" ]; then kill "$proxy" 2>/dev/null || true; rm -f "$sock"; fi')
     out.append("exit $status")
     return "\n".join(out) + "\n"
 
@@ -2327,8 +2920,9 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
-    run inside, R17.10.2, whether xdg-dbus-proxy is here, R17.10, and a bwrap outside the system's
-    folders, :func:`host_path`), and the startup pass can tell a
+    run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
+    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant that holds it,
+    where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""

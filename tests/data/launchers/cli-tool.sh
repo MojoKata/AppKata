@@ -36,11 +36,86 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\n" App >&2; exit 1; }
+# The session bus to filter. With no address set it is where a login session's bus is, which is
+# where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
+upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
+# Every socket file the address names, one a line: no working directory or folder of the app's may
+# show one, wherever it lies (R17.3.1).
+nl='
+'
+bussocks= busok=1 busabs= busbare= busesc= paths=0 busfile= rest="$upstream;"
+while [ -n "$rest" ]; do
+  e=${rest%%;*}; rest=${rest#*;}
+  case "$e" in unix:*) ;; *) continue ;; esac
+  keys="${e#unix:},"
+  while [ -n "$keys" ]; do
+    p=${keys%%,*}; keys=${keys#*,}
+    for v in "${p%%=*}" "${p#*=}"; do
+      case "$v" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    done
+    case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
+    # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
+    # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it
+    # can't unescape is neither.
+    k=${p%%=*}
+    case "$k" in *%*)
+      n=$k; k=
+      while [ -n "$n" ]; do
+        case "$n" in
+          %[0-9A-Fa-f][0-9A-Fa-f]*) x=${n#%}; x=${x%"${x#??}"}; n=${n#%??}
+            case "$x" in 00) k=; break ;; 0[aA]) k="$k%" ;; *) k="$k$(printf "\\$(printf %o "$((0x$x))")")" ;; esac ;;
+          %*) k=; break ;;
+          *%*) k="$k${n%%"%"*}"; n=%${n#*%} ;;
+          *) k="$k$n"; n= ;;
+        esac
+      done ;;
+    esac
+    case "$k" in
+      abstract) busabs=1; continue ;;
+      path) p=${p#*=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
+    esac
+    f=
+    while [ -n "$p" ]; do
+      case "$p" in
+        %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+          case "$x" in 00) break ;; 0[aA]) busok=0; f=; break ;; esac
+          f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
+        %*) busok=0; f=; break ;;
+        *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+        *) f="$f$p"; p= ;;
+      esac
+    done
+    case "$f" in /*) ;; *) busok=0; continue ;; esac
+    case "$f" in *"$nl"*) busok=0; continue ;; esac
+    if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+    bussocks="$bussocks$f$nl"
+    if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
+  done
+done
+# What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name, and
+# no key or value its GDBus refuses the entry for.
+busat=
+case "$upstream" in
+  *";"*) ;;
+  *) [ -n "$busbare$busesc" ] || case "$paths$busabs:$busfile" in
+       1:/*%*) ;;
+       1:/*) busat=file ;;
+       01:) busat=abstract ;;
+     esac ;;
+esac
 here=$(pwd -P 2>/dev/null || echo /)
 hm=$(cd "$HOME" 2>/dev/null && pwd -P || echo "$HOME")
 share=1
 [ "$here" = / ] && share=0
 for d in "$hm" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
+  case "$d/" in "$here"/*) share=0 ;; esac
+done
+[ "${busok:-1}" = 1 ] || share=0
+rest=${bussocks:-}
+while [ -n "$rest" ]; do
+  d=${rest%%"$nl"*}; rest=${rest#*"$nl"}
   case "$d/" in "$here"/*) share=0 ;; esac
 done
 for d in /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts "$rt"; do
@@ -98,37 +173,87 @@ if [ "$share" = 1 ]; then
   set -- --bind "$here" "$here" --chdir "$here" "$@"
 else
   set -- --chdir "$HOME" "$@"
-  printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, or a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder).\n" App "$here" >&2
-  echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  if [ "${busok:-1}" = 1 ]; then
+    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\n" App "$here" >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+  else
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\n" App "$here" "$upstream" >&2
+  fi
 fi
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
 rm -f "$sock"
-# Read the host bus with a default so `set -u` can't abort the launcher when it is unset.
-upstream="${DBUS_SESSION_BUS_ADDRESS:-}"
-# Proxy in its own tmpfs-root bwrap, with $rt bound rw so its socket is visible to the
-# launcher (the P1 gotcha, resolved — A1.2.3.13). It carries *no*
-# /.flatpak-info: the portals judge the caller by the proxy's root, and xdg-desktop-portal
-# 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1), so the
-# app is a host caller to them and the proxy allows only the portal interfaces safe for one.
+# The proxy in its own tmpfs-root bwrap. It reads every message the app chooses to send, so
+# it is given no more of the host than its work takes (CR1.5-24): /usr and /etc read-only,
+# its socket folder, where the launcher finds the socket (A1.2.3.12), and "$@", what
+# reaching this session's bus takes. Nothing else of the runtime folder, which holds the
+# ssh and gpg agents' sockets and the document portal's mount; no pid, IPC, UTS or
+# cgroup namespace of the host's, nor its network where the bus can be reached without;
+# none of the launcher's environment, which a terminal can fill with tokens and keys (its
+# address and socket are arguments: PATH alone, for bwrap to find it; PR #694's review, P1-B2);
+# and the app's own guard against typing into the terminal (R17.4).
+# The proxy is the one this PATH finds, as AppKata's own check finds it, run from its folder
+# (the PATH it is given). Its sandbox holds /usr alone, so one elsewhere is refused, with a
+# line that says so (PR #694's review, P2-B4: a PATH of /usr/bin:/bin failed one in
+# /usr/local/bin, or ran the distribution's beside it). Where this PATH has none, /usr/bin:/bin.
+# What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).
+# It carries *no* /.flatpak-info: the portals judge the caller by the proxy's root, and
+# xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),
+# so the app is a host caller to them and the proxy allows only the portal interfaces safe for one.
 # Its own pid namespace ends it with bwrap: killing bwrap kills the namespace's first
 # process (bwrap's, which keeps --die-with-parent), and with it everything inside. The
 # proxy's own death signal is not enough: the kernel clears it at an exec that changes
 # the security domain, as entering Ubuntu 25.04+'s unpriv_bwrap does, and every launch
 # there left its proxy running (review 2, F2; R17.10.2).
-bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
-  --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
-  --bind "$rt" "$rt" --unshare-pid --die-with-parent -- \
-  xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app &
-proxy=$!
-# Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of
-# blocking for the full timeout.
-i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
-# Said plainly when it didn't start, rather than left to bwrap ("Can't find source path").
-if [ ! -S "$sock" ]; then
-  kill "$proxy" 2>/dev/null || true
-  printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\n' App >&2
-  exit 1
+start_proxy() {   # "$@": the bwrap words that put this session's bus in the proxy's sight
+  pbin=$(command -v xdg-dbus-proxy 2>/dev/null || true)
+  [ -z "$pbin" ] || pbin=$(readlink -f "$pbin" 2>/dev/null || true)
+  case "$pbin" in
+    /usr/*/xdg-dbus-proxy) ppath=${pbin%/*} ;;
+    '') ppath=/usr/bin:/bin ;;
+    *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\n' "$pbin" App >&2; exit 1 ;;
+  esac
+  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
+    --bind "$rt/appkata" "$rt/appkata" "$@" \
+    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "$ppath" \
+    --die-with-parent --seccomp 3 -- \
+    xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app 3< /home/kata/.local/share/appkata/sandboxes/.identity/seccomp-tty.bpf &
+  proxy=$!
+}
+# The proxy connects to the bus once for each connection the app makes, from inside its own
+# bwrap, so the bus has to be in sight there (R17.5). A socket file is bound wherever it lies,
+# alone and read-only: dbus-run-session and dbus-launch put theirs under /tmp, outside the
+# runtime folder, and the proxy then made its socket and failed every connection without a
+# word (CR1.5-18). An abstract socket has no file: it is in the host's network namespace,
+# so the proxy stays in that only then, and has a network of its own otherwise. Either is
+# read from the address's keys in any order ($busat, above: `guid=` can come first). Any
+# other address is one the launcher can't read (a list of addresses, a path with an escaped
+# byte or a relative one, two paths, of which GDBus takes the last, a path with an abstract
+# name, which no client takes, another transport), so the proxy couldn't be shown its bus:
+# no proxy then.
+proxy=
+case "$busat" in
+  file) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
+  abstract) start_proxy ;;
+esac
+if [ -z "$proxy" ]; then
+  # Said plainly, and the app runs with no session bus, as it does where there is none; AppKata's
+  # xdg-open is told why, and says it (PR #694's review, P1-B3: it said "runs Strict").
+  set -- --setenv APPKATA_NO_BUS address "$@"
+  printf 'AppKata: the session bus here (%s) is not one the bus filter can reach, so %s runs without a session bus and gets no desktop services.\n' "$upstream" App >&2
+else
+  # Wait for the socket, but stop early if the proxy died (e.g. no host bus) instead of
+  # blocking for the full timeout.
+  i=0; while [ ! -S "$sock" ] && kill -0 "$proxy" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+  # Said plainly when it didn't start, rather than left to bwrap ("Can't find source path").
+  if [ ! -S "$sock" ]; then
+    kill "$proxy" 2>/dev/null || true
+    printf 'AppKata: the session-bus filter (xdg-dbus-proxy) did not start, so %s cannot run sandboxed here.\n' App >&2
+    exit 1
+  fi
+  # The app's bus is the proxy's socket. The word lands in "$@", after every baked bind.
+  set -- --bind "$sock" "$rt/bus" "$@"
 fi
 
 x11=0
@@ -177,15 +302,14 @@ bwrap \
   --ro-bind-try "$HOME/.local/share/icons" "$HOME/.local/share/icons" \
   --ro-bind-try "$HOME/.local/share/themes" "$HOME/.local/share/themes" \
   --ro-bind "$info" /.flatpak-info \
-  --bind "$sock" "$rt/bus" \
   --ro-bind-try /home/kata/.local/share/appkata/sandboxes/.identity/bin /run/appkata \
   --unshare-all --die-with-parent --seccomp 3 \
   --clearenv --setenv HOME "$HOME" --setenv PATH /run/appkata:/usr/bin:/bin:/usr/sbin:/sbin \
   --setenv XDG_RUNTIME_DIR "$rt" \
   --setenv GDK_DEBUG no-portals \
+  --setenv GIO_USE_PROXY_RESOLVER dummy \
   --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus" \
   "$@" || status=$?
 
-kill "$proxy" 2>/dev/null || true
-rm -f "$sock"
+if [ -n "$proxy" ]; then kill "$proxy" 2>/dev/null || true; rm -f "$sock"; fi
 exit $status

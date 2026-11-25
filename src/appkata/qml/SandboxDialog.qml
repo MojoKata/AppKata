@@ -15,6 +15,10 @@ Dialog {
     property var gs: ({})                   // the working grant set (level, folders, network, sound, devices, caps, exec_deny)
     property bool customized: false
     property bool expanded: false
+    // where a launch here starts the app without Password service, why, asked when the dialog opens
+    // as the launcher asks it at the launch (R17.5.1; PR #694's review, P3-1), on the backend's worker:
+    // "" until the answer comes (P8-1), and where it owns the name
+    readonly property string provideNote: backend.passwordServiceNote
     signal saved(string url)                 // the install card adopts what was saved here
     // the template, when it is made for a folder the user picks: {mode, suggest} (R17.3, review 2 F10)
     readonly property var folderTpl: (function () { const t = (info.templates || []).find(x => x.key === tpl); return t ? t.folder : null })()
@@ -28,6 +32,7 @@ Dialog {
     function openWith(u, preset) {       // preset: the template the install card has picked, not yet saved
         url = u
         info = backend.sandboxInfo(u) || ({})
+        backend.askPasswordService()
         tpl = info.template || "strict"
         gs = JSON.parse(JSON.stringify(info.grants || {}))
         customized = !!info.customized
@@ -235,7 +240,9 @@ Dialog {
                 }
 
                 SbxHeader { text: "CONNECTIONS" }
-                SbxToggle { label: "Network"; ic: "globe"; hint: "Let it reach the internet and the local network."
+                SbxToggle { label: "Network"; ic: "globe"       // a Strict app has no bus, and so no link to have opened
+                            hint: root.gs.level === "strict" ? "Let it reach the internet and the local network."
+                                                            : "Let it reach the internet and the local network. Without it the app can still ask the desktop to open a link, which may carry what the app knows."
                             on: !!root.gs.network; onToggled: on => root.setField("network", on) }
                 SbxToggle { label: "Limit to ports"; ic: "globe"; badge: "Later"; disabled: true
                             hint: "Allow only certain ports (Landlock, kernel ≥ 6.7). Coming in a later release." }
@@ -261,7 +268,8 @@ Dialog {
                             hint: "Show a status-bar icon (StatusNotifierItem) and own its own bus name. Two sandboxed apps with a tray icon running at once can collide on that name, as with Flatpak."
                             onToggled: on => root.toggleIn("caps", "tray", on) }
                 SbxToggle { label: "Media keys"; ic: "play"; on: root.has(root.gs.caps, "mpris")
-                            hint: "Play/pause and track info on the keyboard and lock screen (MPRIS)."
+                            hint: root.gs.mpris_name ? "Play/pause and track info on the keyboard and lock screen (MPRIS), under its own player name alone: " + root.gs.mpris_name + "."
+                                                     : "Play/pause and track info on the keyboard and lock screen (MPRIS). It has no player name of its own here (a review gives one), so it may take any, and can reach every other media player that is running."
                             onToggled: on => root.toggleIn("caps", "mpris", on) }
                 SbxToggle { label: "Notifications"; ic: "info"; on: root.has(root.gs.caps, "notifications")
                             hint: "Show desktop notifications, through the notification portal or the desktop's own notification service. Without it the app's notifications never appear."
@@ -274,6 +282,7 @@ Dialog {
                             onToggled: on => root.toggleIn("caps", "secrets", on) }
                 SbxToggle { label: "Password service"; ic: "key"; warn: true; on: root.has(root.gs.caps, "secrets-provide")
                             hint: "Offer the secret service (org.freedesktop.secrets) to other apps, e.g. KeePassXC. The app then holds every other app's saved passwords."
+                                  + (root.provideNote ? " " + root.provideNote : "")      // said here, on or off, before it is switched on
                             onToggled: on => root.toggleIn("caps", "secrets-provide", on) }
 
                 SbxHeader { text: "ADVANCED · extra hardening inside bwrap (Landlock)" }

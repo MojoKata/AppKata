@@ -12,14 +12,17 @@ the dialog showed.
 
 import json
 import os
+import time
 
 import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6 import QtQuick                                 # noqa: E402,F401  (rootObjects() as a QQuickWindow, for runs_past)
+
 from appkata_core import sandbox as sb                      # noqa: E402
 from appkata_core import trustfile                          # noqa: E402
-from test_sandbox_backend import URL, _installed, _review, _tarball_install, be   # noqa: E402,F401
+from test_sandbox_backend import URL, _installed, _review, _review_lines, _tarball_install, be   # noqa: E402,F401
 
 HARNESS = os.path.join(os.path.dirname(__file__), "qml", "DialogHarness.qml")
 
@@ -132,6 +135,234 @@ def test_picking_a_template_in_the_sandbox_dialog_applies_that_template(ui, be, 
     assert info["source"] == "user" and info["template"] == key
     want = sb.summary(sb.resolve_template(key), template=key) if key != "off" else ["No sandbox"]
     assert [c[0] for c in info["chips"]] == want
+
+
+def _hint(dlg, label):
+    """What the dialog says under one of its switches."""
+    from PySide6.QtCore import QObject
+    return next(o.property("hint") for o in dlg.findChildren(QObject) if o.property("label") == label)
+
+
+def test_a_named_media_player_keeps_its_name_through_the_sandbox_dialog(ui, be, monkeypatch):
+    # CR1.5-36: the MPRIS name a review gives an app is part of its grant set, and the dialog has no
+    # control for it: it rides in the working set. A Save that dropped it would hand the app every
+    # player's name again under the same chips, which is all the untouched-Save test above compares.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    name = "org.mpris.MediaPlayer2.demo"
+    _review_lines(be, f"- Sandbox (linux): media-player\n- Sandbox MPRIS name (linux): {name}\n")
+    dlg = _dialog(ui, "sandbox")
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "tpl") == "media-player" and _prop(dlg, "gs")["mpris_name"] == name
+    assert _hint(dlg, "Media keys") == f"Play/pause and track info on the keyboard and lock screen (MPRIS), under its own player name alone: {name}."
+    _call(dlg, "toggleIn", "caps", "mpris", False)               # Media keys off and on again: still its own name
+    _call(dlg, "toggleIn", "caps", "mpris", True)
+    _call(dlg, "setField", "network", True)                      # and another change beside it
+    _press(dlg, "save")
+    assert be._user_sandbox_config(URL) == {"template": "media-player", "overrides": {"network": True, "mpris_name": name}}
+    args = sb.proxy_args(be._resolved_sandbox(URL)["grants"], "demo")
+    assert f"--own={name}" in args and "--own=org.mpris.MediaPlayer2.*" not in args
+    _call(dlg, "openFor", URL)                                   # reopened: the same
+    assert _prop(dlg, "gs")["mpris_name"] == name
+    # the bare template is the user's own set, with no name: the hint says what that reaches, and
+    # the dialog offers the reviewer's narrower one, "Use theirs" (the review of PR #694, P1-1: it
+    # never showed); the badge stays down, as this was chosen knowing it (R17.11)
+    _pick(dlg, "templateSelect", "media-player")
+    assert not _prop(dlg, "gs").get("mpris_name")
+    assert _hint(dlg, "Media keys") == ("Play/pause and track info on the keyboard and lock screen (MPRIS). It has no player name of its own here "
+                                        "(a review gives one), so it may take any, and can reach every other media player that is running.")
+    _press(dlg, "save")
+    info = be.sandboxInfo(URL)
+    assert "--own=org.mpris.MediaPlayer2.*" in sb.proxy_args(be._resolved_sandbox(URL)["grants"], "demo")
+    assert f"removing media-player names other than {name}" in info["reviewBadgeText"], info
+    assert info["hasSuggestion"] is True and info["reviewBadge"] is False, info
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "info")["hasSuggestion"] is True
+
+
+def test_the_network_hint_says_what_an_app_without_the_network_can_still_send_out(ui, be, monkeypatch):
+    # CR1.5-29: "No network" is an app with no network of its own, not an app that can send nothing
+    # out. At Standard the OpenURI portal is open to every app on the bus (R17.5), so an app without
+    # the grant can have the desktop open https://elsewhere.example/?d=<what it knows>, and the
+    # user's browser fetches it. The design keeps that road (R17.6.3); what was missing is the
+    # sentence, which the Network switch now carries, as R17.17 does. A Strict app has no bus and so
+    # no such road, and its hint stops where it did. How it slipped past: the hints' evidence table
+    # holds each hint to the facts it states, and nothing asks what a switch leaves unsaid.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    _review(be, "offline-editor")
+    dlg = _dialog(ui, "sandbox")
+    _call(dlg, "openFor", URL)
+    assert _prop(dlg, "gs")["level"] == "standard" and not _prop(dlg, "gs")["network"]
+    reach = "Let it reach the internet and the local network."
+    still = reach + " Without it the app can still ask the desktop to open a link, which may carry what the app knows."
+    assert _hint(dlg, "Network") == still
+    # the road the hint tells of is the one the filter leaves this app: were OpenURI ever to get a
+    # switch of its own, the sentence would be that switch's to say
+    grants = be._resolved_sandbox(URL)["grants"]
+    assert not grants["network"] and sb._portal_call("OpenURI") in sb.proxy_args(grants, "demo")
+    _call(dlg, "setField", "network", True)                      # on, it says what off would still leave
+    assert _hint(dlg, "Network") == still
+    _pick(dlg, "templateSelect", "strict")                       # no bus: nothing to ask, nothing to say
+    assert _prop(dlg, "gs")["level"] == "strict" and _hint(dlg, "Network") == reach
+    assert "xdg-dbus-proxy" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("strict"))
+
+
+# What the screens add where a launch here starts an app without Password service (R17.5.1), word for
+# word: the dialog's hint and App Detail (test_sandbox_ui_surfaces)
+PASSWORD_SERVICE = "Offer the secret service (org.freedesktop.secrets) to other apps, e.g. KeePassXC. The app then holds every other app's saved passwords."
+NOT_OFFERED = {
+    "owned": "Not offered here: another program, or a running copy of this app, already provides saved passwords on this computer, so the "
+             "app starts without Password service, which would reach that program and every password it holds.",
+    "activatable": "Not offered here: another program that provides saved passwords is installed (such as gnome-keyring) and starts when "
+                   "an app asks for it, so the app starts without Password service, which could start that program and reach every "
+                   "password it holds.",
+    "free": "",
+}
+
+
+def password_bus(tmp_path, monkeypatch, state):
+    """This session's bus, as a stand-in gdbus first on the launcher's PATH (sandbox.host_path, which
+    AppKata's ask runs with, whatever its own PATH) answers for org.freedesktop.secrets, in
+    gdbus's own shapes (test_sandbox's _ANSWERS): "owned" by another program, "activatable" (the bus
+    can start one), or "free"; or "hung", a bus that takes the ask and never answers (a stopped or
+    wedged dbus-daemon), which the ask's `timeout 5` ends. Returns the file that holds what it was asked."""
+    from test_sandbox import _ANSWERS
+    import shlex
+    fake, asked = tmp_path / "bus-answers", tmp_path / "bus-asked"
+    fake.mkdir()
+    owner, names = _ANSWERS["gdbus"]
+    (fake / "gdbus").write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n' + ("exec sleep 30\n" if state == "hung" else
+                                f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(state == "owned"))} ;; '
+                                f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if state == "activatable" else []))} ;; esac\n'))
+    (fake / "gdbus").chmod(0o755)
+    from appkata_core import sandbox
+    monkeypatch.setattr(sandbox, "HOST_PATH", f"{fake}{os.pathsep}{sandbox.HOST_PATH}")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/bus")
+    return asked
+
+
+def running(done, seconds):
+    """Run the event loop, as the window does, until done() holds or `seconds` have passed. Returns
+    whether it held, and the longest the GUI thread went between two turns of a 20 ms timer: how long
+    the window went without repainting or taking input."""
+    from PySide6.QtCore import QEventLoop, QTimer
+    loop, last, gaps = QEventLoop(), [time.monotonic()], [0.0]
+
+    def turn():
+        now = time.monotonic()
+        gaps.append(now - last[0])
+        last[0] = now
+        if done():
+            loop.quit()
+    timer = QTimer()
+    timer.timeout.connect(turn)
+    timer.start(20)
+    QTimer.singleShot(int(seconds * 1000), loop.quit)
+    loop.exec()
+    timer.stop()
+    return bool(done()), max(gaps)
+
+
+def answered(be) -> bool:
+    """Whether the latest opening's ask of the bus has its answer on the screens (Backend.askPasswordService)."""
+    return be._provide_answered == be._provide_opening
+
+
+def _open(dlg, be, url):
+    """Open the Sandbox dialog on `url`, and run the window until the bus's answer is on it: the
+    dialog asks on a worker (PR #694's review, P8-1)."""
+    _call(dlg, "openFor", url)
+    assert running(lambda: answered(be), 15)[0], "the bus's answer never came"
+
+
+def runs_past(window, start: str) -> list[str] | None:
+    """What layout.py finds drawn outside its box among the texts that begin with `start`, once the
+    layout has settled (two frames that agree: test_layout's _faults), or None where no such text is
+    in view, so the check can't pass on a text scrolled away. The tour never shows these texts (it
+    shows a working system), so this is their layout check."""
+    from PySide6.QtCore import QCoreApplication
+    from appkata import layout
+    last = "unsettled"
+    for _ in range(20):
+        QCoreApplication.processEvents()
+        window.grabWindow()
+        shown = [t for t in layout._texts(window.contentItem()) if str(t.property("text")).startswith(start)
+                 and not layout._shown(t, layout._drawn(t), layout._box(t)[2]).isEmpty()]
+        now = [f["line"] for f in layout.faults(window) if f["text"].startswith(start)] if shown else None
+        if now == last:
+            return now
+        last = now
+    return last
+
+
+@pytest.mark.parametrize("state", list(NOT_OFFERED))
+def test_the_password_service_hint_says_where_a_launch_here_goes_without_it(ui, be, monkeypatch, tmp_path, state):
+    # PR #694's review, P3-1 (the owner's decision of 2026-11-25): the launcher starts an app without
+    # Password service where another program holds org.freedesktop.secrets or the bus can start one,
+    # gnome-keyring's case wherever it is installed, running or not, and the switch's hint said only
+    # what it gives. Now the dialog asks this session's bus when it opens, as the launcher asks it
+    # (test_sandbox's harness holds the two to one rule), and the hint says why, on or off.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    asked = password_bus(tmp_path, monkeypatch, state)
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    dlg = _dialog(ui, "sandbox")
+    _open(dlg, be, URL)
+    want = PASSWORD_SERVICE + (" " + NOT_OFFERED[state] if NOT_OFFERED[state] else "")
+    assert "secrets-provide" in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
+    assert f"--address unix:path={tmp_path}/bus" in asked.read_text() and "NameHasOwner org.freedesktop.secrets" in asked.read_text()
+    _call(dlg, "scrollTo", "advanced")                            # Customize open, and once its groups are
+    runs_past(ui, PASSWORD_SERVICE[:40])                          # laid out, scrolled to the services
+    _call(dlg, "scrollTo", "advanced")
+    assert runs_past(ui, PASSWORD_SERVICE[:40]) == []
+    _call(dlg, "toggleIn", "caps", "secrets-provide", False)     # off, it says so too: before it is switched on
+    assert _hint(dlg, "Password service") == want
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})  # an app without it is told before it asks for it
+    _open(dlg, be, URL)
+    assert "secrets-provide" not in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
+    (tmp_path / "later").mkdir()                                  # and the bus is asked anew at each opening
+    later = password_bus(tmp_path / "later", monkeypatch, "free")
+    _open(dlg, be, URL)
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and later.exists()
+    later.unlink()                                                # the tour shows a working system's, through
+    be.demoSandbox("ok")                                          # its support status, not the machine's running it
+    _open(dlg, be, URL)
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and be.passwordServiceNote == "" and not later.exists()
+
+
+def test_the_password_service_ask_never_holds_the_window(ui, be, monkeypatch, tmp_path):
+    # PR #694's review, P8-1: the dialog asked the bus on the GUI thread as it opened, so a session bus
+    # that takes the connection and never answers (a stopped or wedged dbus-daemon) held the window,
+    # unpainted and deaf to input, for the ask's five seconds at every opening, for every app. Now it
+    # asks on a worker: the dialog opens at once, and the hint takes its words when the answer comes.
+    # The words are the latest opening's: an earlier opening's answer, come late, is dropped.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    answers = []
+
+    def ask(withheld=sb.password_service_withheld):
+        why = withheld()
+        answers.append(why)
+        return why
+    monkeypatch.setattr(sb, "password_service_withheld", ask)
+    hung = password_bus(tmp_path, monkeypatch, "hung")
+    dlg = _dialog(ui, "sandbox")
+    began = time.monotonic()
+    _call(dlg, "openFor", URL)
+    assert time.monotonic() - began < 1 and _prop(dlg, "visible")                      # open at once,
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and not answered(be)      # with no words yet
+    assert running(lambda: hung.exists(), 5)[0]                                         # the bus is being asked
+    (tmp_path / "owned").mkdir()                                  # opened again while that ask waits,
+    owned = password_bus(tmp_path / "owned", monkeypatch, "owned")  # on a bus that answers
+    _call(dlg, "openFor", URL)
+    want = PASSWORD_SERVICE + " " + NOT_OFFERED["owned"]
+    came, gap = running(lambda: _hint(dlg, "Password service") == want, 15)
+    assert came and owned.exists() and answers == ["held"], answers                     # its words, with its answer
+    came, longest = running(lambda: len(answers) == 2, 15)        # the first ask ends with its five seconds,
+    assert came and answers == ["held", "ask"], answers
+    running(lambda: False, 0.3)
+    assert _hint(dlg, "Password service") == want and answered(be)  # and its late answer is dropped
+    assert max(gap, longest) < 1, (gap, longest)                  # the window turned all the while
+    be.demoSandbox("ok")                                          # the tour shows a working system's, not
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE     # what this machine's bus said before it
 
 
 def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be, monkeypatch):

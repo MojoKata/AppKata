@@ -18,6 +18,8 @@ tests/test_sandbox_run.py::test_a_document_portal_that_never_answers_only_delays
 tests/test_sandbox_run.py::test_a_file_argument_is_handed_over_to_a_standard_app  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_file_exported_while_the_app_runs_is_readable_on_its_first_launch  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_file_handed_over_by_the_document_portal_is_readable_and_only_by_that_app  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way[False]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way[True]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
@@ -38,6 +40,12 @@ tests/test_sandbox_run.py::test_a_review_naming_a_relative_folder_never_opens_th
 tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-key-gdbus-cannot-unescape]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-key-with-no-equals]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-list]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[an-escaped-path]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[another-transport]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_standard_app_without_xdg_dbus_proxy_runs_sandboxed_with_no_session_bus  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_standard_launch_leaves_no_proxy_running  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_strict_app_fails_fast_on_every_desktop_road_and_never_falls_back_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
@@ -89,8 +97,15 @@ tests/test_sandbox_run.py::test_no_launcher_file_descriptors_leak_into_the_app  
 tests/test_sandbox_run.py::test_no_network_grant_means_no_network  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[False]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_on_wayland_x11_apps_get_xwayland_only_with_the_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
+tests/test_sandbox_run.py::test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it  # needs gnome-keyring
+tests/test_sandbox_run.py::test_password_service_where_the_bus_can_start_a_keyring_starts_without_the_name_and_cannot_start_it  # needs gnome-keyring
+tests/test_sandbox_run.py::test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves  # needs gnome-keyring
 tests/test_sandbox_run.py::test_simultaneous_first_launches_both_start  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_reach_the_filtered_bus_when_there_is_one  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[an-escaped-key]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[dbus-run-session]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[guid-first]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_standard_apps_reach_the_session_bus_wherever_it_listens[no-address]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[dead]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_standard_apps_run_without_a_session_bus[unset]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_strict_app_runs_and_cannot_read_the_real_home  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
@@ -105,6 +120,8 @@ tests/test_sandbox_run.py::test_the_gpu_renders_inside_the_sandbox_where_the_hos
 tests/test_sandbox_run.py::test_the_inner_sandbox_probe_tells_the_truth_inside_a_generated_launcher  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_the_portals_answer_a_sandboxed_app_as_a_host_caller  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_proxy_dying_mid_run_fails_the_apps_bus_calls_but_not_its_run  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone[a-socket-file]  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone[an-abstract-socket]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_road_the_shim_covers_still_starts_the_first_browser_inside  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_the_test_bus_starts_only_the_portals_on_demand  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_the_tray_capability_starts_the_proxy_and_lets_the_app_own_its_item_name  # needs xdg-dbus-proxy and dbus-daemon

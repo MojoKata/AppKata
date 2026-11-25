@@ -6,6 +6,7 @@ launcher (`--clearenv`, 0.5+) that can create user namespaces; elsewhere they sk
 Mint 22.1 container with `scripts/test-sandbox.sh launcher`.
 """
 
+import hashlib
 import os
 import re
 import shlex
@@ -355,6 +356,190 @@ def test_standard_apps_run_without_a_session_bus(env, bus):
     assert r.returncode == 0 and "RAN" in r.stdout, (r.stdout, r.stderr)
 
 
+# A desktop's shell, as far as the bus shows it: one connection that owns a capability's direct name
+# and serves that service -- and owns a name of its own, with an object that runs what it is sent
+# (as Cinnamon's org.Cinnamon.Eval does). It serves that interface on the service's own object
+# too, and broadcasts a signal of its own beside the service's.
+_SHELL = """
+import sys
+from gi.repository import Gio, GLib
+name, paths, log = sys.argv[1], sys.argv[2].split(","), open(sys.argv[3], "a")
+SERVICES = {
+ "org.freedesktop.Notifications": '''<method name="GetServerInformation"><arg type="s" direction="out"/><arg type="s" direction="out"/>
+   <arg type="s" direction="out"/><arg type="s" direction="out"/></method><signal name="NotificationClosed"><arg type="u"/><arg type="u"/></signal>''',
+ "org.freedesktop.ScreenSaver": '''<method name="Inhibit"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
+   <signal name="ActiveChanged"><arg type="b"/></signal>''',
+ "org.kde.StatusNotifierWatcher": '''<method name="RegisterStatusNotifierItem"><arg type="s" direction="in"/></method>
+   <property name="IsStatusNotifierHostRegistered" type="b" access="read"/><signal name="StatusNotifierHostRegistered"/>''',
+}
+ANSWERS = {"GetServerInformation": GLib.Variant("(ssss)", ("stand-in", "AppKata", "1", "1.2")), "Inhibit": GLib.Variant("(u)", (42,)),
+           "RegisterStatusNotifierItem": None}
+SIGNALS = {"org.freedesktop.Notifications": ("NotificationClosed", GLib.Variant("(uu)", (1, 2))),
+           "org.freedesktop.ScreenSaver": ("ActiveChanged", GLib.Variant("(b)", (False,))), "org.kde.StatusNotifierWatcher": ("StatusNotifierHostRegistered", None)}
+service = Gio.DBusNodeInfo.new_for_xml(f'<node><interface name="{name}">{SERVICES[name]}</interface></node>').interfaces[0]
+shell = Gio.DBusNodeInfo.new_for_xml('''<node><interface name="org.appkata.Shell"><method name="Eval"><arg type="s" direction="in"/>
+  <arg type="b" direction="out"/></method><signal name="Said"><arg type="s"/></signal></interface></node>''').interfaces[0]
+def call(conn, sender, path, iface, method, params, inv):
+    log.write(f"{'EVAL' if method == 'Eval' else 'SERVED'} {iface}.{method} at {path} {params.unpack()}\\n"); log.flush()
+    inv.return_value(GLib.Variant("(b)", (True,)) if method == "Eval" else ANSWERS[method])
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+for path in paths:
+    bus.register_object(path, service, call, lambda *a: GLib.Variant("b", True), None)
+    bus.register_object(path, shell, call, None, None)              # another interface on the service's own object
+bus.register_object("/org/appkata/Shell", shell, call, None, None)  # a second object on the same connection
+def tick():
+    bus.emit_signal(None, paths[0], name, *SIGNALS[name])
+    bus.emit_signal(None, "/org/appkata/Shell", "org.appkata.Shell", "Said", GLib.Variant("(s)", ("the shell's own",)))
+    return True
+GLib.timeout_add(100, tick)
+Gio.bus_own_name_on_connection(bus, "org.appkata.Shell", Gio.BusNameOwnerFlags.NONE, None, None)
+Gio.bus_own_name_on_connection(bus, name, Gio.BusNameOwnerFlags.NONE, None, None)
+GLib.MainLoop().run()
+"""
+
+# The app: its service's own call, then every road to the shell's Eval, then what it hears.
+_SHELL_PROBE = """
+import sys
+from gi.repository import Gio, GLib
+name, paths = sys.argv[1], sys.argv[2].split(",")
+OWN = {"org.freedesktop.Notifications": ("GetServerInformation", None), "org.freedesktop.ScreenSaver": ("Inhibit", GLib.Variant("(ss)", ("appkata", "a call"))),
+       "org.kde.StatusNotifierWatcher": ("RegisterStatusNotifierItem", GLib.Variant("(s)", ("/an/item",)))}
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+heard = set()
+bus.signal_subscribe(None, None, None, None, None, Gio.DBusSignalFlags.NONE, lambda c, s, p, i, m, a: heard.add(f"{i}.{m}"))
+def ask(what, dest, path, iface, method, args=None):
+    try:
+        bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+        print(what, "ANSWERED", flush=True)
+    except GLib.Error as e:
+        print(what, "REFUSED", Gio.DBusError.get_remote_error(e), flush=True)
+eval_ = lambda road: GLib.Variant("(s)", (road,))
+for path in paths:
+    ask(f"SERVICE {path}", name, path, name, *OWN[name])
+    ask(f"INTROSPECT {path}", name, path, "org.freedesktop.DBus.Introspectable", "Introspect")
+    ask(f"OTHER-INTERFACE {path}", name, path, "org.appkata.Shell", "Eval", eval_("the service's own object"))
+ask("PROPERTY", name, paths[0], "org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", (name, "IsStatusNotifierHostRegistered")))
+ask("SECOND-OBJECT", name, "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the service's name"))
+try:
+    owner = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", GLib.Variant("(s)", (name,)),
+                          None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+    ask("UNIQUE-NAME", owner, "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the owner's unique name"))
+except GLib.Error as e:
+    print("OWNER HIDDEN", Gio.DBusError.get_remote_error(e), flush=True)
+ask("SHELL-NAME", "org.appkata.Shell", "/org/appkata/Shell", "org.appkata.Shell", "Eval", eval_("the shell's own name"))
+loop = GLib.MainLoop()
+GLib.timeout_add(700, loop.quit)
+loop.run()
+print("HEARD", *sorted(h for h in heard if not h.startswith("org.freedesktop.DBus.")), flush=True)
+"""
+
+# capability: its direct name, the objects its service is on, the signal the stand-in sends from it,
+# and whether the app hears it (Keep the screen awake hears nothing of the screen saver: CR1.5-44)
+_DIRECT_NAMES = {"notifications": ("org.freedesktop.Notifications", "/org/freedesktop/Notifications", "NotificationClosed"),
+                 "inhibit": ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver,/ScreenSaver", "ActiveChanged", False),
+                 "tray": ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "StatusNotifierHostRegistered")}
+
+
+# A connection that owns a name and broadcasts on an interface and an object of its own beside the
+# name's: what a proxy with a --call rule on the name lets through of its broadcasts.
+_BROADCASTER = """
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+Gio.bus_own_name_on_connection(bus, "org.appkata.Leak", Gio.BusNameOwnerFlags.NONE, None, None)
+def tick():
+    bus.emit_signal(None, "/org/appkata/Other", "org.appkata.Other", "Said", None)
+    return True
+GLib.timeout_add(100, tick)
+GLib.MainLoop().run()
+"""
+_LISTENER = """
+import sys
+from gi.repository import Gio, GLib
+conn = Gio.DBusConnection.new_for_address_sync(sys.argv[1], Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+heard = set()
+conn.signal_subscribe(None, None, None, None, None, Gio.DBusSignalFlags.NONE, lambda c, s, p, i, m, a: heard.add(f"{i}.{m}"))
+loop = GLib.MainLoop()
+GLib.timeout_add(1500, loop.quit)
+loop.run()
+print(*sorted(heard))
+"""
+
+
+def _the_proxy_keeps_broadcasts_to_their_rules(env, bus, tmp_path) -> bool:
+    """Whether this xdg-dbus-proxy lets through only the broadcasts its rules name. 0.1.6 and 0.1.7
+    let every broadcast of a name's owner through once any --call or --broadcast rule names the
+    name (upstream's 0.1.8 fixed it: CVE-2026-93676, GHSA-r7hp-698j-2h6c); 0.1.5 never did, and
+    Debian's 0.1.6-1+deb13u2 carries the fix while still saying 0.1.6, so it is asked of the proxy."""
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    sock = str(tmp_path / "leak-proxy")
+    sender = subprocess.Popen(["python3", "-c", _BROADCASTER], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proxy = subprocess.Popen(["xdg-dbus-proxy", bus.addr, sock, "--filter", "--call=org.appkata.Leak=org.appkata.Leak.*@/org/appkata/Leak"],
+                             env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            owned = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                                    "org.freedesktop.DBus.NameHasOwner", "org.appkata.Leak"], env=on_bus, capture_output=True, text=True).stdout
+            if os.path.exists(sock) and "true" in owned:
+                break
+            time.sleep(0.1)
+        heard = subprocess.run(["python3", "-c", _LISTENER, f"unix:path={sock}"], env=on_bus, capture_output=True, text=True, timeout=30).stdout
+    finally:
+        proxy.terminate()
+        sender.terminate()
+    return "org.appkata.Other.Said" not in heard
+
+
+def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap, keeps=True):
+    """CR1.5-3: `--talk=NAME` is no grant of one service. xdg-dbus-proxy gives it to the connection
+    that owns NAME -- every object and interface it serves, by its unique name too -- and on
+    Cinnamon the desktop's own shell owns org.freedesktop.Notifications: a `standard` app's
+    "Notifications" chip reached org.Cinnamon.Eval, which ran a command as the user outside the
+    sandbox (shown on the Mint 22.3 desktop). Every stand-in until then owned one name and served
+    one object, so nothing showed it. This one is a shell: the app's own service answers, on each
+    of its objects, and the shell's Eval is refused by every road, and never arrives."""
+    name, paths, signal, *heard = _DIRECT_NAMES[cap]
+    log = tmp_path / f"shell-{cap}.log"
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    shell = subprocess.Popen(["python3", "-c", _SHELL, name, paths, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", name], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            subprocess.run(["sleep", "0.1"])
+        for app_id in (cap, f"no-{cap}"):
+            d = env.home / "apps" / app_id / "1.0" / "bin"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "probe.py").write_text(_SHELL_PROBE)
+        probe = f'python3 "$(dirname "$0")/probe.py" {name} {paths}'
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": [cap]})
+        r = env.run(env.app(cap, gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        served = log.read_text()
+        r2 = env.run(env.app(f"no-{cap}", sb.apply_overrides(gs, {"caps": []})), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+    finally:
+        shell.terminate()
+        shell.wait()
+    out = r.stdout.splitlines()
+    for path in paths.split(","):
+        assert f"SERVICE {path} ANSWERED" in out and f"INTROSPECT {path} ANSWERED" in out, (r.stdout, r.stderr)   # the capability still works
+        assert f"OTHER-INTERFACE {path} REFUSED org.freedesktop.DBus.Error.AccessDenied" in out, r.stdout
+    for road in ("SECOND-OBJECT", "UNIQUE-NAME"):
+        assert f"{road} REFUSED org.freedesktop.DBus.Error.AccessDenied" in out, r.stdout
+    assert any(l.startswith("SHELL-NAME REFUSED") for l in out), r.stdout              # a name it was never given: not there at all
+    assert "EVAL" not in served and served.count("SERVED") == len(paths.split(",")), served   # nothing but the service's own calls arrived
+    # the Properties calls a tray library makes (Qt: IsStatusNotifierHostRegistered) pass; the other services have none
+    assert ("PROPERTY ANSWERED" if cap == "tray" else "PROPERTY REFUSED org.freedesktop.DBus.Error.AccessDenied") in out, r.stdout
+    hears = [l for l in out if l.startswith("HEARD")]
+    if keeps:                       # the service's own signal, and not the shell's
+        assert hears == [f"HEARD {name}.{signal}" if heard != [False] else "HEARD"], r.stdout
+    else:                           # a proxy without the fix lets all the owner broadcasts through (R17.17), and only that
+        assert len(hears) == 1 and set(hears[0].split()[1:]) == {f"{name}.{signal}", "org.appkata.Shell.Said"}, r.stdout
+    out2 = r2.stdout.splitlines()                                                       # and without the capability, not even the service
+    assert not [l for l in out2 if "ANSWERED" in l] and "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.stdout, r2.stderr)
+    assert "HEARD" in out2, r2.stdout
+
+
 @needs_proxy
 def test_standard_apps_reach_the_filtered_bus_when_there_is_one(env, tmp_path):
     bus = _Bus(env)
@@ -362,9 +547,16 @@ def test_standard_apps_reach_the_filtered_bus_when_there_is_one(env, tmp_path):
         r = env.run(env.app("gui", sb.resolve_template("online-app")),
                     'echo "A=$DBUS_SESSION_BUS_ADDRESS"; [ -S "$XDG_RUNTIME_DIR/bus" ] && echo BUS',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        assert "BUS" in r.stdout and f"A=unix:path={env.rt}/bus" in r.stdout, (r.stdout, r.stderr)
+        # and what they reach on it by a capability's direct name is that service alone (CR1.5-3); what
+        # they hear of its owner's broadcasts, that service's signal alone where the proxy has the fix
+        # for GHSA-r7hp-698j-2h6c, and everything the owner broadcasts where it hasn't (Ubuntu 26.04's
+        # 0.1.7, an LMDE 7 not yet updated: the VMs found it, R17.17)
+        keeps = _the_proxy_keeps_broadcasts_to_their_rules(env, bus, tmp_path)
+        for cap in _DIRECT_NAMES:
+            _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap, keeps)
     finally:
         bus.close()
-    assert "BUS" in r.stdout and f"A=unix:path={env.rt}/bus" in r.stdout, (r.stdout, r.stderr)
 
 
 # ---------------------------------------------------------------- run-time words stay whole
@@ -409,30 +601,57 @@ _BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configu
 """
 
 
-class _Bus:
-    """A real session bus for the test user (dbus-daemon), torn down afterwards. It starts on demand
-    only the portal services this machine has: `--session` would start any it has installed, and on a
-    desktop gnome-keyring then took a name the app under test should own (review 3, R3-34)."""
+def _bus_conf(env, starts=()) -> str:
+    """The test bus's configuration: it starts on demand only the portal services this machine has
+    (`--session` would start any it has installed, and on a desktop gnome-keyring then took a name
+    the app under test should own: review 3, R3-34), and the service files `starts` names, and
+    listens where a session's own bus does unless it is told an address."""
+    services = env.rt / "bus-services"
+    services.mkdir(exist_ok=True)
+    for d in ("/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services"):
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if (f.startswith(_PORTAL_SERVICES) or f in starts) and not (services / f).exists():
+                (services / f).symlink_to(os.path.join(d, f))
+    conf = env.rt / "bus.conf"
+    conf.write_text(_BUS_CONF.format(services=services))
+    return str(conf)
 
-    def __init__(self, env):
-        self.addr = f"unix:path={env.rt}/bus"
-        services = env.rt / "bus-services"
-        services.mkdir(exist_ok=True)
-        for d in ("/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services"):
-            for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-                if f.startswith(_PORTAL_SERVICES) and not (services / f).exists():
-                    (services / f).symlink_to(os.path.join(d, f))
-        conf = env.rt / "bus.conf"
-        conf.write_text(_BUS_CONF.format(services=services))
-        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={conf}", f"--address={self.addr}", "--nofork", "--nopidfile"],
+
+class _Bus:
+    """A real session bus for the test user (dbus-daemon), torn down afterwards: in the runtime
+    folder, where a login session's is, at the socket file `at`, or on an abstract socket, where
+    dbus 1.12 put a dbus-run-session bus (R17.9)."""
+
+    def __init__(self, env, abstract=False, at=None, starts=()):
+        at = str(at or env.rt / "bus")
+        self.addr = f"unix:abstract=/tmp/appkata-test-bus-{os.getpid()}-{id(self)}" if abstract else f"unix:path={at}"
+        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env, starts)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
                                   env=env.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
-            if (env.rt / "bus").exists():
+            if os.path.exists(at) if not abstract else subprocess.run(
+                    ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                     "org.freedesktop.DBus.GetId"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": self.addr}, capture_output=True).returncode == 0:
                 break
             subprocess.run(["sleep", "0.1"])
 
     def close(self):
         self.p.terminate()
+
+
+class _RunSession:
+    """A session started with `dbus-run-session`, as sway and other bare compositors are: its bus
+    listens where the configuration says, unix:tmpdir=/tmp as the session's own does -- a socket
+    file under /tmp with dbus 1.14 and later (Mint 22.3, LMDE 7, Ubuntu 24.04), an abstract socket
+    with 1.12 -- and so outside the runtime folder either way."""
+
+    def __init__(self, env):
+        self.p = subprocess.Popen(["dbus-run-session", "--config-file", _bus_conf(env), "--", "sh", "-c", 'echo "$DBUS_SESSION_BUS_ADDRESS"; exec cat'],
+                                  env=env.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.addr = self.p.stdout.readline().strip()
+
+    def close(self):
+        self.p.stdin.close()            # the session ends with its program, and its bus with it
+        self.p.wait(timeout=10)
 
 
 @needs_proxy
@@ -859,7 +1078,11 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
              "--method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.FileChooser version 2>&1; " +
              # Round six, R6-2: the Camera portal is denied whatever the camera grant says -- R17.8 and the
              # hint used to promise "the camera portal, which asks you first"; nothing asks
-             _CALL.format('Camera.AccessCamera "{}"') + "; " + _CALL.format("Camera.IsCameraPresent") + "; true")
+             _CALL.format('Camera.AccessCamera "{}"') + "; " + _CALL.format("Camera.IsCameraPresent") + "; " +
+             # CR1.5-28: what the host says of its network -- whether it is up, and the proxy a URL
+             # goes through, with the proxy's credentials where the desktop's setting has them --
+             # comes with the network grant, as the proxy variables do (R17.4)
+             _CALL.format('ProxyResolver.Lookup "http://example.org/"') + "; true")
     bus = _Bus(env)
     try:
         portal = _DesktopPortal(env, bus)
@@ -872,21 +1095,254 @@ def test_the_portals_answer_a_sandboxed_app_as_a_host_caller(env):
     finally:
         bus.close()
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 9 and "Portal operation not allowed" not in r.stdout, (r.stdout, r.stderr)
+    assert len(lines) == 10 and "Portal operation not allowed" not in r.stdout, (r.stdout, r.stderr)
     assert lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied"), lines[7:]   # no camera portal
     assert lines[0] == "(true,)"                                           # answered, as a host app
+    assert lines[9].startswith("(['"), lines[9]                            # ...and the proxies for a URL: this app has the network
     assert lines[1].endswith("AccessDenied") and lines[2].endswith("AccessDenied")   # the proxy, not the portal
     assert "ServiceUnknown" in lines[3]
     assert "AccessDenied" not in lines[4], lines[4]                        # the Notification portal answered
     assert lines[5].endswith("AccessDenied"), lines[5]                     # Inhibit: not this app's capability
     assert lines[6].endswith("AccessDenied"), lines[6]                     # no version probe, so no portal chooser
-    lines = r2.stdout.strip().splitlines()
-    assert len(lines) == 9 and lines[0] == "(true,)", (r2.stdout, r2.stderr)
+    lines = r2.stdout.strip().splitlines()                                 # an offline-editor: no network grant
+    assert len(lines) == 10 and lines[0].endswith("AccessDenied") and lines[9].endswith("AccessDenied"), (r2.stdout, r2.stderr)
     assert lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")
     assert lines[4].endswith("AccessDenied") and lines[5].endswith("AccessDenied")   # no capability, no portal
     assert lines[6].endswith("AccessDenied")
     lines = r3.stdout.strip().splitlines()
-    assert len(lines) == 9 and lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")   # the grant binds devices, opens no portal
+    assert len(lines) == 10 and lines[7].endswith("AccessDenied") and lines[8].endswith("AccessDenied")   # the grant binds devices, opens no portal
+    assert lines[0] == "(true,)" and lines[9].startswith("(['"), lines     # a messenger has the network
+
+
+
+# A GLib program, as far as the network goes: its network monitor and its proxy resolver, which a
+# GLib app that sees /.flatpak-info takes from the portal (gnetworkmonitorportal.c,
+# gproxyresolverportal.c), and a connection to a server of its own on the loopback.
+_GLIB_NETWORK = """
+import socket, sys, threading, time
+from gi.repository import Gio, GLib
+server = socket.socket()
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+threading.Thread(target=lambda: server.accept()[0].send(b"hello"), daemon=True).start()
+monitor, context, end = Gio.NetworkMonitor.get_default(), GLib.MainContext.default(), time.time() + float(sys.argv[1])
+while time.time() < end and not monitor.get_network_available():      # the portal's answer comes on the main loop
+    context.iteration(False)
+    time.sleep(0.01)
+print("MONITOR", type(monitor).__name__, monitor.get_network_available())
+print("RESOLVER", type(Gio.ProxyResolver.get_default()).__name__, Gio.ProxyResolver.get_default().lookup("http://example.org/", None))
+try:
+    connection = Gio.SocketClient().connect_to_host("127.0.0.1", server.getsockname()[1], None)
+    print("LOOPBACK", connection.get_input_stream().read_bytes(5, None).get_data().decode())
+except GLib.Error as e:
+    print("LOOPBACK failed:", e.message)
+"""
+
+
+@needs_proxy
+@pytest.mark.parametrize("network", [True, False])
+def test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_works_either_way(env, network):
+    # CR1.5-28: NetworkMonitor and ProxyResolver come with the network grant. GLib asks the
+    # ProxyResolver portal before every connection it makes, and with the portal refused and
+    # nothing else done, an app without the grant could no longer connect to a server of its own
+    # on the loopback (GLib 2.80 and 2.84: "LOOPBACK failed: …AccessDenied"), where it had been
+    # answered direct://, which is all GLib gives a sandbox without the network whatever the
+    # portal says. So such an app gets GIO_USE_PROXY_RESOLVER=dummy: GLib's own resolver, which
+    # says the same and asks nobody. Nothing reaches stderr either way.
+    app_id = "online" if network else "offline"
+    d = env.home / "apps" / app_id / "1.0" / "bin"
+    d.mkdir(parents=True)
+    (d / "network.py").write_text(_GLIB_NETWORK)
+    bus = _Bus(env)
+    try:
+        portal = _DesktopPortal(env, bus)
+        try:
+            r = env.run(env.app(app_id, sb.apply_overrides(sb.resolve_template("offline-editor"), {"network": network})),
+                        f'python3 "$(dirname "$0")/network.py" {10 if network else 1}; echo "ASKS ${{GIO_USE_PROXY_RESOLVER:-the portal}}"',
+                        env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        finally:
+            portal.close()
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    want = (["MONITOR GNetworkMonitorPortal True", "RESOLVER GProxyResolverPortal ['direct://']", "LOOPBACK hello", "ASKS the portal"] if network else
+            ["MONITOR GNetworkMonitorPortal False", "RESOLVER GDummyProxyResolver ['direct://']", "LOOPBACK hello", "ASKS dummy"])
+    assert r.stdout.splitlines() == want, r.stdout
+
+
+# ---------------------------------------------------------------- the session's bus, wherever it listens (R17.5, CR1.5-18)
+
+@needs_proxy
+@pytest.mark.parametrize("session", ["no-address", "dbus-run-session", "guid-first", "an-escaped-key"])
+def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
+    # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached
+    # a bus only there. A `dbus-run-session` bus is a socket under /tmp since dbus 1.14: the proxy
+    # made its own socket, the launcher's wait passed, and every connection the app made failed with
+    # nothing said -- a Standard app there had no portals, no notifications, no "open on the host".
+    # And with no address set the proxy was given "", not the runtime folder's bus, which is where
+    # libdbus and GLib look. Every bus of these tests was at $XDG_RUNTIME_DIR/bus with its address
+    # set, so nothing met either. Here: a login session's bus that no variable names, and a real
+    # dbus-run-session, whose address also carries the `,guid=…` every such address does; and that
+    # address with `guid=` first, which libdbus and GIO read as well, and where the launcher started
+    # no proxy, since it took the path or the abstract name as the first key alone (PR #694's
+    # review, P4-B1a; at the merge base the proxy was given the address whole). And that address with
+    # its key's name escaped, which GIO, the proxy's, reads unescaped, and the launcher read as
+    # written, so it started no proxy, and showed a granted folder the socket (P6-1).
+    session_bus = _Bus(env) if session == "no-address" else _RunSession(env)
+    transport, _, keys = session_bus.addr.partition(":")
+    addr = transport + ":" + ",".join(sorted(keys.split(","), key=lambda k: not k.startswith("guid="))) if session == "guid-first" else session_bus.addr
+    if session == "an-escaped-key":
+        addr = addr.replace("unix:path=", "unix:pa%74h=", 1).replace("unix:abstract=", "unix:abstr%61ct=", 1)
+    said = {} if session == "no-address" else {"DBUS_SESSION_BUS_ADDRESS": addr}
+    calls = (_OWN.format("io.appkata.web") + "; " + _CALL.format("NetworkMonitor.GetAvailable") + "; " +
+             _CALL.format('FileChooser.OpenFile "" Pick "{}"') + "; true")
+    try:
+        assert session_bus.addr.startswith(("unix:path=", "unix:abstract=")), session_bus.addr
+        if session != "no-address":             # neither in the runtime folder nor named plainly
+            assert str(env.rt) not in addr and "guid=" in addr, addr
+            assert addr.startswith("unix:guid=") is (session == "guid-first"), addr
+            assert ("%" in addr) is (session == "an-escaped-key"), addr
+        portal = _DesktopPortal(env, session_bus)
+        try:
+            r = env.run(env.app("web", sb.resolve_template("online-app")), calls, env=said)
+        finally:
+            portal.close()
+    finally:
+        session_bus.close()
+    lines = r.stdout.strip().splitlines()
+    assert r.returncode == 0 and len(lines) == 3, (session_bus.addr, r.stdout, r.stderr)
+    assert lines[0] == "(uint32 1,)", lines                 # its own name is its own: single instance works
+    assert lines[1] == "(true,)", lines                     # the portal answers through the proxy
+    assert lines[2].endswith("AccessDenied"), lines         # and it is the filtered bus the app is on
+    assert "Failed to connect to bus" not in r.stderr and "not one the bus filter can reach" not in r.stderr, r.stderr
+
+
+@needs_proxy
+def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder(env, monkeypatch):
+    # The review of PR #694, P1-2: the never-shared rules kept the real bus from the app by refusing
+    # the runtime folder, and a dbus-run-session or dbus-launch bus is a socket file under /tmp: a
+    # command-line tool run in its folder shared it, and so did a grant of that folder, and the app
+    # connected to it past the filter. Now the tool runs in its private home and says why, and the
+    # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
+    # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
+    # And a grant of the socket file itself, or of a link to it, which the cover matched no part of
+    # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it. And an
+    # address with its key's name escaped, `pa%74h=`, which is GIO's `path=` and which the launcher
+    # read as written, so it covered nothing and shared the tool's folder (P6-1).
+    folder = env.home.parent / "shared"
+    folder.mkdir()
+    bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
+    sock = str(folder / "dbus-MZ8lHbtZ8K")
+    link = env.home.parent / "bus-link"
+    link.symlink_to(sock)
+    probe = lambda at, said="": (f'[ -S {at} ] && echo SEEN{said}; gdbus call --address unix:path={at} --dest org.freedesktop.DBus '   # noqa: E731
+                                 f'--object-path /org/freedesktop/DBus --method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED{said}; ')
+    try:
+        r = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe(sock) + "echo DONE", cwd=str(folder), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env.rt}/bus")
+        viewer = env.app("viewer", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "ro"}}))
+        assert "Refused folder grant" not in open(viewer).read()
+        r2 = env.run(viewer, probe(sock) + f"echo DONE; ls {folder} >/dev/null && echo LISTED", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        files = env.app("files", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{sock}": "rw", f"+{link}": "ro"}}))
+        assert "Refused folder grant" not in open(files).read()
+        r3 = env.run(files, probe(sock) + probe(link, "-LINK") + "echo DONE", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        escaped = {"DBUS_SESSION_BUS_ADDRESS": bus.addr.replace("unix:path=", "unix:pa%74h=", 1)}
+        r4 = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe(sock) + "echo DONE", cwd=str(folder), env=escaped)
+        r5 = env.run(viewer, probe(sock) + f"echo DONE; ls {folder} >/dev/null && echo LISTED", env=escaped)
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stdout.split() == ["DONE"], (r.stdout, r.stderr)
+    assert f"can't see {folder}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
+    assert r2.returncode == 0 and r2.stdout.split() == ["DONE", "LISTED"], (r2.stdout, r2.stderr)      # the folder is the app's, but not the bus
+    assert r3.returncode == 0 and r3.stdout.split() == ["DONE"], (r3.stdout, r3.stderr)
+    assert "%74" in escaped["DBUS_SESSION_BUS_ADDRESS"], escaped
+    assert r4.returncode == 0 and r4.stdout.split() == ["DONE"] and f"can't see {folder}" in r4.stderr, (r4.stdout, r4.stderr)
+    assert r5.returncode == 0 and r5.stdout.split() == ["DONE", "LISTED"], (r5.stdout, r5.stderr)
+
+
+@needs_proxy
+@pytest.mark.parametrize("address", ["tcp:host=127.0.0.1,port=1", "unix:path={rt}/bus;unix:path=/tmp/dbus-elsewhere", "unix:path={rt}/a%20bus",
+                                     "unix:path={rt}/bus,", "unix:path={rt}/bus,g%zz=1"],
+                         ids=["another-transport", "a-list", "an-escaped-path", "a-key-with-no-equals", "a-key-gdbus-cannot-unescape"])
+def test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one(env, address):
+    # CR1.5-18's other half: an address that names no one socket the launcher can show the proxy
+    # (another transport, a list, an escaped path) still got a proxy, and the app a bus socket on
+    # which every connection failed, with nothing said. Said now, on stderr, and the app runs as
+    # it does where there is no bus: no proxy is started and nothing is left behind. And a trailing
+    # comma, an empty key, for which the proxy's GDBus refuses the address (PR #694's review, P5-1),
+    # and a key's name with an escape it can't unescape, which it refuses as well (P6-2).
+    address = address.format(rt=env.rt)
+    lp = env.app("web", sb.resolve_template("online-app"))
+    r = env.run(lp, '[ -e "$XDG_RUNTIME_DIR/bus" ] && echo BUS; echo "A=$DBUS_SESSION_BUS_ADDRESS"; echo RAN; xdg-open https://example.com/x; echo "exit $?"',
+                env={"DBUS_SESSION_BUS_ADDRESS": address})
+    assert r.returncode == 0 and r.stdout.split() == [f"A=unix:path={env.rt}/bus", "RAN", "exit", "3"], (r.stdout, r.stderr)
+    # and the app's xdg-open says why it can't open a link, not that the app runs Strict (PR #694's review, P1-B3)
+    assert r.stderr == (f"AppKata: the session bus here ({address}) is not one the bus filter can reach, "
+                        "so Web runs without a session bus and gets no desktop services.\n"
+                        "AppKata: this session's bus is at an address AppKata's bus filter can't reach (the launcher named it when "
+                        "the app started), so this app has no desktop services and can't open https://example.com/x on this computer.\n")
+    assert os.listdir(env.rt / "appkata") == []
+
+
+# ---------------------------------------------------------------- the proxy's own sandbox (R17.17, CR1.5-24)
+
+# bwrap with a look inside the proxy's own sandbox: the launcher's words unchanged but for the
+# program, which first says what it can see and which namespaces it is in, and then becomes the proxy.
+_LOOK = r"""import os, sys
+real, argv = sys.argv[1], sys.argv[2:]
+if "xdg-dbus-proxy" in argv:
+    look = ('{ find / -mindepth 1 \\( -path /usr -o -path /etc -o -path /proc -o -path /dev \\) -prune -o -exec stat -c "PROXY-SEES %A %n" {} +; '
+            'for ns in net ipc uts pid; do echo "PROXY-NS $ns $(readlink /proc/self/ns/$ns)"; done; '
+            'echo "PROXY-SECCOMP $(sed -n "s/^Seccomp:[[:space:]]*//p" /proc/self/status)"; '
+            'echo "PROXY-ENV $(tr "\\0" "\\n" < /proc/$$/environ | cut -d= -f1 | sort | paste -sd, -)"; } >&2; exec "$@"')
+    at = argv.index("xdg-dbus-proxy")
+    argv[at:at] = ["sh", "-c", look, "sh"]
+os.execv(real, [real] + argv)
+"""
+
+
+@needs_proxy
+@pytest.mark.parametrize("bus_on", ["a-socket-file", "an-abstract-socket"])
+def test_the_proxy_runs_in_a_sandbox_that_holds_its_socket_folder_and_the_bus_alone(env, tmp_path, bus_on):
+    # CR1.5-24: the proxy parses every message a hostile app sends, and its bwrap gave it the whole
+    # runtime folder read-write -- the ssh and gpg agents' sockets, the document portal's mount, the
+    # sound and display sockets -- with the host's network and IPC and no seccomp filter: a fault in
+    # it would hand the app all the app's own sandbox withholds. Nothing looked inside that
+    # sandbox; this does, from the proxy's own place in it. What is left is the bus (R17.17).
+    fake = tmp_path / "lookbin"
+    fake.mkdir()
+    (fake / "look.py").write_text(_LOOK)
+    (fake / "bwrap").write_text(f'#!/bin/sh\nexec python3 {shlex.quote(str(fake / "look.py"))} {shlex.quote(shutil.which("bwrap"))} "$@"\n')
+    (fake / "bwrap").chmod(0o755)
+    for name in ("keyring/ssh", "gnupg/S.gpg-agent", "doc/by-app/io.appkata.web/a-document", "pipewire-0", "wayland-0"):
+        (env.rt / name).parent.mkdir(parents=True, exist_ok=True)       # what a session keeps there beside its bus
+        (env.rt / name).write_text("")
+    bus = _Bus(env, abstract=bus_on == "an-abstract-socket")
+    try:
+        r = env.run(env.app("web", sb.resolve_template("online-app")), _OWN.format("io.appkata.web"),
+                    env={"DBUS_SESSION_BUS_ADDRESS": bus.addr, "PATH": f"{fake}:{os.environ['PATH']}"})
+    finally:
+        bus.close()
+    assert r.returncode == 0 and r.stdout.strip() == "(uint32 1,)", (r.stdout, r.stderr)   # and from in there it still does its work
+    said = [l.split(" ", 2) for l in r.stderr.splitlines() if l.startswith("PROXY-")]
+    sees = {(mode[0], path) for tag, mode, path in (l for l in said if l[0] == "PROXY-SEES")}     # d, l or s, as `ls -l` has it
+    folders = {path for kind, path in sees if kind == "d"}
+    assert folders and all(f"{env.rt}/appkata".startswith(f) for f in folders), sorted(folders)   # its socket folder, and the way to it
+    want = {("l", "/lib"), ("l", "/lib64"), ("l", "/bin")}
+    if bus_on == "a-socket-file":
+        want.add(("s", f"{env.rt}/bus"))
+    assert sees - {("d", f) for f in folders} == want, r.stderr
+    inside = {kind: link for tag, kind, link in (l for l in said if l[0] == "PROXY-NS")}
+    mine = {ns: os.readlink(f"/proc/self/ns/{ns}") for ns in ("net", "ipc", "uts", "pid")}
+    assert set(inside) == set(mine) and not [ns for ns in ("ipc", "uts", "pid") if inside[ns] == mine[ns]], (inside, mine)
+    # the host's network only where the bus is in it: an abstract socket has no file to bind (R17.9)
+    assert (inside["net"] == mine["net"]) is (bus_on == "an-abstract-socket"), (inside, mine)
+    if sb.seccomp_filter() is not None:
+        assert ["PROXY-SECCOMP", "2"] in said, r.stderr                 # a filter is on: the terminal-injection one (R17.4)
+    # and none of the launcher's environment (PR #694's review, P1-B2): the run's own here, its
+    # home and its runtime folder among them, as a terminal's tokens would be. PATH is the
+    # launcher's word, PWD bwrap's own: the folder it starts the proxy in.
+    assert ["PROXY-ENV", "PATH,PWD"] in said, r.stderr
 
 
 # A stand-in for the OpenURI portal on the test bus: records what it is asked to open. For a file it
@@ -952,6 +1408,14 @@ def test_links_and_files_an_app_opens_go_to_the_host_through_the_portal(env, tmp
                     'echo x > "$HOME/Documents/refuse-me.txt"; xdg-open "$HOME/Documents/refuse-me.txt"; echo "REFUSED $?"; '
                     'if command -v gio >/dev/null; then timeout 10 gio open mailto:someone@example.com && echo GIO-OK; fi; true',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        # CR1.5-29: the road is there whatever the network grant says. An offline-editor has no
+        # network (its namespace holds the loopback alone), and what it knows leaves all the same,
+        # in a link the desktop is asked to open, which the user's browser then fetches for it.
+        # The design keeps the road (R17.6.3); R17.17 and the dialog's Network hint say so.
+        offline = env.run(env.app("ed", sb.resolve_template("offline-editor")),
+                          'echo NET $(cut -s -d: -f1 /proc/net/dev); echo k3y-from-the-sandbox > "$HOME/key"; '
+                          'xdg-open "https://example.com/?d=$(cat "$HOME/key")" && echo URL-OK',
+                          env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
     finally:
         fake.terminate()
         bus.close()
@@ -962,6 +1426,8 @@ def test_links_and_files_an_app_opens_go_to_the_host_through_the_portal(env, tmp
     assert "REFUSED 1" in r.stdout and "the host couldn't open" in r.stderr and "refuse-me.txt" in r.stderr, r.stderr
     if "GIO-OK" in r.stdout:
         assert "OpenURI mailto:someone@example.com" in opened
+    assert offline.stdout.splitlines() == ["NET lo", "URL-OK"], (offline.stdout, offline.stderr)     # no network, and the link went
+    assert "OpenURI https://example.com/?d=k3y-from-the-sandbox" in opened, opened
 
 
 _TEST_HANDLER = "/usr/share/applications/appkata-test-handler.desktop"      # scripts/sandbox/register-test-handler.sh
@@ -1112,16 +1578,28 @@ def test_a_standard_launch_leaves_no_proxy_running(env):
     # the kernel clears at an exec that changes the security domain -- entering unpriv_bwrap does --
     # so killing its bwrap left it alive (and a caller reading the launcher's output waited forever).
     # The proxy's bwrap now has its own pid namespace, which dies with bwrap's first process.
+    # Its socket is named by a hash of the id since R3-12, and this test went on looking for the
+    # id itself: it found no proxy while the app ran either, and so could not fail (seen while
+    # changing the proxy's bwrap for CR1.5-24). It first sees the proxy it then wants gone.
+    tag = hashlib.sha256(b"leak").hexdigest()[:16]
+
+    def proxies():
+        return [l for l in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
+                if "xdg-dbus-proxy" in l and f"bus-{tag}." in l]
+
     bus = _Bus(env)
     try:
         lp = env.app("leak", sb.resolve_template("developer"))
-        r = subprocess.run([lp, "echo RAN"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-        assert r.returncode == 0
+        p = subprocess.Popen([lp, "echo RAN; sleep 2"], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        seen = []
+        for _ in range(40):
+            seen = seen or proxies()
+            subprocess.run(["sleep", "0.05"])
+        assert seen and p.wait(timeout=30) == 0, seen
         left = []
         for _ in range(20):                                   # the namespace's processes go with bwrap, at once
-            left = [l for l in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
-                    if "xdg-dbus-proxy" in l and "bus-io.appkata.leak." in l]
+            left = proxies()
             if not left:
                 break
             subprocess.run(["sleep", "0.1"])
@@ -1847,7 +2325,38 @@ bus.register_object("/org/mpris/MediaPlayer2", Gio.DBusNodeInfo.new_for_xml(XML)
                     lambda *a: GLib.Variant("s", "Playing"), None)
 Gio.bus_own_name_on_connection(bus, "org.mpris.MediaPlayer2.appkataprobe", Gio.BusNameOwnerFlags.NONE,
                                lambda *a: print("OWNED", flush=True), lambda *a: print("NOT-OWNED", flush=True))
+def others():                       # what the app can do to another player on the bus (CR1.5-36)
+    def ask(what, dest, path, iface, method, args=None):
+        try:
+            r = bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+            print(what, "ANSWERED", *([r.unpack()[0]] if method == "RequestName" else []), flush=True)
+        except GLib.Error as e:
+            print(what, "REFUSED", Gio.DBusError.get_remote_error(e), flush=True)
+    names = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", None, None, 0, 3000, None).unpack()[0]
+    print("SEES", *sorted(n for n in names if n.startswith("org.mpris.")), flush=True)
+    ask("OTHER-PLAYER", "org.mpris.MediaPlayer2.other", "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Pause")
+    ask("OTHER-OBJECT", "org.mpris.MediaPlayer2.other", "/org/appkata/Other", "org.appkata.Other", "Open", GLib.Variant("(s)", ("file:///etc/hostname",)))
+    ask("OTHER-NAME", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", ("org.mpris.MediaPlayer2.another", 4)))
+GLib.timeout_add(1200, others)
 GLib.timeout_add(2500, lambda: sys.exit(0))
+GLib.MainLoop().run()
+"""
+
+# Another media player on the bus, as the user's own one is: its MPRIS object, and a second object
+# of its own on the same connection that opens what it is sent.
+_OTHER_PLAYER = """
+import sys
+from gi.repository import Gio, GLib
+log = open(sys.argv[1], "a")
+player = Gio.DBusNodeInfo.new_for_xml('<node><interface name="org.mpris.MediaPlayer2.Player"><method name="Play"/><method name="Pause"/>'
+                                      '<property name="PlaybackStatus" type="s" access="read"/></interface></node>').interfaces[0]
+own = Gio.DBusNodeInfo.new_for_xml('<node><interface name="org.appkata.Other"><method name="Open"><arg type="s" direction="in"/></method></interface></node>').interfaces[0]
+def call(conn, sender, path, iface, method, params, inv):
+    log.write(f"OTHER {method} {params.unpack()}\\n"); log.flush(); inv.return_value(None)
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+bus.register_object("/org/mpris/MediaPlayer2", player, call, lambda *a: GLib.Variant("s", "Playing"), None)
+bus.register_object("/org/appkata/Other", own, call, None, None)
+Gio.bus_own_name_on_connection(bus, "org.mpris.MediaPlayer2.other", Gio.BusNameOwnerFlags.NONE, None, None)
 GLib.MainLoop().run()
 """
 
@@ -1878,37 +2387,92 @@ def test_a_media_key_daemon_can_drive_an_app_with_the_mpris_capability_and_only_
     # proxy rule was tested. A stand-in media-key daemon on the test bus finds the app's MPRIS name,
     # calls Play on it and reads its status back -- through the proxy, into the sandbox -- for the app
     # with the capability; the app without it can't even own the name.
+    # CR1.5-36: that was the daemon calling the app, and never the app calling out. To the proxy a
+    # name an app may own is one it may call, so `--own=org.mpris.MediaPlayer2.*` let the app call
+    # every other player, and whatever else that player's connection serves. Another player is on
+    # the bus now: the app whose review names its MPRIS name owns that one, is driven on it, and
+    # neither sees nor reaches the other; the app nobody named still does (R17.17 says so).
+    # PR #694's review, P1-3: an own is a talk on the named name too, so a named app reaches a
+    # player that holds that same name (another copy of the player, the host's own): the last run.
     bus = _Bus(env)
-    log = tmp_path / "keys.log"
-    daemon = subprocess.Popen(["python3", "-c", _MEDIA_KEYS, str(log)], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log, other_log, same_log = tmp_path / "keys.log", tmp_path / "other.log", tmp_path / "same.log"
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    daemon = subprocess.Popen(["python3", "-c", _MEDIA_KEYS, str(log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    other = subprocess.Popen(["python3", "-c", _OTHER_PLAYER, str(other_log)], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        for name in ("player", "noplayer"):
+        for name in ("named", "player", "noplayer", "samename"):
             d = env.home / "apps" / name / "1.0" / "bin"
             d.mkdir(parents=True, exist_ok=True)
             (d / "mpris.py").write_text(_MPRIS_APP)
+        its_own = sb.apply_overrides(sb.resolve_template("media-player"), {"mpris_name": "org.mpris.MediaPlayer2.appkataprobe"})
+        rn = env.run(env.app("named", its_own), 'python3 "$(dirname "$0")/mpris.py"', env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        reached_by_named = [l for l in other_log.read_text().splitlines() if "Pause" in l or "Open" in l]
         r = env.run(env.app("player", sb.resolve_template("media-player")), 'python3 "$(dirname "$0")/mpris.py"',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
         r2 = env.run(env.app("noplayer", sb.resolve_template("online-app")), 'python3 "$(dirname "$0")/mpris.py"',
                      env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        # the host's own copy of the player holds the name a review gives the sandboxed one
+        same = "org.mpris.MediaPlayer2.hostplayer"
+        host = subprocess.Popen(["python3", "-c", _OTHER_PLAYER.replace("org.mpris.MediaPlayer2.other", same), str(same_log)], env=on_bus,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(50):
+            if subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                               "org.freedesktop.DBus.NameHasOwner", same], env=on_bus, capture_output=True, text=True).stdout.strip() == "(true,)":
+                break
+            time.sleep(0.1)
+        (env.home / "apps" / "samename" / "1.0" / "bin" / "mpris.py").write_text(
+            _MPRIS_APP.replace("org.mpris.MediaPlayer2.appkataprobe", same).replace("org.mpris.MediaPlayer2.other", same))
+        rs = env.run(env.app("samename", sb.apply_overrides(sb.resolve_template("media-player"), {"mpris_name": same})),
+                     'python3 "$(dirname "$0")/mpris.py"', env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        host.terminate()
     finally:
         daemon.terminate()
+        other.terminate()
         bus.close()
     assert "OWNED" in r.stdout and "CALLED Play" in r.stdout, (r.stdout, r.stderr)
-    assert "PLAYED org.mpris.MediaPlayer2.appkataprobe status=Playing" in log.read_text()
+    assert log.read_text().count("PLAYED org.mpris.MediaPlayer2.appkataprobe status=Playing") >= 2      # the named app and the unnamed one
     assert "NOT-OWNED" in r2.stdout and "CALLED" not in r2.stdout, (r2.stdout, r2.stderr)
+    # named: driven on its own name, and that is all of MPRIS it has
+    out = rn.stdout.splitlines()
+    assert "OWNED" in out and any(l.startswith("CALLED Play") for l in out), (rn.stdout, rn.stderr)
+    assert "SEES org.mpris.MediaPlayer2.appkataprobe" in out, rn.stdout                  # not the other player
+    assert "OTHER-PLAYER REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out and "OTHER-OBJECT REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out, rn.stdout
+    assert "OTHER-NAME REFUSED org.freedesktop.DBus.Error.ServiceUnknown" in out, rn.stdout   # nor a second name of its own
+    assert reached_by_named == [], reached_by_named
+    # nobody named it: every player's name, so every player, and what else its connection serves
+    out = r.stdout.splitlines()
+    assert "SEES org.mpris.MediaPlayer2.appkataprobe org.mpris.MediaPlayer2.other" in out, r.stdout
+    assert "OTHER-PLAYER ANSWERED" in out and "OTHER-OBJECT ANSWERED" in out and "OTHER-NAME ANSWERED 1" in out, r.stdout
+    reached = other_log.read_text()
+    assert "OTHER Pause ()" in reached and "OTHER Open ('file:///etc/hostname',)" in reached, reached
+    assert "OTHER-PLAYER REFUSED" in r2.stdout and "OTHER-OBJECT REFUSED" in r2.stdout, r2.stdout    # no capability: no player at all
+    # named, but another program holds that name: the app can't own it, and reaches that program,
+    # its player and what else its connection serves (R17.5.1, R17.17)
+    out = rs.stdout.splitlines()
+    assert "OWNED" not in out and "OTHER-PLAYER ANSWERED" in out and "OTHER-OBJECT ANSWERED" in out, (rs.stdout, rs.stderr)
+    reached = same_log.read_text()
+    assert "OTHER Pause ()" in reached and "OTHER Open ('file:///etc/hostname',)" in reached, reached
 
 
+# org.freedesktop.ScreenSaver as the desktops declare it: KDE's screen locker (kwin 6.3, ksmserver
+# 5.27) serves every member, and Lock locks the screen; GNOME's and Cinnamon's screensaver proxies
+# declare the same and answer all but the inhibit pair with NotSupported. The stand-in answers all.
 _SCREENSAVER = """
 import sys
 from gi.repository import Gio, GLib
-XML = '''<node><interface name="org.freedesktop.ScreenSaver">
+XML = '''<node><interface name="org.freedesktop.ScreenSaver"><method name="Lock"/><method name="SimulateUserActivity"/>
+<method name="GetActive"><arg type="b" direction="out"/></method><method name="GetActiveTime"><arg type="u" direction="out"/></method>
+<method name="GetSessionIdleTime"><arg type="u" direction="out"/></method><method name="SetActive"><arg type="b" direction="out"/><arg type="b" direction="in"/></method>
 <method name="Inhibit"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
-<method name="UnInhibit"><arg type="u" direction="in"/></method></interface></node>'''
+<method name="UnInhibit"><arg type="u" direction="in"/></method>
+<method name="Throttle"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="out"/></method>
+<method name="UnThrottle"><arg type="u" direction="in"/></method><signal name="ActiveChanged"><arg type="b"/></signal></interface></node>'''
+ANSWERS = {"Inhibit": "(u)", "Throttle": "(u)", "GetActive": "(b)", "SetActive": "(b)", "GetActiveTime": "(u)", "GetSessionIdleTime": "(u)"}
 log = open(sys.argv[1], "a")
 def call(conn, sender, path, iface, method, params, inv):
     log.write(f"{method} {params.unpack()}\\n"); log.flush()
-    inv.return_value(GLib.Variant("(u)", (42,)) if method == "Inhibit" else None)
+    t = ANSWERS.get(method)
+    inv.return_value(GLib.Variant(t, (42 if "u" in t else True,)) if t else None)
 bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 for path in ("/ScreenSaver", "/org/freedesktop/ScreenSaver"):
     bus.register_object(path, Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0], call, None, None)
@@ -1916,17 +2480,28 @@ Gio.bus_own_name_on_connection(bus, "org.freedesktop.ScreenSaver", Gio.BusNameOw
 GLib.MainLoop().run()
 """
 
+# the members besides the inhibit pair, each with its arguments for `gdbus call`
+_SCREENSAVER_OTHERS = {"Lock": "", "SetActive": "true", "SimulateUserActivity": "", "GetActive": "", "GetActiveTime": "",
+                       "GetSessionIdleTime": "", "Throttle": 'appkata "a call"', "UnThrottle": "42"}
+
 
 @needs_proxy
 def test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability(env, tmp_path):
     # "Keep the screen awake": the portal road is in the host-caller test; this is the direct
     # org.freedesktop.ScreenSaver name the non-GLib apps (Electron's powerSaveBlocker, Qt, mpv) use.
+    # CR1.5-44: the stand-in served the inhibit pair alone, so the test could not see that the
+    # capability opened the whole interface: an app with it locked the screen under KDE's locker.
+    # It serves what the desktops declare now, and the app gets the pair, on both objects, alone.
     bus = _Bus(env)
     log = tmp_path / "ss.log"
     ss = subprocess.Popen(["python3", "-c", _SCREENSAVER, str(log)], env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    call = ('gdbus call --session --dest org.freedesktop.ScreenSaver --object-path /org/freedesktop/ScreenSaver '
-            '--method org.freedesktop.ScreenSaver.Inhibit appkata "a call" 2>&1')
+    call = ('gdbus call --session --dest org.freedesktop.ScreenSaver --object-path {} '
+            '--method org.freedesktop.ScreenSaver.{} {} 2>&1')
+    asked = "appkata 'a call'"
+    calls = [f'echo "{path} Inhibit: $({call.format(path, "Inhibit", asked)})"; '
+             f'echo "{path} UnInhibit: $({call.format(path, "UnInhibit", "42")})"' for path in ("/org/freedesktop/ScreenSaver", "/ScreenSaver")]
+    calls += [f'echo "{m}: $({call.format("/ScreenSaver", m, a)})"' for m, a in _SCREENSAVER_OTHERS.items()]
     try:
         for _ in range(50):
             r = subprocess.run(["sh", "-c", "gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus "
@@ -1935,13 +2510,19 @@ def test_the_direct_screensaver_name_takes_an_inhibit_only_with_the_capability(e
             if r.stdout.strip() == "(true,)":
                 break
             subprocess.run(["sleep", "0.1"])
-        r = env.run(env.app("awake", sb.resolve_template("messenger")), call, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
-        r2 = env.run(env.app("sleepy", sb.resolve_template("online-app")), call, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r = env.run(env.app("awake", sb.resolve_template("messenger")), "; ".join(calls), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r2 = env.run(env.app("sleepy", sb.resolve_template("online-app")), calls[0], env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
     finally:
         ss.terminate()
         bus.close()
-    assert r.stdout.strip() == "(uint32 42,)", (r.stdout, r.stderr)                       # inhibited, cookie back
-    assert "Inhibit ('appkata', 'a call')" in log.read_text()
+    out = r.stdout.splitlines()
+    for path in ("/org/freedesktop/ScreenSaver", "/ScreenSaver"):
+        assert f"{path} Inhibit: (uint32 42,)" in out and f"{path} UnInhibit: ()" in out, (r.stdout, r.stderr)    # inhibited, cookie back
+    served = log.read_text()
+    assert served.count("Inhibit ('appkata', 'a call')") == 2 and served.count("UnInhibit (42,)") == 2, served
+    for m in _SCREENSAVER_OTHERS:
+        assert any(l.startswith(f"{m}: Error: GDBus.Error:org.freedesktop.DBus.Error.AccessDenied") for l in out), (m, r.stdout)
+        assert not [l for l in served.splitlines() if l.split()[0] == m], (m, served)       # and it never arrived
     assert "AccessDenied" in r2.stdout or "ServiceUnknown" in r2.stdout, r2.stdout        # no capability: no name
 
 
@@ -1989,6 +2570,219 @@ def test_a_password_service_app_serves_a_host_client_only_with_the_provide_capab
     assert "OWNED" in out and "ASKED OpenSession" in out, (out, err)
     assert "/org/freedesktop/secrets/session/s1" in c.stdout, (c.stdout, c.stderr)       # the host client got a session from the sandboxed service
     assert "NOT-OWNED" in out2 and "ASKED" not in out2 and "session/s1" not in c2.stdout, (out2, c2.stdout)
+
+
+# A keyring client, run inside the sandbox: libsecret by ctypes, as Chromium, Electron and QtKeychain
+# use it (store, lookup, a search that unlocks and loads secrets, a relabel, a clear), then
+# secretstorage (jeepney's, the Python `keyring` package's: store, search, relabel, delete, lock,
+# and an unlock whose prompt must complete), then what else the keyring's connection serves.
+_KEYRING_PROBE = """
+import ctypes, faulthandler, sys
+faulthandler.enable()               # a crash names its line on stderr, which the test shows
+def say(*a): print(*a, flush=True)
+try:
+    ls = ctypes.CDLL("libsecret-1.so.0"); gl = ctypes.CDLL("libglib-2.0.so.0")
+except OSError:
+    ls = None; say("LIBSECRET absent")
+class Attr(ctypes.Structure): _fields_ = [("name", ctypes.c_char_p), ("type", ctypes.c_int)]
+class Schema(ctypes.Structure):
+    _fields_ = [("name", ctypes.c_char_p), ("flags", ctypes.c_int), ("attributes", Attr * 32), ("reserved", ctypes.c_int)] + [(f"r{i}", ctypes.c_void_p) for i in range(1, 8)]
+class GError(ctypes.Structure): _fields_ = [("domain", ctypes.c_uint32), ("code", ctypes.c_int), ("message", ctypes.c_char_p)]
+schema = Schema(); schema.name = b"org.appkata.Probe"; schema.attributes[0] = Attr(b"app", 0)
+def why(e): return ctypes.cast(e, ctypes.POINTER(GError)).contents.message.decode() if e.value else "no error"
+if ls:
+    e = ctypes.c_void_p()
+    ok = ls.secret_password_store_sync(ctypes.byref(schema), b"default", b"AppKata probe", b"s3cret-1", None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET store", "OK" if ok else "FAIL " + why(e))
+    e = ctypes.c_void_p(); ls.secret_password_lookup_sync.restype = ctypes.c_char_p
+    pw = ls.secret_password_lookup_sync(ctypes.byref(schema), None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET lookup", "OK" if pw == b"s3cret-1" else f"FAIL {pw} {why(e)}")
+    gl.g_hash_table_new.restype = ctypes.c_void_p      # a pointer: ctypes' default, a C int, cuts one above 2 GiB
+    ht = gl.g_hash_table_new(ctypes.cast(gl.g_str_hash, ctypes.c_void_p), ctypes.cast(gl.g_str_equal, ctypes.c_void_p))
+    gl.g_hash_table_insert(ctypes.c_void_p(ht), b"app", b"probe")
+    for f, t in (("secret_service_search_sync", ctypes.c_void_p), ("secret_item_get_secret", ctypes.c_void_p), ("secret_value_get_text", ctypes.c_char_p)):
+        getattr(ls, f).restype = t
+    gl.g_list_nth_data.restype = ctypes.c_void_p
+    e = ctypes.c_void_p()             # SECRET_SEARCH_ALL | UNLOCK | LOAD_SECRETS, as Chromium's OSCrypt searches
+    found = ls.secret_service_search_sync(None, ctypes.byref(schema), ctypes.c_void_p(ht), 2 | 4 | 8, None, ctypes.byref(e))
+    item = gl.g_list_nth_data(ctypes.c_void_p(found), 0) if found else None
+    value = ls.secret_item_get_secret(ctypes.c_void_p(item)) if item else None
+    say("LIBSECRET search", "OK" if value and ls.secret_value_get_text(ctypes.c_void_p(value)) == b"s3cret-1" else "FAIL " + why(e))
+    e = ctypes.c_void_p()
+    ok = item and ls.secret_item_set_label_sync(ctypes.c_void_p(item), b"AppKata probe, renamed", None, ctypes.byref(e))
+    say("LIBSECRET relabel", "OK" if ok else "FAIL " + why(e))
+    e = ctypes.c_void_p()
+    ok = ls.secret_password_clear_sync(ctypes.byref(schema), None, ctypes.byref(e), b"app", b"probe", None)
+    say("LIBSECRET clear", "OK" if ok else "FAIL " + why(e))
+try:
+    import secretstorage
+except ImportError:
+    secretstorage = None; say("SECRETSTORAGE absent")
+if secretstorage:
+    try:
+        conn = secretstorage.dbus_init()
+        col = secretstorage.get_default_collection(conn)
+        col.create_item("AppKata probe 2", {"app": "probe2"}, b"s3cret-2", replace=True)
+        item = next(col.search_items({"app": "probe2"}))
+        say("SECRETSTORAGE store", "OK" if item.get_secret() == b"s3cret-2" and item.get_attributes()["app"] == "probe2" else "FAIL")
+        item.set_label("AppKata probe 2, renamed")
+        say("SECRETSTORAGE relabel", "OK" if item.get_label().endswith("renamed") else "FAIL")
+        item.delete(); say("SECRETSTORAGE delete OK")
+        col.lock()
+        say("SECRETSTORAGE unlock", "OK, the prompt completed" if col.is_locked() and col.unlock() in (True, False) else "FAIL")
+    except Exception as ex:
+        say("SECRETSTORAGE FAIL", type(ex).__name__, ex)
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+def ask(what, dest, path, iface, method, args=None):
+    try:
+        bus.call_sync(dest, path, iface, method, args, None, Gio.DBusCallFlags.NONE, 3000, None)
+        say("OTHER", what, "ANSWERED")
+    except GLib.Error as e:
+        say("OTHER", what, "REFUSED", Gio.DBusError.get_remote_error(e))
+try:
+    owner = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", GLib.Variant("(s)", ("org.freedesktop.secrets",)),
+                          None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+except GLib.Error as e:
+    owner = None; say("OWNER HIDDEN", Gio.DBusError.get_remote_error(e))
+guilt = "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface"
+login = "/org/freedesktop/secrets/collection/login"
+for road, dest in (("name", "org.freedesktop.secrets"), ("owner", owner), ("keyring", "org.gnome.keyring")):
+    if not dest:
+        continue
+    ask(f"{road} GetEnvironment", dest, "/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon", "GetEnvironment")
+    ask(f"{road} GetControlDirectory", dest, "/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon", "GetControlDirectory")
+    ask(f"{road} UnlockWithMasterPassword", dest, "/org/freedesktop/secrets", guilt, "UnlockWithMasterPassword",
+        GLib.Variant("(o(oayays))", (login, ("/", b"", b"x", "text/plain"))))
+    ask(f"{road} ChangeWithPrompt", dest, "/org/freedesktop/secrets", guilt, "ChangeWithPrompt", GLib.Variant("(o)", (login,)))
+    ask(f"{road} RetrieveSecret", dest, "/org/freedesktop/portal/desktop", "org.freedesktop.impl.portal.Secret", "RetrieveSecret",
+        GLib.Variant("(osa{sv}h)", ("/r/1", "io.appkata.x", {}, 0)))
+"""
+
+
+@needs_proxy
+@pytest.mark.skipif(not shutil.which("gnome-keyring-daemon"), reason="needs gnome-keyring")
+def test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves(env, tmp_path):
+    # CR1.5-43: Saved passwords passed `--talk=org.freedesktop.secrets`, which xdg-dbus-proxy gives to
+    # the connection owning the name (CR1.5-3): gnome-keyring's, with its daemon interface (the
+    # session's SSH agent socket and control folder), its master-password interface and the Secret
+    # portal's backend beside the secret service. Real clients through the filter, against a real
+    # keyring, unlocked as a login leaves it: they keep working, and the rest is refused by every road.
+    bus = _Bus(env)
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    keyring = subprocess.Popen(["gnome-keyring-daemon", "--unlock", "--components=secrets", "--foreground"], env=on_bus,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    keyring.stdin.write(b"login-password")
+    keyring.stdin.close()
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            subprocess.run(["sleep", "0.1"])
+        for app_id in ("keys", "nokeys"):
+            d = env.home / "apps" / app_id / "1.0" / "bin"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "probe.py").write_text(_KEYRING_PROBE)
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets"]})
+        probe = 'python3 "$(dirname "$0")/probe.py"'
+        r = env.run(env.app("keys", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=90)
+        r2 = env.run(env.app("nokeys", sb.apply_overrides(gs, {"caps": []})), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=90)
+    finally:
+        keyring.terminate()
+        keyring.wait()
+        bus.close()
+    out = r.stdout.splitlines()
+    clients = [l for l in out if l.startswith(("LIBSECRET", "SECRETSTORAGE"))]
+    assert [l for l in clients if not l.endswith("absent")], (r.stdout, r.stderr)                  # one client at least
+    assert not [l for l in clients if "FAIL" in l], (r.stdout, r.stderr)                           # each works through the filter
+    others = [l for l in out if l.startswith("OTHER")]
+    assert len(others) >= 10 and not [l for l in others if "ANSWERED" in l], (r.returncode, r.stdout, r.stderr)     # name and owner, five calls each
+    assert not [l for l in others if not l.startswith("OTHER keyring") and not l.endswith("org.freedesktop.DBus.Error.AccessDenied")], \
+        (r.returncode, r.stdout, r.stderr)
+    out2 = r2.stdout.splitlines()                                                                     # and without the capability, no keyring
+    assert not [l for l in out2 if "ANSWERED" in l or l.startswith(("LIBSECRET", "SECRETSTORAGE")) and "FAIL" not in l and not l.endswith("absent")], \
+        (r2.returncode, r2.stdout, r2.stderr)
+    assert "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.returncode, r2.stdout, r2.stderr)
+
+
+@needs_proxy
+@pytest.mark.skipif(not shutil.which("gnome-keyring-daemon"), reason="needs gnome-keyring")
+def test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it(env):
+    # CR1.5-46 (#707; the owner's decision of 2026-11-24): with gnome-keyring holding
+    # org.freedesktop.secrets, an app with Password service alone reached the keyring's whole
+    # connection through the filter -- to it an own is a talk -- its daemon interface and every
+    # unlocked password. Now the launch finds the name held, starts the app without the own and says
+    # why. A real keyring, unlocked as a login leaves it; the sole-provider case is
+    # test_a_password_service_app_serves_a_host_client_only_with_the_provide_capability.
+    bus = _Bus(env)
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    keyring = subprocess.Popen(["gnome-keyring-daemon", "--unlock", "--components=secrets", "--foreground"], env=on_bus,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    keyring.stdin.write(b"login-password")
+    keyring.stdin.close()
+    ask = ('gdbus call --session --dest org.freedesktop.secrets --object-path {} --method {} 2>&1 | head -1; ')
+    probe = (ask.format("/org/gnome/keyring/daemon", "org.gnome.keyring.Daemon.GetEnvironment") +
+             ask.format("/org/freedesktop/secrets", "org.freedesktop.Secret.Service.OpenSession plain \"<\'\'>\"") +
+             _OWN.format("org.freedesktop.secrets") + "; true")
+    try:
+        for _ in range(50):
+            r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus, capture_output=True, text=True)
+            if r.stdout.strip() == "(true,)":
+                break
+            time.sleep(0.1)
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+        r = env.run(env.app("keeper", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+    finally:
+        keyring.terminate()
+        keyring.wait()
+        bus.close()
+    assert r.returncode == 0 and "runs without Password service" in r.stderr, (r.stdout, r.stderr)
+    out = r.stdout.splitlines()
+    assert len(out) == 3 and all("org.freedesktop.DBus.Error.ServiceUnknown" in l for l in out[:2]), out      # nothing of the keyring
+    assert out[2].startswith("Error") and "uint32" not in out[2], out                                           # nor the name
+
+
+_KEYRING_STARTS = "/usr/share/dbus-1/services/org.freedesktop.secrets.service"
+
+
+@needs_proxy
+@pytest.mark.skipif(not os.path.exists(_KEYRING_STARTS), reason="needs gnome-keyring")
+def test_password_service_where_the_bus_can_start_a_keyring_starts_without_the_name_and_cannot_start_it(env):
+    # PR #694's review, P2-3: gnome-keyring installs an activation file for org.freedesktop.secrets,
+    # so where it is installed and not running (a password manager's own set-up) the launch found
+    # the name free and gave the own; to the filter an own is a talk, so the app's own call to the
+    # name had the bus start the keyring, and the app reached its whole connection. Now a name the
+    # bus can start a program for counts as held. The bus here starts the keyring as a desktop's
+    # would (its own service file); nothing runs it first.
+    bus = _Bus(env, starts=(os.path.basename(_KEYRING_STARTS),))
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    driver = ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method"]
+    probe = ('gdbus call --session --dest org.freedesktop.secrets --object-path /org/gnome/keyring/daemon '
+             '--method org.gnome.keyring.Daemon.GetEnvironment 2>&1 | head -1; '
+             'gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus '
+             '--method org.freedesktop.DBus.StartServiceByName org.freedesktop.secrets 0 2>&1 | head -1; ' + _OWN.format("org.freedesktop.secrets") + "; true")
+    try:
+        names = subprocess.run(driver + ["org.freedesktop.DBus.ListActivatableNames"], env=on_bus, capture_output=True, text=True).stdout
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+        r = env.run(env.app("keeper", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        started = subprocess.run(driver + ["org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus,
+                                 capture_output=True, text=True).stdout.strip()
+    finally:
+        pid = subprocess.run(driver + ["org.freedesktop.DBus.GetConnectionUnixProcessID", "org.freedesktop.secrets"], env=on_bus,
+                             capture_output=True, text=True).stdout
+        m = re.search(r"uint32 (\d+)", pid)
+        if m:                                               # a keyring the app started: ended with the test
+            os.kill(int(m.group(1)), 15)
+        bus.close()
+    assert "'org.freedesktop.secrets'" in names, names                                          # the bus can start it
+    assert r.returncode == 0 and "this session bus can start another program that provides saved passwords" in r.stderr, (r.stdout, r.stderr)
+    out = r.stdout.splitlines()
+    assert len(out) == 3 and "org.freedesktop.DBus.Error.ServiceUnknown" in out[0] and out[1].startswith("Error"), out   # nothing of it,
+    assert out[2].startswith("Error") and "uint32" not in out[2], out                                                  # nor the name,
+    assert started == "(false,)", started                                                                              # nor started it
 
 
 def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):

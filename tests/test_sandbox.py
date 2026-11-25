@@ -1,15 +1,21 @@
 """App sandboxing (R17): grant-set resolution, overrides, the launcher, and the review lines."""
 
+import fnmatch
+import itertools
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
 from appkata_core import sandbox as sb
 from appkata_core import trustfile
+import written
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
 
@@ -19,7 +25,7 @@ pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="th
 def test_templates_resolve_to_normalized_grant_sets():
     for name in sb.TEMPLATE_ORDER:
         gs = sb.resolve_template(name)
-        assert set(gs) == {"level", "folders", "network", "ports", "sound", "devices", "caps", "exec_deny", "write_app"}
+        assert set(gs) == {"level", "folders", "network", "ports", "sound", "devices", "caps", "mpris_name", "exec_deny", "write_app"}
         assert gs["level"] in ("standard", "strict")
 
 
@@ -140,7 +146,7 @@ def test_standard_launcher_has_proxy_and_private_home():
     text = sb.build_launcher("signal", "Signal", "/apps/signal/7", "AppRun", gs)
     assert "xdg-dbus-proxy" in text                      # filtered session bus (R17.5)
     assert "--own=io.appkata.signal" in text             # app identity on the bus
-    assert "--talk=org.kde.StatusNotifierWatcher" in text  # the tray capability
+    assert "--call=org.kde.StatusNotifierWatcher=org.kde.StatusNotifierWatcher.*@/StatusNotifierWatcher" in text  # the tray capability
     assert "--share-net" in text                         # messenger has network
     assert '--bind "$home" "$HOME"' in text              # private home over $HOME
     assert _valid_sh(text)
@@ -347,19 +353,1036 @@ def test_proxy_startup_is_set_u_safe_and_bails_if_proxy_dies():
     # readiness loop stops early if the proxy exits instead of blocking for the whole timeout.
     text = sb.build_launcher("signal", "Signal", "/apps/signal/7", "AppRun", sb.resolve_template("messenger"))
     assert '"$DBUS_SESSION_BUS_ADDRESS"' not in text        # not referenced unguarded under set -u
-    assert 'upstream="${DBUS_SESSION_BUS_ADDRESS:-}"' in text
+    assert 'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"' in text
     assert 'kill -0 "$proxy"' in text
     assert _valid_sh(text)
-    # the exact expansion tolerates an unset variable under `set -u`
-    r = subprocess.run(["sh", "-c", 'set -eu; unset DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true; '
-                        'x="${DBUS_SESSION_BUS_ADDRESS:-}"; echo "ok:$x"'], capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout.strip() == "ok:"
+    # the exact expansion tolerates an unset variable under `set -u`, and an empty one is no address either
+    for unset in ("unset DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true", "DBUS_SESSION_BUS_ADDRESS="):
+        r = subprocess.run(["sh", "-c", f'set -eu; rt=/run/user/7; {unset}; x="${{DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}}"; echo "ok:$x"'],
+                           capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout.strip() == "ok:unix:path=/run/user/7/bus"
+
+
+# bwrap as a recorder: each call's words, a JSON line. For the proxy's own bwrap it leaves the
+# socket the proxy would, so the launcher goes on to the app's. With it a generated launcher runs
+# wherever `sh` does, and what it decides at run time -- from the session it finds itself in -- is
+# read from the words it gives bwrap.
+_RECORDER = """import json, socket, sys
+argv = sys.argv[2:]
+with open(sys.argv[1], "a") as f:
+    f.write(json.dumps(argv) + "\\n")
+if "xdg-dbus-proxy" in argv:
+    socket.socket(socket.AF_UNIX).bind(argv[argv.index("xdg-dbus-proxy") + 2])
+"""
+
+
+def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None):
+    """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
+    None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
+    None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
+    where no proxy was started), the app's bwrap's (None where `app` is False and it didn't run),
+    the run, and the runtime folder. The xdg-dbus-proxy its PATH finds is a stand-in that is
+    really at `proxy_at` (None: no stand-in), as `readlink -f` tells the launcher (no machine's /usr
+    is a test's). The
+    rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them.
+    `forward`: the file-argument helper the launcher calls, and `args` its arguments. `before`, where
+    given, is called once the launcher is written and before it runs."""
+    home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
+    for d in (home, rt, fake):
+        d.mkdir()
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
+    monkeypatch.setenv("HOME", str(home))
+    (fake / "record.py").write_text(_RECORDER)
+    (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
+    (fake / "bwrap").chmod(0o755)
+    if proxy_at:
+        (fake / "xdg-dbus-proxy").write_text("#!/bin/sh\nexit 1\n")
+        (fake / "readlink").write_text(f'#!/bin/sh\n[ "$*" = {shlex.quote("-f " + str(fake / "xdg-dbus-proxy"))} ] && exec echo {shlex.quote(proxy_at)}\n'
+                                       f'exec {shlex.quote(shutil.which("readlink"))} "$@"\n')
+        for tool in ("xdg-dbus-proxy", "readlink"):
+            (fake / tool).chmod(0o755)
+    for tool, script in (tools or {}).items():
+        (fake / tool).write_text(script)
+        (fake / tool).chmod(0o755)
+    path = os.environ["PATH"]
+    if hide:
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        for d in path.split(os.pathsep):
+            for f in sorted(os.listdir(d)) if os.path.isdir(d) else ():
+                if f not in hide and not os.path.lexists(bare / f):
+                    (bare / f).symlink_to(os.path.join(d, f))
+        path = str(bare)
+    # A launcher takes its host commands from the PATH it is written with (sandbox.host_path, R17.4),
+    # never from the one it is started with, so the stand-ins are given there, and in both
+    lp = tmp_path / "launcher"
+    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
+                                    seccomp=str(fake / "record.py"), forward=forward,    # any file there is: nothing here reads it as a filter
+                                    path=f"{fake}:{path}"))
+    if before:
+        before()
+    env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{path}"}
+    if address is not None:
+        env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
+    r = subprocess.run(["sh", str(lp), *args], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    run = next((c for c in calls if "/.flatpak-info" in c), None)
+    assert (run is not None) is app, (r.returncode, r.stdout, r.stderr)
+    return next((c for c in calls if "xdg-dbus-proxy" in c), None), run, r, rt
+
+
+def _binds(words: list) -> dict:
+    """bwrap's binds among `words`: destination → (the option, the source)."""
+    opts = ("--bind", "--bind-try", "--ro-bind", "--ro-bind-try", "--dev-bind", "--dev-bind-try")
+    return {words[i + 2]: (w, words[i + 1]) for i, w in enumerate(words[:-2]) if w in opts}
+
+
+# A session's bus address → the socket file the proxy has to be shown to reach it (None: an abstract
+# socket, which has no file). The second and third are what `dbus-run-session -- sh -c 'echo
+# $DBUS_SESSION_BUS_ADDRESS'` prints: with dbus 1.14 and later (Mint 22.3: 1.14.10), and with 1.12.
+BUS_ADDRESSES = {
+    "unix:path={rt}/bus": "{rt}/bus",
+    "unix:path=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
+    # `guid=` first: no program writes it, and libdbus and GIO read it all the same; the launcher
+    # took `path=` and `abstract=` as an entry's first key alone (PR #694's review, P4-B1a)
+    "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,path=/tmp/dbus-MZ8lHbtZ8K": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,abstract=/tmp/dbus-MZ8lHbtZ8K": None,
+    # a key's name escaped: no program writes it, and GIO, the proxy's, reads it unescaped, as it
+    # reads a value (PR #694's review, P6-1: the launcher matched the key as written, and started none)
+    "unix:pa%74h=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:abstr%61ct=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
+}
+
+
+@pytest.mark.parametrize("address", [None, "", *BUS_ADDRESSES])
+def test_the_proxy_is_shown_the_session_bus_wherever_its_socket_is(tmp_path, monkeypatch, address):
+    # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached a
+    # session bus only there (or on an abstract socket). dbus-run-session and dbus-launch listen at
+    # unix:path=/tmp/dbus-… since dbus 1.14: in such a session the proxy made its socket, the
+    # launcher's wait passed, and every connection the app made failed, with nothing said -- no
+    # portals, no notifications, no "open on the host". And with no address set the proxy was given
+    # "" rather than the runtime folder's bus. How it slipped past: every test's bus, in every tier,
+    # was at $XDG_RUNTIME_DIR/bus, and tier 1 read the launcher's text, never what it does with the
+    # session it starts in. This runs the launcher against each kind of address a session has.
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address)
+    want = (address or "unix:path={rt}/bus").format(rt=rt)
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    at = proxy.index("xdg-dbus-proxy")
+    assert proxy[at + 1] == want and proxy[at + 2].startswith(f"{rt}/appkata/bus-") and proxy[at + 3] == "--filter", proxy[at:at + 4]
+    file = BUS_ADDRESSES.get(address or "unix:path={rt}/bus")
+    shown = {dest: how for dest, how in _binds(proxy[:at]).items() if how[0] == "--ro-bind-try"}
+    assert shown == ({file.format(rt=rt): ("--ro-bind-try", file.format(rt=rt))} if file else {}), shown
+    # ...and the app's bus is that proxy's socket, whatever the session's own address was
+    assert _binds(app)[f"{rt}/bus"] == ("--bind", proxy[at + 2])
+    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus" and "APPKATA_NO_BUS" not in app
+
+
+@pytest.mark.parametrize("address", [None, *BUS_ADDRESSES])
+def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alone(tmp_path, monkeypatch, address):
+    # CR1.5-24: the proxy is the one program that parses bytes a hostile app chooses -- every D-Bus
+    # message it sends -- yet its bwrap had --unshare-pid alone: the whole runtime folder read-write
+    # (the ssh-agent and gpg-agent sockets, the document portal's mount, every other app's
+    # sockets), the host's network and IPC, and no seccomp filter, so a fault in xdg-dbus-proxy
+    # would hand the app what its own sandbox withholds. How it slipped past: the proxy's sandbox
+    # was a documented shape (A1.2.3.12) that no test read; the tests of what a sandbox holds
+    # (the inventory) looked at the app's bwrap alone. This holds every word of the proxy's, for
+    # each kind of session bus: the binds are exactly these, and its namespaces are its own -- the
+    # network too, but where the bus is an abstract socket, which has no file to bind. No word
+    # shares anything back: `--share-net` in a launcher is the sign of the network grant, and the
+    # proxy's bwrap never says it.
+    proxy, _, r, rt = _launched(tmp_path, monkeypatch, address)
+    assert r.returncode == 0 and r.stderr == "", (r.stdout, r.stderr)
+    words = proxy[:proxy.index("--")]
+    file = BUS_ADDRESSES.get(address or "unix:path={rt}/bus")
+    want = {"/usr": ("--ro-bind", "/usr"), "/etc": ("--ro-bind", "/etc"), f"{rt}/appkata": ("--bind", f"{rt}/appkata")}
+    if file:
+        want[file.format(rt=rt)] = ("--ro-bind-try", file.format(rt=rt))
+    assert _binds(words) == want
+    # everything else that puts something in its root: the three links into /usr, /proc and /dev
+    mounts = [w for w in words if w in ("--symlink", "--proc", "--dev", "--tmpfs", "--dir", "--file", "--bind-data", "--ro-bind-data", "--overlay", "--mqueue")]
+    assert mounts == ["--symlink"] * 3 + ["--proc", "--dev"], words
+    unshared = {w for w in words if w.startswith("--unshare")}
+    assert unshared == {"--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"} | ({"--unshare-net"} if file else set()), words
+    assert "--die-with-parent" in words and not [w for w in words if w.startswith("--share")], words
+    assert words[words.index("--seccomp") + 1] == "3" and "--new-session" not in words
+    # nor the launcher's environment, which a terminal can fill with tokens: the app's own bwrap
+    # clears it, the proxy's kept it whole (PR #694's review, P1-B2). Its address and socket are
+    # arguments; PATH is for bwrap to find it, the folder of the one the launcher's PATH finds.
+    assert "--clearenv" in words and [words[i + 1:i + 3] for i, w in enumerate(words) if w == "--setenv"] == [["PATH", "/usr/bin"]], words
+    assert not [w for w in words if w in ("--unsetenv", "--chdir")] and words.index("--clearenv") < words.index("--setenv"), words
+
+
+# PR #694's review, P2-B4: the proxy's bwrap had PATH=/usr/bin:/bin, while AppKata's own check
+# (have_bus_filter) finds xdg-dbus-proxy on the launcher's PATH. One in /usr/local/bin -- a build of
+# your own, the way to the fixed 0.1.8 where a distribution ships 0.1.7 (R17.17) -- failed every
+# Standard app with "did not start", or, beside the distribution's, the older one ran without a word.
+# How it slipped past: every test's proxy was /usr/bin's, or no program at all. The launcher now runs
+# the one its PATH finds, from that folder, and refuses one its sandbox (/usr alone) can't run; where
+# its PATH has none, /usr/bin:/bin as before (the inventory's and the persona tests' launchers in
+# tier 1, where no machine's proxy is, among them).
+@pytest.mark.parametrize("found,runs", [("/usr/local/bin/xdg-dbus-proxy", True), ("/usr/bin/xdg-dbus-proxy", True), (None, True),
+                                        ("/usr/lib/xdp/0.1.8/xdg-dbus-proxy", True),
+                                        ("/opt/xdp/bin/xdg-dbus-proxy", False), ("/usr/libexec/xdp/dbus-proxy-0.1.8", False),
+                                        ("/usr/xdg-dbus-proxy", False), ("/usrlocal/bin/xdg-dbus-proxy", False),
+                                        ("/home/kata/.local/bin/xdg-dbus-proxy", False), ("/usr/bin/xdg-dbus-proxy.real", False)])
+def test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can(tmp_path, monkeypatch, found, runs):
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, proxy_at=found, app=runs, hide=() if found else ("xdg-dbus-proxy",))
+    # the launcher keeps the rule AppKata's own check keeps (bus_filter: PR #694's review, P3-B1)
+    assert found is None or fnmatch.fnmatchcase(found, sb.BUS_FILTER_AT) is runs
+    if runs:
+        words = proxy[:proxy.index("--")]
+        assert r.returncode == 0 and r.stderr == "", (words, r.stderr)
+        assert words[words.index("PATH") + 1] == (os.path.dirname(found) if found else "/usr/bin:/bin"), words
+        assert proxy[proxy.index("--") + 1] == "xdg-dbus-proxy", proxy
+    else:
+        assert proxy is None and r.returncode == 1, (r.returncode, r.stderr)
+        assert r.stderr == (f"AppKata: the session-bus filter this PATH finds, {found}, is not an xdg-dbus-proxy under /usr, the one tree "
+                            "its own sandbox holds, so Demo cannot run sandboxed here.\n"), r.stderr
+
+
+# PR #694's review, P3-B1: AppKata's own check was `shutil.which` alone, so a PATH that finds an
+# xdg-dbus-proxy outside /usr first (Linuxbrew, nix-env, a build in ~/.local/bin) read as "the bus
+# filter is here": no hint in Settings or App Detail, and a launcher with a proxy, which the launcher
+# refuses (P2-B4), so every Standard app exited 1 -- where with no proxy at all it runs with no bus
+# and says why. How it slipped past: P2-B4's test held the launcher to its rule, and nothing held
+# AppKata's own check to the same one. Both keep BUS_FILTER_AT now (bus_filter), so such a proxy
+# counts as none, and the hint names the file in place of "isn't installed".
+def test_a_bus_filter_the_launcher_would_refuse_counts_as_none_and_the_hint_names_it(monkeypatch, tmp_path):
+    _apparmor_dir(tmp_path, monkeypatch, {})
+    monkeypatch.setattr(sb, "OS", "linux")
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
+    monkeypatch.setattr("appkata_core.platform.linux_family", lambda: "debian")
+    own = tmp_path / "bin"
+    own.mkdir()
+    for tool in ("bwrap", "xdg-dbus-proxy"):
+        (own / tool).write_text("#!/bin/sh\nexit 1\n")
+        (own / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{own}:{os.environ['PATH']}")
+    found = str(own / "xdg-dbus-proxy")
+    st = sb.support_status()
+    assert st["status"] == "ok" and st["busFilter"] is False and st["missing"] == ["xdg-dbus-proxy"], st
+    assert sb.bus_filter() == (found, False) and not sb.have_bus_filter()
+    assert st["toolsHint"] == (f"The xdg-dbus-proxy this PATH finds, {found}, is outside /usr, where the bus filter's own sandbox can't run "
+                               "it, so sandboxed apps get no desktop services: they can't notify, open links or files on this computer, or "
+                               "show a tray icon. Install xdg-dbus-proxy (sudo apt install xdg-dbus-proxy), have the PATH find /usr/bin's "
+                               "first, and restart AppKata."), st["toolsHint"]
+    assert st["appToolsHint"].startswith(f"Runs without desktop services: the xdg-dbus-proxy this PATH finds, {found}, is outside /usr, "
+                                         "where the bus filter's own sandbox can't run it, so it can't notify"), st["appToolsHint"]
+    # ...and the launcher AppKata writes starts no proxy: the app runs with no session bus, as with none
+    text = sb.launcher_text("chat", "Chat", "/apps", "/apps/chat/1", "bin/chat", sb.resolve_template("online-app"))
+    assert 'xdg-dbus-proxy "$upstream"' not in text and "--setenv APPKATA_NO_BUS no-filter" in text
+    # beside a missing bubblewrap, named with it
+    assert sb.tools_hints(["bubblewrap", "xdg-dbus-proxy"], found)["system"] == (
+        f"bubblewrap isn't installed, nor xdg-dbus-proxy under /usr (this PATH finds {found}), so apps run without a sandbox. "
+        "Install them (sudo apt install bubblewrap xdg-dbus-proxy) and restart AppKata.")
+    # a PATH that finds none, or the one the launcher runs, is as before; #711 asks the launcher's own PATH
+    assert sb.bus_filter(str(tmp_path / "none")) == ("", False) and sb.bus_filter(f"{tmp_path / 'none'}:{own}") == (found, False)
+
+
+def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
+    # ...and the terminal-injection filter, as the app's bwrap does: on a descriptor opened for
+    # that command alone, so the launcher's shell holds none (the app's is opened later). Where
+    # the machine's ABI has no filter, a session of its own, which the proxy can afford.
+    gs = sb.resolve_template("standard")
+    with_filter = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs, seccomp="/data/seccomp-tty.bpf")
+    command = with_filter[with_filter.index("start_proxy() {"):with_filter.index("proxy=$!")]
+    assert "--die-with-parent --seccomp 3 -- " in command and command.rstrip().endswith("3< /data/seccomp-tty.bpf &")
+    assert with_filter.index("3< /data/seccomp-tty.bpf &") < with_filter.index("exec 3< /data/seccomp-tty.bpf")
+    without = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    command = without[without.index("start_proxy() {"):without.index("proxy=$!")]
+    assert "--die-with-parent --new-session -- " in command and "--seccomp" not in command and "3<" not in command
+    assert _valid_sh(with_filter) and _valid_sh(without)
+
+
+@pytest.mark.parametrize("address", ["unix:path=/tmp/a%20b/bus", "unix:path={rt}/bus;unix:path=/tmp/dbus-MZ8lHbtZ8K", "unix:path=relative/bus",
+                                     "unix:path=/tmp/dbus-one,path={rt}/bus",           # GDBus, the proxy's, takes the last (P3-B4)
+                                     # in any order of the keys; and a path with an abstract name, which no client takes (P4-B1a)
+                                     "unix:guid=0123,path=/tmp/a%20b/bus", "unix:guid=0123,path=/tmp/dbus-one,path={rt}/bus",
+                                     "unix:path={rt}/bus,abstract=/tmp/dbus-two", "unix:abstract=/tmp/dbus-two,path={rt}/bus",
+                                     # a key the proxy's GDBus refuses the entry for (P5-1), and a comma inside the path,
+                                     # where the rest is such a key (it was taken as ending the path, and GDBus refused it)
+                                     "unix:path={rt}/bus,", "unix:guid,path={rt}/bus", "unix:path={rt}/bus,,guid=0123",
+                                     "unix:=0123,path={rt}/bus", "unix:abstract=/tmp/dbus-two,", "unix:path=/srv/session,one/bus",
+                                     # ...and a value with an escape it can't read, in any key
+                                     "unix:path={rt}/bus,guid=%zz", "unix:guid=%00,path={rt}/bus", "unix:abstract=/tmp/dbus-two%",
+                                     # ...or a key's name with one (P6-2)
+                                     "unix:path={rt}/bus,g%zz=1", "unix:%=1,path={rt}/bus", "unix:abstract=/tmp/dbus-two,a%00=1",
+                                     "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
+                                     "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
+def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
+    # CR1.5-18's other half: an address whose bus the proxy can't be shown -- one the launcher
+    # doesn't read a socket from -- got a proxy all the same, which failed every connection in
+    # silence. Now the launcher says so, starts no proxy, and the app runs as it does with no bus.
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address)
+    address = address.format(rt=rt)
+    assert proxy is None and r.returncode == 0, (r.stdout, r.stderr)
+    assert r.stderr == (f"AppKata: the session bus here ({address}) is not one the bus filter can reach, "
+                        "so Demo runs without a session bus and gets no desktop services.\n")
+    assert f"{rt}/bus" not in _binds(app) and not [w for w in app if "/appkata/bus-" in w], app
+    assert app[app.index("DBUS_SESSION_BUS_ADDRESS") + 1] == f"unix:path={rt}/bus"      # set all the same, and leads nowhere (R3-33)
+    assert os.listdir(rt / "appkata") == []
+    assert app[app.index("APPKATA_NO_BUS") + 1] == "address"            # and AppKata's xdg-open is told why (P1-B3, below)
+
+
+# PR #694's review, P1-B3: AppKata's xdg-open took "no bus" for Strict, and told a Standard app with
+# none -- no xdg-dbus-proxy here, or a session bus the filter can't reach -- that it runs Strict,
+# and to change that in App Detail, where nothing would. How it slipped past: the shim was written
+# when Strict was the one way to have no bus, and the ways added since were tested on the launcher's
+# own line, never on what the app's xdg-open then said. The launcher now tells it, and it says that.
+@pytest.mark.parametrize("why,says", [(None, "this app runs Strict, with no desktop services"),
+                                      ("no-filter", "the bus filter (xdg-dbus-proxy) isn't installed, so this app has no desktop services"),
+                                      ("address", "this session's bus is at an address AppKata's bus filter can't reach")])
+def test_xdg_open_says_why_the_app_has_no_bus(tmp_path, why, says):
+    shim = tmp_path / "xdg-open"
+    shim.write_text(sb.XDG_OPEN_SHIM)
+    told = {"APPKATA_NO_BUS": why} if why else {}                          # a Strict app is told nothing: no word, no bus
+    r = subprocess.run(["sh", str(shim), "https://example.com/x"], env={"PATH": os.environ["PATH"], "XDG_RUNTIME_DIR": str(tmp_path), **told},
+                       capture_output=True, text=True)
+    assert r.returncode == 3 and r.stderr.startswith("AppKata: " + says) and r.stderr.count("\n") == 1, r.stderr
+
+
+def test_each_launcher_tells_its_xdg_open_why_the_app_has_no_bus(tmp_path, monkeypatch):
+    told = lambda gs, **kw: re.findall(r"--setenv APPKATA_NO_BUS (\S+)", sb.build_launcher("v", "V", "/apps/v/1", "bin/v", gs, **kw))  # noqa: E731
+    assert told(sb.resolve_template("strict")) == []                    # no word and no bus is Strict
+    assert told(sb.resolve_template("standard"), bus_filter=False) == ["no-filter"]
+    assert told(sb.resolve_template("standard")) == ["address"]          # decided at run time, where no proxy starts
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None)            # and where one does, nothing
+    assert proxy is not None and "APPKATA_NO_BUS" not in app, app
+
+
+# CR1.5-46 (#707; the owner's decision of 2026-11-24): Password service owned org.freedesktop.secrets
+# whoever held it, and to the filter an own is a talk, so beside gnome-keyring the app reached the
+# keyring's whole connection, every unlocked password included. The launcher now asks the session's
+# bus at the launch, and where another program holds the name starts the app without the own and
+# says why; the sole provider keeps it. PR #694's review, P2-3: a name the bus can start a program
+# for (gnome-keyring installed, not running) was "free", and the app, which may call the name it may
+# own, could start the keyring itself and reach it: such a name counts as held. How it slipped past:
+# the question asked was the one the decision named, "does another program hold it", and every
+# test's bus started no keyring on demand. Here the asking is a stand-in gdbus or busctl, answering
+# as each answers (gdbus, else busctl).
+_ANSWERS = {"gdbus": (lambda held: f"({str(held).lower()},)",
+                      lambda more: "(['org.freedesktop.DBus', 'org.gnome.keyring'" + "".join(f", '{n}'" for n in more) + "],)"),
+            "busctl": (lambda held: f"b {str(held).lower()}",
+                       lambda more: f'as {2 + len(more)} "org.freedesktop.DBus" "org.gnome.keyring"' + "".join(f' "{n}"' for n in more))}
+
+
+@pytest.mark.parametrize("tool", ["gdbus", "busctl"])
+@pytest.mark.parametrize("held,startable", [(True, False), (False, True), (False, False)],
+                         ids=["another-provider", "one-the-bus-can-start", "the-only-provider"])
+def test_password_service_owns_the_name_only_where_no_other_program_holds_it(tmp_path, monkeypatch, tool, held, startable):
+    asked = tmp_path / "asked"
+    owner, names = _ANSWERS[tool]
+    answer = (f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\ncase "$*" in *NameHasOwner*) echo {shlex.quote(owner(held))} ;; '
+              f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if startable else []))} ;; esac\n')
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={tool: answer}, hide=("gdbus",) if tool == "busctl" else ())
+    assert r.returncode == 0 and proxy is not None, (r.stdout, r.stderr)
+    assert ("--own=org.freedesktop.secrets" in proxy) is not (held or startable), proxy
+    if held:
+        assert r.stderr == ("AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so Demo "
+                            "runs without Password service: offering that name through the bus filter would reach that program and the "
+                            "passwords it holds.\n"), r.stderr
+    elif startable:
+        assert r.stderr == ("AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so "
+                            "Demo runs without Password service: offering that name through the bus filter would let the app start that "
+                            "program and reach the passwords it holds.\n"), r.stderr
+    else:
+        assert r.stderr == "", r.stderr
+    bus = f"unix:path={rt}/bus"
+    want = {"gdbus": [f"call --address {bus} --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method "
+                      f"org.freedesktop.DBus.{m}" for m in ("NameHasOwner org.freedesktop.secrets", "ListActivatableNames")],
+            "busctl": [f"--address={bus} --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus {m}"
+                       for m in ("NameHasOwner s org.freedesktop.secrets", "ListActivatableNames")]}[tool]
+    assert asked.read_text().splitlines() == (want[:1] if held else want)       # a name held needs no list
+    # and an app without the capability asks nothing
+    assert "NameHasOwner" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("standard"))
+
+
+# PR #694's review, P2-2 and P2-B3: the ask failed open -- `|| true` inside it, so a failed or timed-out
+# ask read as "no other provider" and kept the own -- and the tools' own --timeout bounds the call,
+# not the connecting, so a bus that took the connection and never spoke held the launch for good.
+# How it slipped past: the stand-in answered every time, and nothing asked a bus that didn't. Now the
+# name is free only on two answers read as the tool writes them, `timeout 5` bounds each ask, and
+# anything else counts as held, with a line of its own.
+_UNASKED = [
+    ("the ask fails", "exit 1", ()),
+    ("an answer it can't read", "echo '(nonsense,)'", ()),
+    ("the list fails", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) exit 1 ;; esac', ()),
+    ("a list it can't read", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) echo "(@as [],)" ;; esac', ()),
+    ("a bus that never answers", "exec sleep 60", ()),
+    ("no tool to ask with", None, ("gdbus", "busctl")),
+    ("no timeout to bound it", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) echo "([\'org.freedesktop.DBus\'],)" ;; esac', ("timeout",)),
+]
+
+
+@pytest.mark.parametrize("case,gdbus,hide", _UNASKED, ids=[c[0] for c in _UNASKED])
+def test_password_service_counts_the_name_held_where_the_bus_cannot_be_asked(tmp_path, monkeypatch, case, gdbus, hide):
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    began = time.monotonic()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": f"#!/bin/sh\n{gdbus}\n"} if gdbus else {}, hide=hide)
+    assert time.monotonic() - began < 20, case                                      # bounded: `timeout 5`, not the bus
+    assert r.returncode == 0 and proxy is not None and "--own=org.freedesktop.secrets" not in proxy, (case, proxy, r.stderr)
+    assert r.stderr == ("AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), "
+                        "so Demo runs without Password service: offering that name through the bus filter could reach such a program and "
+                        "the passwords it holds.\n"), (case, r.stderr)
+
+
+# PR #694's review, P3-B3: the never-answering stand-in above sleeps on every ask, so the first
+# (NameHasOwner) times out and the second (ListActivatableNames) is never made: nothing held that
+# second ask's `timeout 5`, and taking it off both tools' lines passed every test, while a bus that
+# answers the first ask and then goes silent would hold the launch for good without it (gdbus's own
+# --timeout doesn't bound the connecting: P2-B3). How it slipped past: one stand-in stood for every
+# silent bus. This one answers "no owner" as each tool does, and never answers the list.
+@pytest.mark.parametrize("tool", ["gdbus", "busctl"])
+def test_password_service_counts_the_name_held_where_the_bus_answers_the_first_ask_alone(tmp_path, monkeypatch, tool):
+    owner, _ = _ANSWERS[tool]
+    answer = f'#!/bin/sh\ncase "$*" in *NameHasOwner*) echo {shlex.quote(owner(False))} ;; *) exec sleep 60 ;; esac\n'
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    began = time.monotonic()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={tool: answer}, hide=("gdbus",) if tool == "busctl" else ())
+    assert time.monotonic() - began < 20, tool                                       # bounded: `timeout 5`, not the bus
+    assert r.returncode == 0 and proxy is not None and "--own=org.freedesktop.secrets" not in proxy, (proxy, r.stderr)
+    assert r.stderr == ("AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), "
+                        "so Demo runs without Password service: offering that name through the bus filter could reach such a program and "
+                        "the passwords it holds.\n"), r.stderr
+
+
+# PR #694's review, P3-1 (the owner's decision of 2026-11-25): the launcher withheld Password service
+# beside another provider, a running keyring or one the bus could start, which is every desktop that
+# installs gnome-keyring (Mint, LMDE, Ubuntu), and said so only in the app's log: the Sandbox dialog
+# offered the switch with a hint that said what it gives, and App Detail showed the chip. Now both
+# say it, from AppKata's own ask of the session bus, in the launcher's words (_PROVIDE_ASK). How it
+# slipped past: the decision was the launcher's, and its tests read the launcher's stderr; nothing
+# asked what the screens that offer the switch say of it. This is the class's harness: every answer a
+# bus or a host gives the launcher's tests above, for both tools, and two addresses, goes to the
+# launcher and to AppKata's ask under the same PATH and session, and the two must decide alike and
+# ask alike. The screens' text is test_dialog_contract's and test_sandbox_ui_surfaces' to show.
+def _bus_answers(tool, held, startable):
+    owner, names = _ANSWERS[tool]
+    return (f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(held))} ;; '
+            f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if startable else []))} ;; esac')
+
+
+_SESSION = "unix:path={rt}/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf"
+_PROVIDE_ANSWERS = [(f"{tool}, {what}, {where}", tool, _bus_answers(tool, held, start), ("gdbus",) if tool == "busctl" else (), address)
+                    for tool in ("gdbus", "busctl")
+                    for what, held, start in (("owned", True, False), ("activatable", False, True), ("free", False, False))
+                    for where, address in (("no address", None), ("an address", _SESSION))]
+_PROVIDE_ANSWERS += [(case, "gdbus", body, hide, None) for case, body, hide in _UNASKED]
+
+
+@pytest.mark.parametrize("case,tool,body,hide,address", _PROVIDE_ANSWERS, ids=[c[0] for c in _PROVIDE_ANSWERS])
+def test_appkata_asks_the_session_bus_what_the_launcher_asks_and_decides_alike(tmp_path, monkeypatch, case, tool, body, hide, address):
+    asked = tmp_path / "asked"
+    tools = {tool: f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n{body}\n'} if body else {}
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, gs=gs, tools=tools, hide=hide)
+    assert r.returncode == 0 and proxy is not None, (r.stdout, r.stderr)
+    lines = {"held": "AppKata: another program already provides saved passwords", "start": "AppKata: this session bus can start another program",
+             "ask": "AppKata: could not ask this session bus"}
+    launcher = next((why for why, line in lines.items() if r.stderr.startswith(line)), "")
+    assert (r.stderr == "") is (launcher == "") and ("--own=org.freedesktop.secrets" in proxy) is (launcher == ""), (case, r.stderr, proxy)
+    launcher_asked = asked.read_text() if asked.exists() else ""
+    asked.unlink(missing_ok=True)
+    # AppKata in the same session: the same runtime folder and address as the launcher's run, and the
+    # launcher's PATH (sandbox.host_path), which its ask runs with whatever AppKata's own is
+    path = str(tmp_path / "bare") if hide else os.environ["PATH"]
+    monkeypatch.setattr(sb, "HOST_PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
+    if address is None:
+        monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    else:
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address.format(rt=rt))
+    began = time.monotonic()
+    why = sb.password_service_withheld()
+    assert time.monotonic() - began < 15, case        # bounded as the launch is (on a worker: test_the_password_service_ask_never_holds_the_window)
+    assert why == launcher, (case, why, launcher)
+    assert (asked.read_text() if asked.exists() else "") == launcher_asked, case     # the same names, of the same bus
+    assert bool(launcher_asked) is (bool(body) and "timeout" not in hide), case      # a stand-in that is there is asked
+    assert (sb.PROVIDE_NOTES.get(why, "") != "") is (why != ""), why                  # and the screens have words for each reason
+
+
+# Where #689 (U03, CR1.5-31) met this unit: a launcher takes every host command from its own PATH
+# (sandbox.host_path), whatever PATH it is started with, while AppKata's ask of the bus still took
+# gdbus and timeout from AppKata's own, where a login's ~/bin and ~/.local/bin come first: the
+# Sandbox dialog and App Detail could say one thing and the launch decide another. And the ask's
+# tools weren't in sandbox.HOST_COMMANDS, the list a launcher's commands come from and no command
+# link may be named after, so a machine whose command folders hold those alone answered "could not
+# ask" at every launch. How it slipped past: each side's tests held its own rule, with the other's
+# code not there yet. The class: AppKata's PATH is never the launcher's, and the launcher's commands
+# are the listed ones.
+def test_appkata_asks_with_the_launchers_path_not_its_own(tmp_path, monkeypatch):
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    path = os.environ["PATH"]
+    free, held = (f'#!/bin/sh\n{_bus_answers("gdbus", h, False)}\n' for h in (False, True))
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": free})
+    assert r.returncode == 0 and r.stderr == "" and "--own=org.freedesktop.secrets" in proxy, (r.stderr, proxy)
+    own = tmp_path / "own-bin"                              # AppKata's own PATH: a gdbus that says "held" first
+    own.mkdir()
+    (own / "gdbus").write_text(held)
+    (own / "gdbus").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{own}{os.pathsep}{path}")
+    monkeypatch.setattr(sb, "HOST_PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")   # the launcher's, as it ran
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    assert sb.password_service_withheld() == ""             # what the launch decided
+
+
+def test_a_launcher_with_password_service_runs_no_host_command_but_the_listed_ones(tmp_path, monkeypatch):
+    # As tests/test_sandbox_adversarial.py's test of the same name holds the launchers without a bus:
+    # a machine whose command folders hold sandbox.HOST_COMMANDS and nothing else (the bus tools as
+    # stand-ins answering "no other provider", so no real session bus is asked) still gets the ask
+    # answered, the name owned and the app started. A tool the ask uses and the list lacks fails here
+    # with the "could not ask" line.
+    only = tmp_path / "only"
+    only.mkdir()
+    for n in sb.HOST_COMMANDS:
+        if n in _ANSWERS:
+            (only / n).write_text(f'#!/bin/sh\n{_bus_answers(n, False, False)}\n')
+            (only / n).chmod(0o755)
+        elif real := shutil.which(n, path=sb.HOST_PATH):
+            os.symlink(real, only / n)
+    os.symlink(shutil.which("sh"), only / "sh")                # what runs the launcher, not a command it runs
+    monkeypatch.setenv("PATH", str(only))
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs)
+    assert r.returncode == 0 and r.stderr == "" and "--own=org.freedesktop.secrets" in proxy, (r.stderr, proxy)
+
+
+# The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
+# refusing the runtime folder alone, and dbus-run-session and dbus-launch put the bus under /tmp
+# (BUS_ADDRESSES): a tool run in /tmp, or a grant of /tmp, showed the app the bus's socket file, and
+# the app could connect to it past the filter. How it slipped past: every test of the rules had the
+# bus where they assumed it, in the runtime folder; the tests that moved it (CR1.5-18) looked at the
+# proxy, which was the change, and not at the rules that had assumed the old place.
+
+def _a_bus_socket(folder):
+    import socket
+    folder.mkdir(parents=True, exist_ok=True)
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(str(folder / "dbus-MZ8lHbtZ8K"))
+    return s, folder / "dbus-MZ8lHbtZ8K"
+
+
+def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies(tmp_path, monkeypatch):
+    folder = tmp_path / "tmp"
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={folder}/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf")
+    assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket"
+    assert sb.protected_folder(str(folder / "dbus-MZ8lHbtZ8K")) == "the session bus's socket"
+    assert sb.protected_folder(str(folder / "project")) == ""                      # the file is protected, not its neighbours
+    assert sb.strip_protected(sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}}))[1] == \
+        [(str(folder), "a folder above the session bus's socket")]
+    # each socket file a list names, unescaped, as libdbus reads it; an abstract socket has none
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:abstract=/tmp/dbus-one;unix:path={tmp_path}/a%20b/bus")
+    assert sb.bus_files()[0] == [f"{tmp_path}/a b/bus"]
+    assert sb.protected_folder(str(tmp_path / "a b")) == "a folder above the session bus's socket"
+    # an escaped byte as the byte it is, as the launcher's shell reads it, UTF-8 or not (PR #694's review, P2-1)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/a%ffb/bus")
+    odd = os.fsdecode(os.fsencode(str(tmp_path)) + b"/a\xffb")
+    assert sb.bus_files()[0] == [odd + "/bus"] and sb.protected_folder(odd) == "a folder above the session bus's socket"
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=0123")
+    assert sb.bus_files()[0] == [] and sb.protected_folder(str(folder)) == ""
+
+
+# PR #694's review, P3-2 and P3-B5: the grant-time reader (bus_sockets(), now bus_files(): P4-B2)
+# looked for the leading `/` before it unescaped the path, so an address that escapes it (`%2F`:
+# legal, though dbus never writes it) named no file and a grant of the socket's folder passed; and
+# it kept an escaped NUL, so every folder check raised
+# ValueError (from os.path.realpath) in such a session, where the launcher refuses the address
+# cleanly. How it slipped past: P2-1 tested each form on the launcher's shell, which unescapes
+# first, and the grant-time reader on the forms dbus writes. Now the path is judged once unescaped,
+# an escaped NUL ends it (as libdbus and sd-bus read it; GIO refuses the address), and an address
+# that names a file AppKata can't read refuses every folder, as the launcher then shares no
+# working directory: the file could be in any.
+def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_where_it_cannot_be_read(tmp_path, monkeypatch):
+    folder, beside = tmp_path / "tmp", str(tmp_path / "project")
+    sock = str(folder / "dbus-MZ8lHbtZ8K")
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw", f"+{beside}": "rw"}})
+    # ...and a key's name unescaped, as GIO reads it, where libdbus and sd-bus take it as written
+    # (PR #694's review, P6-1: `pa%74h=` named no file, and GIO connects to it)
+    for address in ("unix:path=" + sock.replace("/", "%2F"), f"unix:path={sock}%00zz", f"unix:path={tmp_path}/first,path={sock}",
+                    f"unix:pa%74h={sock}", f"unix:path={tmp_path}/first,%70ath={sock}"):
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sock in sb.bus_files()[0] and sb.bus_files()[1], address
+        assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket" and sb.protected_folder(beside) == "", address
+        assert sb.strip_protected(gs)[1] == [(str(folder), "a folder above the session bus's socket")], address
+        assert f"# Refused folder grant {folder}: a folder above" in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    # a path that isn't absolute, a broken escape, a newline: the file could be anywhere
+    for address in ("unix:path=relative/bus", "unix:path=/tmp/dbus-%zz", "unix:path=/tmp/dbus-%2", "unix:path=/tmp/a%0Ab",
+                    "unix:path=%00/tmp/x", "unix:path=", f"unix:abstract=/tmp/x;unix:path={sock},path=bus"):
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sb.protected_folder(beside) == ("a folder the session bus's socket could be in (its address names a file AppKata "
+                                               "can't read)") and sb.protected_folder("$cwd") == "", address   # $cwd: the launcher's own rule
+        assert not sb.bus_files()[1] and sb.protected_folder("~") == "your whole home folder", address       # a reason of its own stays its own
+        assert sorted(p for p, _ in sb.strip_protected(gs)[1]) == sorted([str(folder), beside]), address
+    for address in ("unix:path", "unix:guid=0123", "tcp:host=localhost,port=4000", "unix:abstract=/tmp/x"):   # no file named: nothing to read
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sb.bus_files() == ([], True) and sb.protected_folder(beside) == "", address
+
+
+# PR #694's review, P2-1: the launcher's own rules (the working directory, the cover of a granted
+# folder) read the socket from a plain `unix:path=` address alone, while bus_files() reads every
+# form, so a session whose address was a list, put `guid=` first or escaped a byte -- or named a link
+# to the socket -- left the file in sight of a tool run beside it or a folder granted. How it slipped
+# past: P1-2's tests used the address dbus itself writes, and the forms the proxy can't take were
+# tested for the proxy alone. Each form is a way to name the socket `_a_bus_socket` makes in `tmp`.
+BUS_FORMS = {
+    "plain": "unix:path={tmp}/dbus-MZ8lHbtZ8K,guid=0123",
+    "guid first": "unix:guid=0123,path={tmp}/dbus-MZ8lHbtZ8K",
+    "a list": "unix:abstract=/tmp/dbus-none;unix:path={tmp}/dbus-MZ8lHbtZ8K",
+    "an escaped byte": "unix:path={up}/%74mp/dbus-%4dZ8lHbtZ8K",
+    "a link to it": "unix:path={up}/elsewhere/bus",
+    # PR #694's review, P3-B4: GIO takes the last of two `path=` keys, and libdbus and sd-bus end a
+    # path at an escaped NUL; the launcher read the first alone, and counted the NUL unreadable
+    "a second path=": "unix:path={up}/elsewhere/none,path={tmp}/dbus-MZ8lHbtZ8K",
+    "an escaped NUL": "unix:path={tmp}/dbus-MZ8lHbtZ8K%00zz",
+    # P6-1: GIO unescapes a key's name, so this is its `path=`; the launcher read the key as written
+    "an escaped key": "unix:pa%74h={tmp}/dbus-MZ8lHbtZ8K,guid=0123",
+}
+
+
+def _bus_form(form, path):
+    """The session address of `form` for the socket at `path` (and the link it names, made)."""
+    if form == "a link to it":
+        os.makedirs(path.parent.parent / "elsewhere", exist_ok=True)
+        (path.parent.parent / "elsewhere" / "bus").symlink_to(path)
+    return BUS_FORMS[form].format(tmp=path.parent, up=path.parent.parent)
+
+
+@pytest.mark.parametrize("form", BUS_FORMS)
+@pytest.mark.parametrize("where", ["the socket's folder", "a folder beside it"])
+def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, monkeypatch, where, form):
+    sock, path = _a_bus_socket(tmp_path / "tmp")
+    run_in = os.path.realpath(path.parent if where == "the socket's folder" else path.parent / "project")
+    os.makedirs(run_in, exist_ok=True)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), template="cli-tool", cwd=run_in)
+    sock.close()
+    assert (proxy is not None) is (form in ("plain", "guid first", "a link to it", "an escaped key")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
+    if where == "the socket's folder":
+        assert run_in not in _binds(app) and app[app.index("--chdir") + 1] == str(tmp_path / "home"), app
+        assert f"Demo runs sandboxed and can't see {run_in}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
+    else:
+        assert _binds(app)[run_in] == ("--bind", run_in) and "can't see" not in r.stderr, (app, r.stderr)
+
+
+@pytest.mark.parametrize("address", ["unix:path=relative/dbus-MZ8lHbtZ8K", "unix:path=/tmp/dbus-%zz", "unix:abstract=/tmp/x;unix:path=/tmp/a%0Ab"])
+def test_a_tool_is_shown_no_folder_where_the_session_bus_names_a_file_it_cannot_read(tmp_path, monkeypatch, address):
+    # ...and an address that names a socket file the launcher can't read (a relative path, a broken
+    # escape, a newline) could name one anywhere: the tool is shown no working folder, and told why.
+    run_in = tmp_path / "project"
+    run_in.mkdir()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, template="cli-tool", cwd=run_in)
+    assert proxy is None and r.returncode == 0 and str(run_in) not in _binds(app), (app, r.stderr)
+    assert (f"Demo runs sandboxed and can't see {run_in}, nor any folder here: this session bus's address ({address}) names a socket "
+            "file AppKata can't read, which could be there.") in r.stderr, r.stderr
+
+
+_FORWARD_STUB = """import json, sys
+with open(sys.argv[0] + ".args", "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\\n")
+sys.exit(1)
+"""
+
+
+@pytest.mark.parametrize("address", ["unix:path=relative/dbus-MZ8lHbtZ8K", "unix:path=/tmp/dbus-%zz", "unix:abstract=/tmp/x;unix:path=/tmp/a%0Ab", None])
+def test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot_read(tmp_path, monkeypatch, address):
+    # PR #694's review, P3-B4: ...and such an address could name a socket in any granted folder, at any
+    # depth, while the cover asked $bussocks alone. Each granted folder is shown empty and read-only
+    # now, a granted socket file covered, a granted file left as it is, the app told why, and a file
+    # named in a granted folder handed over rather than given as a path the app can't see.
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")      # AppKata's own: the grants stand
+    folder, notes = tmp_path / "project", tmp_path / "notes.txt"
+    sock, deep = _a_bus_socket(folder / "deep")
+    other, single = _a_bus_socket(tmp_path / "sockets")
+    notes.write_text("x")
+    granted = {str(folder): "rw", str(single): "rw", str(notes): "ro"}
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{p}": m for p, m in granted.items()}})
+    stub = tmp_path / "forward.py"
+    stub.write_text(_FORWARD_STUB)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, gs=gs, forward=str(stub), args=[str(folder / "a.txt")])
+    sock.close()
+    other.close()
+    emptied = {app[i + 1]: (i, app[i + 2:i + 4]) for i, w in enumerate(app) if w == "--tmpfs" and app[i + 1] in granted}
+    told = json.loads(stub.with_name("forward.py.args").read_text())
+    visible = told[3:told.index("--")]                                      # id, runtime folder, working folder, then these
+    assert r.returncode == 0 and _binds(app)[str(folder)] == ("--bind-try", str(folder)), (app, r.stderr)
+    if address is None:                                                   # the address is read: the folders are shown
+        assert emptied == {} and str(single) not in [app[i + 2] for i, w in enumerate(app) if w == "--ro-bind" and app[i + 1] == "/dev/null"]
+        assert sorted(visible) == sorted(granted) and "can't see the folders" not in r.stderr, (visible, r.stderr)
+        return
+    assert emptied == {str(folder): (emptied[str(folder)][0], ["--remount-ro", str(folder)])}, app
+    assert emptied[str(folder)][0] > app.index(str(folder)), app                       # after the folder's own bind
+    assert _binds(app)[str(single)] == ("--ro-bind", "/dev/null") and _binds(app)[str(notes)] == ("--ro-bind-try", str(notes)), app
+    assert visible == [], told                                            # a file named there is handed over instead
+    assert (f"Demo runs sandboxed and can't see the folders it was given ({', '.join(sorted(granted))}): this session bus's address "
+            f"({address}) names a socket file AppKata can't read, which could be in one of them.\n") in r.stderr, r.stderr
+
+
+# PR #694's review, P3-B4 (and P3-2 before it): two readers of one address, bus_files() when a grant
+# is judged and the launcher's shell at the launch, read it differently: the shell took the first
+# `path=` of an entry alone (GIO takes the last) and counted an escaped NUL unreadable (libdbus and
+# sd-bus end the path there), so a live socket the clients reach stayed in sight of a granted folder.
+# How it slipped past: each reader was tested on forms of its own, never one against the other. This
+# runs the launcher's own reader on each form and holds it to bus_files(): the same files, and the
+# same answer to whether the address names one it can't read. The paths are under no folder there
+# is, so neither names them further (the shell's `pwd -P` and a link's target are tried above).
+BUS_READS = [
+    "unix:path=/nowhere/a/bus", "unix:path=/nowhere/a/bus,guid=0123", "unix:guid=0123,path=/nowhere/a/bus",
+    "unix:path=/nowhere/a/first,path=/nowhere/b/second", "unix:path=/nowhere/a,path=relative",
+    "unix:path=/nowhere/a/bus;unix:path=/nowhere/b/bus;", "unix:abstract=/nowhere/x;unix:path=/nowhere/b/bus",
+    "unix:path=%2Fnowhere%2Fa%2Fbus", "unix:path=/nowhere/a%00b", "unix:path=/nowhere/a%00%zz", "unix:path=%00/nowhere",
+    "unix:path=/nowhere/%e9t%C3%A9/bus", "unix:path=/nowhere/a%25b%2cc%5C%2a", "unix:path=/nowhere/a/../b/bus", "unix:path=/nowhere/a/",
+    "unix:path=relative/bus", "unix:path=./bus", "unix:path=", "unix:path=/nowhere/%zz", "unix:path=/nowhere/%2", "unix:path=/nowhere/a%",
+    "unix:path=/nowhere/a%0Ab", "unix:path=/nowhere/a%0ab", "unix:path=/nowhere/a\nb",
+    "unix:path", "unix:", "unix:abstract=/nowhere/x,guid=1", "unix:runtime=yes", "tcp:host=localhost,port=4000", ";;", "nonsense",
+    # a key's name unescaped, as GIO reads it (P6-1), once, exactly, and never into a newline
+    "unix:pa%74h=/nowhere/a/bus", "unix:path=/nowhere/a/first,%70ath=/nowhere/b/second", "unix:p%61th=relative/bus",
+    "unix:%70%61%74%68=/nowhere/a%20b", "unix:PA%54H=/nowhere/a/bus", "unix:p%2561th=/nowhere/a/bus", "unix:pa%0ath=/nowhere/a/bus",
+]
+
+
+@pytest.mark.parametrize("address", BUS_READS)
+def test_the_launcher_reads_the_bus_address_as_bus_files_does(address):
+    script = "set -u\nrt=/nowhere-rt\n" + sb._BUS_BLOCK + 'printf "%s" "$bussocks"; echo "busok=$busok"\n'
+    r = subprocess.run(["sh", "-c", script], env={"PATH": os.environ["PATH"], "DBUS_SESSION_BUS_ADDRESS": address},
+                       capture_output=True, timeout=30)
+    assert r.returncode == 0 and r.stderr == b"", r.stderr
+    *files, said, end = r.stdout.split(b"\n")
+    assert said in (b"busok=1", b"busok=0") and end == b"", r.stdout
+    want, readable = sb.bus_files(address)
+    assert (files, said) == ([os.fsencode(f) for f in want], b"busok=1" if readable else b"busok=0"), address
+
+
+# PR #694's review, P4-B1a and P4-B1b: the launcher's choice of the bus the proxy is shown, and
+# bus_warning(), counted `path=` and `abstract=` only as an entry's first key, where bus_files() and
+# the launcher's reader of the socket files (P3-B4) take a key in any place, as libdbus and GIO do:
+# `unix:guid=…,path=…` left a Standard app with no session bus (at the merge base it had its filtered
+# one), and `unix:guid=…,abstract=…` without the warning that an app with the network grant reaches
+# that bus unfiltered. How it slipped past: P3-B4's harness held the two readers of the socket files
+# to each other, while the proxy's choice and the warning kept readings of their own, tested on the
+# forms dbus writes, which put the path or the name first. This holds every reading of the address
+# to every order of each entry's keys: the files, whether one can't be read, the bus the proxy is
+# shown and the warning stay the same, and the launcher's `abstract=` is the warning's.
+BUS_KEY_ORDERS = {
+    "unix:path=/nowhere/a/bus,guid=0123": "file /nowhere/a/bus",
+    "unix:abstract=/tmp/dbus-x,guid=0123": "abstract",
+    "unix:path=/nowhere/a/bus,guid=0123,foo=1": "file /nowhere/a/bus",       # a key the clients don't know: they connect
+    "unix:abstract=/tmp/dbus-a,abstract=/tmp/dbus-b": "abstract",             # the proxy's GDBus takes the last: no file to show it
+    "unix:path=/nowhere/a/bus,abstract=/tmp/dbus-x,guid=0123": "",           # no client takes both
+    "unix:path=/nowhere/a/first,path=/nowhere/b/second,guid=0123": "",       # GDBus takes the last, the proxy would be shown one
+    "unix:path=/nowhere/a%20b,guid=0123": "",                                # an escaped byte
+    "unix:path=relative/bus,guid=0123": "",
+    "unix:path=/nowhere/a/bus,guid=0123;unix:abstract=/tmp/dbus-x,guid=0123": "",   # a list
+    "unix:tmpdir=/tmp,guid=0123": "",
+    "tcp:host=localhost,port=4000": "",
+    # a key the proxy's GDBus refuses the entry for (P5-1): an empty one (a trailing or doubled comma),
+    # one with no `=`, one with nothing before it; libdbus takes the first, and bus_files() reads them
+    "unix:path=/nowhere/a/bus,": "",
+    "unix:path=/nowhere/a/bus,,guid=0123": "",
+    "unix:path=/nowhere/a/bus,guid": "",
+    "unix:path=/nowhere/a/bus,=0123": "",
+    "unix:abstract=/tmp/dbus-x,": "",
+    # a value with an escape GDBus can't read (not two hex digits, or an escaped NUL), in any key
+    "unix:path=/nowhere/a/bus,guid=%zz": "",
+    "unix:path=/nowhere/a/bus,guid=%00": "",
+    "unix:abstract=/tmp/dbus-x%2,guid=0123": "",
+    # a key's name as GIO reads it, unescaped (P6-1), and matched exactly: `PA%54H` is not `path`
+    "unix:pa%74h=/nowhere/a/bus,guid=0123": "file /nowhere/a/bus",
+    "unix:abstr%61ct=/tmp/dbus-x,guid=0123": "abstract",
+    "unix:path=/nowhere/a/first,pa%74h=/nowhere/b/second": "",
+    "unix:path=/nowhere/a/bus,%61bstract=/tmp/dbus-x": "",
+    "unix:PA%54H=/nowhere/a/bus,guid=0123": "",
+    # ...and a key's name GDBus can't unescape, for which it refuses the entry (P6-2)
+    "unix:path=/nowhere/a/bus,g%zz=1": "",
+    "unix:path=/nowhere/a/bus,%=1": "",
+    "unix:abstract=/tmp/dbus-x,a%00=1": "",
+}
+
+
+def _key_orders(address):
+    """`address` with each entry's keys in every order (the entries in theirs)."""
+    entries = [e.partition(":") for e in address.split(";")]
+    for keys in itertools.product(*(itertools.permutations(k.split(",")) for _, _, k in entries)):
+        yield ";".join(t + c + ",".join(ks) for (t, c, _), ks in zip(entries, keys))
+
+
+@pytest.mark.parametrize("address,proxy", BUS_KEY_ORDERS.items())
+def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatch, address, proxy):
+    monkeypatch.setattr(sb, "OS", "linux")
+    script = ("set -u\nrt=/nowhere-rt\n" + sb._BUS_BLOCK + 'printf "%s" "$bussocks"; echo "busok=$busok busabs=${busabs:-0}"\n'
+              'case "$busat" in file) echo "proxy=file $busfile" ;; *) echo "proxy=$busat" ;; esac\n')
+    seen = set()
+    for order in _key_orders(address):
+        r = subprocess.run(["sh", "-c", script], env={"PATH": os.environ["PATH"], "DBUS_SESSION_BUS_ADDRESS": order},
+                           capture_output=True, timeout=30)
+        assert r.returncode == 0 and r.stderr == b"", (order, r.stderr)
+        *files, said, shown, end = r.stdout.split(b"\n")
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", order)
+        want, readable = sb.bus_files()
+        warns = bool(sb.bus_warning())
+        assert said == f"busok={int(readable)} busabs={int(warns)}".encode() and end == b"", (order, r.stdout)
+        assert sorted(files) == sorted(os.fsencode(f) for f in want), order
+        assert shown == f"proxy={proxy}".encode(), (order, shown)
+        seen.add((tuple(sorted(want)), readable, warns))
+    assert len(seen) == 1, seen
+
+
+# PR #694's review, P5-1: the launcher showed the proxy an entry with a key that has no `=` (a
+# trailing or doubled comma, a bare `guid`), which its key loop skips, as _bus_keys() does, and which
+# the proxy's own GDBus refuses whole: every connection the app made failed, and nothing said why.
+# How it slipped past: the readings of the address were held to each other (BUS_KEY_ORDERS) and to
+# the forms dbus writes, never to the reader that then connects with it, the proxy's GDBus. This
+# holds the launcher's choice to it: every address the launcher shows the proxy (a socket file or an
+# abstract name) is one GIO's own connect, g_dbus_address_get_stream(), the proxy's, takes -- it may
+# find no bus there, but never refuses the address -- for each key shape alone and each pair in both
+# orders, and every address the tests above read.
+BUS_KEY_SHAPES = ["path=/nowhere/a/bus", "path=/nowhere/b/bus", "path=relative/bus", "path=/nowhere/a%20b", "path=",
+                  "abstract=/tmp/dbus-x", "abstract=/tmp/dbus-a%20b", "guid=0123", "guid=", "foo=1", "tmpdir=/tmp",
+                  "guid", "", "=0123", "guid=%zz", "guid=%2", "guid=%00", "foo=%", "guid=%41", "abstract=/tmp/dbus-%zz",
+                  "abstract=/tmp/dbus-a%00b",
+                  # a key's name escaped (P6-1): GIO unescapes it once and matches it exactly
+                  "pa%74h=/nowhere/b/bus", "abstr%61ct=/tmp/dbus-y", "PA%54H=/nowhere/a/bus", "p%2561th=/nowhere/a/bus",
+                  "pa%0ath=/nowhere/a/bus",
+                  # ...and one GDBus can't unescape, for which it refuses the entry (P6-2)
+                  "g%zz=1", "%=1", "a%00=1"]
+
+_GIO_TAKES = """import json, sys
+from gi.repository import Gio, GLib
+refused = {}
+for a in sys.argv[1:]:
+    try:
+        Gio.dbus_address_get_stream_sync(a, None)
+    except GLib.Error as e:
+        if e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.INVALID_ARGUMENT):
+            refused[a] = e.message
+print(json.dumps(refused))
+"""
+
+
+def test_the_proxy_is_shown_a_bus_only_where_its_own_gdbus_takes_the_address():
+    if subprocess.run(["python3", "-c", "from gi.repository import Gio"], capture_output=True).returncode:
+        pytest.skip("needs python3-gi")
+    addresses = {"unix:" + ",".join(keys) for n in (1, 2) for keys in itertools.product(BUS_KEY_SHAPES, repeat=n)}
+    addresses |= {*BUS_READS, *(o for a in BUS_KEY_ORDERS for o in _key_orders(a)), *(a.format(rt="/nowhere-rt") for a in BUS_ADDRESSES)}
+    addresses = sorted(addresses)
+    script = 'set -u\nrt=/nowhere-rt\nfor DBUS_SESSION_BUS_ADDRESS in "$@"; do (\n' + sb._BUS_BLOCK + 'echo "${busat:--}"\n); done\n'
+    r = subprocess.run(["sh", "-c", script, "sh", *addresses], capture_output=True, text=True, timeout=120)
+    shown = dict(zip(addresses, r.stdout.splitlines()))
+    assert r.returncode == 0 and r.stderr == "" and len(shown) == len(addresses) == len(r.stdout.splitlines()), r.stderr
+    assert {"file", "abstract", "-"} == set(shown.values()), set(shown.values())
+    to_proxy = [a for a, at in shown.items() if at != "-"]
+    r = subprocess.run(["python3", "-I", "-c", _GIO_TAKES, *to_proxy], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {}, r.stdout
+
+
+# PR #694's review, P6-1: GDBus unescapes an address's key names as well as its values, so
+# `unix:pa%74h=<socket>` is `path=` to GIO -- to every GLib and GTK program of that session, and to
+# the proxy -- while libdbus and sd-bus take a key as written and refuse it. The launcher and
+# bus_files() matched `path=` and `abstract=` as written, so neither saw that socket: a granted
+# folder, or a tool's working folder, showed the app the unfiltered bus, and `abstr%61ct=` went
+# without the warning. How it slipped past: P5-1's harness asked GIO only whether it refuses an
+# address the proxy is shown, never which socket it then reaches, and no key shape had an escape in
+# its name. This holds every reader to the socket GIO's own connect reaches, with a live socket at
+# every file and abstract name the key shapes name: for each shape alone and each pair in both
+# orders, a file it reaches is one bus_files() and the launcher's $bussocks name (or they count the
+# address unreadable, which shows no folder at all), an abstract socket it reaches is warned of
+# (bus_warning(), $busabs), and the bus the launcher shows the proxy is the one GIO reaches.
+_GIO_REACHES = r"""import json, socket, sys
+from gi.repository import Gio, GLib
+job = json.load(sys.stdin)
+ears = {}
+for at in job["files"] + ["\0" + n for n in job["names"]]:
+    ears[at] = socket.socket(socket.AF_UNIX)
+    ears[at].bind(at)
+    ears[at].listen(8)
+    ears[at].setblocking(False)
+def took(ear):
+    try:
+        ear.accept()[0].close()
+        return True
+    except BlockingIOError:
+        return False
+reached = {}
+for a in job["addresses"]:
+    try:
+        Gio.dbus_address_get_stream_sync(a, None)[0].close(None)
+    except GLib.Error:
+        pass
+    reached[a] = [at.replace("\0", "@", 1) for at, ear in ears.items() if took(ear)]
+print(json.dumps(reached))
+"""
+
+
+def test_every_reader_of_the_bus_address_names_the_socket_gio_reaches(tmp_path, monkeypatch):
+    if subprocess.run(["python3", "-c", "from gi.repository import Gio"], capture_output=True).returncode:
+        pytest.skip("needs python3-gi")
+    monkeypatch.setattr(sb, "OS", "linux")
+    root, name = os.path.join(os.path.realpath(tmp_path), "s"), f"appkata-{os.getpid()}-{os.urandom(4).hex()}"   # $bussocks is `pwd -P`'s
+    os.makedirs(f"{root}/a")
+    os.makedirs(f"{root}/b")
+    live = lambda shape: shape.replace("/nowhere/", f"{root}/").replace("/tmp/dbus-", f"{name}-")   # noqa: E731
+    files = [f"{root}/a/bus", f"{root}/b/bus", f"{root}/a b"]
+    names = [f"{name}-x", f"{name}-y", f"{name}-a b"]
+    addresses = sorted({"unix:" + ",".join(map(live, keys)) for n in (1, 2) for keys in itertools.product(BUS_KEY_SHAPES, repeat=n)})
+    job = json.dumps({"files": files, "names": names, "addresses": addresses})
+    r = subprocess.run(["python3", "-I", "-c", _GIO_REACHES], input=job, capture_output=True, text=True, timeout=300, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    reached = json.loads(r.stdout)
+    script = ('set -u\nrt=/nowhere-rt\nfor DBUS_SESSION_BUS_ADDRESS in "$@"; do (\n' + sb._BUS_BLOCK +
+              'printf "%s" "$bussocks" | tr "\\n" "\\t"; echo "|$busok|${busabs:-0}|${busat:--}|$busfile"\n); done\n')
+    r = subprocess.run(["sh", "-c", script, "sh", *addresses], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0 and r.stderr == "" and len(r.stdout.splitlines()) == len(addresses), r.stderr
+    wrong = {}
+    for a, line in zip(addresses, r.stdout.splitlines()):
+        socks, busok, busabs, busat, busfile = line.split("|")
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", a)
+        want, readable = sb.bus_files()
+        got, warns = reached[a], bool(sb.bus_warning())
+        said = []
+        for at in got:
+            if at.startswith("@"):
+                said += [] if warns and busabs == "1" else ["an abstract socket it isn't warned of"]
+            else:
+                said += [] if not readable or at in want else ["a file bus_files() doesn't name"]
+                said += [] if busok == "0" or at in socks.split("\t") else ["a file $bussocks doesn't name"]
+        if busat == "file" and got != [busfile]:
+            said.append(f"the proxy shown {busfile}, and GIO reaches {got}")
+        if busat == "abstract" and not (len(got) == 1 and got[0].startswith("@")):
+            said.append(f"the proxy shown an abstract socket, and GIO reaches {got}")
+        if said:
+            wrong[a] = f"GIO reaches {got or 'nothing'}: {'; '.join(said)}"
+    assert not wrong, f"{len(wrong)} of {len(addresses)}:\n" + "\n".join(f"{a}  {w}" for a, w in wrong.items()).replace(root, "S").replace(name, "N")
+
+
+# PR #694's review, P5-B1: the cover matched a socket file only *under* a granted path, so a grant of
+# the socket file itself, or of a link to it (a "folder" grant binds a file as readily as a folder,
+# R17.3.1), left the live socket in sight, where an address the launcher can't read has a granted
+# socket file covered. How it slipped past: the cover's tests varied how the address names the
+# socket (P2-1, P3-B4) and granted its folder alone; how the grant shows it never varied. Each way
+# here: the grant → where the app sees the socket through it (None: it doesn't). A link is followed
+# when the app starts, as bwrap follows it, so one pointed there after the launcher was written
+# counts too.
+GRANT_FORMS = {
+    "its folder": "{tmp}/dbus-MZ8lHbtZ8K",
+    "a folder above it": "{tmp}/dbus-MZ8lHbtZ8K",
+    "the file itself": "{grant}",
+    "a link to the file": "{grant}",
+    "a link to its folder": "{grant}/dbus-MZ8lHbtZ8K",
+    "a link pointed there later": "{grant}/dbus-MZ8lHbtZ8K",
+    "a folder beside it": None,
+}
+
+
+def _granted(grant, path, links):
+    """The path `grant` grants for the socket at `path`, made (a link in `links`), and what to do
+    once the launcher is written."""
+    up = path.parent.parent
+    (up / "beside").mkdir(exist_ok=True)
+    made = {"its folder": path.parent, "a folder above it": up, "the file itself": path, "a folder beside it": up / "beside"}
+    if grant in made:
+        return str(made[grant]), None
+    link = links / grant.replace(" ", "-")
+    link.symlink_to({"a link to the file": path, "a link to its folder": path.parent, "a link pointed there later": up / "beside"}[grant])
+    return str(link), (lambda: (link.unlink(), link.symlink_to(path.parent))) if grant == "a link pointed there later" else None
+
+
+@pytest.mark.parametrize("form", BUS_FORMS)
+@pytest.mark.parametrize("grant", GRANT_FORMS)
+def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch, grant, form):
+    # A grant is judged when the launcher is written, by AppKata's own session's bus; a session
+    # started another way can put its bus inside that folder later. The run covers the file, however
+    # the session's address names it (P2-1, above), and however the grant shows it (P5-B1).
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    sock, path = _a_bus_socket(tmp_path / "up" / "tmp")
+    (tmp_path / "links").mkdir()
+    folder, then = _granted(grant, path, tmp_path / "links")
+    shown = GRANT_FORMS[grant] and GRANT_FORMS[grant].format(tmp=path.parent, grant=folder)
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), gs=gs, before=then)
+    sock.close()
+    assert r.returncode == 0 and "AppKata: the session bus here" not in r.stderr or proxy is None, (r.stdout, r.stderr)
+    at = lambda *words: next((i for i in range(len(app)) if app[i:i + 3] == list(words)), None)   # noqa: E731
+    covered = [app[i + 2] for i in range(len(app) - 2) if app[i:i + 2] == ["--ro-bind", "/dev/null"]]
+    assert at("--bind-try", folder, folder) is not None, app                    # the grant stands
+    assert covered == ([shown] if shown else []), (covered, shown)
+    if shown:
+        assert at("--ro-bind", "/dev/null", shown) > at("--bind-try", folder, folder)     # after the folder's own bind
+    # where this session's bus is elsewhere, nothing is covered
+    _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs)
+    assert "/dev/null" not in app and r.returncode == 0, (app, r.stderr)
 
 
 def test_proxy_args_map_capabilities():
     args = sb.proxy_args(sb.resolve_template("media-player"), "vlc")
     assert "--own=org.mpris.MediaPlayer2.*" in args      # media keys
-    assert "--talk=org.freedesktop.ScreenSaver" in args  # inhibit
+    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.Inhibit@/org/freedesktop/ScreenSaver" in args  # inhibit
+
+
+# The names a grant set opens whole (`--talk`: whatever the connection that owns the name serves),
+# each with what was seen of that connection.
+OPENED_WHOLE = {
+    "org.freedesktop.portal.IBus": "IBus 1.5.29's ibus-portal: a process and connection of its own, with the portal object alone",
+    "org.freedesktop.portal.Fcitx": "Fcitx 5.1.7: a connection of its own, with the input-method objects alone",
+}
+
+
+def test_a_direct_name_is_opened_for_its_own_service_and_no_name_whole_but_the_listed():
+    # CR1.5-3: the notifications, inhibit and tray capabilities passed `--talk=NAME`, which
+    # xdg-dbus-proxy gives to the connection owning NAME -- on Cinnamon the desktop's own shell,
+    # with everything it serves (org.Cinnamon.Eval ran a command outside the sandbox). Each
+    # direct name is opened as the portal is, for its service's own interface on its own objects;
+    # and since the tests then checked that `--talk` word itself, this one holds the whole class:
+    # no `--talk` but the listed names, and no rule without both an interface and an object.
+    every = sb.proxy_args({"caps": sorted(sb.CAP_PROXY_ARGS)}, "demo")
+    assert {a.split("=", 1)[1] for a in every if a.startswith("--talk=")} == set(OPENED_WHOLE)
+    assert not [a for a in every if a.startswith("--see=")]
+    for a in every:
+        if a.startswith(("--call=", "--broadcast=")):
+            name, rule = a.split("=", 2)[1:]
+            member, at, path = rule.partition("@")
+            assert member.startswith(("org.", "com.")) and at and path.startswith("/") and path != "/*", a
+    # CR1.5-44: and of a service's interface, what its capability means. The ScreenSaver interface
+    # also locks the screen, switches the screen saver on and tells how long the user has been idle
+    # (KDE's screen locker serves all of it; GNOME's and Cinnamon's declare it), so Keep the screen
+    # awake opens its inhibit pair alone, and hears none of its signals.
+    services = {"notifications": ("org.freedesktop.Notifications", ["/org/freedesktop/Notifications"], ["*"], True),
+                "inhibit": ("org.freedesktop.ScreenSaver", ["/org/freedesktop/ScreenSaver", "/ScreenSaver"], ["Inhibit", "UnInhibit"], False),
+                "tray": ("org.kde.StatusNotifierWatcher", ["/StatusNotifierWatcher"], ["*"], True)}
+    for cap, (name, paths, members, signals) in services.items():
+        rules = [a for a in sb.CAP_PROXY_ARGS[cap] if a.split("=", 2)[1] == name]
+        want = set()
+        for path in paths:
+            want |= {f"--call={name}={name}.{m}@{path}" for m in members} | {f"--call={name}=org.freedesktop.DBus.Introspectable.*@{path}"}
+            want |= {f"--broadcast={name}={name}.*@{path}"} if signals else set()
+        if cap == "tray":       # what Qt's tray icon reads before it registers (IsStatusNotifierHostRegistered)
+            want |= {f"--call={name}=org.freedesktop.DBus.Properties.{m}@/StatusNotifierWatcher" for m in ("Get", "GetAll")}
+        assert set(rules) == want, cap
+    # an app without a capability has none of its rules, on either road
+    plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")
+    assert not [a for a in plain for name, *_ in services.values() if name in a]
+
+
+def test_saved_passwords_open_the_secret_service_alone():
+    # CR1.5-43: Saved passwords opened org.freedesktop.secrets whole (`--talk`), and gnome-keyring's
+    # connection serves more than the Secret Service on it: its daemon interface (the session's SSH
+    # agent socket and control folder), its master-password interface beside the service on the
+    # service's own object, and the Secret portal's backend. The Secret Service's five interfaces
+    # are opened on its object tree alone (the service, and below it the collections and aliases,
+    # items, sessions and prompts), with the property calls and the listing clients make, and the
+    # service's own signals.
+    name, tree = "org.freedesktop.secrets", "/org/freedesktop/secrets/*"
+    secret = [f"org.freedesktop.Secret.{i}" for i in ("Service", "Collection", "Item", "Session", "Prompt")]
+    want = {f"--call={name}={i}.*@{tree}" for i in [*secret, "org.freedesktop.DBus.Properties", "org.freedesktop.DBus.Introspectable"]}
+    want |= {f"--broadcast={name}={i}.*@{tree}" for i in secret[:2] + secret[4:]}
+    want.add(f"--broadcast={name}=org.freedesktop.DBus.Properties.PropertiesChanged@{tree}")
+    assert set(sb.CAP_PROXY_ARGS["secrets"]) == want
+    args = sb.proxy_args(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets"]}), "keys")
+    assert {a for a in args if name in a} == want and not [a for a in args if "org.gnome.keyring" in a or "impl.portal" in a]
+    assert not [a for a in sb.proxy_args(sb.resolve_template("standard"), "plain") if name in a]       # none without it
 
 
 def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
@@ -369,14 +1392,172 @@ def test_the_notification_and_inhibit_portals_come_with_their_capabilities():
     # name -- and an app without it has neither.
     portal = "--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.{}.*@/org/freedesktop/portal/desktop"
     plain = sb.proxy_args(sb.resolve_template("offline-editor"), "ed")        # no capabilities
-    assert portal.format("Notification") not in plain and "--talk=org.freedesktop.Notifications" not in plain
-    assert portal.format("Inhibit") not in plain and "--talk=org.freedesktop.ScreenSaver" not in plain
+    direct = "--call=org.freedesktop.{0}=org.freedesktop.{0}.*@/org/freedesktop/{0}"
+    assert portal.format("Notification") not in plain and not [a for a in plain if "org.freedesktop.Notifications" in a]
+    assert portal.format("Inhibit") not in plain and not [a for a in plain if "org.freedesktop.ScreenSaver" in a]
     assert portal.format("OpenURI") in plain                                   # the always-on portals stay
     web = sb.proxy_args(sb.resolve_template("online-app"), "web")            # notifications only
-    assert portal.format("Notification") in web and "--talk=org.freedesktop.Notifications" in web
-    assert portal.format("Inhibit") not in web
+    assert portal.format("Notification") in web and direct.format("Notifications") in web
+    assert portal.format("Inhibit") not in web and not [a for a in web if "org.freedesktop.ScreenSaver" in a]
     chat = sb.proxy_args(sb.resolve_template("messenger"), "chat")           # both
-    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat and "--talk=org.freedesktop.ScreenSaver" in chat
+    assert portal.format("Notification") in chat and portal.format("Inhibit") in chat
+    assert "--call=org.freedesktop.ScreenSaver=org.freedesktop.ScreenSaver.Inhibit@/org/freedesktop/ScreenSaver" in chat
+    # CR1.5-28: so do the two portals that tell of the host's network, with the network grant. An
+    # offline-editor has no network: neither portal, nor the signal that says the network changed.
+    changed = "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop"
+    assert not [a for a in plain if "NetworkMonitor" in a or "ProxyResolver" in a], plain
+    assert portal.format("NetworkMonitor") in web and portal.format("ProxyResolver") in web and changed in web
+
+
+def _portals_opened(args: list) -> set:
+    """The Desktop portal's interfaces a filter opens, by a call or by a broadcast signal."""
+    return {a.split("Desktop=org.freedesktop.portal.", 1)[1].split(".")[0] for a in args
+            if a.startswith(("--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.", "--broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal."))}
+
+
+@pytest.mark.parametrize("template", [t for t in sb.TEMPLATE_ORDER if sb.resolve_template(t)["level"] == "standard"])
+@pytest.mark.parametrize("network", [True, False])
+def test_what_the_host_says_of_its_network_reaches_an_app_only_with_the_network_grant(template, network):
+    # CR1.5-28: the launcher withholds the host's proxy variables from an app without the network
+    # grant, since they can carry the proxy's user name and password (R17.4; review 2, F15) -- and
+    # the filter opened the ProxyResolver portal to every app on the bus, which answers Lookup(uri)
+    # with those same settings (GIO's resolver builds http://user:password@host:port from the
+    # desktop's), and NetworkMonitor with the host's connection state. An app that may not use the
+    # network gains nothing from either call but the settings, so the withholding was undone for
+    # exactly the apps it protects. How it slipped past: each road had its own test (the variables,
+    # the marker) or none (the portals were checked against R17.5's own list, which said the same),
+    # and nothing put the roads side by side. This does, for every Standard template either way:
+    # the variables, the marker's [Context] and the two portals all follow the one grant -- and
+    # every portal interface the filter opens has a switch that accounts for it.
+    assert "GIO_USE_PROXY_RESOLVER" not in sb.build_launcher("vault", "Vault", "/apps/vault/1", "bin/vault", sb.resolve_template("strict"))   # no bus, nothing to ask
+    gs = sb.apply_overrides(sb.resolve_template(template), {"network": network})
+    text = sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    passed = next(line for line in text.splitlines() if line.startswith("for v in ") and "LANG" in line).removesuffix("; do").split()
+    assert all((v in passed) is network for v in sb._PROXY_PASSTHROUGH), passed
+    assert ("shared=network;" in sb.flatpak_info_text("demo", sb._marker_network(gs))) is network
+    # ...and where the portal is closed GLib is told not to ask it: it asks before every connection
+    # it makes, the app's own loopback included, and a refusal fails the connection (tier 2)
+    assert ("  --setenv GIO_USE_PROXY_RESOLVER dummy \\\n" in text) is not network
+    args = sb.proxy_args(gs, "demo")
+    assert all((sb._portal_call(i) in args) is network for i in sb.NETWORK_PORTAL_INTERFACES), args
+    switched = {"Notification": "notifications" in gs["caps"], "Inhibit": "inhibit" in gs["caps"],
+                **{i: network for i in sb.NETWORK_PORTAL_INTERFACES}}
+    assert _portals_opened(args) == {*sb.PORTAL_INTERFACES, "Request", "Session", *[i for i, on in switched.items() if on]}
+    assert not set(sb.PORTAL_INTERFACES) & set(switched)          # and "every app" names none that has a switch
+
+
+# ---------------------------------------------------------------- the app's own MPRIS name (R17.5.1, CR1.5-36)
+
+VLC = "org.mpris.MediaPlayer2.vlc"
+
+
+def _player(name=None, template="media-player"):
+    return sb.apply_overrides(sb.resolve_template(template), {"mpris_name": name} if name else {})
+
+
+def test_media_keys_own_the_apps_own_mpris_name_and_every_name_only_when_nobody_named_it():
+    # CR1.5-36: Media keys passed `--own=org.mpris.MediaPlayer2.*`, and to xdg-dbus-proxy an own is
+    # a talk too, on every name below the prefix, whoever owns it: the app could call every other
+    # media player (and whatever else that player's connection serves). The need is the reverse,
+    # the desktop calling the app on the app's own name, so the launcher owns the name a review
+    # gives, and that alone. The only test of the capability ran the daemon calling the app.
+    own = lambda gs: [a for a in sb.proxy_args(gs, "player") if "mpris" in a]      # noqa: E731
+    assert own(_player(VLC)) == [f"--own={VLC}"]
+    assert own(_player("org.mpris.MediaPlayer2.chromium.*")) == ["--own=org.mpris.MediaPlayer2.chromium.*"]   # a name per instance
+    assert own(_player()) == ["--own=org.mpris.MediaPlayer2.*"]                 # nobody named it: every name, as before
+    assert sb.CAP_PROXY_ARGS["mpris"] == ["--own=org.mpris.MediaPlayer2.*"]
+    # a name is no capability: without Media keys it grants nothing, and the set doesn't keep it
+    plain = sb.apply_overrides(sb.resolve_template("online-app"), {"mpris_name": VLC})
+    assert own(plain) == [] and sb.normalize(plain)["mpris_name"] is None
+    assert sb.normalize({**_player(VLC), "level": "strict"})["mpris_name"] is None     # Strict has no bus
+    # what isn't one name below the prefix is no name: the whole prefix, another service's name, an
+    # element xdg-dbus-proxy refuses (it exits, and the app has no bus), a second argument
+    for bad in ("org.mpris.MediaPlayer2.*", "org.mpris.MediaPlayer2", "org.freedesktop.secrets", "org.mpris.MediaPlayer2.7zip",
+                "org.mpris.MediaPlayer2..vlc", "org.mpris.MediaPlayer2.*.vlc", "org.mpris.MediaPlayer2.vlc --talk=org.freedesktop.secrets",
+                "org.mpris.MediaPlayer2.vlc.", "org.mpris.MediaPlayer3.vlc", "vlc", "org.mpris.MediaPlayer2." + "x" * 240, 7, ["x"]):
+        assert sb.mpris_name(bad) is None, bad
+        assert own(_player(bad)) == ["--own=org.mpris.MediaPlayer2.*"], bad
+        assert trustfile._setting_value("sandboxMprisName", str(bad)) is None, bad      # the review line's reader agrees
+    for good in (VLC, "org.mpris.MediaPlayer2.chromium.instance4711", "org.mpris.MediaPlayer2.firefox.instance_1_23",
+                 "org.mpris.MediaPlayer2.io.github.Some-Player", "org.mpris.MediaPlayer2.chromium.*"):
+        assert sb.mpris_name(good) == good and trustfile._setting_value("sandboxMprisName", f"`{good}`") == good, good
+    # the grant set carries it wherever a set goes: stored, compared, customized, reset
+    gs = _player(VLC)
+    assert sb.to_json(gs)["mpris_name"] == VLC and sb.normalize(sb.to_json(gs)) == sb.normalize(gs)
+    assert sb.customized("media-player", gs) and not sb.customized("media-player", _player())
+    assert sb.as_overrides("media-player", gs) == {"mpris_name": VLC}
+    assert sb.grants_from_config({"template": "media-player", "overrides": sb.as_overrides("media-player", gs)}) == sb.normalize(gs)
+
+
+def test_a_review_names_the_apps_mpris_name_and_reviews_merge_to_the_narrower_one():
+    # R10.3.1: the line a review names it with, read, applied, written back and merged across Trusts
+    section = ("## VLC::Settings\n\n- Sandbox (linux): media-player\n"
+               f"- Sandbox MPRIS name (linux): `{VLC}`\n")
+    parsed, warns = trustfile.parse_section("VLC", section)
+    assert not warns
+    opts = trustfile.resolve_settings(parsed["opts"], "linux")
+    assert opts["sandboxMprisName"] == VLC
+    assert trustfile.resolve_settings(parsed["opts"], "windows").get("sandboxMprisName") is None      # Linux-only, as every Sandbox line
+    gs = sb.grants_from_config(sb.config_from_review(opts))
+    assert gs["mpris_name"] == VLC and f"--own={VLC}" in sb.proxy_args(gs, "vlc")
+    bad, _ = trustfile.parse_section("VLC", "## VLC::Settings\n\n- Sandbox: media-player\n- Sandbox MPRIS name: org.freedesktop.secrets\n")
+    assert "sandboxMprisName" not in bad["opts"]                                 # no name below the prefix: ignored, as an unknown word is
+    # ...and written: the user's own set as their review's lines, and read back the same
+    written, refused = sb.as_review("media-player", gs)
+    assert written == {"sandbox": "media-player", "sandboxMprisName": VLC} and not refused
+    assert sb.grants_from_config(sb.config_from_review(written)) == sb.normalize(gs)
+    text = trustfile.format_settings("VLC", trustfile.options_to_write({}, "", written, "linux"))
+    assert f"- Sandbox MPRIS name (linux): {VLC}" in text
+    assert "sandboxMprisName" not in sb.as_review("media-player", _player())[0]
+    assert "sandboxMprisName" in trustfile.SANDBOX_KEYS and "sandboxMprisName" in trustfile.SETTINGS_ORDER
+    # across Trusts the least privilege (R17.3.2): a name beats no name, the narrower of two wins,
+    # and two reviews that name different players leave no name both allow, so no media keys
+    one = lambda a, b: sb.intersect(_player(a), _player(b))                      # noqa: E731
+    assert one(VLC, None)["mpris_name"] == VLC and one(None, VLC)["mpris_name"] == VLC
+    assert one(VLC, VLC)["mpris_name"] == VLC and one(None, None)["mpris_name"] is None
+    assert "mpris" in one(VLC, None)["caps"] and "mpris" in one(None, None)["caps"]
+    per, inst = "org.mpris.MediaPlayer2.chromium.*", "org.mpris.MediaPlayer2.chromium.instance7"
+    assert one(per, inst)["mpris_name"] == inst and one(inst, per)["mpris_name"] == inst
+    assert one(per, "org.mpris.MediaPlayer2.chromium")["mpris_name"] == "org.mpris.MediaPlayer2.chromium"     # `.*` covers the name itself too
+    assert one("org.mpris.MediaPlayer2.chromium.*", "org.mpris.MediaPlayer2.chromium.beta.*")["mpris_name"] == "org.mpris.MediaPlayer2.chromium.beta.*"
+    for a, b in ((VLC, "org.mpris.MediaPlayer2.mpv"), (per, "org.mpris.MediaPlayer2.chromiumdev"), (VLC, "org.mpris.MediaPlayer2.vlc.instance1")):
+        both = one(a, b)
+        assert "mpris" not in both["caps"] and both["mpris_name"] is None and "inhibit" in both["caps"], (a, b)
+    assert sb.intersect(_player(VLC), sb.resolve_template("online-app"))["mpris_name"] is None     # no Media keys in one: none
+    # ...whatever the two say, in either order: the merged set never has a name one of them lacks
+    covers = lambda wide, name: wide is None or wide == name or (wide.endswith(".*") and (name == wide[:-2] or name.startswith(wide[:-1])))   # noqa: E731
+    names = (None, VLC, "org.mpris.MediaPlayer2.mpv", per, inst, "org.mpris.MediaPlayer2.chromium", "org.mpris.MediaPlayer2.chromium.beta.*",
+             "org.mpris.MediaPlayer2.chromium.beta.instance1")
+    for a in names:
+        assert sb.intersect(_player(a), _player(a)) == sb.normalize(_player(a))
+        for b in names:
+            m = one(a, b)
+            assert m == one(b, a), (a, b)
+            if "mpris" in m["caps"]:
+                assert covers(a, m["mpris_name"] or "org.mpris.MediaPlayer2.*") and covers(b, m["mpris_name"] or "org.mpris.MediaPlayer2.*"), (a, b, m["mpris_name"])
+            else:
+                assert a and b and not covers(a, b) and not covers(b, a), (a, b)
+    _, merged = sb.resolve(reviews=[{"template": "media-player", "overrides": {"mpris_name": VLC}}, {"template": "media-player", "overrides": {}}])
+    assert merged["mpris_name"] == VLC
+
+
+def test_a_named_mpris_name_shows_as_the_narrowing_it_is():
+    # the dialog's description, the Audit and the review badge say a set by its changes (R17.3.4,
+    # R17.11): a name takes away every other one, so it reads as less access, never as more
+    named, any_ = _player(VLC), _player()
+    assert sb.changes(any_, named) == ([], [f"media-player names other than {VLC}"])
+    assert sb.changes(named, any_) == (["every media-player name"], [])
+    assert sb.changes(named, _player("org.mpris.MediaPlayer2.mpv")) == (["the media-player name org.mpris.MediaPlayer2.mpv"], [f"the media-player name {VLC}"])
+    assert sb.changes(named, named) == ([], [])
+    assert sb.describe("media-player", named) == f"Media player, without media-player names other than {VLC}"
+    assert sb.describe("media-player", any_) == "Media player"
+    narrower = sb.suggestion_text(any_, named, "Ana")
+    assert narrower == f"Ana suggests removing media-player names other than {VLC}. The app may have more access than it needs."
+    wider = sb.suggestion_text(named, any_, "Ana")
+    assert wider == "Ana suggests adding every media-player name. Until you review it, the app may not work fully."
+    # Media keys itself coming or going is said as that, once
+    assert sb.changes(sb.resolve_template("online-app"), sb.apply_overrides(sb.resolve_template("online-app"), {"caps": ["notifications", "mpris"], "mpris_name": VLC})) == (["media keys"], [])
+    assert sb.summary(named) == sb.summary(any_)                                  # the chip is the capability's; its hint says which names
 
 
 # ---------------------------------------------------------------- the review lines (R10.3.1)
@@ -501,6 +1682,25 @@ def test_play_only_sound_is_not_shown_as_blocking_the_microphone():
     assert "Sound · can also record" in sb.summary(sb.resolve_template("online-app"))
     assert "Sound and microphone" in sb.summary(sb.resolve_template("messenger"))
     assert not any("ound" in c for c in sb.summary(sb.resolve_template("offline-editor")))
+
+
+def test_a_chip_names_a_capability_as_its_switch_in_the_sandbox_dialog_does():
+    # CR1.9-32: the summary's chip said "Secrets" and "Keep screen awake" where the Sandbox dialog's
+    # switch for the same capability says "Saved passwords" and "Keep the screen awake": one
+    # capability under two names on two screens, and A1.2.3.14's table of the names recorded both.
+    # How it slipped past: the chips' words were held to nothing but the table that copied them.
+    # Here every capability and the camera are held to the dialog itself: the chip a grant adds,
+    # and the name a keyring capability refused to a review is shown under (R17.3.1), are the label
+    # of its switch, word for word.
+    with open(written.path("src/appkata/qml/SandboxDialog.qml"), encoding="utf-8") as f:
+        switch = {key: label for label, key in re.findall(
+            r'SbxToggle \{ label: "([^"]+)"; ic: "[a-z]+";(?: warn: true;)? on: root\.has\(root\.gs\.(?:caps|devices), "([a-z0-9-]+)"\)', f.read())}
+    assert set(switch) == set(sb.CAP_LABELS) | set(sb.DEVICE_LABELS), switch          # each has its switch
+    bare = sb.apply_overrides(sb.resolve_template("standard"), {"caps": [], "devices": ["x11"]})
+    for field, key in [("caps", c) for c in sb.CAP_LABELS] + [("devices", "camera")]:   # x11, the default, has no chip
+        granted = sb.apply_overrides(bare, {field: sorted({*bare[field], key})})
+        assert [c for c in sb.summary(granted) if c not in sb.summary(bare)] == [switch[key]], key
+    assert {c: name for c, (name, _) in sb.SECRET_CAPS.items()} == {c: switch[c] for c in sb.SECRET_CAPS}
 
 
 def test_an_off_review_adds_no_limit_of_its_own():
@@ -787,8 +1987,10 @@ def test_the_portals_see_the_app_as_a_host_caller_through_a_narrowed_proxy(tmp_p
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     args = sb.proxy_args(sb.resolve_template("online-app"), "web")
     assert "--talk=org.freedesktop.portal.Desktop" not in args
-    rules = [a for a in args if a.startswith(("--call=", "--broadcast="))]
-    assert all(a.startswith(("--call=org.freedesktop.portal.Desktop=", "--broadcast=org.freedesktop.portal.Desktop=")) for a in rules)
+    ruled = [a for a in args if a.startswith(("--call=", "--broadcast="))]
+    # rules on the portal's name, and on the direct name of online-app's one capability (CR1.5-3), no other
+    assert {a.split("=", 2)[1] for a in ruled} == {"org.freedesktop.portal.Desktop", "org.freedesktop.Notifications"}
+    rules = [a for a in ruled if a.split("=", 2)[1] == "org.freedesktop.portal.Desktop"]
     for allowed in ("OpenURI", "Notification", "Settings", "Request", "Session"):   # Notification: online-app's capability
         assert any(f"org.freedesktop.portal.{allowed}.*@" in a for a in rules), allowed
     for denied in ("FileChooser", "Background", "DynamicLauncher", "Documents", "Camera", "ScreenCast",
@@ -841,6 +2043,7 @@ def test_a_sandboxed_app_gets_an_xdg_open_that_asks_the_host(tmp_path, monkeypat
     # Review 3, R3-33: no bus, but an address all the same, with nothing behind it -- unset, GLib and
     # libdbus would autolaunch a bus inside the sandbox through dbus-launch
     assert '--setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$rt/bus"' in strict and '--bind "$sock" "$rt/bus"' not in strict
+    assert "APPKATA_NO_BUS" not in strict                               # no word and no bus is Strict (PR #694's review, P1-B3)
     r = subprocess.run(["sh", shim, "https://example.com/x"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
     assert r.returncode == 3 and "runs Strict" in r.stderr and "https://example.com/x" in r.stderr
 
@@ -1215,7 +2418,10 @@ def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):
     text = open(lp).read()
     helper = sb.forward_path()
     assert os.path.exists(helper) and "org.freedesktop.portal.Documents" in open(helper).read()
-    assert f'python3 {helper} "$id" "$rt" "" {fake_home}/Projects -- "$@"' in text
+    # ...each only where the launcher shows it, which it doesn't where the session bus's address names
+    # a file it can't read (PR #694's review, P3-B4)
+    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+{fake_home}/Projects}} -- "$@"' in text
+    assert text.index('folders=1; [ "${busok:-1}" = 1 ] || folders=') < text.index("forward-files.py")
     assert text.index("forward-files.py") < text.index('set -- -- "$appdir/$exe" "$@"')     # before the words are fixed
     assert text.index("--appkata-menu") < text.index("forward-files.py")                  # after the menu word is shifted off
     cli = sb.build_launcher("t", "T", "/x/1", "bin/t", sb.resolve_template("cli-tool"), forward=helper)
@@ -1371,6 +2577,10 @@ def test_the_display_leak_warning_clears_only_gnome_wayland(monkeypatch, tmp_pat
     ("unix:abstract=/tmp/dbus-AbCdEf,guid=0123", True),                   # dbus-run-session / dbus-launch on dbus 1.12
     ("unix:path=/tmp/dbus-AbCdEf,guid=0123", False),                      # the same on dbus 1.14 and later
     ("unix:path=/run/user/1000/bus;unix:abstract=/tmp/dbus-x", True),     # any address of a list counts
+    ("unix:guid=0123,abstract=/tmp/dbus-AbCdEf", True),                   # in any place among its keys (PR #694's review, P4-B1b)
+    ("unix:abstr%61ct=/tmp/dbus-AbCdEf,guid=0123", True),                 # its name unescaped, as GIO reads it (P6-1)
+    ("unix:ABSTR%41CT=/tmp/dbus-AbCdEf", False),                          # ...and matched exactly: GIO connects to none
+    (" unix:abstract=/tmp/dbus-AbCdEf", False),                           # ...and as the clients read an entry: none takes this one
     ("", False),
 ])
 def test_the_bus_warning_is_said_only_for_an_abstract_session_bus(monkeypatch, addr, warns):

@@ -120,13 +120,16 @@ which overrides the line without one on that platform.
 | Sandbox sound | `play`, `record`, comma-separated; `+`/`-` prefixes add to / remove from the template's | Sound (R17.8) |
 | Sandbox devices | `camera`, `x11`, the same way | Devices (R17.2.1, R17.9) |
 | Sandbox services | `notifications`, `keep-awake`, `tray`, `media-keys`, `passwords`, `password-service`, the same way | Desktop-services capabilities (R17.5.1); a review can't grant the last two (R17.3.1) |
+| Sandbox MPRIS name | a bus name below `org.mpris.MediaPlayer2`, as `org.mpris.MediaPlayer2.vlc`; with a `.*` suffix, that name and every name below it (`org.mpris.MediaPlayer2.chromium.*`), for an app that takes a name per instance | The app's own media-player name: the one name its `media-keys` service may own (R17.5.1). Without the line it may own any |
 | Sandbox app folder | yes / no | The writable app folder (R17.7.1) |
 
 Trust, Rating and Tags take no platform; a platform on them is ignored, with a parse warning.
 The `Sandbox*` lines are Linux-only; on other platforms they're ignored.
 
 - A **Download filter** is written in backticks so Markdown leaves its `\`, `*` and `_` alone. A
-  value that isn't a valid regex, or an unknown forge, is ignored.
+  value that isn't a valid regex, or an unknown forge, is ignored. So is a **Sandbox MPRIS name**
+  that isn't one name below `org.mpris.MediaPlayer2` (the prefix alone with `.*`, which is every
+  player's name, is none).
 - **Recommended Source settings** apply to an app on this platform unless you set your own in
   Source settings (R2.6.7), with the same Trust order as the other options (R4.3.1.6): yours, then
   the highest Score, then name. They also apply to apps that only Trusts list. A recommended
