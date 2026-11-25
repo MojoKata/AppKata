@@ -164,18 +164,22 @@ _AN_IPV6_ADDRESS = re.compile(r"\[[0-9a-f:.]+\]")
 
 def _a_name_as_sent(name: str) -> bool:
     """Whether a host, its escapes decoded, is a name in the form it is sent, its IDNA form: ASCII
-    letters, digits, `-`, `_` and dots. A name is sent in that form, in lower case (_sent), so a name
-    in any script is one, its marks too (the review's pass 5, P5-1), and one whose IDNA form holds
-    what no name does isn't: `a⑴b` is sent as `a(1)b`, and `%5b127.0.0.1%5d` as `[127.0.0.1]`, which
-    a proxy reads as an address (P5-2). Nor is a name whose IDNA form changes with its case: with a
-    letter Unicode 3.2 hadn't, such as `Ⱥ`, the name written and the one sent are two names, with two
-    addresses."""
+    letters, digits, `-` and `_`, in parts between dots, none of them empty but for what follows a
+    name's one final dot. A name is sent in that form, in lower case (_sent), so a name in any script
+    is one, its marks too (the review's pass 5, P5-1), and one whose IDNA form holds what no name
+    does isn't: `a⑴b` is sent as `a(1)b`, and `%5b127.0.0.1%5d` as `[127.0.0.1]`, which a proxy reads
+    as an address (P5-2). Nor is one with no IDNA form (an empty part, a part of more than 63
+    characters, what IDNA has none for), or whose IDNA form has an empty part though the name has
+    none: the codec looks for empty parts before it makes the form, which makes dots of `‥` and `㏇`,
+    so `a‥b` is sent as `a..b` and `㏇.example` as `co..example` (the review's pass 6, P6-1). Nor is
+    a name whose IDNA form changes with its case: with a letter Unicode 3.2 hadn't, such as `Ⱥ`, the
+    name written and the one sent are two names, with two addresses."""
     try:
         sent = name.encode("idna").decode("ascii").lower()
         looked_up = name.lower().encode("idna").decode("ascii").lower()
     except UnicodeError:                     # an empty part, one longer than 63, or what IDNA has no form for
         return False
-    return sent == looked_up and re.fullmatch(r"[a-z0-9_.-]+", sent) is not None
+    return sent == looked_up and re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*\.?", sent) is not None
 
 
 def _named(text: str, host_part: str) -> str:

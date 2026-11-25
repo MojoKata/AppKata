@@ -1060,6 +1060,8 @@ def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_
     ("https://İstanbul.example/shot.png", "https://xn--istanbul-o0e.example/shot.png"),  # a capital İ, which lower() makes an i and a mark
     ("https://%E0%A4%AD%E0%A4%BE%E0%A4%B0%E0%A4%A4.example/shot.png", "https://xn--h2brj9c.example/shot.png"),  # भारत, escaped
     ("https://Images.Example.COM:8443/Shot.png?A=B", "https://images.example.com:8443/Shot.png?A=B"),         # the host in lower case, and only it
+    ("https://a。b.example/shot.png", "https://a.b.example/shot.png"),             # IDNA's own dots (review pass 6, P6-1)
+    ("https://⒈x.example./shot.png", "https://1.x.example./shot.png"),             # a dot its IDNA form makes, and a name's final dot
 ])
 def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url, sent):
     seen = []
@@ -1084,17 +1086,37 @@ def test_a_source_on_a_host_whose_name_has_marks_is_asked_for_with_its_token():
     assert "whose IDNA form, the one its lookup and a proxy are sent" in " ".join(reqdocs.item("R3.1.1").split())
 
 
+#
+# The review's pass 6, P6-1: R3.1.1 says a name with no IDNA form isn't asked for, and no test had
+# one, so taking out the `except UnicodeError` that refuses it let a UnicodeError out of Http, which
+# ended a whole Sync once (CR1 #269). And `‥` and `㏇` are no dots to the IDNA codec, which splits
+# a name into its parts before it makes their IDNA form, and that form makes dots of them: `a‥b` is
+# sent as `a..b`, a name with an empty part, which was asked for. The class is "a name that is no
+# name in the form it is sent", so these have no IDNA form, or one with an empty part.
 @pytest.mark.parametrize("host", [
     "a⑴b.example",              # its IDNA form: a(1)b.example
     "a%E2%91%B4b.example",      # the same, escaped
     "aͺb.example",              # its IDNA form holds a space
-    "Ⱥb.example",               # a letter Unicode 3.2 hadn't: its IDNA form isn't its lower case's, which the lookup is sent
+    "Ⱥb.example",               # a letter Unicode 3.2 hadn't: its IDNA form isn't its lower case's
+    # no IDNA form (review pass 6, P6-1)
+    "a..b.example",             # an empty part
+    ".example",
+    "a.example..",              # an empty part before a final dot
+    "a" * 64 + ".example",      # a part of more than 63 characters
+    "é" * 64 + ".example",      # the same, outside ASCII
+    "%ffb.example",             # U+FFFD, which IDNA has no form for
+    # an IDNA form with an empty part
+    "a‥b.example",              # a..b.example
+    "‥.example",                # ...example
+    "㏇.example",               # co..example
+    "a.㏇.",                    # a.co.., two final dots
 ])
 def test_a_name_whose_idna_form_is_more_than_a_name_is_refused(host):
     seen = []
     with pytest.raises(Unreachable, match="more than a host and its port"):
         names(Http(opener=recording({}, seen))).bytes(f"https://{host}/shot.png", token_host="git.example.org")
     assert seen == []
+    assert "or whose IDNA form has an empty part" in " ".join(reqdocs.item("R3.1.1").split())
 
 
 # The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host

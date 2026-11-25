@@ -14,7 +14,8 @@ comes between the `//` and the first `/` after it, is a host and its port and no
 Source's own host's too: a name, with its escapes decoded, whose IDNA form, the one its lookup and a
 proxy are sent, is ASCII letters, digits, `-`, `_` and dots, and doesn't change when the name is
 written in lower case, so a name in any script is asked for, and one with no IDNA form (an empty
-part, as in `a..b`, or a part of more than 63 characters) isn't; or an IPv6 address in brackets, as
+part, as in `a..b`, or a part of more than 63 characters), or whose IDNA form has an empty part
+(`a‥b`'s is `a..b`), isn't, though a name's one final dot is its own; or an IPv6 address in brackets, as
 they are written and not escaped; then a `:` and the port where it names one. So none with a user part
 before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, escaped brackets
 (`%5b127.0.0.1%5d`), or a `?` or `#` right after its host with no path
