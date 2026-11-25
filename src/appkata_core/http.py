@@ -326,15 +326,20 @@ def _sent(host: str) -> str:
     return _idna(host)
 
 
-def _as_sent(url: str, parts) -> str:
-    """An address as Http sends it, from what _http_address read of it (`parts`): its host part the
-    host _allowed judged as it is sent (_sent), then its port as written, and the rest of it as
-    written. Its host part is a host and its port and nothing else (_http_address)."""
-    before, slashes, rest = url.partition("//")
-    written = rest.partition("/")[0]
+def _host_part_as_sent(parts) -> str:
+    """An address's host part as Http sends it, from what _http_address read of it (`parts`): the
+    host _allowed judged as it is sent (_sent), then its port as written. Its host part is a host and
+    its port and nothing else (_http_address), so `parts.netloc` is all of it as written."""
     name = _sent(unquote(parts.hostname).lower())
-    port = written[len(_HOST_PART.fullmatch(written)[1]):]          # `:` and the port's digits, as written, or nothing
-    return before + slashes + (f"[{name}]" if ":" in name else name) + port + rest[len(written):]
+    port = parts.netloc[len(_HOST_PART.fullmatch(parts.netloc)[1]):]      # `:` and the port's digits, as written, or nothing
+    return (f"[{name}]" if ":" in name else name) + port
+
+
+def _as_sent(url: str, parts) -> str:
+    """An address as Http sends it, from what _http_address read of it (`parts`): its host part as
+    it is sent (_host_part_as_sent), and the rest of it as written."""
+    before, slashes, rest = url.partition("//")
+    return before + slashes + _host_part_as_sent(parts) + rest[len(rest.partition("/")[0]):]
 
 
 def _addresses(host: str) -> list[str]:
@@ -499,11 +504,41 @@ def _proxies() -> dict[str, str]:
     return {k: v for k, v in urllib.request.getproxies().items() if k in ("http", "https")}
 
 
+def _bypassed(host: str) -> bool:
+    """Whether the system says to reach a host directly, `host` being its host part as it is sent
+    (_host_part_as_sent): as urllib decides it (urllib.request.proxy_bypass: by the environment's
+    no_proxy where the environment names a proxy, else by the bypass list of the system's own
+    settings), and by each of no_proxy's entries in the form it is sent, as every rule compares
+    hosts. urllib compares an entry as it is written with the host as it is sent, its IDNA form, so
+    an entry in a name's script named no host: with `no_proxy=übung.lan`, every request to the
+    Source `übung.lan` went through the proxy, its token inside the tunnel (the review's pass 8,
+    P8-2). An entry with no IDNA form is compared as it is written alone."""
+    if urllib.request.proxy_bypass(host):
+        return True
+    entries = []
+    for entry in urllib.request.getproxies_environment().get("no", "").split(","):
+        with contextlib.suppress(UnicodeError):
+            entries.append(_sent(entry.strip().lstrip(".").lower()))      # as urllib reads one, then as it is sent
+    return urllib.request.proxy_bypass_environment(host, {"no": ",".join(entries)})
+
+
+class _Proxies(urllib.request.ProxyHandler):
+    """urllib's ProxyHandler, whose request reaches its host directly where Http's rule says so
+    (_bypassed), the rule Http._proxied reads too, so Http's check of an address and its request go
+    the same way. The check read the host as written and urllib's handler as it is sent, and for a
+    name outside ASCII the two went two ways (the review's pass 8, P8-2)."""
+
+    def proxy_open(self, req, proxy, type):
+        if req.host and _bypassed(req.host):        # req.host: the host part as it is sent, Http's own request's
+            return None
+        return super().proxy_open(req, proxy, type)
+
+
 def _opener(proxies, redirects, connect) -> urllib.request.OpenerDirector:
     """Http's own opener: urllib's default one without its file:, ftp: and data: handlers (CR1 #266),
-    with Http's rules for a redirect, and Http's own connections (CR1 #682)."""
+    with Http's rule for a proxy (_Proxies) and for a redirect, and Http's own connections (CR1 #682)."""
     opener = urllib.request.OpenerDirector()
-    for handler in (urllib.request.ProxyHandler(proxies), urllib.request.UnknownHandler(), _Connections(connect),
+    for handler in (_Proxies(proxies), urllib.request.UnknownHandler(), _Connections(connect),
                     urllib.request.HTTPDefaultErrorHandler(), redirects, urllib.request.HTTPErrorProcessor()):
         opener.add_handler(handler)
     return opener
@@ -656,10 +691,13 @@ class Http:
         return parts
 
     def _proxied(self, parts) -> bool:
-        """Whether a request to this address goes through a proxy, as urllib's ProxyHandler decides
-        it: one of Http's proxies is for its scheme, and the system doesn't say to reach its host
-        directly (no_proxy, or the bypass list of the system's own settings)."""
-        return parts.scheme in self.proxies and not urllib.request.proxy_bypass(unquote(parts.netloc))
+        """Whether a request to this address goes through a proxy, as Http's own opener decides it
+        (_Proxies): one of Http's proxies is for its scheme, and the system doesn't say to reach its
+        host directly (_bypassed: no_proxy, or the bypass list of the system's own settings), its
+        host part read as it is sent, as the opener reads it. Read as written, a name outside ASCII
+        was taken for direct where the request went through the proxy, or the other way (the
+        review's pass 8, P8-2)."""
+        return parts.scheme in self.proxies and not _bypassed(_host_part_as_sent(parts))
 
     def _unlimited(self, parts) -> None:
         """RateLimited when the host of this address said when to come back and that time hasn't

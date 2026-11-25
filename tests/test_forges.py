@@ -1442,6 +1442,59 @@ def test_through_real_sockets_a_host_in_any_script_is_sent_over_plain_http_in_it
     _asked_in_the_form_it_is_sent(monkeypatch, serving, "http", route, name, sent)
 
 
+# The review's pass 8, P8-2: a request is made with its host as it is sent (round 6), and urllib's
+# ProxyHandler compares each no_proxy entry, as it is written, with that host, in its IDNA form. An
+# entry in a name's script, no_proxy=übung.example, named no host, and every request to the Source
+# übung.example went through the proxy, its token inside the tunnel; and _proxied, which says what
+# the handler does, read the host as written, so the two disagreed. How it slipped past: the one
+# no_proxy entry in the tests was ASCII. The class is "one host, two spellings", at no_proxy, so an
+# entry in each form names an address in each form, through Http's own opener to a real server on
+# this computer, reached directly or through a proxy before it.
+NO_PROXY = [                     # a no_proxy entry, and whether it names übung.example on the server's port
+    pytest.param("übung.example", True, id="its-script"),
+    pytest.param("xn--bung-zra.example", True, id="its-idna-form"),
+    pytest.param("ÜBUNG.EXAMPLE", True, id="in-upper-case"),
+    pytest.param(".übung.example", True, id="with-a-leading-dot"),          # it, and the names under it
+    pytest.param("other.example, übung.example:{port}", True, id="with-its-port-in-a-list"),
+    pytest.param("bücher.example", False, id="another-name"),
+]
+
+
+def _routed_by_no_proxy(monkeypatch, serving, scheme, entry, direct, written, tls=None):
+    origin = serving(tls=tls)
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    proxy = serving(_Forwarding, _ForwardingServer)
+    proxy.to = port
+    behind_a_proxy(monkeypatch, proxy, https=True, no_proxy=entry.format(port=port))
+    source = f"{written}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    assert http.json(f"{scheme}://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    # an image there that another Source's request asks for: this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    url = f"{scheme}://{written}:{port}/shot.png"
+    assert http.bytes(url, token_host="git.example.org") == PNG
+    sent = f"xn--bung-zra.example:{port}"
+    assert proxy.seen == ([] if direct else [f"CONNECT {sent} HTTP/1.1"] * 2 if scheme == "https" else
+                          [f"GET http://{sent}{path} HTTP/1.1" for path in ("/api/v1/repos/o/r", "/shot.png")])
+    assert [path for path, _ in origin.seen] == ["/api/v1/repos/o/r", "/shot.png"] if direct or scheme == "https" else \
+        [f"http://{sent}{path}" for path in ("/api/v1/repos/o/r", "/shot.png")]
+    assert http._proxied(http_._http_address(url)) is not direct       # Http's rule says what its opener did
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example", "%C3%BCbung.example"])
+@pytest.mark.parametrize("entry, direct", NO_PROXY)
+def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_tls(monkeypatch, serving, trusting, entry, direct, written):
+    _routed_by_no_proxy(monkeypatch, serving, "https", entry, direct, written, tls=trusting)
+
+
+@pytest.mark.parametrize("written", ["übung.example", "xn--bung-zra.example", "%C3%BCbung.example"])
+@pytest.mark.parametrize("entry, direct", NO_PROXY)
+def test_through_real_sockets_a_no_proxy_entry_in_any_form_names_its_host_over_plain_http(monkeypatch, serving, entry, direct, written):
+    _routed_by_no_proxy(monkeypatch, serving, "http", entry, direct, written)
+
+
 def test_through_real_sockets_a_redirect_on_a_sources_own_host_in_any_script_is_that_host(pair, monkeypatch):
     # a path alone is made an address with the host part the request was sent with, and a forge may
     # write that host part out: either is the Source's own host, which may be on this computer, and
