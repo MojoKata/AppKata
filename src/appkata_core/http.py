@@ -584,17 +584,21 @@ class Http:
         left to a proxy (the review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`,
         `127.0.0.1.` or `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as
         a name, and the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone.
-        An address whose host part is more than a host and its port (a user part, a `\\`, a `?` or
+        It is judged in the form it is sent, so a name in any script is one: judged in its script,
+        `übung.example.org` was refused where `xn--bung-zra.example.org`, the name the proxy is sent,
+        was left to it (the review's pass 7, P7-3); and full-width `ｌｏｃａｌｈｏｓｔ`, sent as
+        `localhost`, is refused. An address whose host part is more than a host and its port (a user part, a `\\`, a `?` or
         `#` before any path), which urllib sends to a proxy along with the host, is refused before
         any of this, by _http_address (the review's passes 3 and 4, P3-1 and P4-1)."""
         parts = _http_address(url)
-        host = unquote(parts.hostname).lower()     # as it is judged: the host alone here (_http_address), and sent as _sent makes it
+        host = unquote(parts.hostname).lower()     # as it is judged: the host alone here (_http_address)
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
+        sent = _sent(host)                         # as it is sent, the lookup's and the proxy's
         try:
-            addresses = self._lookup(_sent(host))
+            addresses = self._lookup(sent)
         except (OSError, ValueError) as e:        # no such name: what the connection would have found
-            if self._proxied(parts) and _a_name(host) and not _localhost(host):
+            if self._proxied(parts) and _a_name(sent) and not _localhost(sent):
                 return parts                      # unless it is the proxy's, which looks the name up itself
             raise Unreachable(f"couldn't reach {host}: {e}") from None
         _refuse_local(host, addresses)

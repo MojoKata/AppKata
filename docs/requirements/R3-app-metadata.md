@@ -35,12 +35,12 @@ Source's own host in whichever form it is written, in its IDNA form or its scrip
 either case, or with a name's final dot or without it, so `xn--bung-zra.lan` and `übung.lan` are
 one host, and so are `git.example` and `%67it.example`. Behind a proxy, the proxy looks a host's
 name up: a name this computer can't look up is asked for through the proxy, and one this computer
-finds to be such an address, or
-`localhost`, is still refused. Of the hosts this computer can't look
+finds to be such an address, or `localhost`, is still refused. Of the hosts this computer can't look
 up, only a plain name is left to the proxy: ASCII letters, digits, `-`, `_` and dots, whose last
-part isn't a number. Any other is refused, such as an address with a trailing dot, an IPv6 zone or a
-port inside the host. An image that is refused is passed over for the next one in R3.2's or R3.3's
-list.
+part isn't a number, in the form it is sent, so a name in any script is one (`übung.example.org`,
+sent as `xn--bung-zra.example.org`). Any other is refused, such as an address with a trailing dot,
+an IPv6 zone or a port inside the host. An image that is refused is passed over for the next one in
+R3.2's or R3.3's list.
 
 R3.2. **Icon.** AppKata uses the first one it finds:
 

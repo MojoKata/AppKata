@@ -837,6 +837,49 @@ def test_behind_a_proxy_a_name_only_it_knows_is_asked_for_over_https_through_its
     assert "only a plain name is left to the proxy" in " ".join(reqdocs.item("R3.1.1").split())
 
 
+# The review's pass 7, P7-3: the rule above leaves to the proxy a plain name this computer can't look
+# up, and read the name as written, in its script, where the lookup is given its IDNA form and so is
+# the proxy: übung.example.org and बिंब.example.org were refused ("couldn't reach übung.example.org:
+# ... xn--bung-zra.example.org"), and xn--bung-zra.example.org was asked for through the proxy. How
+# it slipped past: every name only the proxy knew in the tests was ASCII. The class is "the host
+# judged isn't the host sent", at the proxy's rule, so these are names in other scripts, escaped
+# and full-width, over http and https; and what this computer can tell is local, spelled so, is
+# still refused.
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name, sent", [
+    ("übung.example.org", "xn--bung-zra.example.org"),
+    ("ÜBUNG.example.org", "xn--bung-zra.example.org"),
+    ("%C3%BCbung.example.org", "xn--bung-zra.example.org"),
+    ("बिंब.example.org", "xn--i1b7fb8e.example.org"),
+    ("ｉｍａｇｅｓ.example.org", "images.example.org"),           # full-width letters
+])
+def test_behind_a_proxy_a_name_only_it_knows_in_any_script_is_asked_for_through_it(pair, monkeypatch, tmp_path, scheme, name, sent):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    saved = sync._save_image(knows_only(Http(timeout=5), {}), f"{scheme}://{name}/shot.png", str(tmp_path / "shot"),
+                             token_host="git.example.org")
+    assert saved.endswith("shot.png")
+    assert [p for p, _ in a.seen] == ([f"CONNECT {sent}:443", "/shot.png"] if scheme == "https" else [f"http://{sent}/shot.png"])
+    assert "whose last part isn't a number, in the form it is sent, so a name in any script is one" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name", [
+    "ｌｏｃａｌｈｏｓｔ", "ｐｒｉｎｔｅｒ.ｌｏｃａｌｈｏｓｔ",   # localhost, whoever looks it up
+    "１２７.1", "０ｘ７ｆ.1",                                # 127.1 and 0x7f.1: a number for a last part
+    "1\U0001FBF0.0.0.1",                                     # xn--1-ed6s.0.0.1, which a reader that knows 🯰 reads as 10.0.0.1
+    "①②⑦.0.0.1",                                             # 127.0.0.1, which this computer looks up as itself
+])
+def test_behind_a_proxy_a_local_address_in_another_script_is_still_refused(pair, monkeypatch, tmp_path, scheme, name):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), {}), f"{scheme}://{name}/shot.png", str(tmp_path / "shot"),
+                         token_host="git.example.org")
+    assert a.seen == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
 # The review's pass 3, P3-1: the check reads the host after an address's `@`, and urllib sends all
 # that comes before the path, the user part too and decoded, as the host: a proxy is sent
 # `10.0.0.5/@images.example.com` in the Host header and a tunnel's CONNECT, and one that reads a
