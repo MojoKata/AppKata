@@ -2079,10 +2079,12 @@ set -- -- "$appdir/$exe" "$@"
 # nothing before it: the key loop skips such a key, as _bus_keys() does, but the proxy's GDBus refuses
 # the entry whole, so it is shown nothing (PR #694's review, P5-1: it was given the path and failed
 # every connection the app made, with no word; libdbus takes a trailing comma, so the file the path
-# names stays in $bussocks). $busesc is 1 where a key's value has an escape GDBus can't read (a `%`
-# not followed by two hex digits, or an escaped NUL), in whichever key it is: GDBus unescapes every
-# value, and refuses the entry whole for one (PR #694's review, P5-1's harness: `guid=%zz` beside a
-# path, or an abstract name with one, got a proxy that failed every connection, with no word).
+# names stays in $bussocks). $busesc is 1 where a key's name or value has an escape GDBus can't read
+# (a `%` not followed by two hex digits, or an escaped NUL), in whichever key it is: GDBus unescapes
+# every name and value, and refuses the entry whole for one (PR #694's review, P5-1's harness:
+# `guid=%zz` beside a path, or an abstract name with one, got a proxy that failed every connection,
+# with no word; P6-2: so did `g%zz=1` beside a path, the name read alone was the value). libdbus
+# takes such a name as written and connects to the path beside it, so its file stays in $bussocks.
 _BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
@@ -2097,7 +2099,9 @@ while [ -n "$rest" ]; do
   keys="${e#unix:},"
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
-    case "${p#*=}" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    for v in "${p%%=*}" "${p#*=}"; do
+      case "$v" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    done
     case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
     # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
     # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it

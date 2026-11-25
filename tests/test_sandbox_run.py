@@ -1242,14 +1242,15 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
 
 @needs_proxy
 @pytest.mark.parametrize("address", ["tcp:host=127.0.0.1,port=1", "unix:path={rt}/bus;unix:path=/tmp/dbus-elsewhere", "unix:path={rt}/a%20bus",
-                                     "unix:path={rt}/bus,"],
-                         ids=["another-transport", "a-list", "an-escaped-path", "a-key-with-no-equals"])
+                                     "unix:path={rt}/bus,", "unix:path={rt}/bus,g%zz=1"],
+                         ids=["another-transport", "a-list", "an-escaped-path", "a-key-with-no-equals", "a-key-gdbus-cannot-unescape"])
 def test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one(env, address):
     # CR1.5-18's other half: an address that names no one socket the launcher can show the proxy
     # (another transport, a list, an escaped path) still got a proxy, and the app a bus socket on
     # which every connection failed, with nothing said. Said now, on stderr, and the app runs as
     # it does where there is no bus: no proxy is started and nothing is left behind. And a trailing
-    # comma, an empty key, for which the proxy's GDBus refuses the address (PR #694's review, P5-1).
+    # comma, an empty key, for which the proxy's GDBus refuses the address (PR #694's review, P5-1),
+    # and a key's name with an escape it can't unescape, which it refuses as well (P6-2).
     address = address.format(rt=env.rt)
     lp = env.app("web", sb.resolve_template("online-app"))
     r = env.run(lp, '[ -e "$XDG_RUNTIME_DIR/bus" ] && echo BUS; echo "A=$DBUS_SESSION_BUS_ADDRESS"; echo RAN; xdg-open https://example.com/x; echo "exit $?"',

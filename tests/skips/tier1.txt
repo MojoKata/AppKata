@@ -41,6 +41,7 @@ tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_w
 tests/test_sandbox_run.py::test_a_self_updating_app_can_change_its_folder_only_with_the_writable_grant[True]  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_self_updating_appimage_can_change_its_unpacked_copy_but_never_the_appimage_itself  # needs a working bwrap 0.5+ (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-key-gdbus-cannot-unescape]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-key-with-no-equals]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[a-list]  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_run.py::test_a_session_bus_the_filter_cannot_be_shown_is_said_and_the_app_runs_without_one[an-escaped-path]  # needs xdg-dbus-proxy and dbus-daemon

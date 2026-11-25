@@ -603,6 +603,8 @@ def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
                                      "unix:=0123,path={rt}/bus", "unix:abstract=/tmp/dbus-two,", "unix:path=/srv/session,one/bus",
                                      # ...and a value with an escape it can't read, in any key
                                      "unix:path={rt}/bus,guid=%zz", "unix:guid=%00,path={rt}/bus", "unix:abstract=/tmp/dbus-two%",
+                                     # ...or a key's name with one (P6-2)
+                                     "unix:path={rt}/bus,g%zz=1", "unix:%=1,path={rt}/bus", "unix:abstract=/tmp/dbus-two,a%00=1",
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
 def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
@@ -986,6 +988,10 @@ BUS_KEY_ORDERS = {
     "unix:path=/nowhere/a/first,pa%74h=/nowhere/b/second": "",
     "unix:path=/nowhere/a/bus,%61bstract=/tmp/dbus-x": "",
     "unix:PA%54H=/nowhere/a/bus,guid=0123": "",
+    # ...and a key's name GDBus can't unescape, for which it refuses the entry (P6-2)
+    "unix:path=/nowhere/a/bus,g%zz=1": "",
+    "unix:path=/nowhere/a/bus,%=1": "",
+    "unix:abstract=/tmp/dbus-x,a%00=1": "",
 }
 
 
@@ -1032,7 +1038,9 @@ BUS_KEY_SHAPES = ["path=/nowhere/a/bus", "path=/nowhere/b/bus", "path=relative/b
                   "abstract=/tmp/dbus-a%00b",
                   # a key's name escaped (P6-1): GIO unescapes it once and matches it exactly
                   "pa%74h=/nowhere/b/bus", "abstr%61ct=/tmp/dbus-y", "PA%54H=/nowhere/a/bus", "p%2561th=/nowhere/a/bus",
-                  "pa%0ath=/nowhere/a/bus"]
+                  "pa%0ath=/nowhere/a/bus",
+                  # ...and one GDBus can't unescape, for which it refuses the entry (P6-2)
+                  "g%zz=1", "%=1", "a%00=1"]
 
 _GIO_TAKES = """import json, sys
 from gi.repository import Gio, GLib

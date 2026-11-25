@@ -47,7 +47,9 @@ while [ -n "$rest" ]; do
   keys="${e#unix:},"
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
-    case "${p#*=}" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    for v in "${p%%=*}" "${p#*=}"; do
+      case "$v" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
+    done
     case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
     # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
     # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it
