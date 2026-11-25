@@ -167,3 +167,177 @@ Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
 - **The runs before each fix wrote outside their test's folder**, as the defect does: #306's left
     a file in pytest's own temporary folder (`/tmp/pytest-of-dev/pytest-<n>/`, which pytest
     rotates), nowhere else.
+
+## Batch 2
+
+Fable 5.2 at high effort, 2026-11-25. Nothing uncommitted was found in the worktree; nothing was
+taken over. No failure of CI's was written here for batch 1's commits.
+
+**Files touched:** `src/appkata/backend.py`, `src/appkata_core/install.py`,
+`src/appkata/qml/AppDetail.qml`, `src/appkata/qml/ReviewDialog.qml`, `src/appkata/qml/PopMenu.qml`,
+`docs/requirements/R4-installing-updating-and-uninstalling.md`,
+`docs/requirements/R10-trust-and-the-appkata-md-file.md`, `tests/test_backend.py`,
+`tests/test_install_review.py`, `tests/test_channel_ui.py`, `tests/test_sandbox_ui_surfaces.py`,
+`tests/skips/windows.txt`, `docs/relay/progress.md`.
+
+**Counts:** fixed 4 (one of them with its remedy changed in two points, listed), no defect 0, set
+aside 0, still left 0, new 2 (neither fixed here).
+
+### The findings
+
+Each test was shown failing by exporting the commit before the fix (`git archive`) to a scratch
+folder, putting the new test files over it, and running the new tests there in a scratch home.
+
+- **#465 (Med), fixed, `1269665`.** `detail()` gives an installed app's chip from its install
+    record (`verify`: signed, checksum or unverified, with `verifyTip` from `checksum_source`), and a
+    forecast for the file Install or Update would take (`forecast`: published or none, with
+    `forecastVersion`), read from the release that file is a file of (`_release_of`), not from
+    `releases[0]`. App Detail shows the installed chip whatever the newest release holds (the
+    QML's `&& !!root.d.asset` is gone) and the forecast as its own chip. R4.4 has the paragraph.
+    Tests: in `tests/test_backend.py`,
+    `test_an_installed_apps_chip_is_what_its_own_install_checked_whatever_the_next_release_publishes`
+    (6 records), `test_an_installed_app_has_its_own_chip_and_no_forecast_when_there_is_no_file_to_take`,
+    `test_a_file_that_isnt_installed_yet_gets_a_forecast_read_from_its_own_release` (6 kinds of
+    release; case 4 is two of them), `test_nothing_is_forecast_for_an_app_install_isnt_offered_for`;
+    in `tests/test_sandbox_ui_surfaces.py`, the chips and their tooltips read from the real App
+    Detail: `test_app_detail_shows_what_the_installed_file_was_checked_against_and_a_forecast_for_the_next_one`.
+    Before the fix: 18 of the first 19 fail (the two for foreign and Track only were written after
+    that run and can only fail there: the key is new); the one that passes is the signed record in
+    the QML, which was read before. Most fail on the new keys, so the old values were read
+    directly too, on the code before: case 1 gave `checksum`, case 2 `unverified`, case 4
+    `unverified` for a file whose own release has a `SHA256SUMS`. Cases 1, 2 and 4 reproduce; case 3
+    is #328's (batch 4) and is as it was.
+- **#467 (Med), fixed, `cb5f115`, the remedy changed in two points.** `install()` keeps the
+    download's SHA-256 in the record, `installed_sha256(record, version)` reads it, and `detail()`
+    and the review dialog's Details use it. R4.1 names it.
+    1. **By version**, `"sha256": {<version>: <digest>}` with the kept versions' own, not the one
+        key `"sha256": got`: `switch_to` makes a kept version current with no download, and it must
+        have its own file's digest. It is in the record and not in the version's own entry
+        (`current`), because `tests/test_sandbox_transitions.py` holds that entry to its three keys
+        and is U03's and U17's file, not this unit's: the first form of the fix failed two of its
+        tests, and was changed, not the test.
+    2. **No fall-back to the release's data.** The remedy and the record's proof have one "for
+        records made before that": left out by the brief's rule (nothing for what an earlier
+        version stored). Records without a digest are otherwise those of copies AppKata never
+        downloaded, where the forge's digest of a same-named file is the finding's own false claim.
+    Tests: `tests/test_install_review.py::test_the_record_keeps_the_sha256_of_each_versions_own_download`
+    (three installs with keep 1, then a switch back; Linux-only, its skip line is in the same
+    commit) and `::test_a_record_has_no_sha256_for_a_copy_appkata_didnt_download`;
+    `tests/test_backend.py::test_the_installed_files_own_sha256_is_what_a_reviewers_is_compared_with_and_what_a_review_says`
+    (5 cases) and `::test_a_file_not_yet_installed_is_compared_by_the_digest_its_release_gives`.
+    Before the fix: 7 of 8 fail (the pill shown for the replaced file and never for the installed
+    one, no SHA-256 line without a forge digest, no digest in the record); the one that passes is
+    the file not yet installed, which is unchanged.
+- **#466 (Med), fixed, `84d5cb6`.** `_same_digest` is true only for the same 64 hexadecimal digits.
+    R10.3.4 says so and R10's example has a whole digest. Tests:
+    `tests/test_channel_ui.py::test_same_digest_and_source_settings` turned round (15 shortened or
+    wrong forms, and two shortened values that agree), and
+    `tests/test_backend.py::test_same_file_is_said_only_of_a_reviewers_whole_sha256` (7 forms ×
+    installed and about to be installed, through `detail()`). Before the fix: 11 of 15 fail (every
+    shortened form was a match); the 4 that pass are the whole digests.
+- **#497 (Low), fixed, `086192d`.** The Version menu holds every choice and scrolls: `PopMenu` has
+    a `maxHeight` (0, the default: as tall as its rows, as before), which this menu sets to 460.
+    The Details preview shows each line as written, wrapped. Scrolling the list is the remedy
+    taken, not the "more…" step. Tests, in `tests/test_sandbox_ui_surfaces.py`:
+    `test_the_review_dialogs_version_select_reaches_every_release_and_every_reviewed_version` (25
+    releases and a review of a version that is no longer one: the wheel is turned over the menu
+    and the row clicked, for the newest, the installed oldest and the reviewed one),
+    `test_a_menu_with_no_height_set_is_as_tall_as_its_rows_and_doesnt_scroll`,
+    `test_the_review_dialog_shows_the_details_it_will_write_whole`. Before the fix: all 3 fail (12
+    rows where 27 are expected; `- SHA-256: 5e5e5e5e5e5e…`; the second has no scrolling part to
+    read). The screens were also rendered offscreen from a scratch copy and looked at.
+
+### Needs your eye
+
+- `1269665` (#465): **R4.4's new paragraph**, and what App Detail shows:
+    - a file not yet installed: **Checksum published** or **No checksum published** where
+        Checksum or Unverified was, in the same colours. Tooltip: "2.0 publishes a checksum for
+        the file Update would take: the download is checked against it." / "2.0 publishes no
+        checksum for the file Install would take: there is nothing to check the download against."
+    - the Checksum chip's tooltip: "Checked against the forge's digest" / "Checked against
+        SHA256SUMS" (the file's name).
+    - **an installed app whose record names no check is Unverified**, AppKata's own adopted copy
+        among them, with the tooltip "AppKata adopted this copy as it found it and didn't download
+        it, so it checked nothing". Before, its chip was the next release's (Checksum, on GitHub).
+    - no forecast where neither Install nor Update is offered: a copy installed outside AppKata,
+        a Track only app, a channel's update, an AppKata that only tells of its releases. Those
+        showed Checksum or Unverified before.
+- `cb5f115` (#467): **R4.1** lists "the SHA-256 of that file as it was downloaded" (the record
+    named no requirement to change; R8.4.5.1 fills Details "from the install record (R4.1)").
+    An app AppKata didn't download has no SHA-256 line in a review's Details and no pill.
+- `84d5cb6` (#466): **R10.3.4's two new sentences** and **R10's example digest**, now 64 digits
+    (made up: `3c1f6a0b…be9e07`).
+- `086192d` (#497): the Version menu is at most 460 high and shows a scroll bar while it scrolls;
+    12 plain rows were 480 before. The Details preview wraps a long line.
+
+### Needs a run
+
+- **CI's tour job** (#465): App Detail's screens change. Not made here.
+- **The Windows VM** (the coordinator's): `scripts/test-windows-vm.sh --tests`. Of this batch only
+    `tests/test_install_review.py::test_a_record_has_no_sha256_for_a_copy_appkata_didnt_download`
+    runs there (the rest need PySide6 or the Linux layout, and are in `tests/skips/windows.txt`).
+    Nothing asserts on Windows that an installer's record has its digest: the line that writes it
+    is the same for every kind.
+- No container was needed or run. Run here, in a scratch home, all passing: the touched test
+    files whole (`tests/test_backend.py`, `tests/test_install_review.py`,
+    `tests/test_channel_ui.py`, `tests/test_sandbox_ui_surfaces.py`), `tests/test_skip_lists.py`,
+    the document checks, every other test file that loads QML, and `tests/test_windows.py`,
+    `tests/test_selfinstall.py`, `tests/test_sandbox_transitions.py`, `tests/test_sandbox.py`,
+    `tests/test_sandbox_backend.py`, `tests/test_core.py`, `tests/test_channels.py`,
+    `tests/test_dialog_contract.py`. Tier 1 whole is CI's.
+
+### Guard
+
+Nothing: every file changed is in U04's files.
+
+### New
+
+1. **Not fixed. A review of an app installed from a package channel says "Channel: GitHub
+    release" and has no Commit.** `src/appkata/backend.py`, `_review_versions` (the `details`
+    lines). Case, run on this branch: Demo installed as a Flatpak (record `channel: flatpak`, a
+    64-digit `commit`): the review dialog's Details are Date, Platform and `Channel: <forge>
+    release`, with no Commit line. R8.4.5.1: "Date, Platform, Channel, and File and SHA-256, or the
+    Flatpak Commit"; R10.3.4's examples: `Flathub org.zettlr.Zettlr (verified)`, `Debian package
+    3.5.1-1`. So a published review names a channel the reviewer didn't install from, and the
+    Commit half of R10.3.4's pill has only hand-written Details to match. Low (Med if a wrong
+    fact in a published, signed review counts as one). Not small: the Channel line for a Flatpak
+    and for a package, and the Commit.
+2. **Not fixed. After a Flatpak is updated outside AppKata its record holds the shortened commit,
+    so "Same file" can't show for it.** `src/appkata_core/sync.py`, the `rec["commit"] = i.commit`
+    line of the Flatpak pass (its own comment: "`flatpak list` shows a shortened commit").
+    By reading, not run. Before #466 a reviewer's whole commit didn't match such a record either
+    (`mine.startswith(theirs)`); only a shortened one did, which is what #466 ends. Low. Not this
+    unit's file.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
+`/home/dev/.local/share/applications` before and after was empty.
+
+### Doubts
+
+- **The tour's demo installs.** `scripts/demo_data.py` (not this unit's file; shared) gives its
+    .deb, .rpm and tarball installs the record `{}`, and AppKata's own copy `verified: adopted`:
+    those App Detail screens will now say **Unverified** where they said Checksum. Its AppImage
+    installs have `verified: checksum` and stay Checksum. If the tour should show checked
+    installs, `inst()` there needs `{"verified": "checksum", "checksum_source": "forge digest"}`.
+- **Unverified for a record with no result.** R4.4 has three chips, and #318's record uses
+    Unverified for the unchecked case, so an adopted AppKata is Unverified, not chip-less. The
+    alternative is no chip at all for it.
+- **#467 without the fall-back** departs from its record's proof ("a record without one falls
+    back to the release's"), by the brief's rule. Say so on the issue.
+- **`_release_of` finds the release by the file's name and URL.** `catalog.build` doesn't say
+    which release `asset` came from, and `catalog.py` is not in #465's files. Two releases that
+    list one URL under one name would give the newer; their file is then the same one.
+- **#656 (a first install goes around the minimum age)** makes the forecast describe the file the
+    catalog offers (the eligible release's), while Install today takes the newest release's. The
+    forecast follows the catalog's file; #656's fix makes the two one.
+- **A wheel event with no timestamp scrolls a menu once and no further** (Qt's Flickable reads
+    the wheel's speed from it). The test's events carry one, as real ones do; without it the menu
+    looked stuck after 72 pixels. Nothing in the product: said so the next reader of that helper
+    knows why the line is there.
+- **`tests/test_sandbox_ui_surfaces.py` holds #465's chip test**, though #465's record names
+    `tests/test_backend.py`: the harness that loads the real App Detail is there. The new
+    Version-select test takes about 5 seconds (the wheel's animation).
+- **The pending setup's record** (AppKata's own setup on Windows) gets no digest here: that is
+    #326's (`pendingSha256`), in another unit.
