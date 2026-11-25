@@ -231,7 +231,7 @@ Rectangle {
             Flow {      // chips
                 width: parent.width; spacing: 6
                 Pill { visible: root.d.verify === "signed"; text: "Verified" + (root.d.signer ? " · " + root.d.signer : "")       // Authenticode (R15.11)
-                       tip: root.ch ? "Signed by " + (root.ch.kind === "flatpak" ? "Flathub" : root.ch.distro || "the distribution") : ""    // R16.3.6
+                       tip: root.d.verifyTip || ""      // a channel's copy: "Signed by <its remote or repository>" (R16.3.6)
                        icon: "shieldCheck"; color: Theme.okSoft; fg: Theme.ok; u: 0.92 }
                 Pill { visible: root.d.verify === "checksum"; text: "Checksum"; tip: root.d.verifyTip || ""; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
                 Pill { visible: root.d.verify === "unverified"; text: "Unverified"; tip: root.d.verifyTip || ""; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }

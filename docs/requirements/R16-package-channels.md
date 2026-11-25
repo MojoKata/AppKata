@@ -138,9 +138,23 @@ R16.3.5. **Installing a package.** Through the package backend (R16.8):
 3. The record holds the package name, the manager, the repository, and whether the package was
    already marked as a dependency (R16.4.3).
 
-R16.3.6. **Verification** (R4.4). Flatpak commits and packages are checked by flatpak, apt and dnf
-against their repositories' keys; AppKata shows **Verified** with the tooltip "Signed by Flathub"
-or "Signed by Ubuntu" (the repository's name).
+R16.3.6. **Verification** (R4.4). flatpak checks a Flatpak's commits against its remote's key, and
+apt and dnf check packages against their repositories' keys. AppKata shows **Verified** only for
+a copy that was checked so, with the tooltip "Signed by Flathub" or "Signed by Ubuntu" (the
+remote's or the repository's own name, as R16.1.2 shows it; "Signed by its repository" when it
+gives none):
+
+- A Flatpak, when signature checking is on for the remote it came from. A remote added with
+  `--no-gpg-verify`, and the one a bundle installed from a file leaves behind, have it off.
+- A package, when a repository whose key the package manager checks offers the installed version.
+  A version no repository offers (one installed from a file, or one its repository has since
+  replaced) and a package of a repository that is trusted without a key (`[trusted=yes]`) were
+  checked against nothing AppKata can tell.
+
+Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
+named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
+package manager each time it installs, adopts (R16.4.2) or updates the copy; the chip is their
+answer, kept in the install record (R4.1).
 
 R16.4. **Tracking.**
 
@@ -232,7 +246,8 @@ R16.6.1. The App Detail panel shows each channel the app has, with who publishes
 
 - **Flathub · verified**: published by the project itself.
 - **Flathub · community**: packaged by someone else.
-- **Ubuntu (universe)**, **Fedora**, or the repository's name (R16.1.2).
+- **Ubuntu (universe)**, **Fedora**, or the repository's name (R16.1.2); **Package** for a package
+  no repository's key checked (R16.3.6), whose repository AppKata can't name.
 - The link check (R16.1.4).
 
 These describe the channel, not the app: they never change the app's Trust or Rating (R10.6).
@@ -290,6 +305,14 @@ holder's name) for up to 10 minutes, then fails with that reason. **Cancel** wor
 R16.8.4. Reading uses the command line and files: `dpkg-query`, `rpm -q`, `apt list`,
 `dnf check-update` and `dnf repoquery`, the AppStream catalog (R16.2.2), and `flatpak` (which never
 needs administrator rights for `--user`).
+
+R16.8.5. **A package file from a release** (`.deb`, `.rpm`; R4.3.3) is always installed through
+the command line (R16.8.2), also where PackageKit is running: PackageKit takes a file by its
+path, reads it as root later, and can't be held to the file AppKata checked. After the dry run
+(R16.3.5) one command runs through `pkexec`. It copies the file to a new folder under `/var/cache`
+that only root can change, compares the copy's SHA-256 with the download's (R4.4), hands the copy
+to `apt-get install` or `dnf install`, and removes the folder. When the two differ, nothing is
+installed.
 
 R16.9. **The Audit** (R13) records channel installs, adoptions (R16.4.2), uninstalls, updates, the
 **Updates** choice, and what changed outside AppKata (R16.4.1, R16.5.4), with the actor **System**.

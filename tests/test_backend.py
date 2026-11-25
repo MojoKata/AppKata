@@ -692,6 +692,49 @@ def test_an_installed_apps_chip_is_what_its_own_install_checked_whatever_the_nex
     assert (d["forecast"], d["forecastVersion"]) == ("published" if next_digest else "none", "2.0")     # the update's file, beside it
 
 
+# R16.3.6 (CR1, #318): the chip of a copy from a package channel is what its record says checked it.
+# It was Verified for every record with a channel, whatever the record said.
+FLATPAK = {"channel": "flatpak", "flatpak": "org.example.Demo", "installation": "user"}
+PACKAGE = {"channel": "package", "package": "demo", "manager": "apt", "pkgVersion": "1.0-1"}
+
+
+@pytest.mark.parametrize("record, chip, tip", [
+    ({**FLATPAK, "remote": "flathub", "verified": "signed", "signer": "Flathub"}, "signed", "Signed by Flathub"),
+    ({**FLATPAK, "remote": "vendor", "verified": "signed", "signer": "vendor"}, "signed", "Signed by vendor"),
+    ({**FLATPAK, "remote": "aktest", "verified": "unverified", "signer": ""}, "unverified",
+     "No key checked this copy: flatpak doesn't check its remote, aktest, against one"),
+    ({**FLATPAK, "remote": "", "verified": "unverified", "signer": ""}, "unverified",
+     "Its remote isn't known, so AppKata can't tell that a key checked this copy"),
+    ({**PACKAGE, "verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}, "signed", "Signed by Ubuntu"),
+    ({**PACKAGE, "verified": "signed", "signer": "LP-PPA-mozillateam", "repository": "LP-PPA-mozillateam"}, "signed", "Signed by LP-PPA-mozillateam"),
+    ({**PACKAGE, "verified": "signed", "signer": "", "repository": "https://deb.example.org/apt"}, "signed", "Signed by its repository"),
+    ({**PACKAGE, "verified": "unverified", "signer": "", "repository": ""}, "unverified",
+     "No repository offers the installed version (1.0-1), so AppKata can't tell that a repository's key checked it"),
+    ({**PACKAGE, "verified": "unverified", "signer": "", "repository": "file:/tmp/akrepo"}, "unverified",
+     "No key checked this package: it is from file:/tmp/akrepo, which isn't checked against one"),
+    ({**PACKAGE, "adopted": True}, "unverified",
+     "No repository offers the installed version (1.0-1), so AppKata can't tell that a repository's key checked it"),     # names no check
+], ids=["flathub", "a-vendors-remote", "a-remote-not-checked", "no-remote", "the-distribution", "a-ppa", "a-repository-with-no-name",
+        "a-package-put-in-by-hand", "a-repository-trusted-without-a-key", "no-result"])
+def test_a_channels_copy_has_the_chip_its_record_says_and_none_for_being_from_a_channel(be, record, chip, tip):
+    source(be, published("1.0"))
+    installed_as(be, "1.0", record)
+    d = be.detail(URL)
+    assert d["ch"]["kind"] == record["channel"]
+    assert (d["verify"], d["verifyTip"], d["signer"], d["forecast"]) == (chip, tip, "", "")       # the signer is in the tooltip
+
+
+def test_a_package_no_repository_checked_is_named_by_no_distribution(be):
+    """Its label and the rows that name its distribution took the record's signer, which was the
+    distribution's name for every package."""
+    source(be, published("1.0"))
+    installed_as(be, "1.0", {**PACKAGE, "verified": "unverified", "signer": "", "repository": ""})
+    assert (be.detail(URL)["ch"]["label"], be.detail(URL)["ch"]["distro"]) == ("Package", "")
+    be.db.x("DELETE FROM installs")
+    installed_as(be, "1.0", {**PACKAGE, "verified": "signed", "signer": "LP-PPA-mozillateam", "origin": "main"})
+    assert (be.detail(URL)["ch"]["label"], be.detail(URL)["ch"]["distro"]) == ("LP-PPA-mozillateam (main)", "LP-PPA-mozillateam")
+
+
 @pytest.mark.parametrize("releases, state", [
     ([published("1.0", digest=SHA)], "installed"),                                   # nothing newer: no file to forecast
     ([published("2.0", digest=SHA, file=False), published("1.0", digest=SHA)], "update"),     # 2.0 has no file for this computer

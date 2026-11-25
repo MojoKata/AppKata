@@ -146,7 +146,10 @@
     699,
     729,
     730,
-    731
+    731,
+    739,
+    740,
+    742
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -173,11 +176,16 @@
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
     "tests/test_windows.py",
-    "tests/skips/windows.txt"
+    "tests/skips/windows.txt",
+    "src/appkata/qml/AppRow.qml",
+    "tests/test_docs_facts.py",
+    "src/appkata_core/sync.py",
+    "tests/test_sync.py"
    ],
    "depends_on": [
     "U01"
-   ]
+   ],
+   "oversize": "21 findings: 15 from the review, and six its own batches found in its own work (#729, #730, #731, #739, #740, #742), which are cheapest fixed while the unit is in them; #740 and #742 are on what #318 and #327 just built."
   },
   {
    "id": "U05",
@@ -249,7 +257,9 @@
     430,
     556,
     662,
-    667
+    667,
+    737,
+    738
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -272,7 +282,9 @@
     "tests/test_channels.py",
     "tests/test_core.py",
     "tests/test_dialog_contract.py",
-    "tests/test_install_review.py"
+    "tests/test_install_review.py",
+    "tests/test_backend.py",
+    "tests/test_sync.py"
    ]
   },
   {
@@ -432,7 +444,8 @@
     359,
     365,
     367,
-    370
+    370,
+    741
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -11510,6 +11523,100 @@
    "size": "medium",
    "proof": "A folder argument, a link planted in it through the document portal, then a file argument through the link: the target is not handed over (tier 1, and tier 2 with the real portal in both containers).",
    "note": "Found by U05's second batch (2026-11-25) on its branch after #379's fix, and filed by the coordinator; taken in U05's fifth batch beside #400 (the same portal records), so #379 closes with its road shut."
+  },
+  {
+   "finding": 737,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [],
+   "related": [
+    465
+   ],
+   "size": "small",
+   "proof": "A test writing a review of a Flatpak install and of a package install: the Channel line names the install's channel and a Flatpak's has its Commit line.",
+   "note": "Found by U04's second batch (2026-11-25) and filed by the coordinator."
+  },
+  {
+   "finding": 738,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_sync.py"
+   ],
+   "depends_on": [],
+   "related": [
+    466
+   ],
+   "size": "small",
+   "proof": "A test of sync after an outside update: the record holds the full commit and App Detail says Same file.",
+   "note": "Found by U04's second batch (2026-11-25), by reading, and filed by the coordinator."
+  },
+  {
+   "finding": 739,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "tests/test_channels.py with real apt in the channels container: an update from a release's .deb plans no upgrade of its own package.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator; fixed in U04 (24c5a0d)."
+  },
+  {
+   "finding": 740,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_sync.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    738
+   ],
+   "size": "small",
+   "proof": "A test of sync after a channel copy is replaced outside AppKata: the record's verdict is taken again.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator; the verdict is #318's (U04), so U04's fourth batch takes it."
+  },
+  {
+   "finding": 741,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata_core/windows.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [
+    326,
+    370
+   ],
+   "size": "small",
+   "proof": "The Windows VM's suite: the elevated .msi's log is written in the administrators-only folder.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 742,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the package manager refuses a plan: the backend shows the plan dialog with refused: True.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading; U04's fourth batch takes it."
   },
   {
    "finding": 743,

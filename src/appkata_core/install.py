@@ -1055,17 +1055,23 @@ def _secure_target(portable: "Portable", target: str) -> None:
         raise InstallError(str(e)) from None
 
 
-def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
-    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8)."""
+def _run_installer(app: dict, file: str, sha256: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
+    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8).
+    `sha256` is the downloaded file's, as AppKata checked it: an installer started with administrator
+    rights is started from a copy that is held to it (R15.7.5)."""
     from . import windows
     scope = portable.scope if portable.scope in windows.scopes(kind, exe_kind) else "me"
     msi_log = os.path.join(tmpdir, "msi.log") if kind == "msi" else ""
     prog, args, elevate = windows.installer_command(kind, exe_kind, file, scope, msi_log)
     before = windows.uninstall_entries()
     try:
-        code = windows.shell_execute(prog, args, elevate=elevate, cwd=os.path.dirname(file))
+        if elevate:
+            code = windows.run_elevated(file, sha256, windows.msi_arguments(scope, msi_log) if kind == "msi" else args, msi=kind == "msi")
+        else:
+            code = windows.shell_execute(prog, args, cwd=os.path.dirname(file))
     except (OSError, TimeoutError) as e:
         raise InstallError(f"couldn't run the installer: {e}") from None
+    _elevated_refusal(code)
     meaning = windows.exit_meaning(code)
     if meaning == "cancelled":
         raise Cancelled()
@@ -1085,6 +1091,15 @@ def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Po
     else:
         log.warning("%s: no Uninstall entry appeared; AppKata can't uninstall it", app["name"])
     return rec
+
+def _elevated_refusal(code: int) -> None:
+    """Raise for what windows.run_elevated() says of a file it didn't start (R15.7.5)."""
+    from . import windows
+    if code == windows.CHANGED:
+        raise InstallError("the downloaded file changed after AppKata checked it; nothing was installed")
+    if code == windows.NOT_STARTED:
+        raise InstallError("Windows couldn't make the administrators' copy of the installer or start it; nothing was installed")
+
 
 def _retain(rec: dict, keep: int) -> list[dict]:
     """Keep up to `keep` older versions in the record (R4.3.1.5), and return the rest: the caller
@@ -1385,7 +1400,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             _activate(rec, app, portable, target)
             retired = _retain(rec, portable.keep)
         elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
-            rec.update(_run_installer(app, file, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
+            rec.update(_run_installer(app, file, got, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
         elif kind == "msix" and OS == "windows":            # R15.7.4
             from . import windows
             try:
@@ -1401,14 +1416,20 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             m = re.search(r"Installing\s+\d+/\d+…?\s+(\S+)|(\w+(?:\.\w+){2,})", p.stdout + p.stderr)
             rec["flatpak"] = m.group(1) or m.group(2) if m else ""
         elif kind in ("deb", "rpm"):
-            # through the package backend, dry run first (R16.3.5, R16.8)
+            # Through the package manager's command line, dry run first (R16.3.5), and never
+            # PackageKit: the command that runs as root installs its own copy of this file, and
+            # only when the copy is the file whose SHA-256 was just taken (R4.4, R16.8.5).
             if kind == "deb":
                 pkg = subprocess.run(["dpkg-deb", "-f", file, "Package"], capture_output=True, text=True).stdout.strip()
             else:
                 pkg = subprocess.run(["rpm", "-qp", "--qf", "%{NAME}", file], capture_output=True, text=True).stdout.strip()
-            be = pkgbackend.backend()
-            _apply(be, "install", [os.path.abspath(file)], app.get("confirmed", False), progress, cancel,
-                   app.get("onWait"))
+            be = pkgbackend.Cli("apt" if kind == "deb" else "dnf")
+            try:
+                be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"), package=pkg)
+            except NeedsConfirmation:
+                raise
+            except PackageError as e:
+                raise InstallError(str(e)) from None
             rec["package"], rec["manager"] = pkg, be.manager
         else:
             raise InstallError(f"installing {kind} files isn't supported on {OS} yet")
@@ -1847,14 +1868,15 @@ def install_msvcrt() -> str:
     os.makedirs(folder, exist_ok=True)
     file = os.path.join(folder, "vc_redist.x64.exe")
     try:
-        download(windows.VC_REDIST_URL, file)
+        got = download(windows.VC_REDIST_URL, file)
         status, signer = windows.authenticode(file)
         if status != "Valid" or signer != "Microsoft Corporation":
             raise InstallError("the Visual C++ run-time download isn't signed by Microsoft; nothing was installed")
-        try:
-            code = windows.shell_execute(file, "/install /quiet /norestart", elevate=True)
+        try:        # with administrator rights: from a copy held to the file whose signature was just read (R15.7.5)
+            code = windows.run_elevated(file, got, "/install /quiet /norestart")
         except (OSError, TimeoutError) as e:
             raise InstallError(f"couldn't run the Visual C++ run-time installer: {e}") from None
+        _elevated_refusal(code)
         meaning = windows.exit_meaning(code)
         if meaning == "cancelled":
             raise Cancelled()
@@ -2290,9 +2312,19 @@ def uninstall_blocker(rec: dict) -> str:
     return ""
 
 
-def _distro() -> str:
-    from .channels import distro_name
-    return distro_name()
+def channel_verdict(rec: dict) -> dict:
+    """What checked the copy a channel's record is of, as the record keeps it (R16.3.6): asked of
+    flatpak and the package manager each time the copy is installed, adopted or updated, never
+    taken as given. A Flatpak is "signed" when its remote is one flatpak checks against the
+    remote's key, a package when a repository whose key is checked offers the installed version;
+    `signer` is that remote or repository. Otherwise "unverified", and `repository` is the
+    package's unkeyed repository, if it has one."""
+    if rec.get("channel") == "flatpak":
+        remote = rec.get("remote", "")
+        if flatpak.checks_signatures(remote, rec.get("installation") == "system"):
+            return {"verified": "signed", "signer": "Flathub" if remote == flatpak.FLATHUB else remote}
+        return {"verified": "unverified", "signer": ""}
+    return pkgbackend.signed_by(rec["package"], rec.get("manager"))
 
 
 def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None, phase=None, on_wait=None,
@@ -2316,8 +2348,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         except flatpak.FlatpakError as e:
             raise InstallError(str(e)) from None
         rec = {"channel": "flatpak", "flatpak": got.app_id, "remote": remote, "commit": got.commit,
-               "installation": "user", "branch": got.branch, "verified": "signed", "signer": remote.capitalize(),
+               "installation": "user", "branch": got.branch,
                "perms": flatpak.permissions(meta), "extraData": flatpak.extra_data_host(meta)}
+        rec.update(channel_verdict(rec))
         raw, kind, asset = got.version, "flatpak", f"{remote} {got.app_id}"
         version = channels.project_version("flatpak", got.version) or got.version
     elif option["channel"] == "package":
@@ -2325,8 +2358,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         name = option["value"]
         _apply(be, "install", [name], confirmed, progress, cancel, on_wait)
         raw = pkgbackend.installed_version(name, be.manager)
-        rec = {"channel": "package", "package": name, "manager": be.manager, "verified": "signed",
-               "signer": _distro(), "pkgVersion": raw, "origin": option.get("origin", "")}
+        rec = {"channel": "package", "package": name, "manager": be.manager, "pkgVersion": raw,
+               "origin": option.get("origin", "")}
+        rec.update(channel_verdict(rec))
         kind, asset = be.manager, name
         version = channels.project_version(be.manager, raw)
     else:
@@ -2368,6 +2402,7 @@ def update_channel(db: DB, url: str, progress=None, cancel=None, on_wait=None, c
     else:
         raise InstallError("not installed from a channel")
     rec.pop("pending", None)
+    rec.update(channel_verdict(rec))        # of the copy that is installed now
     db.x("UPDATE installs SET version=?, record=?, installed_at=? WHERE url=?", (version, json.dumps(rec), now(), url))
     return rec
 

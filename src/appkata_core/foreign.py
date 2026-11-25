@@ -139,7 +139,7 @@ def scan(db: DB) -> None:
 def adopt(db: DB, url: str) -> dict:
     """Track an install AppKata didn't make, without reinstalling it (R16.4.2). Returns
     the install record."""
-    from . import audit, channels, flatpak
+    from . import audit, channels, flatpak, install
     row = db.one("SELECT * FROM foreign_installs WHERE url=?", (url,))
     link = json.loads(row["adopt"] or "{}") if row and row.get("adopt") else {}
     if not link:
@@ -148,9 +148,9 @@ def adopt(db: DB, url: str) -> dict:
     if link["kind"] == "flatpak":
         system = link.get("installation") == "system"
         inf = flatpak.info(link["value"], system)
-        rec = {"channel": "flatpak", "flatpak": link["value"], "remote": link.get("origin") or link.get("remote", ""),
+        # the remote this copy came from, as flatpak has it: the link's own may be another
+        rec = {"channel": "flatpak", "flatpak": link["value"], "remote": link.get("origin", ""),
                "commit": inf.get("commit", ""), "installation": "system" if system else "user", "adopted": True,
-               "verified": "signed", "signer": (link.get("origin") or "flathub").capitalize(),
                "perms": flatpak.permissions(flatpak.installed_metadata(link["value"], system))}
         raw, kind, asset = link.get("version", ""), "flatpak", f"{rec['remote']} {link['value']}"
         version = channels.project_version("flatpak", raw) or raw
@@ -158,10 +158,11 @@ def adopt(db: DB, url: str) -> dict:
         from . import pkgbackend
         facts = pkgbackend.backend().facts([link["value"]])
         rec = {"channel": "package", "package": link["value"], "manager": link["manager"], "adopted": True,
-               "verified": "signed", "signer": channels.distro_name(), "pkgVersion": link.get("version", ""),
-               "wasAuto": link["value"] in facts.auto}
+               "pkgVersion": link.get("version", ""), "wasAuto": link["value"] in facts.auto}
         raw, kind, asset = link.get("version", ""), link["manager"], link["value"]
         version = channels.project_version(link["manager"], raw)
+    # AppKata installed nothing here: what checked this copy is asked, not taken from the link (R16.3.6)
+    rec.update(install.channel_verdict(rec))
     with db.tx():
         db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
                 VALUES(?,?,?,?,?,?,?,?)""", (url, app["name"], version, "", asset, kind, json.dumps(rec), now()))

@@ -103,16 +103,20 @@ def installer_command(kind: str, exe_kind: str, file: str, scope: str, log_file:
     """(program, arguments, elevate) to run an installer silently for a scope (R15.7.2).
     An installer AppKata doesn't recognize runs interactively and decides for itself."""
     if kind == "msi":
-        args = f'/i "{file}" /qn /norestart' + (f' /l*v "{log_file}"' if log_file else "")
-        if scope == "everyone":
-            return "msiexec.exe", args + " ALLUSERS=1", True
-        return "msiexec.exe", args + " ALLUSERS=2 MSIINSTALLPERUSER=1", False
+        args = f'/i "{file}" ' + msi_arguments(scope, log_file)
+        return "msiexec.exe", args, scope == "everyone"
     silent = SILENT.get(exe_kind, "")
     if not silent:
         return file, "", False
     me, everyone = SCOPE_ARGS.get(exe_kind, ("", ""))
     extra = everyone if scope == "everyone" else me
     return file, (silent + " " + extra).strip(), bool(scope == "everyone" and everyone)
+
+
+def msi_arguments(scope: str, log_file: str = "") -> str:
+    """What follows `/i "<file>"` on msiexec's command line (R15.7.2)."""
+    args = "/qn /norestart" + (f' /l*v "{log_file}"' if log_file else "")
+    return args + (" ALLUSERS=1" if scope == "everyone" else " ALLUSERS=2 MSIINSTALLPERUSER=1")
 
 
 def exe_kind_from_release(asset_names: list[str]) -> str:
@@ -292,6 +296,88 @@ def shell_execute(program: str, args: str = "", elevate: bool = False, wait: boo
         return code.value
     finally:
         kernel32.CloseHandle(info.hProcess)
+
+
+# ---------------------------------------------------------------- installers run with administrator rights (R15.7.5)
+# The file AppKata checked is in a folder its user, and so any program of the user's, can change,
+# and Windows would start it with administrator rights after the UAC prompt. So what is elevated is
+# this script and not the file: it takes a copy to a folder only administrators can change, compares
+# the copy's SHA-256 with the one AppKata checked, and starts that copy. It runs elevated with
+# nothing to hold on to but Windows' own files, so it calls .NET alone: a cmdlet could come from a
+# module in the user's own module folder, and the user's environment could name another Windows
+# folder. Its values come as base64, never as text pasted into it.
+CHANGED = 0x4B410001            # its exit code when the copy isn't the file AppKata checked
+NOT_STARTED = 0x4B410002        # ...and when it couldn't make the copy or start it
+_ELEVATED = r"""$ErrorActionPreference = 'Stop'
+function V([string]$b) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)) }
+$src = V '@SRC@'; $want = V '@SHA@'; $name = V '@NAME@'; $argl = V '@ARGS@'; $msi = @MSI@
+$code = @NOT_STARTED@
+try {
+    $dir = [IO.Path]::Combine([Environment]::GetFolderPath('Windows'), 'Temp', 'AppKata-' + [Guid]::NewGuid().ToString('N'))
+    $only = [Security.AccessControl.DirectorySecurity]::new()
+    $only.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)')
+    if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) { throw 'taken' }
+    [void][IO.Directory]::CreateDirectory($dir, $only)
+    try {
+        $copy = [IO.Path]::Combine($dir, $name)
+        [IO.File]::Copy($src, $copy)
+        $in = [IO.File]::OpenRead($copy)
+        try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($in)).Replace('-', '').ToLowerInvariant() }
+        finally { $in.Dispose() }
+        if ($got -ne $want) { $code = @CHANGED@ }
+        else {
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            if ($msi) {
+                $start.FileName = [IO.Path]::Combine([Environment]::SystemDirectory, 'msiexec.exe')
+                $start.Arguments = '/i "' + $copy + '" ' + $argl
+            } else {
+                $start.FileName = $copy
+                $start.Arguments = $argl
+            }
+            $start.WorkingDirectory = $dir
+            $p = [Diagnostics.Process]::Start($start)
+            $p.WaitForExit()
+            $code = $p.ExitCode
+        }
+    } finally {
+        try { [IO.Directory]::Delete($dir, $true) } catch { }
+    }
+} catch {
+    $e = $_.Exception
+    while ($e.InnerException) { $e = $e.InnerException }
+    if ($e -is [ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { $code = 1223 }    # declined at Windows' own warning
+}
+exit $code
+"""
+
+
+def _b64(text: str) -> str:
+    import base64
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def elevated_script(file: str, sha256: str, args: str, msi: bool) -> str:
+    """The script run_elevated() runs with administrator rights, for this file."""
+    values = {"SRC": _b64(os.path.abspath(file)), "SHA": _b64(sha256.lower()), "NAME": _b64(os.path.basename(file)),
+              "ARGS": _b64(args), "MSI": "$true" if msi else "$false", "CHANGED": str(CHANGED), "NOT_STARTED": str(NOT_STARTED)}
+    return re.sub(r"@([A-Z_]+)@", lambda m: values[m.group(1)], _ELEVATED)
+
+
+def system_powershell() -> str:
+    """Windows' own PowerShell, by its full path: what the UAC prompt then names."""
+    return os.path.join(os.environ.get("SystemRoot") or "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+def run_elevated(file: str, sha256: str, args: str = "", msi: bool = False, timeout: float = 3600) -> int:
+    """Run a downloaded installer with administrator rights (R15.7.5): Windows asks (UAC) for a
+    script that copies the file to a folder only administrators can change, checks that the copy
+    is the file AppKata checked (`sha256`), and runs the copy, an `.msi` through msiexec. Returns
+    the installer's exit code, 1223 when the prompt was declined, CHANGED when the file is no
+    longer the one that was checked, NOT_STARTED when the copy couldn't be made or started."""
+    import base64
+    command = base64.b64encode(elevated_script(file, sha256, args, msi).encode("utf-16-le")).decode("ascii")
+    return shell_execute(system_powershell(), "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + command,
+                         elevate=True, show=0, timeout=timeout)
 
 
 def run_hidden(cmd: list[str], **kw) -> subprocess.CompletedProcess:

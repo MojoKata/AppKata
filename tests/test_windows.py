@@ -507,3 +507,178 @@ def test_runtime_on_real_programs(tmp_path):
     shutil.copy(os.path.join(home, dll), tmp_path / dll)  # the same library without the run-time beside it
     assert w.needs_msvcrt(str(tmp_path))
     w.msvcrt_installed()                              # reads the registry without failing
+
+
+# ---------------------------------------------------------------- an installer run with administrator rights (R15.7.5; CR1, #327)
+# How it slipped past: the installer tests stopped at the command's words (test_installer_arguments_by_scope),
+# and nothing asked which file Windows is handed with administrator rights. It was the download itself,
+# in a folder any program of the user's can write, started after the check and the UAC prompt.
+def _elevated_values(args: str) -> dict:
+    """What the script Windows is asked to elevate holds: its values, read back from its own text."""
+    import base64
+    import re
+    script = base64.b64decode(args.split("-EncodedCommand ")[1]).decode("utf-16-le")
+    said = {name: base64.b64decode(value).decode("utf-8") for name, value in re.findall(r"\$(\w+) = V '([A-Za-z0-9+/=]*)'", script)}
+    return {**said, "msi": re.search(r"\$msi = \$(true|false)", script).group(1) == "true", "script": script}
+
+
+@pytest.fixture
+def installer_road(windows_road, monkeypatch):
+    """The installers' road on any OS: no signature, no Uninstall entries, and Windows' own start of a
+    program replaced by `started`, the calls, each answered with `road["code"]` or, for the script
+    that runs with administrator rights, by what that script would find: the file's own SHA-256
+    compared with the one it was given."""
+    import hashlib
+    road = {"started": [], "code": 0, "swap": None}
+
+    def shell_execute(program, args="", elevate=False, wait=True, cwd="", show=1, timeout=3600):
+        road["started"].append({"program": program, "args": args, "elevate": elevate, "show": show})
+        if not elevate:
+            return road["code"]
+        v = _elevated_values(args)
+        if road["swap"]:
+            road["swap"](v["src"])
+        with open(v["src"], "rb") as f:
+            return road["code"] if hashlib.sha256(f.read()).hexdigest() == v["want"] else w.CHANGED
+    monkeypatch.setattr(w, "shell_execute", shell_execute)
+    monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
+    monkeypatch.setattr(w, "uninstall_entries", lambda: {})
+    monkeypatch.setattr(w, "processes_in", lambda folder: [])
+    return road
+
+
+ODD = "Demo's $(tool) `setup` ‘1.0’"            # a name PowerShell would read as more than text, were it pasted in
+
+
+@pytest.mark.parametrize("kind, exe_kind, args", [
+    ("msi", "", '/qn /norestart /l*v "{log}" ALLUSERS=1'),
+    ("exe", "inno", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS"),
+    ("exe", "electron", "/S /allusers"),
+])
+def test_an_installer_for_everyone_is_started_by_the_script_that_copies_and_checks_it(installer_road, env, server, tmp_path, kind, exe_kind, args):
+    import hashlib
+    import urllib.parse
+    from appkata_core import install
+    root, base = server
+    name, data = f"{ODD}.{kind}", b"MZ, an installer as its release published it"
+    (root / name).write_bytes(data)
+    a = Asset(name, f"{base}/{urllib.parse.quote(name)}", len(data))
+    rec = install.install(env, {**APP, "installVersion": "1.0", "exeKind": exe_kind}, a, kind, [a],
+                          portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
+    (started,) = installer_road["started"]                    # one start, and it is not of the downloaded file
+    assert started["elevate"] and started["show"] == 0
+    assert started["program"].replace("\\", "/").endswith("/System32/WindowsPowerShell/v1.0/powershell.exe")
+    assert started["args"].startswith("-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ")
+    v = _elevated_values(started["args"])
+    folder = os.path.join(install.downloads_dir(), rec["id"])
+    assert v["src"] == os.path.join(folder, name) and v["name"] == name and v["want"] == hashlib.sha256(data).hexdigest()
+    assert v["argl"] == args.format(log=os.path.join(folder, "msi.log")) and v["msi"] is (kind == "msi")
+    assert not any(odd in v["script"] for odd in ("Demo", "$(tool)", "‘", folder))         # its values are base64, not pasted text
+    assert rec["sha256"] == {"1.0": v["want"]} and rec["installer"] == (exe_kind or "msi")
+
+
+@pytest.mark.parametrize("kind, exe_kind, scope, program, args", [
+    ("msi", "", "me", "msiexec.exe", '/i "{file}" /qn /norestart /l*v "{log}" ALLUSERS=2 MSIINSTALLPERUSER=1'),
+    ("exe", "inno", "me", "{file}", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"),
+    ("exe", "nsis", "everyone", "{file}", "/S"),                 # it decides for itself, and asks Windows itself if it needs to
+    ("exe", "installer", "me", "{file}", ""),
+])
+def test_an_installer_appkata_doesnt_elevate_is_started_as_before(installer_road, env, server, tmp_path, kind, exe_kind, scope, program, args):
+    from appkata_core import install
+    root, base = server
+    name = f"setup.{kind}"
+    (root / name).write_bytes(b"MZ")
+    a = Asset(name, f"{base}/{name}", 2)
+    rec = install.install(env, {**APP, "installVersion": "1.0", "exeKind": exe_kind}, a, kind, [a],
+                          portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope=scope))
+    folder = os.path.join(install.downloads_dir(), rec["id"])
+    said = {"file": os.path.join(folder, name), "log": os.path.join(folder, "msi.log")}
+    assert installer_road["started"] == [{"program": program.format(**said), "args": args.format(**said), "elevate": False, "show": 1}]
+
+
+def _replaced(path):
+    with open(path, "wb") as f:
+        f.write(b"MZ, another installer")
+
+
+@pytest.mark.parametrize("swap, code, error", [
+    (_replaced, 0, "the downloaded file changed after AppKata checked it; nothing was installed"),
+    (None, "NOT_STARTED", "Windows couldn't make the administrators' copy of the installer or start it; nothing was installed"),
+    (None, 1223, ""),                                           # declined at the UAC prompt: cancelled (R15.7.3)
+    (None, 1603, "the installer exited with code 1603"),
+], ids=["swapped after the check", "no copy", "declined", "the installer failed"])
+def test_an_installer_that_isnt_the_file_that_was_checked_is_not_started(installer_road, env, server, tmp_path, swap, code, error):
+    from appkata_core import install
+    root, base = server
+    (root / "setup.msi").write_bytes(b"MZ, an installer as its release published it")
+    a = Asset("setup.msi", f"{base}/setup.msi", 44)
+    installer_road.update(swap=swap, code=getattr(w, code) if isinstance(code, str) else code)
+    with pytest.raises(install.Cancelled if not error else install.InstallError) as e:
+        install.install(env, {**APP, "installVersion": "1.0"}, a, "msi", [a],
+                        portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
+    assert not error or str(e.value) == error
+    assert len(installer_road["started"]) == 1 and not env.one("SELECT 1 FROM installs")
+
+
+def test_the_visual_cpp_runtime_is_started_by_the_same_script_held_to_the_file_whose_signature_was_read(installer_road, env, monkeypatch):
+    import hashlib
+    from appkata_core import install
+    data = b"MZ, vc_redist as Microsoft published it"
+
+    def download(url, dest, *a, **k):
+        with open(dest, "wb") as f:
+            f.write(data)
+        return hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(install, "download", download)
+    monkeypatch.setattr(w, "authenticode", lambda path: ("Valid", "Microsoft Corporation"))
+    monkeypatch.setattr(w, "msvcrt_installed", lambda: "14.40")
+    assert install.install_msvcrt() == "ok"
+    (started,) = installer_road["started"]
+    v = _elevated_values(started["args"])
+    assert started["elevate"] and started["program"].replace("\\", "/").endswith("/powershell.exe")
+    assert (v["name"], v["argl"], v["msi"], v["want"]) == ("vc_redist.x64.exe", "/install /quiet /norestart", False, hashlib.sha256(data).hexdigest())
+    installer_road["started"].clear()
+    installer_road["swap"] = _replaced                           # swapped between the signature check and the start
+    with pytest.raises(install.InstallError, match="changed after AppKata checked it"):
+        install.install_msvcrt()
+
+
+def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_folder_of_its_own(tmp_path):
+    """The script that runs with administrator rights. On any system, what its text must hold to,
+    since it runs with nothing to rely on but Windows' own files. On Windows itself (the test VM's
+    session has administrator rights, so UAC doesn't ask) it is run: a copy of cmd.exe is the
+    installer, which writes down where it runs from and who may change that folder."""
+    import hashlib
+    import re
+    import shutil
+    script = w.elevated_script("C:\\d\\setup.exe", "ab" * 32, "/S", False)
+    assert not re.search(r"\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b", script)              # no cmdlet: one could come from the user's own modules
+    assert "$env:" not in script and "%" not in script                         # nor a folder the user's environment names
+    assert "'O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)'" in script          # the folder: Administrators' and SYSTEM's, nothing inherited
+    steps = [script.index(step) for step in ("::CreateDirectory($dir, $only)", "[IO.File]::Copy($src, $copy)", "ComputeHash($in)",
+                                             "if ($got -ne $want)", "[Diagnostics.Process]::Start($start)", "[IO.Directory]::Delete($dir, $true)")]
+    assert steps == sorted(steps)                                              # made, copied, hashed, compared, then started; removed after
+    assert script.count("$copy") >= 4 and "$start.FileName = $src" not in script and "+ $src" not in script     # only the copy is ever started
+    if os.name != "nt":
+        return
+    setup = tmp_path / "setup one.exe"
+    shutil.copy(os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "cmd.exe"), setup)
+    sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+    where, acl = tmp_path / "where.txt", tmp_path / "acl.txt"
+    assert w.run_elevated(str(setup), sha, f'/d /c "cd>{where}&icacls .>{acl}"') == 0
+    ran_in = where.read_text().strip()
+    temp = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Temp")
+    assert os.path.dirname(ran_in).lower() == temp.lower() and os.path.basename(ran_in).startswith("AppKata-")
+    assert not os.path.exists(ran_in)                             # the copy's folder is gone when the installer is done
+    grants = [line for line in acl.read_text(errors="replace").splitlines() if ":(" in line]
+    assert len(grants) == 2 and all("(OI)(CI)(F)" in g for g in grants), grants          # Administrators and SYSTEM, no one else
+    assert sorted(g.split(":(")[0].split("\\")[-1] for g in grants) == ["Administrators", "SYSTEM"], grants
+    # the file changed after its check (a byte added): not started
+    with open(setup, "ab") as f:
+        f.write(b"\0")
+    again = tmp_path / "again.txt"
+    assert w.run_elevated(str(setup), sha, f'/d /c "cd>{again}"') == w.CHANGED and not again.exists()
+    assert w.run_elevated(str(tmp_path / "gone.exe"), sha, "") == w.NOT_STARTED
+    # an installer's own exit code comes back
+    sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+    assert w.run_elevated(str(setup), sha, "/d /c exit 3010") == 3010

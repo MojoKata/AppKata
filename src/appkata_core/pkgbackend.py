@@ -288,6 +288,40 @@ def _priv(cmd: list[str], env: dict | None = None) -> list[str]:
 APT_OPTS = ["-y", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold",
             "-o", "APT::Status-Fd=1", "-o", f"DPkg::Lock::Timeout={LOCK_WAIT}"]
 
+# A release's own package file (R4.4, R16.8.5). The .deb or .rpm AppKata downloaded and checked is
+# in a folder its user, and so any program of the user's, can change, and the package manager
+# would read it again as root after the password prompt. So the command that runs as root takes
+# a copy to a folder only root can change, compares the copy's SHA-256 with the one AppKata
+# checked, and installs that copy: what is installed is what was checked, or nothing is.
+# $1 is the file, $2 its SHA-256, $3 the copy's name; the rest is the package manager's command,
+# which gets the copy's path as its last word.
+STAGING = "/var/cache"          # where the copy's folder is made: only root can write here
+CHANGED = 65                    # the command's exit code when the copy isn't the file AppKata checked
+CHANGED_TEXT = "the downloaded file changed after AppKata checked it; nothing was installed"
+_FILE_INSTALL = r"""set -eu
+umask 022
+dir=$(mktemp -d @STAGING@/appkata-install.XXXXXX)
+trap 'rm -rf "$dir"' EXIT
+trap 'exit 130' HUP INT TERM
+copy=$dir/$3
+cp -- "$1" "$copy"
+sum=$(sha256sum < "$copy")
+if [ "${sum%% *}" != "$2" ]; then
+    echo "@CHANGED_TEXT@" >&2
+    exit @CHANGED@
+fi
+chmod 755 "$dir"
+chmod 644 "$copy"
+shift 3
+"$@" "$copy"
+"""
+
+
+def file_install_script() -> str:
+    """The shell script that installs a checked package file from root's own copy of it."""
+    return (_FILE_INSTALL.replace("@STAGING@", _q(STAGING)).replace("@CHANGED_TEXT@", CHANGED_TEXT)
+            .replace("@CHANGED@", str(CHANGED)))
+
 
 def _apt_progress(line: str):
     """APT::Status-Fd lines → percent: downloading is the first half, installing the second."""
@@ -341,6 +375,30 @@ class Cli(Backend):
             verb = {"install": ["install"], "remove": ["remove", "--noautoremove"], "upgrade": ["upgrade"]}[action]
             cmd = _priv(["dnf", "-y", *verb, *names])
         _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
+
+    def install_file(self, file: str, sha256: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
+                     package: str = "") -> Plan:
+        """Install a package file a release published, whose SHA-256 AppKata checked (R16.8.5): the
+        dry run and its review as for any install (R16.3.5), then the administrator's side installs
+        its own copy of the file, and only when that copy is the file that was checked. `package`
+        is the name of the package in the file: upgrading it is what an update of the app is, and
+        needs no confirmation (the file's own name is no package's)."""
+        file = os.path.abspath(file)
+        plan = self.simulate("install", [file])
+        v = review(plan, "install", [package or os.path.basename(file)], self.facts(plan.names() | {package} - {""}))
+        if v.refuse:
+            raise Refused(v.refuse)
+        if v.confirm and not confirmed:
+            raise NeedsConfirmation(v.confirm, plan)
+        if self.manager == "apt":
+            wait_for_lock(APT_LOCKS, on_wait, cancel)
+            inner, env = ["apt-get", *APT_OPTS, "install"], {"DEBIAN_FRONTEND": "noninteractive"}
+        else:
+            wait_for_lock(RPM_LOCKS, on_wait, cancel)
+            inner, env = ["dnf", "-y", "install"], None
+        cmd = _priv(["/bin/sh", "-c", file_install_script(), "appkata-install", file, sha256.lower(), os.path.basename(file), *inner], env)
+        _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
+        return plan
 
 
 def _q(s: str) -> str:
@@ -471,9 +529,8 @@ class PackageKit(Backend):
         return out
 
     def _call(self, action: str, names: list[str], flags: int, on_event=None, cancel=None) -> list[tuple]:
-        files = [n for n in names if os.path.sep in n]
-        if files:
-            return self.t.transaction("InstallFiles", "tas", [flags, files], on_event, cancel)
+        # by name only: a package file goes through Cli.install_file, since InstallFiles takes a
+        # path and can't be held to the file AppKata checked (R16.8.5)
         if action == "remove":
             ids = list(self.resolve(names, installed=True).values())
             return self.t.transaction("RemovePackages", "tasbb", [flags, ids, True, False], on_event, cancel)
@@ -585,6 +642,96 @@ def _text(cmd: list[str]) -> str:
 
 def apt_policy(name: str) -> dict:
     return parse_apt_policy(_text(["apt-cache", "policy", name]))
+
+
+# ---------------------------------------------------------------- whose key checked it (R16.3.6)
+def apt_installed_sources(text: str) -> list[tuple[str, str]]:
+    """`apt-cache policy <pkg>` → the repositories that offer the installed version, as
+    [(site, "suite/component")]. None for a version only `/var/lib/dpkg/status` has: one installed
+    from a file with `dpkg -i`, or one its repository no longer offers."""
+    out, mine = [], False
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r"^(\*\*\*\s+)?\S+\s+-?\d+$", s)
+        if m:                                  # a version's own line: "*** 2.10-3build1 500" is the installed one
+            mine = bool(m.group(1))
+            continue
+        m = re.match(r"^-?\d+\s+(\S+)\s+(\S+)(?:\s+\S+)?\s+Packages$", s)
+        if m and mine:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def _trusted_without_key(entry: str) -> bool:
+    """Does a sources entry (`$(SOURCESENTRY)`: "<file>:<n>", the line of a `.list` file or the
+    stanza of a `.sources` file) tell apt to take the repository without checking its key?
+    A `.sources` file is judged whole: one `Trusted: yes` in it counts for each of its stanzas."""
+    path, _, n = entry.rpartition(":")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    if path.endswith(".sources"):
+        return any(re.match(r"^\s*Trusted\s*:\s*yes\s*$", l, re.I) for l in lines)
+    if n.isdigit() and 0 < int(n) <= len(lines):
+        lines = [lines[int(n) - 1]]
+    return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=\s*yes\b", l, re.I) for l in lines)
+
+
+def apt_unkeyed_repositories() -> set[tuple[str, str]]:
+    """The (site, suite) of every repository apt is told to trust without a key (`[trusted=yes]`,
+    `Trusted: yes`): a package from one was checked against nothing."""
+    out = set()
+    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(SOURCESENTRY)"]).splitlines():
+        site, _, rest = line.partition("\t")
+        suite, _, entry = rest.partition("\t")
+        if entry and (site, suite) not in out and _trusted_without_key(entry):
+            out.add((site, suite))
+    return out
+
+
+def _offered_by(source: tuple[str, str], site: str, suite: str) -> bool:
+    """Is a policy line's (site, "suite/component") of the repository (site, suite)?"""
+    return source[0] == site and (source[1] == suite or source[1].startswith(suite.rstrip("/") + "/"))
+
+
+def signed_by(name: str, manager: str | None = None) -> dict:
+    """What checked the installed package, for its install record (R16.3.6):
+    {"verified": "signed" or "unverified", "signer", "repository"}. "signed" when a repository whose
+    key the package manager checks offers the installed version, with that repository's own name
+    as `signer` ("Ubuntu", "LP-PPA-…"; "" when it gives none). Otherwise "unverified":
+    `repository` is then the one that offers it and is trusted without a key, or "" when none does
+    (installed from a file, or a version its repository no longer offers)."""
+    manager = manager or ("apt" if linux_family() == "debian" else "dnf")
+    if manager != "apt":
+        return _rpm_signed_by(name)
+    offered = apt_installed_sources(_text(["apt-cache", "policy", name]))
+    if not offered:
+        return {"verified": "unverified", "signer": "", "repository": ""}
+    unkeyed = apt_unkeyed_repositories()
+    keyed = [s for s in offered if not any(_offered_by(s, *u) for u in unkeyed)]
+    if not keyed:
+        return {"verified": "unverified", "signer": "", "repository": offered[0][0]}
+    names = {(r["site"], f"{r['suite']}/{r['component']}" if r["component"] else r["suite"]): r.get("o") or r.get("l") or ""
+             for r in parse_apt_releases(_text(["apt-cache", "policy"]))}
+    signer = next((names[s] for s in keyed if names.get(s)), "")
+    return {"verified": "signed", "signer": signer, "repository": signer or keyed[0][0]}
+
+
+def _rpm_signed_by(name: str) -> dict:
+    """The same for dnf, whose code is kept and unsupported (R1.1): the installed package came from
+    a repository (not from a file on the command line) and carries a signature."""
+    lines = [l.strip() for l in _text(["dnf", "-q", "repoquery", "--installed", "--qf", "%{from_repo}\n", name]).splitlines() if l.strip()]
+    repo = lines[-1] if lines else ""
+    if not repo or repo.startswith(("@", "<")):           # "@commandline", "@System", "<unknown>"
+        return {"verified": "unverified", "signer": "", "repository": ""}
+    sig, _, vendor = _text(["rpm", "-q", "--qf", "%{SIGPGP:pgpsig}%{SIGGPG:pgpsig}%{RSAHEADER:pgpsig}%{DSAHEADER:pgpsig}\t%{VENDOR}",
+                            name]).partition("\t")
+    if not sig.replace("(none)", "").strip():
+        return {"verified": "unverified", "signer": "", "repository": repo}
+    vendor = "" if vendor.strip() == "(none)" else vendor.strip()
+    return {"verified": "signed", "signer": vendor or repo, "repository": repo}
 
 
 def package_version_available(name: str, manager: str | None = None) -> str:

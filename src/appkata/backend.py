@@ -505,9 +505,13 @@ class Backend(QObject):
         irec = json.loads(irow["record"] or "{}") if irow else {}
         # An installed app's chip is what its own install checked, as its record keeps it, whatever
         # a later release publishes (R4.4; CR1, #465). A copy AppKata adopted was never downloaded,
-        # so nothing of it was checked.
+        # so nothing of it was checked. A channel's copy is Verified where its record says flatpak
+        # or the package manager checked it against a repository's key, and not for being from a
+        # channel (R16.3.6; CR1, #318).
         verify = signer = verify_tip = ""
-        if irow:
+        if irec.get("channel"):
+            verify, verify_tip = _channel_check(irec)
+        elif irow:
             verify = irec["verified"] if irec.get("verified") in ("signed", "checksum") else "unverified"
             how = irec.get("checksum_source", "")
             if verify == "signed":
@@ -516,8 +520,6 @@ class Backend(QObject):
                 verify_tip = "Checked against " + ("the forge's digest" if how == "forge digest" else how)
             elif irec.get("verified") == "adopted":
                 verify_tip = "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"
-        if a.get("ch"):            # checked by flatpak, apt or dnf against the repository's keys (R16.3.6)
-            verify, signer, verify_tip = "signed", "", ""
         # The file Install or Update would take hasn't been checked: a forecast, worded as one, of
         # what its own release publishes for it. That release isn't always the newest one (a
         # pre-release, a minimum age), so it is found by the file. Nothing is forecast where
@@ -2850,6 +2852,21 @@ class Backend(QObject):
         else:
             self._busy.pop(url, None)
         self.busyChanged.emit()
+
+
+def _channel_check(rec: dict) -> tuple[str, str]:
+    """(chip, tooltip) for a copy from a package channel, from its install record (R16.3.6):
+    Verified with who signed it, or Unverified with where the copy is from."""
+    if rec.get("verified") == "signed":
+        return "signed", "Signed by " + (rec.get("signer") or "its repository")
+    if rec.get("channel") == "flatpak":
+        if rec.get("remote"):
+            return "unverified", f"No key checked this copy: flatpak doesn't check its remote, {rec['remote']}, against one"
+        return "unverified", "Its remote isn't known, so AppKata can't tell that a key checked this copy"
+    if rec.get("repository"):
+        return "unverified", f"No key checked this package: it is from {rec['repository']}, which isn't checked against one"
+    version = f" ({rec['pkgVersion']})" if rec.get("pkgVersion") else ""
+    return "unverified", f"No repository offers the installed version{version}, so AppKata can't tell that a repository's key checked it"
 
 
 def _release_of(releases: list[dict], asset: dict) -> dict:
