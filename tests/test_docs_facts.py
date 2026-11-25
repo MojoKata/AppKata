@@ -29,6 +29,12 @@ WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eigh
 # Facts the documents still state wrongly, and the finding that keeps each
 STILL_WRONG: dict = {}
 
+# The flaws upstream has published in the bus filter's filtering, and the version that fixes each
+# (`gh api repos/flatpak/xdg-dbus-proxy/security-advisories`, read 2026-11-24): R17.17 names each.
+# PR #694's review, P2-4: R17.17 and R17.5 said calls are filtered "on every version" while two of
+# these let an app past the filter; a new advisory joins this list and R17.17 together.
+BUS_FILTER_FLAWS = {"CVE-2026-34080": "0.1.7", "CVE-2026-93676": "0.1.8", "CVE-2026-94422": "0.1.9"}
+
 
 def _read(rel):
     if rel == REQ:
@@ -116,6 +122,15 @@ def _facts() -> dict:
     others -= set(sb.PORTAL_INTERFACES) | set(sb.NETWORK_PORTAL_INTERFACES) | {"Request", "Session"}
     said = {o for o in others if o.split(".")[-1] in _req("R17.5")}
     f["R17.5: nothing else on the portal's name"] = (said, others)
+    limits = re.sub(r"\s+", " ", _req("R17.17"))
+    named = {cve: re.search(rf"{cve}, fixed in (\d+\.\d+\.\d+)", limits) for cve in BUS_FILTER_FLAWS}
+    f["R17.17: the bus filter's published flaws, each with the version that fixes it"] = (
+        {cve: m.group(1) if m else None for cve, m in named.items()}, BUS_FILTER_FLAWS)
+    # ...and no sentence of R17.5 or R17.17 says the filter holds on every version without them
+    versions = re.sub(r"\s+", " ", _req("R17.5") + _req("R17.5.1") + _req("R17.17"))
+    unqualified = [m.group(0) for m in re.finditer(r"(?:on every|on any|by any) version(?: of the filter)?", versions)
+                   if not versions[m.end():].startswith(" without a known flaw")]
+    f["R17.5 and R17.17: the filter's versions, said without its flaws"] = (unqualified, [])
     # ...and R17.5's list is the one list (CR1.11-86): the design had three more, in A1.2.3.6,
     # A1.2.3.12 and A1.9, written out by hand, and two of them had lost ProxyResolver on the way.
     # The facts above hold R17.5's to the code; a copy is held by nobody. So no sentence of the
