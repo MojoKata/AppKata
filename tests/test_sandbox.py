@@ -1317,15 +1317,16 @@ def test_every_reader_of_the_bus_address_names_the_socket_gio_reaches(tmp_path, 
 # socket file covered. How it slipped past: the cover's tests varied how the address names the
 # socket (P2-1, P3-B4) and granted its folder alone; how the grant shows it never varied. Each way
 # here: the grant → where the app sees the socket through it (None: it doesn't). A link is followed
-# when the app starts, as bwrap follows it, so one pointed there after the launcher was written
-# counts too.
+# when the app starts, as bwrap follows it. One pointed there after the launcher was written was
+# covered too; since CR1.5-40 its grant is dropped at that launch, as any grant that no longer leads
+# where it led, so nothing of it is there to cover.
 GRANT_FORMS = {
     "its folder": "{tmp}/dbus-MZ8lHbtZ8K",
     "a folder above it": "{tmp}/dbus-MZ8lHbtZ8K",
     "the file itself": "{grant}",
     "a link to the file": "{grant}",
     "a link to its folder": "{grant}/dbus-MZ8lHbtZ8K",
-    "a link pointed there later": "{grant}/dbus-MZ8lHbtZ8K",
+    "a link pointed there later": None,
     "a folder beside it": None,
 }
 
@@ -1361,13 +1362,130 @@ def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp
     assert r.returncode == 0 and "AppKata: the session bus here" not in r.stderr or proxy is None, (r.stdout, r.stderr)
     at = lambda *words: next((i for i in range(len(app)) if app[i:i + 3] == list(words)), None)   # noqa: E731
     covered = [app[i + 2] for i in range(len(app) - 2) if app[i:i + 2] == ["--ro-bind", "/dev/null"]]
-    assert at("--bind-try", folder, folder) is not None, app                    # the grant stands
+    if grant == "a link pointed there later":
+        assert at("--bind-try", folder, folder) is None and folder not in app, app          # dropped: it leads elsewhere now
+        assert f"Demo runs sandboxed and isn't given {folder} this time" in r.stderr, r.stderr
+    else:
+        assert at("--bind-try", folder, folder) is not None, app                # the grant stands
     assert covered == ([shown] if shown else []), (covered, shown)
     if shown:
         assert at("--ro-bind", "/dev/null", shown) > at("--bind-try", folder, folder)     # after the folder's own bind
     # where this session's bus is elsewhere, nothing is covered
     _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs, home=home)
     assert at("--bind-try", folder, folder) is not None and "/dev/null" not in app and r.returncode == 0, (app, r.stderr)
+
+
+# CR1.5-40 (#665): a folder grant's source was text, judged once when the launcher was written and
+# followed by bwrap, links and all, at every launch. With one grant inside another the app can put
+# a link on the inner one's way (in the outer folder, which is the host's real one), and the next
+# launch mounted what the link named: the user's real ~/.ssh, in the finding's run. How it slipped
+# past: the one test of nested grants planted a link to /oldroot, which leads nowhere on the host
+# and is skipped whatever bwrap does with a source; no test moved a grant's way between the
+# launcher's writing and its run, but one for the bus's socket (GRANT_FORMS's "pointed there later").
+# Here the launcher is run whole, a stand-in bwrap recording its words, and each folder's way is
+# changed, or not, once the launcher is written: what leads elsewhere is not among the words, is
+# not counted visible for a file argument, is covered by nothing, and is said on stderr.
+def test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said(tmp_path, monkeypatch):
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    home = tmp_path / "home"
+    for d in ("Projects/sub/deep", "disk/Documents", "disk/Other", ".ssh", "Music"):
+        (home / d).mkdir(parents=True)
+    (home / "Docs").symlink_to(home / "disk" / "Documents")           # the user's own link, there before the grant
+    (home / "Moved").symlink_to(home / "disk" / "Documents")          # ...and one the user points elsewhere later
+    granted = {"Projects": "rw", "Projects/sub/deep": "ro", "Projects/later/deep": "rw", "Docs": "rw", "Moved": "ro", "Music": "ro", "NotThere/x": "rw"}
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{home / p}": m for p, m in granted.items()}})
+    stub = tmp_path / "forward.py"
+    stub.write_text(_FORWARD_STUB)
+
+    def since():                    # what the app does in ~/Projects, which is its to write, and the user to a link of their own
+        (home / "Projects" / "evil").mkdir()
+        (home / "Projects" / "evil" / "deep").symlink_to("../../.ssh")
+        (home / "Projects" / "sub").rename(home / "Projects" / "sub.old")
+        (home / "Projects" / "sub").symlink_to("evil")
+        (home / "Projects" / "later").mkdir()
+        (home / "Projects" / "later" / "deep").symlink_to(home / "Music")
+        (home / "Moved").unlink()
+        (home / "Moved").symlink_to(home / "disk" / "Other")
+
+    _, app, r, _ = _launched(tmp_path, monkeypatch, None, gs=gs, forward=str(stub), args=[str(home / "a.txt")], before=since)
+    assert r.returncode == 0, r.stderr
+    users = lambda w: w.startswith(str(home) + "/") and os.path.relpath(w, home).split("/")[0] in ("Projects", "Docs", "Moved", "Music", "NotThere", "disk", ".ssh")      # noqa: E731
+    binds = {dest: how for dest, how in _binds(app).items() if users(dest)}
+    stand = {"Projects": "--bind-try", "Docs": "--bind-try", "Music": "--ro-bind-try", "NotThere/x": "--bind-try"}
+    assert binds == {str(home / p): (flag, str(home / p)) for p, flag in stand.items()}, binds        # each as written, source and destination
+    assert app.index(str(home / "Docs")) < app.index(str(home / "Music")) < app.index(str(home / "NotThere/x")) < app.index(str(home / "Projects"))
+    assert not [w for w in app if "/.ssh" in w or "/Moved" in w or "/sub/deep" in w or "/later" in w], app
+    told = json.loads(stub.with_name("forward.py.args").read_text())
+    assert sorted(told[3:told.index("--")]) == sorted(str(home / p) for p in stand), told             # ...and no other is the app's to see
+    said = [line for line in r.stderr.splitlines() if "isn't given" in line]
+    led = {"Moved": ("disk/Documents", "disk/Other"), "Projects/later/deep": ("Projects/later/deep", "Music"), "Projects/sub/deep": ("Projects/sub/deep", ".ssh")}
+    assert said == [f"Demo runs sandboxed and isn't given {home / p} this time: it led to {home / was} when AppKata wrote this launcher and leads to "
+                    f"{home / now} now, so a link on the way there was made or changed since. AppKata judges the folder again the next time it starts."
+                    for p, (was, now) in led.items()], r.stderr
+
+    # Where the launcher can't ask (no `readlink` that answers), no grant stands; and one that doesn't
+    # is not covered or shown empty either, where this session's bus names a file the launcher can't read
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{home / 'Docs'}": "rw", f"+{home / 'Music'}": "ro"}})
+    again = tmp_path / "again"
+    again.mkdir()
+    _, app, r, _ = _launched(again, monkeypatch, "unix:path=relative/bus", gs=gs, home=home, tools={"readlink": "#!/bin/sh\nexit 1\n"})
+    assert r.returncode == 0 and not [w for w in app if users(w)], (app, r.stderr)
+    for p, was in (("Docs", "disk/Documents"), ("Music", "Music")):
+        assert f"isn't given {home / p} this time: it led to {home / was} when AppKata wrote this launcher and leads to nowhere that can be followed now" in r.stderr, r.stderr
+    (tmp_path / "once-more").mkdir()
+    _, app, r, _ = _launched(tmp_path / "once-more", monkeypatch, "unix:path=relative/bus", gs=gs, home=home)
+    assert {w for w in app if users(w)} == {str(home / "Docs"), str(home / "Music")} and app.count("--tmpfs") >= 2, app      # as before, where they stand
+
+
+def test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_the_launcher_is_written(tmp_path, monkeypatch):
+    # ...and AppKata writes every launcher again at its next start if its text would differ, as it does
+    # once a grant leads elsewhere: where the folder leads is baked into it. Judged afresh there, the
+    # app's link would have become the folder's place for good, for every folder no list names
+    # (~/Documents). So a grant is refused when a link on its way lies in another folder of the set,
+    # whoever made the link: the chips, the launcher and the Sandbox dialog's own check say so.
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "APPKATA_APPS", "APPKATA_DATA"):
+        monkeypatch.delenv(v, raising=False)
+    for d in ("Projects/real/deep", "Documents", "disk/Documents", "Music/albums"):
+        (home / d).mkdir(parents=True)
+    apps = str(home / "bin/apps")
+    judged = lambda folders: sb.refused_folders({**sb.resolve_template("standard"), "folders": folders}, apps)      # noqa: E731
+    both = {"~/Projects": "rw", "~/Projects/sub/deep": "ro"}
+    assert judged(both) == {}                                                 # nothing there yet: both stand
+    (home / "Projects" / "sub").symlink_to("real")                            # a link in the outer folder, to a folder in it
+    why = "a link in ~/Projects, which the app can change, is on the way to it"
+    assert judged(both) == {"~/Projects/sub/deep": why}
+    assert judged({"~/Projects": "ro", "~/Projects/sub/deep": "ro"}) == {"~/Projects/sub/deep": why}      # a read-only one too: it may have been the app's before
+    assert judged({"~/Projects/sub/deep": "ro"}) == {} and judged({"~/Projects/sub/deep": "ro", "~/Music": "rw"}) == {}      # the user's link, in no folder of the app's
+    for target in ("../Documents", "sub", "/nowhere"):                        # ...one that leads out of it, a loop, one that leads nowhere
+        (home / "Projects" / "sub").unlink()
+        (home / "Projects" / "sub").symlink_to(target)
+        assert judged(both) == {"~/Projects/sub/deep": why}, target
+    # a link that is the grant itself, where it lies in another; a link outside every grant that leads into one, and what the app does there
+    (home / "Projects" / "docs").symlink_to(home / "Documents")
+    (home / "work").symlink_to(home / "Projects" / "real" / "deep")
+    assert judged({"~/Projects": "rw", "~/Projects/docs": "rw"}) == {"~/Projects/docs": why}
+    assert judged({"~/Projects": "rw", "~/work": "ro"}) == {}
+    (home / "Projects" / "real").rename(home / "Projects" / "real.old")
+    (home / "Projects" / "real").symlink_to("../Documents")
+    assert judged({"~/Projects": "rw", "~/work": "ro"}) == {"~/work": why}
+    # the user's own link to a folder kept elsewhere, and a folder granted in it: no link lies in a granted folder
+    (home / "Docs").symlink_to(home / "disk" / "Documents")
+    assert judged({"~/Docs": "rw", "~/Docs/letters": "ro", "~/Music": "ro", "~/Music/albums": "rw"}) == {}
+    # a folder that is refused anyway is not the app's, so a link in it refuses nothing
+    assert judged({"~": "rw", "~/Docs": "rw"}) == {"~": "your whole home folder"}
+    # one judgement in every place a set is read
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + p: m for p, m in both.items()}})
+    assert f"~/Projects/sub/deep · refused: {why}" in sb.summary(gs, apps) and "~/Projects" in sb.summary(gs, apps)
+    kept, refused = sb.strip_protected(gs, apps)
+    assert set(kept["folders"]) == {"~/Projects"} and refused == [("~/Projects/sub/deep", why)]
+    text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
+    assert f"# Refused folder grant ~/Projects/sub/deep: {why} (R17.3.1)." in text
+    assert f"g1={home}/Projects; leads \"$g1\" {home}/Projects || g1=\n" in text and "g2=" not in text and "/sub/deep" not in text.split("# Refused")[0]
+    assert text.count("bind-try " + str(home)) == 1 and f'[ {home}/Projects = "$g1" ] && set -- --bind-try {home}/Projects {home}/Projects "$@"\n' in text
 
 
 def test_proxy_args_map_capabilities():
@@ -2576,12 +2694,13 @@ def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):
     helper = sb.forward_path()
     assert os.path.exists(helper) and "org.freedesktop.portal.Documents" in open(helper).read()
     # ...each only where the launcher shows it, which it doesn't where the session bus's address names
-    # a file it can't read (PR #694's review, P3-B4)
+    # a file it can't read (PR #694's review, P3-B4), nor where the folder no longer leads where it
+    # led when the launcher was written ($g1 is empty then: CR1.5-40)
     # ...then the never-shared folders, which win over an argument (CR1.5-38): the session bus's
     # socket files as the launcher read them, and R17.3.1's list as it is written
     never = " ".join(shlex.quote(r) for r in dict.fromkeys([sb.sandboxes_root()] + [r for r, _ in sb._protected_roots(str(fake_home / "bin/apps"))]))
     assert str(fake_home / ".ssh") in never.split() and str(fake_home / "bin/apps") in never.split()
-    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+{fake_home}/Projects}} -- "${{bussocks:-}}" {never} -- "$@"' in text
+    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+${{g1:+{fake_home}/Projects}}}} -- "${{bussocks:-}}" {never} -- "$@"' in text
     assert text.index('folders=1; [ "${busok:-1}" = 1 ] || folders=') < text.index("forward-files.py")
     assert text.index("forward-files.py") < text.index('set -- -- "$appdir/$exe" "$@"')     # before the words are fixed
     assert text.index("--appkata-menu") < text.index("forward-files.py")                  # after the menu word is shifted off

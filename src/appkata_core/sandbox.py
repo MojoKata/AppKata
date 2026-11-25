@@ -773,10 +773,59 @@ def refused_chips(refused: list) -> list[list]:
     return [[f"{p} · refused: {why}", "ban", "warn"] for p, why in refused or []]
 
 
-def strip_protected(gs: dict, apps_root: str | None = None) -> tuple[dict, list[tuple[str, str]]]:
-    """A grant set without its protected folders, and [(path, why)] for each one dropped."""
+def _links_on_the_way(full: str) -> list[str]:
+    """Each link followed on the way to the full path `full`, as the file the link is: the folder it
+    lies in resolved, its own name kept; of a loop of links, the first forty."""
+    todo, at, links = full.split(os.sep)[::-1], os.sep, []
+    while todo:
+        name = todo.pop()
+        if name in ("", "."):
+            continue
+        if name == "..":
+            at = os.path.dirname(at)
+            continue
+        step = os.path.join(at, name)
+        try:
+            target = os.readlink(step)
+        except OSError:
+            at = step
+            continue
+        links.append(step)
+        if len(links) >= 40:
+            break
+        if target.startswith(os.sep):
+            at = os.sep
+        todo.extend(target.split(os.sep)[::-1])
+    return links
+
+
+def refused_folders(gs: dict, apps_root: str | None = None) -> dict[str, str]:
+    """Each folder of the grant set `gs` that is not shared, and why (R17.3.1): a never-shared one
+    (:func:`protected_folder`), and one that a link in another folder of the set is on the way to.
+    A link in a folder the app is given is the app's to make: with ~/Projects read-write and
+    ~/Projects/sub/deep granted too, the app put a link where `sub` was, and what the link named was
+    mounted at the next launch, the user's keys among it (CR1.5-40). The launcher drops a grant that
+    no longer leads where it led when it was written; this is the rule for the next time it is
+    written, so that AppKata's own start doesn't take the app's link for the folder's place. The
+    link is judged by where it lies, not by where it leads or who made it: the user's own link in
+    a granted folder is refused the same way, and the folder it names can be granted itself."""
     gs = normalize(gs)
-    refused = [(p, why) for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root))]
+    out = {p: why for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root))}
+    shared = {p: os.path.realpath(os.path.expanduser(p)) for p in gs["folders"] if p != "$cwd" and p not in out}
+    for p in sorted(shared):
+        links = _links_on_the_way(os.path.expanduser(p))
+        for other, real in sorted(shared.items()):
+            if other != p and any(link.startswith(real.rstrip(os.sep) + os.sep) for link in links):
+                out[p] = f"a link in {other}, which the app can change, is on the way to it"
+                break
+    return out
+
+
+def strip_protected(gs: dict, apps_root: str | None = None) -> tuple[dict, list[tuple[str, str]]]:
+    """A grant set without the folders that are not shared (:func:`refused_folders`), and [(path,
+    why)] for each one dropped."""
+    gs = normalize(gs)
+    refused = sorted(refused_folders(gs, apps_root).items())
     for p, _ in refused:
         gs["folders"].pop(p)
     return gs, refused
@@ -932,9 +981,10 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
     out = [["Strict · private home", "lock", "ok"] if gs["level"] == "strict" else ["Standard", "shieldCheck", "ok"]]
     if template in FOLDER_TEMPLATES and gs["level"] != "strict" and not any(p != "$cwd" for p in gs["folders"]):
         out.append(["No folder yet", "folder", "warn"])
+    refused = refused_folders(gs, apps_root)
     for path, mode in sorted(gs["folders"].items()):
         nice = "The folder it's run in" if path == "$cwd" else path
-        if why := protected_folder(path, apps_root):     # never shared, whoever asked (R17.3.1)
+        if why := refused.get(path):                     # never shared, whoever asked (R17.3.1)
             out.append([f"{nice} · refused: {why}", "ban", "warn"])
             continue
         if secret_folder(path):                          # the user's own grant of a secret (R17.3.1): said plainly
@@ -2290,7 +2340,7 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || {{ printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\\n" {qname} >&2; exit 1; }}
-{bus}{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
+{bus}{cwd}{grants}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
 set -- -- "$appdir/$exe" "$@"
 """
@@ -2532,10 +2582,33 @@ def _launcher_env(net: bool = False) -> list[str]:
 # launcher drops any it finds before mounting; `rm` on a link never follows it. A second, already
 # running instance could still plant one between this check and bwrap's mounts — bwrap offers no
 # fd-based destination to close that — so the guard covers the persistent case, not a live race.
-# Nested folder grants (~/Projects rw with ~/Projects/sub/deep ro) don't reopen the hole from the
-# source side: a link the app plants at the outer grant lands on the host, but bwrap resolves the
-# *source* on the host too, where /oldroot does not exist, so --bind-try skips the mount, and a link
-# to a path that resolves on both sides mounts inside the private home. Checked in round two.
+# A folder grant's *source* is the host's real folder, and bwrap follows every link on the way to it
+# at each launch. With one grant inside another (~/Projects read-write and ~/Projects/sub/deep), a
+# link the app puts where `sub` was lands on the host, in the real ~/Projects, where the guard, which
+# walks the private home, never looks; the next launch mounted what the link named: with relative
+# links that lead somewhere on both sides (`sub` to a folder `evil` beside it, `evil/deep` to
+# `../../.ssh`), the user's real ~/.ssh, at the app's ~/.ssh (CR1.5-40; this note said the source
+# side was safe, and the test beside it planted a link to /oldroot, which leads nowhere on the host
+# and is skipped whatever bwrap does). So each grant is asked again at every launch, before bwrap
+# (_GRANT_FN): mounted only while it leads where it led when the launcher was written, which is
+# baked beside it, and dropped with a line on stderr otherwise. Compared with where it led, not
+# with the path as written: a grant through the user's own link (~/Documents kept on another disk)
+# stands. And when a launcher is written, a grant that a link in another granted folder is on the
+# way to is refused (refused_folders), so writing it again never takes the app's link for the place.
+# As with the guard, a second instance still running could put a link there between the asking and
+# bwrap's mounts: this covers what an app leaves behind, not a live race.
+_GRANT_FN = """# A folder the app was given is mounted only while it leads where it led when AppKata wrote this
+# launcher (R17.3.1): bwrap follows each link on the way to it, and a link put there since -- the app
+# can put one in a folder it was given, above another -- would mount whatever the link names.
+# "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
+# while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
+leads() {{
+  now=$(readlink -m -- "$1" 2>/dev/null) || now=
+  [ "$now" = "$2" ] && return 0
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when AppKata wrote this launcher and leads to %s now, so a link on the way there was made or changed since. AppKata judges the folder again the next time it starts.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
+  return 1
+}}
+"""
 # Password service (R17.5.1) owns org.freedesktop.secrets only where no other program holds it at
 # launch. To the filter a name an app may own is one it may call, whoever holds it, so with the
 # keyring (or another password manager) holding the name the app reached that program's whole
@@ -2749,10 +2822,18 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         system = " ".join(q(r) for r, _ in _system_roots())
         media = "|".join(q(m) + "/*" for m in dict.fromkeys(m for media in SYSTEM_MEDIA for m in _as_written_and_real(media)))
         cwd = _CWD_DECIDE.format(protected=protected, system=system, media=media)
+    # Each granted folder, and the variable that says at each launch whether its grant stands
+    # (_GRANT_FN): asked before the file-argument block, which counts a folder as visible only then.
+    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
+    stands = {p: f"g{i}" for i, p in enumerate(granted, 1)}
+    grants = ""
+    if granted:
+        grants = _GRANT_FN.format(name=q(name)) + "".join(
+            f'{stands[p]}={q(os.path.expanduser(p))}; leads "${stands[p]}" {q(os.path.realpath(os.path.expanduser(p)))} || {stands[p]}=\n' for p in granted)
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it
-        visible = ["${folders:+" + q(os.path.expanduser(p)) + "}" for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        visible = ["${folders:+${" + stands[p] + ":+" + q(os.path.expanduser(p)) + "}}" for p in granted] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
         shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
@@ -2767,7 +2848,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), path=q(path or HOST_PATH), id=app_identity(app_id), home=q(home),
                                    rt=_RT, info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
                                    log=q(log_path or applog.app_log_path(app_id)), bus=_BUS_BLOCK if standard else "",
-                                   cwd=cwd, forward=fwd, note=note), _GUARD_FN]
+                                   cwd=cwd, grants=grants, forward=fwd, note=note), _GUARD_FN]
     for path, why in refused:            # said in the launcher itself, which App Detail can show
         out.append(f"# Refused folder grant {c(path)}: {c(why)} (R17.3.1).")
     if appimage_path is not None:
@@ -2795,7 +2876,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # granted socket file is covered, as the working directory is refused then, with a line (PR
     # #694's review, P3-B4: the cover never asked $busok, and an address the clients read past the
     # launcher left a live socket in sight). A file or a folder not there is left as its bind left it.
-    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
     if standard and granted:
         cover = ["# A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).",
                  'if [ "${busok:-1}" = 1 ]; then',
@@ -2805,13 +2885,13 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                  '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'      r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
-                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+            cover.append(f'      [ -z "${stands[p]}" ] || {{ r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
+                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac; }}')
         cover += ["    fi", "  done", "else",
                   "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
         for p in granted:
             d = q(os.path.expanduser(p))
-            cover.append(f'  if [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
+            cover.append(f'  if [ -z "${stands[p]}" ]; then :; elif [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
         cover.append(f"  printf \"%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file "
                      f"AppKata can't read, which could be in one of them.\\n\" {q(name)} {q(', '.join(granted))} \"$upstream\" >&2")
         out.append("\n".join(cover + ["fi"]) + "\n")
@@ -2958,6 +3038,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         dests.append('"$img"')
     dests += [q(os.path.expanduser(p)) for p in sorted(gs["folders"]) if p != "$cwd"]
     out.append("for d in " + " ".join(dests) + '; do guard "$d"; done')
+    # Folder grants: each bound while it stands (_GRANT_FN), the last first, so that in "$@" they
+    # are in their order, a folder before one inside it, and before every word above that covers a
+    # part of one. $cwd (the CLI-tool template) is the working-directory block's (R17.3.3). The
+    # folder is the line's second word, as tests/test_sandbox_properties.py reads a bind's.
+    for path in reversed(granted):
+        flag = "--bind-try" if gs["folders"][path] == "rw" else "--ro-bind-try"
+        p = q(os.path.expanduser(path))
+        out.append(f'[ {p} = "${stands[path]}" ] && set -- {flag} {p} {p} "$@"')
     out.append("")
 
     # 2. The sandboxed app. Fixed args are baked; the run-time ones are in "$@", after them.
@@ -3014,13 +3102,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append('for d in /dev/video* /dev/media*; do\n'
                    '  if [ -c "$d" ]; then set -- --dev-bind "$d" "$d" "$@"; fi\n'
                    'done\n')
-    # Folder grants (baked). $cwd (the CLI-tool template) binds the current directory (R17.3.3).
-    for path, mode in sorted(gs["folders"].items()):
-        if path == "$cwd":           # added at run time by the working-directory block
-            continue
-        flag = "--bind-try" if mode == "rw" else "--ro-bind-try"
-        p = q(os.path.expanduser(path))
-        parts.append(f'  {flag} {p} {p} \\')
     # Sound: the PipeWire and Pulse sockets, the app identified as sandboxed by .flatpak-info (R17.8).
     # PipeWire/WirePlumber don't stop such a client from recording (verified: WirePlumber 0.4.17,
     # PipeWire 1.0.5), so "play" and "record" bind the same sockets; enforcing the split is deferred.
@@ -3104,8 +3185,8 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
     run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
-    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant that holds it,
-    where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
+    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant, where its
+    folder leads, and where AppKata's own session bus has its socket if in it (R17.3.1) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""

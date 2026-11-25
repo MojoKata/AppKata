@@ -2005,6 +2005,102 @@ def test_nested_folder_grants_cannot_reopen_the_symlink_hole(env):
     r = env.run(lp, "echo RAN-AGAIN")
     assert r.returncode == 0 and "RAN-AGAIN" in r.stdout, r.stderr            # the next launch still works ...
     assert os.listdir(victim) == []                                            # ... and created nothing there
+    _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env)
+
+
+def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
+    # CR1.5-40 (#665): ...but a link to /oldroot leads nowhere on the host, so that plant was skipped
+    # whatever bwrap did with a source. Relative links lead somewhere on both sides: with ~/Projects
+    # read-write and ~/Projects/sub/deep granted too, the app made ~/.ssh in its private home, put a
+    # folder `evil` in ~/Projects with `evil/deep` a link to `../../.ssh`, moved `sub` away and made
+    # `sub` a link to `evil`; all of it landed in the real ~/Projects, and the next launch mounted the
+    # user's real ~/.ssh at the app's (read-only as the inner grant was; with a read-write one, the
+    # real ~/.config/autostart, written to). Each grant is asked again at every launch now, and one
+    # that no longer leads where it led when the launcher was written is dropped, with a line; and a
+    # launcher written again refuses a grant that a link in another granted folder is on the way to.
+    # (Parts of the test above, not tests of their own: a run test is named in tests/skips/tier1.txt,
+    # which is another unit's file while this is written.)
+    (env.home / ".config" / "autostart" / "HOST-VICTIM-FILE").write_text("HOST-VICTIM-CONTENT\n")
+    (env.home / "Documents").mkdir()
+    (env.home / "Documents" / "taxes.txt").write_text("TAXES\n")
+    hosts = {".ssh": ["id_ed25519"], ".config/autostart": ["HOST-VICTIM-FILE"], "Documents": ["taxes.txt"]}
+    secret = ("SECRET-KEY", "HOST-VICTIM-CONTENT", "TAXES", "id_ed25519", "HOST-VICTIM-FILE", "taxes.txt")
+
+    def untouched(r, *where):
+        assert r.returncode == 0 and "RAN-AGAIN" in r.stdout, (where, r.stdout, r.stderr)
+        assert not [w for w in secret if w in r.stdout], (where, r.stdout, r.stderr)             # nothing of the user's read or listed
+        assert {v: sorted(os.listdir(env.home / v)) for v in hosts} == hosts, where              # and nothing written there
+        assert "bwrap" not in r.stderr, (where, r.stderr)
+
+    look = ('ls "$HOME/{victim}" 2>&1; cat "$HOME/{victim}"/* 2>&1; cat "$HOME/{inner}"/* 2>&1; (echo x > "$HOME/{victim}/planted-by-app") 2>&1; '
+            '(echo x > "$HOME/{inner}/planted-by-app") 2>&1; echo out > "$HOME/{outer}/out.txt"; echo RAN-AGAIN')
+    dropped = "{app} runs sandboxed and isn't given {folder} this time: it led to {folder} when AppKata wrote this launcher and leads to {now} now"
+
+    # the finding's own run, the inner grant read-only and read-write; then a folder no list names
+    for n, (mode, victim) in enumerate((("ro", ".ssh"), ("rw", ".config/autostart"), ("ro", "Documents")), 1):
+        outer, up = f"P{n}", "../.."                           # from ~/P<n>/evil, where the link is, to the home
+        proj = env.home / outer
+        (proj / "sub" / "deep").mkdir(parents=True)
+        (proj / "sub" / "deep" / "mine.txt").write_text("MINE\n")
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + str(proj): "rw", "+" + str(proj / "sub" / "deep"): mode}})
+        lp = env.app(f"nest{n}", gs)
+        r = env.run(lp, f'cat "$HOME/{outer}/sub/deep/mine.txt" && mkdir -p "$HOME/{victim}" "$HOME/{outer}/evil" && ln -s {up}/{victim} "$HOME/{outer}/evil/deep" && '
+                        f'mv "$HOME/{outer}/sub" "$HOME/{outer}/sub.old" && ln -s evil "$HOME/{outer}/sub" && echo planted')
+        assert "MINE" in r.stdout and "planted" in r.stdout and os.path.islink(proj / "sub"), (r.stdout, r.stderr)   # the grant worked, and the links are the host's
+        assert os.path.realpath(proj / "sub" / "deep") == str(env.home / victim)                    # where bwrap would be led
+        r = env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer))
+        untouched(r, outer, "the next launch")
+        assert dropped.format(app=f"Nest{n}", folder=proj / "sub" / "deep", now=env.home / victim) in r.stderr, r.stderr
+        assert (proj / "out.txt").read_text() == "out\n"                                            # the folder above is still the app's
+        # ...and AppKata writing the launcher again (its next start does) doesn't take the link for the folder
+        lp = env.app(f"nest{n}", gs)
+        assert f"# Refused folder grant {proj / 'sub' / 'deep'}: " in open(lp).read()
+        assert [c for c in sb.summary(gs, str(env.home / "apps")) if c.startswith(f"{proj / 'sub' / 'deep'} · refused: ")]
+        untouched(env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer)), outer, "written again")
+
+    # a nested folder that wasn't there when the launcher was written, made as a link since
+    proj = env.home / "P4"
+    proj.mkdir()
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + str(proj): "rw", "+" + str(proj / "later" / "deep"): "rw"}})
+    lp = env.app("nest4", gs)
+    r = env.run(lp, 'mkdir -p "$HOME/.config/autostart" "$HOME/P4/later" && ln -s ../../.config/autostart "$HOME/P4/later/deep" && echo planted')
+    assert "planted" in r.stdout and os.path.islink(proj / "later" / "deep"), (r.stdout, r.stderr)
+    r = env.run(lp, look.format(victim=".config/autostart", inner="P4/later/deep", outer="P4"))
+    untouched(r, "P4")
+    assert dropped.format(app="Nest4", folder=proj / "later" / "deep", now=env.home / ".config/autostart") in r.stderr, r.stderr
+
+    # a command-line tool with a folder of its own, run once in a folder above it (its to write), then elsewhere
+    proj, other = env.home / "src5" / "proj", env.home / "src5" / "other"
+    (proj / "data").mkdir(parents=True)
+    other.mkdir()
+    gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+" + str(proj / "data"): "ro"}})
+    lp = env.app("tool5", gs)
+    r = env.run(lp, 'mkdir -p "$HOME/.ssh" && mv data data.old && ln -s ../../.ssh data && echo planted', cwd=str(proj))
+    assert "planted" in r.stdout and os.path.islink(proj / "data"), (r.stdout, r.stderr)
+    r = env.run(lp, look.format(victim=".ssh", inner="src5/proj/data", outer="src5/other"), cwd=str(other))
+    untouched(r, "the tool")
+    assert dropped.format(app="Tool5", folder=proj / "data", now=env.home / ".ssh") in r.stderr, r.stderr
+
+    # The user's own link is no plant: a grant through one stands (~/Docs kept on another disk). Pointed
+    # elsewhere after the launcher was written, it is not given at that launch, and is again once
+    # AppKata has written the launcher for where it leads now.
+    for d in ("Documents", "Other"):
+        (env.home / "disk" / d).mkdir(parents=True)
+        (env.home / "disk" / d / "note.txt").write_text(d.upper() + "-NOTE\n")
+    (env.home / "Docs").symlink_to(env.home / "disk" / "Documents")
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/Docs": "rw"}})
+    lp = env.app("reader", gs)
+    r = env.run(lp, 'cat "$HOME/Docs/note.txt"; echo mine > "$HOME/Docs/mine.txt"')
+    assert r.returncode == 0 and "DOCUMENTS-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+    assert (env.home / "disk" / "Documents" / "mine.txt").read_text() == "mine\n"
+    (env.home / "Docs").unlink()
+    (env.home / "Docs").symlink_to(env.home / "disk" / "Other")
+    r = env.run(lp, 'cat "$HOME/Docs/note.txt" 2>&1; echo RAN-AGAIN')
+    assert r.returncode == 0 and "RAN-AGAIN" in r.stdout and "-NOTE" not in r.stdout, (r.stdout, r.stderr)
+    assert (f"Reader runs sandboxed and isn't given {env.home}/Docs this time: it led to {env.home}/disk/Documents when AppKata wrote this "
+            f"launcher and leads to {env.home}/disk/Other now") in r.stderr, r.stderr
+    r = env.run(env.app("reader", gs), 'cat "$HOME/Docs/note.txt"')
+    assert r.returncode == 0 and "OTHER-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
 
 
 def test_a_launcher_rewritten_while_the_app_runs_still_tears_down_and_reports_its_status(env):

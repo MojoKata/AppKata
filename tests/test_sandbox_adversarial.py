@@ -51,12 +51,20 @@ WORDS = HOSTILE + ["--ro-bind", "--", "-", "", " ", "file:///no/such/file", "fil
                    "$(touch /tmp/pwned)", "`id`", "'", '"', "\\", "a\x00b"[:1] + "nul"]
 
 
-def _bind_pairs(text: str) -> list[tuple[str, str]]:
-    """Every `--bind-try X Y` / `--ro-bind-try X Y` word pair baked into the app's bwrap command,
-    unquoted: the command runs from its `bwrap \\` line to the `"$@" || status=$?` word."""
+def _bwrap_words(text: str) -> list[str]:
+    """The words of the app's bwrap command that the launcher's text holds, unquoted: each folder
+    grant's, which it puts before "$@" at the launch while the grant stands (`[ F = "$g1" ] && set
+    -- --bind-try F F "$@"`, the lines after the guard's; CR1.5-40: they were baked into the
+    command), and the command's own, from its `bwrap \\` line to the `"$@" || status=$?` word."""
+    grants = text[text.rindex('; do guard "$d"; done\n'):text.rindex("if [ \"$logging\" = 1 ]")].split("\n", 1)[1]
     block = text[text.rindex("bwrap \\\n"):]
     block = block[:block.index('"$@" || status=$?')]
-    words = shlex.split(block.replace("\\\n", " "), posix=True)
+    return shlex.split(grants, posix=True) + shlex.split(block.replace("\\\n", " "), posix=True)
+
+
+def _bind_pairs(text: str) -> list[tuple[str, str]]:
+    """Every `--bind-try X Y` / `--ro-bind-try X Y` word pair among them (_bwrap_words)."""
+    words = _bwrap_words(text)
     return [(words[i + 1], words[i + 2]) for i, w in enumerate(words)
             if w in ("--bind-try", "--ro-bind-try", "--bind", "--ro-bind") and i + 2 < len(words)]
 
@@ -134,8 +142,7 @@ def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, t
         assert sb.protected_folder(path, apps), path                 # refused, with a reason
         text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
         subprocess.run(["sh", "-n"], input=text, text=True, check=True)
-        block = text[text.rindex("bwrap \\\n"):]
-        words = shlex.split(block[:block.index('"$@" || status=$?')].replace("\\\n", " "), posix=True)
+        words = _bwrap_words(text)
         grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
         assert ("/media/usb", "/media/usb") in grants               # the folder beside it, as asked
         mine = {path, os.path.normpath(path), os.path.realpath(path)}

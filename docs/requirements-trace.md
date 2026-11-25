@@ -62,6 +62,7 @@ differ from its list (review 3, harness B).
 | R17.3.1 | Such a grant is dropped — the launcher | test_launcher_and_summary_refuse_protected_folders, test_a_custom_sandbox_cannot_share_a_protected_folder |
 | R17.3.1 | A grant is judged when the launcher is written, by AppKata's own session's bus | test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket, test_the_launcher_reads_the_bus_address_as_bus_files_does, test_every_reader_of_the_bus_address_names_the_socket_gio_reaches, test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot_read, test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder |
 | R17.3.1 | The list is _protected_roots() and bus_files() in | test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies, test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_where_it_cannot_be_read, statement |
+| R17.3.1 | A grant is refused the same way when a link | test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_the_launcher_is_written, test_nested_folder_grants_cannot_reopen_the_symlink_hole |
 | R17.3.1 | A folder is named from / or ~ | test_a_folder_not_named_from_the_root_or_home_is_refused_and_never_bound, test_a_review_naming_a_relative_folder_never_opens_the_real_home |
 | R17.3.1 | Sandbox folders: home bound the real /home). | statement |
 | R17.3.1 | Secrets are refused when a review asks | test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can, test_the_users_own_secret_folder_stands_with_a_warning |
@@ -113,6 +114,8 @@ differ from its list (review 3, harness B).
 | R17.4 | The host's desktop entries (/usr/share/applications | test_the_hosts_desktop_entries_are_hidden_from_the_sandbox |
 | R17.4 | GLib opens a link or file with the | test_a_glib_program_opens_links_on_the_host_even_when_the_host_has_a_handler, claim |
 | R17.4 | Every mount destination under $HOME lies inside the | test_a_link_the_app_leaves_at_a_mount_point_is_not_followed, test_launcher_guards_every_mount_destination_under_home |
+| R17.4 | A folder grant's source is the host's own folder | test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said, test_nested_folder_grants_cannot_reopen_the_symlink_hole, test_the_launcher_matches_its_golden |
+| R17.4 | One that leads elsewhere — a link on the way | test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said, test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket, test_nested_folder_grants_cannot_reopen_the_symlink_hole |
 | R17.4 | The launcher's exact text is the goldens in | test_the_launcher_matches_its_golden, test_17_points_at_the_goldens_and_the_field_test_runs_appkatas_own_code |
 | R17.5 | Filtered session bus. | statement |
 | R17.5 | When the level uses the bus, the launcher | test_standard_launcher_has_proxy_and_private_home, test_a_standard_launch_leaves_no_proxy_running, test_an_app_whose_name_starts_with_a_digit_still_gets_the_bus, harness:inputmethod |
