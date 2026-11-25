@@ -76,10 +76,13 @@ R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desk
 Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a
 command-line tool (R17.3.3) gets none unless the user or a Trust chose the option for it. The
 `.desktop` entry starts the app through a small script AppKata keeps for it in its own folder
-(`~/.local/share/appkata/menu/<app>`, which runs what the app runs by its own path), so the entry
-never holds a path in the install folder, and no install folder is refused for its name: a `%` in
-it, which an entry must write as `%%`, made GLib's menus (Cinnamon, GNOME, MATE, Xfce) take the app
-for one that isn't installed. Started from the menu, the app has its own path as its name, as it
+(`~/.local/share/appkata/menu/<app>`, which runs what the app runs by its own path), run by
+`/bin/sh`, the entry's program. So the entry never holds a path in the install folder, and no
+install folder is refused for its name: a `%` in it, which an entry must write as `%%`, made GLib's
+menus (Cinnamon, GNOME, MATE, Xfce) take the app for one that isn't installed. Nor does a `%` in
+the path of AppKata's own folder keep an app out of the menu, and an app starts from the menu where
+that folder is on a mount that runs no programs (`noexec`), since the script is only read. Started
+from the menu, the app has its own path as its name, as it
 does started any other way, so a program that finds its files beside itself starts. The script
 goes with the entry.
 

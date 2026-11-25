@@ -142,7 +142,7 @@ def test_portable_options(env, server, tmp_path):
     cmd = tmp_path / "cmd" / "demo-tool"
     assert os.path.islink(cmd) and open(cmd, "rb").read() == data
     desktop, menu = tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop", tmp_path / "data" / "menu" / "demo-tool"
-    assert f'Exec="{menu}" %U' in desktop.read_text() and _menu_starts(menu) == str(stable)    # launchers use the stable name
+    assert f'Exec=/bin/sh "{menu}" %U' in desktop.read_text() and _menu_starts(menu) == str(stable)    # launchers use the stable name
     install.uninstall(env, APP["url"])
     assert not os.path.lexists(cmd) and not (tmp_path / "bin-apps" / "demo-tool").exists() and not desktop.exists()
     assert not os.path.lexists(menu)
@@ -441,7 +441,7 @@ def test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry(env, se
     assert "\x00" not in text and text.endswith("\n")
     link = str(tmp_path / "data" / "menu" / rec["id"])                    # what the entry starts (#685)
     assert _menu_starts(link) == rec["exec"]
-    want = f'"{link}" %U'
+    want = f'/bin/sh "{link}" %U'
     entry = _entry(path)
     assert list(entry) == ["Desktop Entry"] and list(entry["Desktop Entry"]) == _ENTRY_KEYS, entry
     assert entry["Desktop Entry"]["Exec"] == want
@@ -449,7 +449,7 @@ def test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry(env, se
     assert entry["Desktop Entry"]["Name"] == "Demo MimeType=x-scheme-handler/https;text/html; Terminal=true"
     assert entry["Desktop Entry"]["Comment"] == 'A tool Exec=sh -c "touch /tmp/pwned" [X] NoDisplay=true'
     if (glib := _glib_reads(path)) is not None:
-        assert glib == [["Desktop Entry"], _ENTRY_KEYS, [link, "%U"]], glib
+        assert glib == [["Desktop Entry"], _ENTRY_KEYS, ["/bin/sh", link, "%U"]], glib
 
 
 @linux_only
@@ -476,10 +476,10 @@ def test_the_menu_entry_starts_the_app_through_its_script_whatever_the_install_f
         path = next(f for f in rec["files"] if f.endswith(".desktop"))
         link = str(tmp_path / "data" / "menu" / f"demo-{i}")
         entry = _entry(path)["Desktop Entry"]
-        assert _exec_words(entry["Exec"]) == [link, "%U"] and "%%" not in entry["Exec"], entry["Exec"]
+        assert _exec_words(entry["Exec"]) == ["/bin/sh", link, "%U"] and "%%" not in entry["Exec"], entry["Exec"]
         assert _menu_starts(link) == rec["exec"] and link in rec["files"]
         if (glib := _glib_reads(path)) is not None:
-            assert glib[2] == [link, "%U"], glib                           # GLib loads it: the app is in the menu
+            assert glib[2] == ["/bin/sh", link, "%U"], glib                # GLib loads it: the app is in the menu
         assert install.uninstall(env, app["url"]) == [] and not os.path.lexists(link) and not os.path.exists(path)
     # the escaping, for a path that has these characters: a sandbox launcher's own word stays a word
     # of its own, outside the quotes, and a path no entry can start is refused
@@ -502,7 +502,24 @@ def test_a_program_started_from_its_menu_entry_is_started_by_its_own_path(env, s
     # AppKata's menu folder and didn't start from the menu, while Open started it. The file is a
     # small script of AppKata's that runs the app by its own path, with the words the entry passes,
     # whatever the install folder's path holds; it is the app's, and goes with it.
-    root, base = server
+    a = _start_script_archive(*server)
+    for i, folder in enumerate((tmp_path / "apps", tmp_path / "it's \"50% off\" a $ and `id` \\n", tmp_path / "line\nbreak")):
+        app = {**APP, "url": f"{APP['url']}-{i}", "name": f"tool {i}"}
+        rec = install.install(env, app, a, "tarball", [a], portable=install.Portable(folder=str(folder), stable_name=stable_name))
+        assert "launcher" not in rec and rec["exec"].startswith(str(folder))                 # it runs unsandboxed
+        entry = next(f for f in rec["files"] if f.endswith(".desktop"))
+        sh, first, *words = _exec_words(_entry(entry)["Desktop Entry"]["Exec"])
+        assert first == str(tmp_path / "data" / "menu" / f"tool-{i}") and words == ["%U"]  # still AppKata's own folder (#685)
+        started = subprocess.run([sh, first, "a file.txt", "$HOME", "it's"], capture_output=True, text=True)   # as GLib starts it
+        assert (started.returncode, started.stdout, started.stderr) == (0, "found my files\n[a file.txt][$HOME][it's]", ""), started
+        assert not os.path.islink(first) and _menu_starts(first) == rec["exec"]
+        assert first in rec["files"] and first not in rec["links"]
+        assert install.uninstall(env, app["url"]) == [] and not os.path.lexists(first) and not os.path.exists(entry)
+
+
+def _start_script_archive(root, base):
+    """A tarball whose program is a start script that sources lib.sh beside "$0" and prints data.txt
+    from there, then its arguments, each in brackets: it starts only by its own path."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for path, mode, body in (("tool-1.2/tool", 0o755, b'#!/bin/sh\n. "$(dirname "$0")/lib.sh"\nfound "$@"\n'),
@@ -512,19 +529,52 @@ def test_a_program_started_from_its_menu_entry_is_started_by_its_own_path(env, s
             info.size, info.mode = len(body), mode
             tf.addfile(info, io.BytesIO(body))
     (root / "tool-1.2-linux-x86_64.tar.gz").write_bytes(buf.getvalue())
-    a = Asset("tool-1.2-linux-x86_64.tar.gz", base + "/tool-1.2-linux-x86_64.tar.gz")
-    for i, folder in enumerate((tmp_path / "apps", tmp_path / "it's \"50% off\" a $ and `id` \\n", tmp_path / "line\nbreak")):
-        app = {**APP, "url": f"{APP['url']}-{i}", "name": f"tool {i}"}
-        rec = install.install(env, app, a, "tarball", [a], portable=install.Portable(folder=str(folder), stable_name=stable_name))
-        assert "launcher" not in rec and rec["exec"].startswith(str(folder))                 # it runs unsandboxed
-        entry = next(f for f in rec["files"] if f.endswith(".desktop"))
-        first, *words = _exec_words(_entry(entry)["Desktop Entry"]["Exec"])
-        assert first == str(tmp_path / "data" / "menu" / f"tool-{i}") and words == ["%U"]  # still AppKata's own folder (#685)
-        started = subprocess.run([first, "a file.txt", "$HOME", "it's"], capture_output=True, text=True)   # as GLib starts it
-        assert (started.returncode, started.stdout, started.stderr) == (0, "found my files\n[a file.txt][$HOME][it's]", ""), started
-        assert not os.path.islink(first) and _menu_starts(first) == rec["exec"]
-        assert first in rec["files"] and first not in rec["links"]
-        assert install.uninstall(env, app["url"]) == [] and not os.path.lexists(first) and not os.path.exists(entry)
+    return Asset("tool-1.2-linux-x86_64.tar.gz", base + "/tool-1.2-linux-x86_64.tar.gz")
+
+
+def _glib_starts(path):
+    """What an app prints when GLib starts its menu entry as a desktop's menu does, with no file
+    (Gio.DesktopAppInfo.launch): its output, "not shown" where GLib loads no app from the file or
+    its menu doesn't show it, or None where no system python3 has python3-gi (tier 1's container
+    has it). The app inherits the output, so it is read to its end, past GLib's own exit."""
+    py = shutil.which("python3", path="/usr/bin:/bin")
+    if not py or subprocess.run([py, "-c", "import gi"], capture_output=True).returncode:
+        return None
+    code = ("import sys, gi\ngi.require_version('Gio', '2.0')\nfrom gi.repository import Gio\n"
+            "try:\n    i = Gio.DesktopAppInfo.new_from_filename(sys.argv[1])\nexcept TypeError:\n    i = None\n"
+            "if not i or not i.should_show():\n    print('not shown', end='')\nelse:\n    i.launch([], None)\n")
+    return subprocess.run([py, "-c", code, str(path)], capture_output=True, text=True, timeout=60).stdout
+
+
+@linux_only
+@pytest.mark.parametrize("data", ["data", "100% data", "d%x %U"], ids=["plain", "a percent", "a field code"])
+def test_an_app_starts_from_its_menu_entry_whatever_appkatas_own_folder_holds_or_how_it_is_mounted(env, server, tmp_path,
+                                                                                                    monkeypatch, data):
+    # #689's review, P3-2: the entry's program, the first word of its Exec=, was the app's script in
+    # AppKata's own folder (#685), which GLib runs as a program. A % in that folder's path (a home
+    # such as /home/u/100%, or $XDG_DATA_HOME's, or APPKATA_DATA's), written %% as the specification
+    # asks, made GLib take the app for one that isn't installed, as a % in the install folder did
+    # before #685: the app was in no menu. And a program is run only from a mount that allows it:
+    # with the home mounted noexec, every entry failed with "Permission denied", while Open and the
+    # command link started the app from its install folder on another mount. The entry's program
+    # is /bin/sh, which GLib finds wherever AppKata's folder is, and the script its first argument,
+    # which sh only reads. Here the script can't be run (mode 0644, as on a noexec mount), and the
+    # entry is started by GLib itself where it is here, and by its words everywhere.
+    folder = tmp_path / data / "appkata"
+    monkeypatch.setenv("APPKATA_DATA", str(folder))
+    a = _start_script_archive(*server)
+    rec = install.install(env, APP, a, "tarball", [a], portable=install.Portable(folder=str(tmp_path / "apps")))
+    assert "launcher" not in rec and rec["exec"].startswith(str(tmp_path / "apps"))           # it runs unsandboxed
+    entry = next(f for f in rec["files"] if f.endswith(".desktop"))
+    script = str(folder / "menu" / rec["id"])
+    os.chmod(script, 0o644)                                 # as on a mount that runs no program: read, never run
+    if (glib := _glib_starts(entry)) is not None:
+        assert glib == "found my files\n[]", glib           # GLib shows the entry and starts the app from it
+    words = _exec_words(_entry(entry)["Desktop Entry"]["Exec"])
+    started = subprocess.run([w for w in words if w != "%U"] + ["a file.txt", "100%"], capture_output=True, text=True)
+    assert (started.returncode, started.stdout, started.stderr) == (0, "found my files\n[a file.txt][100%]", ""), started
+    assert words == ["/bin/sh", script, "%U"] and script in rec["files"]
+    assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(script) and not os.path.exists(entry)
 
 
 def _menu_starts(path):
@@ -1716,7 +1766,7 @@ def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_link
         assert not os.path.lexists(launcher) and "launcher" not in rec and "sandbox" not in rec
         assert rec["exec"] == str(home / "DemoTool.AppImage") and _runs(rec["exec"]) == "1.0"
     assert os.access(rec["exec"], os.X_OK)                                                  # what AppKata's Open starts
-    assert _menu_starts(_exec_words(_entry(entry)["Desktop Entry"]["Exec"])[0]) == rec["exec"]    # and what the menu starts
+    assert _menu_starts(_exec_words(_entry(entry)["Desktop Entry"]["Exec"])[1]) == rec["exec"]    # and what the menu starts
     assert (os.readlink(link) if link.is_symlink() else link.read_text()) == kept_as and str(link) not in rec["links"]
     assert rec["options"]["commandLink"] is True and rec["commandRefused"] == (
         f"demo-tool is already a command on this computer ({link})" if on_path and theirs == "a link to their own program"
@@ -1790,7 +1840,7 @@ def test_what_an_archive_installs_starts_its_program_not_a_helper(env, server, t
     assert os.path.basename(rec["exec"]) == "codium" and _runs(rec["exec"]) == "codium"
     assert _runs(str(tmp_path / "cmd" / "vscodium")) == "codium"
     entry = _entry(tmp_path / "xdg" / "applications" / "appkata-vscodium.desktop")
-    assert _runs(_exec_words(entry["Desktop Entry"]["Exec"])[0]) == "codium"
+    assert _runs(_exec_words(entry["Desktop Entry"]["Exec"])[1]) == "codium"
 
 
 # ---------------------------------------------------------------- Windows' "Installs to" for an installed app (CR1.8-36)

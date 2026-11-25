@@ -439,7 +439,7 @@ def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monke
     assert rec["sandbox"]["level"] == "standard"
     # the .desktop entry (through its script, R4.3.1.1) and the command link point at the launcher, not the program
     desktop, menu = next(f for f in rec["files"] if f.endswith(".desktop")), str(tmp_path / "data" / "menu" / "demo")
-    assert f'Exec="{menu}" --appkata-menu %U' in open(desktop).read() and _menu_starts(menu) == launcher
+    assert f'Exec=/bin/sh "{menu}" --appkata-menu %U' in open(desktop).read() and _menu_starts(menu) == launcher
     cmd_link = os.path.join(str(tmp_path / "cmd"), "demo")
     assert os.path.realpath(cmd_link) == os.path.realpath(launcher)
     # the identity marker was written outside the private home (the app can't touch it)
@@ -1113,9 +1113,9 @@ def test_the_menu_entry_passes_the_menu_word_only_to_a_launcher(fake_home, monke
     from appkata_core import install
     monkeypatch.setenv("XDG_DATA_HOME", str(fake_home / ".local/share"))
     p = install._desktop_entry("app", "App", "/x/run", "", "An app", launcher=True)
-    assert 'Exec="/x/run" --appkata-menu %U\n' in open(p).read()
+    assert 'Exec=/bin/sh "/x/run" --appkata-menu %U\n' in open(p).read()
     p = install._desktop_entry("app", "App", "/x/bin/app", "", "An app")
-    assert 'Exec="/x/bin/app" %U\n' in open(p).read()
+    assert 'Exec=/bin/sh "/x/bin/app" %U\n' in open(p).read()
 
 
 def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):

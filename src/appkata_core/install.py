@@ -221,22 +221,29 @@ def desktop_value(text: str) -> str:
     return one_line(text).replace("\\", "\\\\")
 
 
-def desktop_exec(exec_path: str, *words: str) -> str:
+# The program an app's menu entry starts, its script the first argument (#689's review, P3-2): a
+# path GLib finds whatever AppKata's own folder holds or where it is mounted
+MENU_SHELL = "/bin/sh"
+
+
+def desktop_exec(exec_path: str, *words: str, through_sh: bool = False) -> str:
     """The value of `Exec=` that starts `exec_path` with AppKata's own `words` and the opened files
     (`%U`), written as the Desktop Entry Specification asks: the path in double quotes with `\\`, `$`
     and a backtick escaped, a `%` doubled, and then every backslash doubled again, as in any string
-    value. A path with a quote or a control character (a line break) is refused with ValueError:
-    no entry starts such a path, and nothing is written for it."""
+    value. With `through_sh`, the entry's program is `/bin/sh` (:data:`MENU_SHELL`) and `exec_path`,
+    a script, its first argument. A path with a quote or a control character (a line break) is
+    refused with ValueError: no entry starts such a path, and nothing is written for it."""
     if '"' in exec_path or _CONTROL.search(exec_path):
         raise ValueError(f"{one_line(exec_path)!r} has a quote or a line break in it, which a menu entry can't start")
     quoted = re.sub(r"([\\$`])", r"\\\1", exec_path).replace("%", "%%")
-    return " ".join([f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
+    return " ".join([*([MENU_SHELL] if through_sh else []), f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
 
 
 def _menu_exec(exec_path: str, *words: str) -> str:
-    """:func:`desktop_exec`, as an install's step: a path no menu entry can start stops the install."""
+    """:func:`desktop_exec` of an app's script (:func:`_menu_link_path`), run by `/bin/sh`, as an
+    install's step: a path no menu entry can start stops the install."""
     try:
-        return desktop_exec(exec_path, *words)
+        return desktop_exec(exec_path, *words, through_sh=True)
     except ValueError as e:
         raise InstallError(f"couldn't add the app-menu entry: {e}") from None
 
@@ -257,14 +264,17 @@ def _menu_link_path(app_id: str) -> str:
     isn't installed -- it looks for the program before it reads `%%` as `%` -- and the app had no
     entry in the menus of Cinnamon, GNOME, MATE or Xfce (#685, the owner's decision: the entry
     starts the app through a link in AppKata's own folder, and nothing is refused). An id has no
-    `%` (:func:`slug`)."""
+    `%` (:func:`slug`). The entry's program is `/bin/sh`, and this path its argument
+    (:func:`_menu_exec`): as the program, a `%` in AppKata's own folder hid the app the same way,
+    and on a home mounted noexec the script couldn't be run, where `sh` only reads it (#689's
+    review, P3-2)."""
     return os.path.join(_menu_links_dir(), app_id)
 
 
 def _write_menu_link(target: str, app_id: str) -> str:
-    """Write the script an app's menu entry starts (:func:`_menu_link_path`): two lines that run
-    `target`, what the app runs (its stable name, program or sandbox launcher), by its own path,
-    with the words the entry passes. Returns its path.
+    """Write the script an app's menu entry starts through `/bin/sh` (:func:`_menu_link_path`): two
+    lines that run `target`, what the app runs (its stable name, program or sandbox launcher), by
+    its own path, with the words the entry passes. Returns its path.
 
     A script and not a symbolic link (#689's review, P2-1): started through a link, an app that runs
     unsandboxed had the link as its `$0`, so a program that finds its files beside `"$0"` (a start
@@ -290,7 +300,8 @@ def _is_menu_file(path: str) -> bool:
 
 
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
-    """The app-menu entry, starting `exec_path` (an app's own: :func:`_menu_link_path`). For a sandbox
+    """The app-menu entry, starting `exec_path`, an app's script (:func:`_menu_link_path`), through
+    `/bin/sh` (:func:`_menu_exec`). For a sandbox
     launcher (`launcher=True`) Exec passes the word --appkata-menu first: started this way nothing
     shows stderr, so the launcher keeps its own in logs/apps/<id>.log, where a refused launch is then
     found (R14.2.1, R17.4).
@@ -1004,7 +1015,8 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
     a command-line tool gets no menu entry when that option was Settings' default (`_apply_kind`),
     so the entry is checked only when it is sure to be written. The entry holds the path of the
     app's script in AppKata's own folder (:func:`_menu_link_path`), never the install folder's, so
-    no install folder is refused for it (#685)."""
+    no install folder is refused for it (#685), and as the argument of `/bin/sh`, so a `%` in
+    AppKata's own folder is none either (#689's review, P3-2)."""
     if OS == "windows":
         from . import windows
         shim = os.path.join(portable.command_folder, app_id + ".cmd") if portable.command_dir else ""
