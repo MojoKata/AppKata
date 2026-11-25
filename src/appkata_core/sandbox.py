@@ -493,7 +493,7 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
     runtime folder (the real, unfiltered session bus lives there, in a login session; where else
-    it can be is :func:`bus_sockets`'s)."""
+    it can be is :func:`bus_files`'s)."""
     from .platform import apps_dir
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
@@ -601,11 +601,6 @@ def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     return files, readable
 
 
-def bus_sockets(address: str | None = None) -> list[str]:
-    """The socket files of the session bus `address` names that AppKata can read (:func:`bus_files`)."""
-    return bus_files(address)[0]
-
-
 # Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
 BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
@@ -614,9 +609,9 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
     since sharing a parent shares everything beneath it — and the session bus's own socket file and
-    anything above it, wherever it is (:func:`bus_sockets`; a folder beside it may be shared), and
-    every folder where the address names a socket file AppKata can't read, which could be in any
-    (:func:`bus_files`; the launcher shares no folder then either; PR #694's review, P3-2). Reviews
+    anything above it, wherever it is (a folder beside it may be shared), and every folder where
+    the address names a socket file AppKata can't read, which could be in any (the launcher shares
+    no folder then either; PR #694's review, P3-2): both are :func:`bus_files`'s. Reviews
     and the Customize picker both go through this; the CLI tool's `$cwd` has its own run-time rule
     (R17.3.3)."""
     if path == "$cwd":

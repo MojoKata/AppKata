@@ -8,7 +8,9 @@ the release gate, exercised that design instead of AppKata's launcher (and overw
 real SSH key). These checks keep the retired identifiers out of them.
 """
 
+import collections
 import os
+import re
 
 import reqdocs
 
@@ -47,3 +49,25 @@ def test_17_points_at_the_goldens_and_the_field_test_runs_appkatas_own_code():
     assert "install.install(" in py and "rewrite_launcher(" in py           # the product's install path and launcher
     assert "bwrap --ro-bind" not in py                                      # no hand-written sandbox
     assert "tempfile.mkdtemp" in py and 'os.environ.update(HOME=FAKE' in py  # a throwaway home
+
+
+# PR #694's review, P4-B2: once protected_folder() read bus_files(), bus_sockets() had no caller in
+# AppKata, only in the tests, and the docstrings of _protected_roots() and protected_folder() still
+# sent a reader to it, away from the function that holds the rule. How it slipped past: a function
+# only the tests call passes every test, and nothing read what a docstring points at. Every function
+# sandbox.py defines is one AppKata's own code (src/, scripts/) names, and every :func: a docstring
+# there points at is one of those.
+def test_every_function_of_the_sandbox_is_one_appkata_names_and_its_docstrings_point_at_those():
+    own = ""
+    for top in ("src", "scripts"):
+        for d, _, files in os.walk(os.path.join(HERE, "..", top)):
+            own += "".join(_read(os.path.relpath(os.path.join(d, f), os.path.join(HERE, ".."))) for f in sorted(files)
+                           if f.endswith((".py", ".sh", ".qml")))
+    # each word, less its definitions and the docstrings' pointers: what names it
+    words = collections.Counter(re.findall(r"\w+", own))
+    words.subtract(re.findall(r"^def (\w+)\(", own, re.M) + re.findall(r":func:`(?:\w+\.)*(\w+)`", own))
+    text = _read("src/appkata_core/sandbox.py")
+    defined = re.findall(r"^def (\w+)\(", text, re.M)
+    assert [n for n in defined if words[n] < 1] == [], "functions of sandbox.py nothing in src/ or scripts/ names"
+    pointed = re.findall(r":func:`(?:\w+\.)*(\w+)`", text)
+    assert pointed and [n for n in pointed if words[n] < 1] == [], "docstrings of sandbox.py point at these"

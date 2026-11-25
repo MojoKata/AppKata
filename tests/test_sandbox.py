@@ -756,19 +756,20 @@ def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_l
         [(str(folder), "a folder above the session bus's socket")]
     # each socket file a list names, unescaped, as libdbus reads it; an abstract socket has none
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:abstract=/tmp/dbus-one;unix:path={tmp_path}/a%20b/bus")
-    assert sb.bus_sockets() == [f"{tmp_path}/a b/bus"]
+    assert sb.bus_files()[0] == [f"{tmp_path}/a b/bus"]
     assert sb.protected_folder(str(tmp_path / "a b")) == "a folder above the session bus's socket"
     # an escaped byte as the byte it is, as the launcher's shell reads it, UTF-8 or not (PR #694's review, P2-1)
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/a%ffb/bus")
     odd = os.fsdecode(os.fsencode(str(tmp_path)) + b"/a\xffb")
-    assert sb.bus_sockets() == [odd + "/bus"] and sb.protected_folder(odd) == "a folder above the session bus's socket"
+    assert sb.bus_files()[0] == [odd + "/bus"] and sb.protected_folder(odd) == "a folder above the session bus's socket"
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=0123")
-    assert sb.bus_sockets() == [] and sb.protected_folder(str(folder)) == ""
+    assert sb.bus_files()[0] == [] and sb.protected_folder(str(folder)) == ""
 
 
-# PR #694's review, P3-2 and P3-B5: bus_sockets() looked for the leading `/` before it unescaped the
-# path, so an address that escapes it (`%2F`: legal, though dbus never writes it) named no file and
-# a grant of the socket's folder passed; and it kept an escaped NUL, so every folder check raised
+# PR #694's review, P3-2 and P3-B5: the grant-time reader (bus_sockets(), now bus_files(): P4-B2)
+# looked for the leading `/` before it unescaped the path, so an address that escapes it (`%2F`:
+# legal, though dbus never writes it) named no file and a grant of the socket's folder passed; and
+# it kept an escaped NUL, so every folder check raised
 # ValueError (from os.path.realpath) in such a session, where the launcher refuses the address
 # cleanly. How it slipped past: P2-1 tested each form on the launcher's shell, which unescapes
 # first, and the grant-time reader on the forms dbus writes. Now the path is judged once unescaped,
@@ -781,7 +782,7 @@ def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_w
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw", f"+{beside}": "rw"}})
     for address in ("unix:path=" + sock.replace("/", "%2F"), f"unix:path={sock}%00zz", f"unix:path={tmp_path}/first,path={sock}"):
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
-        assert sock in sb.bus_sockets() and sb.bus_files()[1], address
+        assert sock in sb.bus_files()[0] and sb.bus_files()[1], address
         assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket" and sb.protected_folder(beside) == "", address
         assert sb.strip_protected(gs)[1] == [(str(folder), "a folder above the session bus's socket")], address
         assert f"# Refused folder grant {folder}: a folder above" in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
@@ -799,7 +800,7 @@ def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_w
 
 
 # PR #694's review, P2-1: the launcher's own rules (the working directory, the cover of a granted
-# folder) read the socket from a plain `unix:path=` address alone, while bus_sockets() reads every
+# folder) read the socket from a plain `unix:path=` address alone, while bus_files() reads every
 # form, so a session whose address was a list, put `guid=` first or escaped a byte -- or named a link
 # to the socket -- left the file in sight of a tool run beside it or a folder granted. How it slipped
 # past: P1-2's tests used the address dbus itself writes, and the forms the proxy can't take were
