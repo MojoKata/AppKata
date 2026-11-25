@@ -2300,27 +2300,29 @@ class Backend(QObject):
                     {"suggested": ", ".join(saved["sandboxReviewSeen"] or [])})
         self.reload()
 
-    def _regenerate_launcher(self, url: str) -> str:
+    def _regenerate_launcher(self, url: str) -> Exception | None:
         """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
-        Returns "", or why it couldn't: the app is then as it was, install.rewrite_launcher having
-        taken the change back (#689's review, P4-B3). An error AppKata doesn't expect is logged with
-        its traceback and returned the same way, so the Sandbox dialog's Save still puts the choice
-        back (:meth:`_apply_sandbox`) and refreshes the window, and AppKata's start goes on to the
-        next app (C-1: only InstallError and OSError were caught, and any other error left both
-        half-way)."""
+        Returns None, or the error that kept it from being written: the app is then as it was,
+        install.rewrite_launcher having put the change back (#689's review, P4-B3), or, where even
+        that couldn't be done, an install.NotPutBack that names what isn't (P5-2). An error AppKata
+        doesn't expect is logged with its traceback and returned the same way, so the Sandbox
+        dialog's Save still puts the choice back (:meth:`_apply_sandbox`) and refreshes the window,
+        and AppKata's start goes on to the next app (C-1: only InstallError and OSError were caught,
+        and any other error left both half-way)."""
         a = self._app(url)
         if not a:
-            return ""
+            return None
         gs = self._sandbox_for_install(url)
         try:
             install.rewrite_launcher(self.db, {**a, "sandbox": gs}, self._app_options(url))
         except (install.InstallError, OSError) as e:
-            log.warning("couldn't regenerate the launcher for %s: %s", url, e)
-            return str(e)
+            log.warning("couldn't regenerate the launcher for %s: %s%s", url, e,
+                        f"; not put back: {', '.join(e.left)}" if isinstance(e, install.NotPutBack) else "")
+            return e
         except Exception as e:      # noqa: BLE001
             log.exception("couldn't regenerate the launcher for %s", url)
-            return str(e) or type(e).__name__
-        return ""
+            return e
+        return None
 
     # the keys of an app's settings row that say which sandbox it runs with (R17.11): the user's
     # choice, the grant set it was pinned to, and the review suggestion it was chosen knowing
@@ -2334,13 +2336,15 @@ class Backend(QObject):
         Save (`settings_before`; a corrected kind's too, whose default the change was), so App
         Detail and the Sandbox dialog show the sandbox the app runs with, the same Save made again
         makes the change, and the caller writes no Audit entry, a failed change being none (R13.3).
+        Where the change couldn't all be put back either (install.NotPutBack), the toast names what
+        isn't as it was rather than saying the app runs as it did (P5-2).
 
         #689's review, P5-3: the choice stayed saved, so App Detail and the dialog showed it as in
         force (Strict and no network, while the app ran with the network), the Audit's row named the
         old launcher's hash as written for it, and a failed Off stayed sandboxed under "Off", which
         AppKata's start never rewrites."""
-        why = self._regenerate_launcher(url)
-        if not why:
+        e = self._regenerate_launcher(url)
+        if e is None:
             return True
         saved = self._install_settings(url)
         for k in keys:
@@ -2349,8 +2353,14 @@ class Backend(QObject):
             else:
                 saved.pop(k, None)
         self._set_install_settings(url, saved)
-        self._toast.emit("error", f"Couldn't change the sandbox of {(self._app(url) or {}).get('name', url)}, "
-                                  f"so it runs as it did: {why}")
+        name, why = (self._app(url) or {}).get("name", url), str(e) or type(e).__name__
+        if isinstance(e, install.NotPutBack):
+            one = len(e.left) == 1
+            parts = e.left[0] if one else ", ".join(e.left[:-1]) + " and " + e.left[-1]
+            self._toast.emit("error", f"Couldn't change the sandbox of {name}: {why}. It couldn't all be put back either: "
+                                      f"{parts} {'isn' if one else 'aren'}'t as {'it was' if one else 'they were'}.")
+        else:
+            self._toast.emit("error", f"Couldn't change the sandbox of {name}, so it runs as it did: {why}")
         return False
 
     def _heal_launchers_at_startup(self) -> None:

@@ -769,6 +769,40 @@ def test_a_sandbox_change_that_cant_be_written_takes_its_choice_back_with_it(be,
     assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
 
 
+def test_a_sandbox_change_that_cant_be_put_back_says_what_isnt_as_it_was(be, tmp_path, monkeypatch):
+    # #689's review, P5-2: where a failed change couldn't all be put back either, the toast said the
+    # app "runs as it did" all the same. Here the file system makes no hard links, so putting the
+    # change back writes what it replaced, and the disk is full from the menu entry's write on: the
+    # toast names what isn't as it was (install's
+    # test_a_sandbox_change_that_cant_be_put_back_names_what_isnt_as_it_was holds the names to the
+    # files), and the choice goes back as for a change put back in full (P5-3).
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    shown = {k: be.sandboxInfo(URL)[k] for k in _SHOWN if k not in ("active", "launcherHash")}
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full(path, data, mode):             # the menu entry's write, and every one after it
+        if path.endswith(".desktop") or failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+
+    def no_hard_links(*a, **k):
+        raise OSError(1, "Operation not permitted")
+    monkeypatch.setattr(install, "_write_whole", full)
+    monkeypatch.setattr(os, "link", no_hard_links)
+    be.setSandbox(URL, {"template": "off"})
+    assert toasts == [("error", "Couldn't change the sandbox of Demo: [Errno 28] No space left on device. It couldn't all be "
+                                "put back either: its launcher and its app-menu entry aren't as they were.")]
+    assert {k: be.sandboxInfo(URL)[k] for k in shown} == shown              # the choice it runs with, as it was
+
+
 def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be, tmp_path, monkeypatch):
     # #689's review, C-1 (its checker's note on P4-1): _regenerate_launcher caught InstallError and
     # OSError alone. Any other error (P4-1's UnicodeEncodeError was one) left the Sandbox dialog's

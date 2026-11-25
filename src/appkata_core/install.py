@@ -5,6 +5,7 @@ macOS installers follow."""
 from __future__ import annotations
 
 import configparser
+import glob
 import hashlib
 import json
 import os
@@ -49,6 +50,16 @@ class InUse(InstallError):
     def __init__(self, name: str, programs: list[str]):
         self.name, self.programs = name, programs
         super().__init__(f"close {name} to continue")
+
+
+class NotPutBack(InstallError):
+    """A sandbox change that failed and couldn't all be put back either (:func:`rewrite_launcher`):
+    its message is the change's own error, and `left` names the parts of the app that aren't as
+    they were, as the user knows them ("its launcher", "its app-menu entry"), so nothing says the
+    app runs as it did (R17.4; #689's review, P5-2)."""
+    def __init__(self, why: str, left: list[str]):
+        self.left = left
+        super().__init__(why)
 
 
 def slug(name: str) -> str:
@@ -1374,48 +1385,169 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     record are put back as they were. An app in that layout has no `current` link whatever the
     options say, here as at its install.
 
-    Whatever step fails, the app is put back as its stored record has it, and the error is raised
-    for the caller to report: its launcher, its app-menu script and entry and its command link, as
-    a failed update is (R4.6; #689's review, P4-B3: the sandbox turned Off and the entry's write
-    failing on a full disk left the launcher removed under a record that still named it, the
-    script running the program, the entry passing it --appkata-menu and no command link, and
-    nothing repaired it)."""
-    row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
-    if not row:
-        return {}
-    rec = json.loads(row["record"] or "{}")
-    if not rec.get("current") or OS != "linux":
-        return rec
-    portable = _where_it_is(rec, portable)
-    stored, target, gs = json.loads(row["record"]), rec["target"], app.get("sandbox")
-    retired, moved, was = [], None, _was_there(app_id_of(rec, app), rec["target"])
-    try:
-        if (app.get("autoUpdate") and rec.get("launcher") and (not gs or sandbox.level_of(gs) == "off")
-                and not rec.get("selfUpdating") and not rec.get("selfInstalled")):
-            retired, moved = _enter_fixed_layout(rec, app, portable, target)
-        if rec.get("selfUpdating"):
-            portable = replace(portable, stable_name=False, keep=0)
-        _activate(rec, app, portable, target)
-        db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
-    except BaseException:
-        if moved:               # back in version folders, under the record that says so
-            fixed, before, aside = moved
+    Whatever step fails, the app is put back as it was, and the error is raised for the caller to
+    report: its launcher, its app-menu script and entry, its command link and its private home
+    (#689's review, P4-B3: the sandbox turned Off and the entry's write failing on a full disk
+    left the launcher removed under a record that still named it, the script running the program,
+    the entry passing it --appkata-menu and no command link, and nothing repaired it). What the
+    change can replace or remove is kept first (:func:`_keep_aside`), so putting it back renames,
+    links and removes, and writes nothing (:func:`_put_back`). #689's review, P5-2: the take-back
+    activated the stored record again, which wrote the same files on the disk that had just
+    refused one, so on a disk that stays full it failed at the same write, and left the command
+    link removed and a private home the change made. Where even that can't put something back,
+    the error is a :class:`NotPutBack` that names it."""
+    with _ACTIVATE_LOCK:                # nothing else activates the app between what is kept and the change
+        row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
+        if not row:
+            return {}
+        rec = json.loads(row["record"] or "{}")
+        if not rec.get("current") or OS != "linux":
+            return rec
+        portable = _where_it_is(rec, portable)
+        stored, target, gs, app_id = json.loads(row["record"]), rec["target"], app.get("sandbox"), app_id_of(rec, app)
+        retired, moved, was, kept = [], None, _was_there(app_id, rec["target"]), {"files": {}, "links": {}}
+        try:
+            _keep_aside(kept, stored, app_id, portable)        # before anything changes
             try:
-                if os.path.lexists(fixed) and not os.path.lexists(before):
-                    os.replace(fixed, before)
-                if aside and os.path.lexists(aside) and not os.path.lexists(fixed):
-                    os.replace(aside, fixed)
-            except OSError:
-                log.exception("couldn't move %s back to %s", fixed, before)
-        # the launcher, the menu files and the links made again as the stored record has them: the
-        # activation removed some before it failed (an Off removes the launcher first)
-        _undo_portable(db, app, {**rec, "current": stored["current"]}, stored, portable, target, was)
-        raise
+                if (app.get("autoUpdate") and rec.get("launcher") and (not gs or sandbox.level_of(gs) == "off")
+                        and not rec.get("selfUpdating") and not rec.get("selfInstalled")):
+                    retired, moved = _enter_fixed_layout(rec, app, portable, target)
+                if rec.get("selfUpdating"):
+                    portable = replace(portable, stable_name=False, keep=0)
+                _activate(rec, app, portable, target)
+                db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(rec), app["url"]))
+            except BaseException as e:
+                left = []
+                if moved:               # back in version folders, under the record that says so
+                    fixed, before, aside = moved
+                    try:
+                        if os.path.lexists(fixed) and not os.path.lexists(before):
+                            os.replace(fixed, before)
+                        if aside and os.path.lexists(aside) and not os.path.lexists(fixed):
+                            os.replace(aside, fixed)
+                    except OSError:
+                        log.exception("couldn't move %s back to %s", fixed, before)
+                        left.append("the folder of its current version")
+                left += _put_back(kept, rec, stored, app_id, portable, target, was)
+                if left and isinstance(e, Exception):
+                    raise NotPutBack(str(e) or type(e).__name__, left) from e
+                raise
+        finally:
+            _drop_aside(kept)
     if moved:                   # a sandboxed AppImage's unpacked copies: it runs Off now (R17.7)
         for k in [stored["current"]] + stored.get("kept", []):
             _remove_extracted(k)
     _forget(retired)
     return rec
+
+
+def _keep_aside(kept: dict, rec: dict, app_id: str, portable: "Portable") -> None:
+    """Keep in `kept` what a sandbox change can replace or remove (:func:`rewrite_launcher`), so
+    that putting it back writes nothing (:func:`_put_back`): the launcher, its identity marker, the
+    private home's owner record and the app-menu files, each as a hard link beside its place
+    (`<path>.<pid>.was`, removed by :func:`_drop_aside`, and one an earlier change left there by
+    the next), or as its bytes where the file system makes no hard links; a path with nothing there
+    as None; and the links `rec` names, by their targets. Filled as it goes, so what it made is
+    dropped if it stops part-way."""
+    paths = [rec.get("launcher"), sandbox.launcher_path(app_id, portable.root), sandbox.identity_path(app_id),
+             sandbox.home_owner_path(app_id), _menu_link_path(app_id), _menu_entry_path(app_id)]
+    for p in dict.fromkeys(p for p in paths + [f for f in rec.get("files", []) if _is_menu_file(f)] if p):
+        if os.path.islink(p):
+            kept["files"][p] = ("link", os.readlink(p))
+        elif os.path.isfile(p):
+            aside = f"{p}.{os.getpid()}.was"
+            for stale in glob.glob(glob.escape(p) + ".*.was"):     # one an earlier change couldn't remove
+                os.remove(stale)
+            try:
+                os.link(p, aside, follow_symlinks=False)
+                kept["files"][p] = ("aside", aside)
+            except OSError:             # a file system with no hard links: its bytes, written back if need be
+                with open(p, "rb") as f:
+                    kept["files"][p] = ("bytes", f.read(), os.stat(p).st_mode & 0o7777)
+        elif not os.path.lexists(p):
+            kept["files"][p] = None
+    kept["links"].update({link: os.readlink(link) for link in rec.get("links", []) if os.path.islink(link)})
+
+
+def _put_back(kept: dict, rec: dict, prev: dict, app_id: str, portable: "Portable", target: str, was: dict) -> list[str]:
+    """Put back what a failed sandbox change replaced or removed (:func:`_keep_aside`), by renames,
+    links and removals, each step whatever the one before did: the links the change made removed,
+    each kept file renamed back to its place and each file the change made removed, the links the
+    stored record `prev` names pointed at their targets again, and a private home the change made
+    for an app that runs unsandboxed removed, so it is still one that has none (R17.13). `rec` is
+    the record as far as the change wrote it. Returns the parts that couldn't be put back, as
+    :class:`NotPutBack` names them; [] when all was."""
+    left: list[str] = []
+    own = (portable.root, os.path.dirname(target))
+    launcher = {prev.get("launcher"), sandbox.launcher_path(app_id, portable.root), sandbox.identity_path(app_id)}
+
+    def part(path: str) -> str:
+        if path in launcher:
+            return "its launcher"
+        if path == sandbox.home_owner_path(app_id):
+            return "its private home"
+        if _is_menu_file(path):
+            return "its app-menu entry"
+        return "its stable name link" if os.path.dirname(path) == target else "its command link"
+
+    def step(name: str, fn) -> None:
+        try:
+            fn()
+        except Exception:       # noqa: BLE001 -- the change's own error is the one raised; this one is named
+            log.exception("couldn't put back %s of %s", name, app_id)
+            if name not in left:
+                left.append(name)
+
+    def restore(path: str, k) -> None:
+        if k is None:
+            _remove_path(path)                      # the change made it
+        elif k[0] == "aside":
+            if not (os.path.lexists(path) and os.path.samestat(os.lstat(path), os.lstat(k[1]))):
+                os.replace(k[1], path)              # the file as it was, where the change replaced or removed it
+        elif k[0] == "link":
+            _relink(path, k[1])
+        elif not (os.path.isfile(path) and not os.path.islink(path) and _read(path) == k[1]):
+            _write_whole(path, k[1], k[2])
+
+    for link in [l for l in rec.get("links", []) if l not in kept["links"]]:
+        step(part(link), lambda link=link: _remove_links([link], own))
+    for path, k in kept["files"].items():
+        step(part(path), lambda path=path, k=k: restore(path, k))
+    for link, to in kept["links"].items():
+        step(part(link), lambda link=link, to=to: _relink(link, to))
+    home = sandbox.sandbox_home(app_id)
+    if was.get("home") is False and not prev.get("launcher") and os.path.isdir(home):
+        step("its private home", lambda: shutil.rmtree(home))
+    return left
+
+
+def _relink(link: str, to: str) -> None:
+    """Point `link` at `to` again, as it pointed before (:func:`_put_back`), replacing a link a
+    change put there; anything else at its place is not AppKata's to replace."""
+    if os.path.islink(link) and os.readlink(link) == to:
+        return
+    if os.path.lexists(link) and not os.path.islink(link):
+        raise OSError(f"{link} isn't a link AppKata made")
+    if os.path.lexists(link):
+        os.remove(link)
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    os.symlink(to, link)
+
+
+def _read(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _drop_aside(kept: dict) -> None:
+    """Remove the hard links :func:`_keep_aside` made that are still beside their files: after the
+    change was written, or put back."""
+    for k in kept["files"].values():
+        if k and k[0] == "aside" and os.path.lexists(k[1]):
+            try:
+                os.remove(k[1])
+            except OSError:
+                log.warning("couldn't remove %s", k[1])
 
 
 def refresh_command_link(db: DB, app: dict, portable: "Portable") -> bool:

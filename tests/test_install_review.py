@@ -2023,6 +2023,97 @@ def test_a_sandbox_change_whose_menu_file_cant_be_written_leaves_the_app_as_it_w
     assert ("--appkata-menu" in _exec_words(_entry(entry)["Desktop Entry"]["Exec"])) is bool(after)
 
 
+def _full(entry, fails, failed):
+    """install._write_whole, through which every file AppKata keeps for an app is written (P5-B3),
+    failing as on a disk that stays full: every write, the menu entry's every time (its folder
+    can't be written), or the menu entry's once and every one after it."""
+    real = install._write_whole
+
+    def write(path, data, mode):
+        if fails == "every write" or path == entry or (failed and fails.endswith("then every write")):
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+    return write
+
+
+_DISK_STAYS_FULL = ["every write", "the menu entry's, every time", "the menu entry's once, then every write"]
+
+
+@linux_only
+@pytest.mark.parametrize("fails", _DISK_STAYS_FULL)
+@pytest.mark.parametrize("change", list(_CHANGES))
+def test_a_sandbox_change_on_a_disk_that_stays_full_leaves_the_app_as_it_was(env, server, tmp_path, change, fails):
+    # #689's review, P5-2: the take-back of a failed sandbox change (P4-B3) activated the stored
+    # record again, writing the launcher, the menu script and the entry anew on the disk that had
+    # just refused one. Where the failure lasts (a full disk, a quota, a folder that can't be
+    # written) it failed at the same write and stopped: the command link, which an activation
+    # removes first and makes last, was left removed under a record that named it, and a private
+    # home the change made for an app that runs unsandboxed stayed (R17.13), while the toast and
+    # R17.4 said the app was as it was. What the change replaces is kept beside it now, and
+    # putting it back writes nothing.
+    from appkata_core import sandbox
+    before, after = (sandbox.resolve_template(t) if t else None for t in _CHANGES[change])
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    was = install.install(env, {**APP, "installVersion": "1.0", "sandbox": before}, a, "appimage", [a], portable=p)
+    assert os.readlink(tmp_path / "cmd" / "demo-tool") == was["exec"] and ("launcher" in was) is bool(before)
+    kept, failed = _left(tmp_path, env), []
+    script, entry = str(tmp_path / "data" / "menu" / was["id"]), str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop")
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(install, "_write_whole", _full(entry, fails, failed))
+        with pytest.raises(OSError, match="No space left on device") as e:
+            install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
+    assert failed and _changed(kept, _left(tmp_path, env)) == {}        # every file, link, private home, and the record
+    assert _menu_starts(script) == was["exec"] and os.access(was["exec"], os.X_OK)    # what the menu and Open start
+    assert not isinstance(e.value, install.NotPutBack)                   # all of it put back, as the error says
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)     # with room on the disk, the change is made
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"]) and ("launcher" in rec) is bool(after)
+    assert os.readlink(tmp_path / "cmd" / "demo-tool") == rec["exec"] == _menu_starts(script) and os.access(rec["exec"], os.X_OK)
+
+
+# What the user knows each of an app's paths as (install.NotPutBack's words), by its place under the test's folder
+_PARTS = {os.path.join("apps", "demo-tool", "run"): "its launcher",
+          os.path.join("data", "sandboxes", ".identity", "apps", "demo-tool"): "its launcher",
+          os.path.join("data", "menu", "demo-tool"): "its app-menu entry",
+          os.path.join("xdg", "applications", "appkata-demo-tool.desktop"): "its app-menu entry",
+          os.path.join("cmd", "demo-tool"): "its command link",
+          os.path.join("apps", "demo-tool", "DemoTool.AppImage"): "its stable name link",
+          os.path.join("data", "sandboxes", "demo-tool"): "its private home",
+          os.path.join("data", "sandboxes", ".owners", "demo-tool"): "its private home"}
+
+
+@linux_only
+@pytest.mark.parametrize("change", list(_CHANGES))
+def test_a_sandbox_change_that_cant_be_put_back_names_what_isnt_as_it_was(env, server, tmp_path, monkeypatch, change):
+    # #689's review, P5-2: where even putting a change back fails, the error says what isn't as
+    # it was, and that is exactly what isn't, so the toast doesn't say the app runs as it did. Here
+    # the file system makes no hard links, so what the change replaced is kept as its bytes and
+    # written back, and the disk is full from the menu entry's write on.
+    from appkata_core import sandbox
+    before, after = (sandbox.resolve_template(t) if t else None for t in _CHANGES[change])
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    install.install(env, {**APP, "installVersion": "1.0", "sandbox": before}, a, "appimage", [a], portable=p)
+    kept, failed = _left(tmp_path, env), []
+    entry = str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop")
+
+    def no_hard_links(*a, **k):
+        raise OSError(1, "Operation not permitted")
+    monkeypatch.setattr(os, "link", no_hard_links)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(install, "_write_whole", _full(entry, "the menu entry's once, then every write", failed))
+        with pytest.raises(install.NotPutBack, match="No space left on device") as e:
+            install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
+    changed = _changed(kept, _left(tmp_path, env))
+    assert "<installs>" not in changed and changed                     # the record as it was; some file not
+    assert sorted(e.value.left) == sorted({_PARTS[k] for k in changed})  # named, every one, and only those
+    assert not [k for k in _left(tmp_path, env) if k.endswith(".was")]   # and nothing kept is left beside its place
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)     # with room on the disk, the change is made
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"]) and ("launcher" in rec) is bool(after)
+    assert os.readlink(tmp_path / "cmd" / "demo-tool") == rec["exec"] and os.access(rec["exec"], os.X_OK)
+
+
 # ---------------------------------------------------------------- the program of an archive (CR1.3-17)
 
 _ELF, _SCRIPT = b"\x7fELF\x02\x01\x01" + b"\0" * 57, b"#!/bin/sh\nexec true\n"
