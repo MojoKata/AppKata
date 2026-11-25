@@ -2681,3 +2681,45 @@ def test_no_version_is_placed_in_a_folder_that_isnt_in_the_apps_own(tmp_path, mo
         with pytest.raises(install.InstallError, match="isn't a name in"):
             install._place("tarball", str(file), APP, str(folder), "1.0", "tool.tar.gz")
         assert os.listdir(folder) == [] and os.listdir(tmp_path / "apps" / "other-app") == ["1.0"] and file.exists()
+
+
+# ---------------------------------------------------------------- the file AppKata names after an app (CR1.3-39)
+
+@linux_only
+@pytest.mark.parametrize("name", ["日本語アプリ", "Приложение", "Εφαρμογή", "…", "!!!", ""])
+def test_an_app_whose_name_has_no_ascii_letter_or_digit_gets_its_id_in_the_file_named_after_it(env, server, tmp_path, name):
+    # CR1.3-39: the stable name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2)
+    # are the app's name without what isn't an ASCII letter or digit, which for such a name is
+    # nothing: the file was `.AppImage`, hidden and nameless. The whole road of that name: the
+    # fixed layout, AppKata's own update into versions with the stable link, and back.
+    from appkata_core import sandbox
+    app, gs = {**APP, "name": name}, sandbox.resolve_template("standard")
+    home, cmd = tmp_path / "apps" / "app", tmp_path / "cmd"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    a = _version(server, "appimage", "1.0")
+    rec = install.install(env, {**app, "installVersion": "1.0", "autoUpdate": True}, a, "appimage", [a], portable=p)
+    assert rec["id"] == "app" and os.listdir(home) == ["app.AppImage"]                    # it updates itself: one file
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"1.0"
+    install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": gs}, p)        # sandboxed, so AppKata updates it
+    a = _version(server, "appimage", "2.0")
+    rec = install.install(env, {**app, "installVersion": "2.0", "sandbox": gs}, a, "appimage", [a], portable=p)
+    assert os.readlink(home / "app.AppImage") == "Tool-2.0-x86_64.AppImage" and str(home / "app.AppImage") in rec["links"]
+    assert [os.path.basename(k["path"]) for k in rec["kept"]] == ["app-1.0.AppImage"]
+    assert not [n for n in os.listdir(home) if n.startswith(".")]
+    rec = install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": None}, p)       # Off: it updates itself again
+    assert os.listdir(home) == ["app.AppImage"] and not os.path.islink(home / "app.AppImage")
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"2.0"
+    # a second such app has its own id, and its own name
+    b = _appimage(server, "Other-1.0-x86_64.AppImage", b"other")
+    other = install.install(env, {**app, "url": APP["url"] + "-other", "name": "別のアプリ"}, b, "appimage", [b], portable=p)
+    assert other["id"] == "app-2" and other["exec"] == str(tmp_path / "apps" / "app-2" / "app-2.AppImage")
+    assert os.readlink(other["exec"]) == "Other-1.0-x86_64.AppImage"
+    assert install.uninstall(env, APP["url"]) == [] and install.uninstall(env, APP["url"] + "-other") == []
+    assert not os.path.lexists(home) and not os.path.lexists(tmp_path / "apps" / "app-2")
+
+
+def test_the_file_named_after_an_app_has_its_names_ascii_letters_and_digits_or_its_id():
+    folder = os.path.join("apps", "app-2")
+    for name, stem in (("LocalSend", "LocalSend"), ("Demo Tool", "DemoTool"), ("日本 App 2", "App2"), ("7-Zip", "7Zip"),
+                       ("日本語アプリ", "app-2"), ("", "app-2"), ("..", "app-2"), ("/", "app-2")):
+        assert install._file_stem({"name": name}, folder) == stem

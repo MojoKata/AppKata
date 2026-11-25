@@ -405,6 +405,23 @@ def test_a_refused_portable_install_leaves_everything_as_it_was(windows_road, en
         assert not any(os.path.exists(lnk) for lnk in windows_road["made"])
 
 
+@pytest.mark.parametrize("name,exe", [("日本語アプリ", "app.exe"), ("Приложение 2", "2.exe"), ("Demo Tool", "DemoTool.exe")])
+def test_a_portable_program_is_named_after_its_app_or_by_the_apps_id(windows_road, env, server, tmp_path, monkeypatch, name, exe):
+    # CR1.3-39, Windows' side: a portable .exe is kept under the app's name without what isn't an
+    # ASCII letter or digit, and an app whose name has none had a program named just `.exe`.
+    from appkata_core import install
+    monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
+    root, base = server
+    (root / "tool-1.0-portable.exe").write_bytes(b"MZ, and not a program")
+    a = Asset("tool-1.0-portable.exe", f"{base}/tool-1.0-portable.exe")
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "bin"))
+    rec = install.install(env, {**APP, "name": name, "exeKind": "portable", "installVersion": "1.0"}, a, "exe", [a], portable=p)
+    assert rec["current"]["exec"] == os.path.join("1.0", exe) and os.listdir(rec["current"]["path"]) == [exe]
+    assert os.path.basename(rec["exec"]) == exe and os.path.exists(rec["exec"])
+    install.uninstall(env, APP["url"])
+    assert not os.path.lexists(rec["target"])
+
+
 # ---------------------------------------------------------------- the Visual C++ run-time (R15.18)
 def make_pe(path, dlls, delay=(), pe32plus=True):
     """A minimal Windows program whose import tables name `dlls` (and delay-loaded `delay`)."""

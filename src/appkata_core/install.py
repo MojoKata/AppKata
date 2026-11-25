@@ -681,6 +681,16 @@ def _appimage_name(asset_name: str, version: str, versioned: bool = False) -> st
     return f"{stem}-{_safe(version)}{ext}"
 
 
+def _file_stem(app: dict, target: str) -> str:
+    """The app's name in the name of a file AppKata names after it: `LocalSend.AppImage`, the stable
+    name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2), and a portable Windows
+    program's `.exe`. It is the name's ASCII letters and digits. An app whose name has none
+    (日本語アプリ) got a file named just `.AppImage` or `.exe`: hidden on Linux, and no name at all.
+    It gets the app's id (:func:`app_id_of`), which is the name of its folder, `target`
+    (CR1.3-39)."""
+    return re.sub(r"[^A-Za-z0-9]+", "", app["name"]) or os.path.basename(target)
+
+
 def _aside(path: str) -> str:
     """Where :func:`_swap_in` keeps what was at `path` until the install has succeeded."""
     return path + ".old"
@@ -718,8 +728,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
-        dest = _in_folder(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
-                          else _appimage_name(asset_name, version))
+        dest = _in_folder(target, _file_stem(app, target) + ".AppImage" if fixed else _appimage_name(asset_name, version))
         if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
             dest = _in_folder(target, _appimage_name(asset_name, version, versioned=True))
         staging = dest + ".new"
@@ -738,8 +747,8 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     try:
         if kind == "exe":                      # a portable Windows program
             os.makedirs(staging)
-            shutil.move(file, os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe"))
-            exe = os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe")
+            exe = os.path.join(staging, _file_stem(app, target) + ".exe")
+            shutil.move(file, exe)
         else:
             _extract(kind, file, staging)
             exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
@@ -804,7 +813,7 @@ def _enter_fixed_layout(rec: dict, app: dict, portable: "Portable", target: str)
     fixed name: neither a link AppKata made nor one of the app's own versions."""
     cur, kept, own = rec["current"], rec.get("kept", []), (portable.root, os.path.dirname(target))
     appimage = cur["path"].lower().endswith(".appimage") and not os.path.isdir(cur["path"])
-    fixed = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if appimage else "app")
+    fixed = os.path.join(target, _file_stem(app, target) + ".AppImage" if appimage else "app")
     aside = ""
     if fixed != cur["path"]:
         if os.path.lexists(fixed) and not _points_into(fixed, own) and fixed not in [k["path"] for k in kept]:
@@ -847,7 +856,7 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     run = os.path.join(target, cur["exec"])
     if portable.stable_name and OS != "windows":       # symlinks need extra rights on Windows
         if cur["path"].lower().endswith(".appimage"):      # LocalSend.AppImage → LocalSend-1.18.2-x86_64.AppImage
-            stable = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage")
+            stable = os.path.join(target, _file_stem(app, target) + ".AppImage")
             if stable != cur["path"]:
                 run = _link(cur["path"], stable)
                 rec["links"].append(stable)
