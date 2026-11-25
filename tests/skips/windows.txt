@@ -76,6 +76,7 @@ tests/test_install_review.py::test_the_sweep_removes_only_what_a_stopped_change_
 tests/test_install_review.py::test_the_versions_an_app_has_are_there_until_the_new_one_is_installed  # the Linux install layout
 tests/test_install_review.py::test_uninstalling_says_what_it_did_not_remove  # the Linux install layout
 tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux install layout
+tests/test_install_review.py::test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own  # the Linux install layout
 tests/test_install_review.py::test_what_an_archive_installs_starts_its_program_not_a_helper  # the Linux install layout
 tests/test_install_review.py::test_what_an_option_made_goes_when_it_is_turned_off_and_nothing_outlasts_uninstall  # the Linux install layout
 tests/test_install_review.py::test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced  # the Linux install layout

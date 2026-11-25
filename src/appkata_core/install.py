@@ -855,6 +855,24 @@ def _file_stem(app: dict, target: str) -> str:
     return stem
 
 
+def _not_anothers(path: str, others: tuple[str, ...]) -> str:
+    """`path`, the place a version's name gives it, or the first of that name with `_2`, `_3`...
+    after it (before an AppImage's extension) that is the place of none of the app's other
+    versions, `others`. A version's name in a path isn't the version (:func:`_safe`): 1.0 beta and
+    1.0_beta are both `1.0_beta`, `current` and `_current` both `_current`, and on Windows 1.0-RC
+    and 1.0-rc are one folder. The later one was unpacked over the earlier, which was then no
+    longer there to go back to, and its entry among the kept versions named the later one's files
+    (CR1.3-52). The record keeps each version's path, so nothing reads a version back from a name."""
+    same = (lambda x: os.path.normcase(x).lower()) if OS == "windows" else (lambda x: x)
+    taken = {same(o) for o in others}
+    stem, ext = os.path.splitext(path) if path.lower().endswith(".appimage") else (path, "")
+    n, free = 1, path
+    while same(free) in taken:
+        n += 1
+        free = f"{stem}_{n}{ext}"
+    return free
+
+
 def _aside(path: str) -> str:
     """Where :func:`_swap_in` keeps what was at `path` until the install has succeeded."""
     return path + ".old"
@@ -894,7 +912,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     if kind == "appimage":
         dest = _in_folder(target, _file_stem(app, target) + ".AppImage" if fixed else _appimage_name(asset_name, version))
         if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
-            dest = _in_folder(target, _appimage_name(asset_name, version, versioned=True))
+            dest = _not_anothers(_in_folder(target, _appimage_name(asset_name, version, versioned=True)), others)
         staging = dest + ".new"
         _remove_path(staging)
         try:
@@ -905,7 +923,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
             _remove_path(staging)
             raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
-    vdir = _in_folder(target, "app" if fixed else _version_folder(version))
+    vdir = _in_folder(target, "app") if fixed else _not_anothers(_in_folder(target, _version_folder(version)), others)
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
     try:

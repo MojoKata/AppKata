@@ -3308,6 +3308,77 @@ def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_asid
     assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))
 
 
+# ---------------------------------------------------------------- two versions whose names in a path are one (R4.3.1; CR1.3-52)
+# How it slipped past: every test's versions were numbers, which are their own names. A version is
+# the release author's text, and its name in a path isn't the version: the characters a path can't
+# hold become `_`, and a name AppKata keeps for itself gets a `_` of its own (CR1.3-9, CR1.3-47).
+_ONE_FOLDER = [("1.0 beta", "1.0_beta"), ("1.0_beta", "1.0 beta"), ("1.0 beta", "1.0_beta", "1.0/beta"), ("2.0~rc1", "2.0_rc1", "2.0 rc1"),
+               ("current", "_current"), ("_current", "Current", "current"), ("run", "_run"), ("..", "_.."), ("2.0.old", "2.0.old_"),
+               ("2.0.new_", "2.0.new"), ("1.0_beta", "1.0 beta", "1.0_beta_2"), ("1.0_beta_2", "1.0 beta", "1.0_beta")]
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["tarball", "appimage"])
+@pytest.mark.parametrize("versions", _ONE_FOLDER, ids=[" then ".join(v) for v in _ONE_FOLDER])
+def test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own(env, server, tmp_path, versions, kind):
+    """R4.3.1.5: "AppKata keeps up to *N* previous versions ... A kept version reinstalls instantly".
+    The later of two such versions was placed where the earlier was, which was then gone, and no
+    longer kept: installing 1.0_beta over 1.0 beta left nothing to go back to."""
+    nothing = _left(tmp_path, env)
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    cmd, says = tmp_path / "cmd" / "demo-tool", {}
+
+    def release(v, again=""):
+        """Version `v` as its release has it: under one file name for every version, as many projects do."""
+        i = f"{versions.index(v)}{again}"
+        (server[0] / i).mkdir(exist_ok=True)
+        if kind == "appimage":
+            a = _appimage(server, f"{i}/Tool-x86_64.AppImage", f"#!/bin/sh\necho {i}\n".encode())
+            says[v] = i
+        else:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+            says[v] = f"tool-{i}/tool"
+        return Asset(a.name.split("/")[1], a.url)
+
+    for n, v in enumerate(versions):
+        a = release(v)
+        rec = install.install(env, {**APP, "installVersion": v}, a, kind, [a], portable=p)
+        assert _runs(cmd) == says[v] and rec["current"]["version"] == v
+        assert [k["version"] for k in rec["kept"]] == list(reversed(versions[:n])) == install.kept_versions(env, APP["url"])
+    places = {k["version"]: k["path"] for k in [rec["current"]] + rec["kept"]}
+    assert len(set(places.values())) == len(versions) and all(os.path.dirname(x) == str(tmp_path / "apps" / "demo-tool") for x in places.values())
+    for v in versions:                                  # each one is there to go back to, and is itself
+        if v != rec["current"]["version"]:
+            rec = install.switch_to(env, dict(APP), v, p)
+        assert _runs(cmd) == says[v] and rec["current"] == {"version": v, "path": places[v], "exec": rec["current"]["exec"]}
+    # the same version again takes its own place, and no other version's
+    a = release(versions[-1], again="-again")
+    rec = install.install(env, {**APP, "installVersion": versions[-1]}, a, kind, [a], portable=p)
+    assert _runs(cmd) == says[versions[-1]] and rec["current"]["path"] == places[versions[-1]]
+    assert sorted(k["version"] for k in rec["kept"]) == sorted(versions[:-1])
+    for v in versions[:-1]:
+        assert _runs(install.switch_to(env, dict(APP), v, p)["exec"]) == says[v]
+    assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_place_a_version_gets_when_its_names_is_another_versions(monkeypatch, system):
+    monkeypatch.setattr(install, "OS", system)
+    free = install._not_anothers
+    at = lambda *names: tuple(os.path.join("apps", "tool", n) for n in names)      # noqa: E731
+    (one,) = at("1.0_beta")
+    assert free(one, ()) == one and free(one, at("1.0", "1.0_beta_2", "2.0")) == one
+    assert free(one, at("1.0_beta")) == at("1.0_beta_2")[0]
+    assert free(one, at("1.0_beta_2", "1.0_beta", "1.0_beta_3")) == at("1.0_beta_4")[0]
+    assert free(at("1.0")[0], at("1.0")) == at("1.0_2")[0]                           # a folder's name ends where it ends: no extension
+    assert free(at("Tool-1.0_beta.AppImage")[0], at("Tool-1.0_beta.AppImage")) == at("Tool-1.0_beta_2.AppImage")[0]
+    assert free(at("nvim-0.9.appimage")[0], at("nvim-0.9.appimage", "nvim-0.9_2.appimage")) == at("nvim-0.9_3.appimage")[0]
+    # Windows keeps one folder for 1.0-RC and 1.0-rc; elsewhere they are two
+    assert free(at("1.0-RC")[0], at("1.0-rc")) == at("1.0-RC_2" if system == "windows" else "1.0-RC")[0]
+    for name in ("1.0_beta_2", "_current_2", "2.0.old__2"):                         # never a name AppKata keeps or makes for itself
+        assert install._version_folder(name) == name
+
+
 # ---------------------------------------------------------------- a release's .deb or .rpm (R4.4, R16.8.5; CR1, #327)
 # How it slipped past: no test installed a release's package file at all, so none saw which file the
 # package manager is handed. It was the downloaded one, in a folder any program of the user's can
