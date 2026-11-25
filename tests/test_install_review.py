@@ -2852,3 +2852,138 @@ def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_asid
         back = install.switch_to(env, dict(APP), odd, p)
         assert back["current"]["path"] == its and _runs(back["exec"]) == f"tool-{odd}/tool"
     assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))
+
+
+# ---------------------------------------------------------------- a release's .deb or .rpm (R4.4, R16.8.5; CR1, #327)
+# How it slipped past: no test installed a release's package file at all, so none saw which file the
+# package manager is handed. It was the downloaded one, in a folder any program of the user's can
+# write, read again as root after the dry run and the password prompt.
+@pytest.fixture
+def package_tools(tmp_path, monkeypatch):
+    """Stand-ins for the package tools, first on the PATH: dpkg-deb and rpm name the package; apt-get
+    and dnf plan an install of it and, told to install, keep the file they were handed and say where
+    it was. The command that would run as root runs here as the test's user, with the folder only
+    root can write under the test's own. No PackageKit of this machine's is ever asked."""
+    from appkata_core import pkgbackend
+    tools, out, staging = tmp_path / "tools", tmp_path / "installed", tmp_path / "root-only"
+    for d in (tools, out, staging):
+        d.mkdir()
+    manager = f"""#!/bin/sh
+for a in "$@"; do last=$a; done
+case " $* " in
+    *" -s "*) echo "Inst demo (1.0 local [all])"; exit 0 ;;
+    *" --assumeno "*) printf 'Installing:\\n demo  noarch  1.0  @commandline  1 k\\nTransaction Summary\\n'; exit 0 ;;
+    *" install "*) ;;
+    *) exit 0 ;;                # a question about the system's packages: nothing to say
+esac
+cp "$last" {shlex.quote(str(out))}/file
+echo "$last" > {shlex.quote(str(out))}/path
+stat -c %a "$(dirname "$last")" "$last" > {shlex.quote(str(out))}/modes
+ls "$(dirname "$last")" > {shlex.quote(str(out))}/beside
+"""
+    for name, text in (("apt-get", manager), ("dnf", manager), ("dpkg-deb", "#!/bin/sh\necho demo\n"), ("rpm", "#!/bin/sh\nprintf demo\n")):
+        (tools / name).write_text(text)
+        (tools / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(pkgbackend, "STAGING", str(staging), raising=False)
+    monkeypatch.setattr(pkgbackend, "_priv", lambda cmd, env=None: cmd)
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "linux_family", lambda: "debian")
+    monkeypatch.setattr(pkgbackend.PkTransport, "available", lambda self: False)
+    return out, staging
+
+
+def _package_file(server, kind, data=b"a package, as its release published it"):
+    root, base = server
+    name = "demo_1.0_all.deb" if kind == "deb" else "demo-1.0-1.noarch.rpm"
+    (root / name).write_bytes(data)
+    return Asset(name, f"{base}/{name}", len(data), "sha256:" + hashlib.sha256(data).hexdigest()), data
+
+
+def _swap_after_the_dry_run(monkeypatch, swap):
+    """The dry run is the first of what lies between AppKata's check and the package manager's read:
+    then come a confirmation, perhaps, and the password prompt."""
+    from appkata_core import pkgbackend
+    real = pkgbackend.Cli.simulate
+
+    def simulate(self, action, names):
+        plan = real(self, action, names)
+        swap(names[0])
+        return plan
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", simulate)
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+def test_a_releases_package_is_installed_from_roots_own_copy_of_the_file_that_was_checked(env, server, package_tools, kind):
+    out, staging = package_tools
+    a, data = _package_file(server, kind)
+    rec = install.install(env, {**APP, "installVersion": "1.0"}, a, kind, [a])
+    handed = (out / "path").read_text().strip()
+    assert os.path.dirname(os.path.dirname(handed)) == str(staging) and os.path.basename(handed) == a.name
+    assert not handed.startswith(install.downloads_dir())                       # never the file a program of the user's can write
+    assert (out / "file").read_bytes() == data and (out / "beside").read_text().split() == [a.name]
+    assert (out / "modes").read_text().split() == ["755", "644"]                # read by all, written by its owner alone
+    assert os.listdir(staging) == [] and _downloads() == []                     # the copy and the download are gone
+    assert (rec["package"], rec["manager"], rec["verified"]) == ("demo", "apt" if kind == "deb" else "dnf", "checksum")
+    assert rec["sha256"] == {"1.0": hashlib.sha256(data).hexdigest()}
+
+
+def _other_bytes(path):
+    with open(path, "wb") as f:
+        f.write(b"a package of someone else's, with scripts that run as root")
+
+
+def _same_size(path):
+    size = os.path.getsize(path)
+    with open(path, "r+b") as f:                # changed in place: the same file, the same size
+        f.write(b"X" * size)
+
+
+def _a_link_to_another(path):
+    other = path + ".other"
+    with open(other, "wb") as f:
+        f.write(b"another file, behind the same name")
+    os.remove(path)
+    os.symlink(other, path)
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+@pytest.mark.parametrize("swap", [_other_bytes, _same_size, _a_link_to_another])
+def test_a_package_swapped_after_its_check_is_refused_on_the_administrators_side(env, server, package_tools, monkeypatch, kind, swap):
+    """The finding's case: the download is hashed and compared, and a program of the user's then
+    puts another file at its path before the package manager opens it as root."""
+    out, staging = package_tools
+    a, _ = _package_file(server, kind)
+    _swap_after_the_dry_run(monkeypatch, swap)
+    with pytest.raises(install.InstallError, match="^the downloaded file changed after AppKata checked it; nothing was installed$"):
+        install.install(env, {**APP, "installVersion": "1.0"}, a, kind, [a])
+    assert os.listdir(out) == []                                                 # the package manager was handed nothing
+    assert os.listdir(staging) == [] and not env.one("SELECT 1 FROM installs")
+    assert [p for p in _downloads() if not p.endswith(".other")] == []          # nor is the swapped file kept to "resume"
+
+
+@linux_only
+def test_a_releases_package_never_goes_to_packagekit_which_takes_a_path_and_no_checksum(env, server, package_tools, monkeypatch):
+    from appkata_core import pkgbackend
+    out, _ = package_tools
+    asked = []
+    monkeypatch.setattr(pkgbackend.PkTransport, "available", lambda self: True)          # a desktop, where PackageKit runs
+    monkeypatch.setattr(pkgbackend.PkTransport, "transaction", lambda self, method, *a, **k: asked.append(method) or [("finished", 1)])
+    a, data = _package_file(server, "deb")
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "deb", [a])
+    assert asked == [] and (out / "file").read_bytes() == data
+
+
+@linux_only
+def test_a_package_whose_plan_needs_the_users_ok_is_copied_nowhere_before_it_is_given(env, server, package_tools, monkeypatch):
+    from appkata_core import pkgbackend
+    out, staging = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["other"]))
+    a, data = _package_file(server, "deb")
+    with pytest.raises(pkgbackend.NeedsConfirmation):
+        install.install(env, {**APP, "installVersion": "1.0"}, a, "deb", [a])
+    assert os.listdir(out) == [] and os.listdir(staging) == [] and len(_downloads()) == 1       # kept for Install again
+    install.install(env, {**APP, "installVersion": "1.0", "confirmed": True}, a, "deb", [a])
+    assert (out / "file").read_bytes() == data and os.listdir(staging) == []

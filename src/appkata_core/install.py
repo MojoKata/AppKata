@@ -1055,17 +1055,23 @@ def _secure_target(portable: "Portable", target: str) -> None:
         raise InstallError(str(e)) from None
 
 
-def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
-    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8)."""
+def _run_installer(app: dict, file: str, sha256: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
+    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8).
+    `sha256` is the downloaded file's, as AppKata checked it: an installer started with administrator
+    rights is started from a copy that is held to it (R15.7.5)."""
     from . import windows
     scope = portable.scope if portable.scope in windows.scopes(kind, exe_kind) else "me"
     msi_log = os.path.join(tmpdir, "msi.log") if kind == "msi" else ""
     prog, args, elevate = windows.installer_command(kind, exe_kind, file, scope, msi_log)
     before = windows.uninstall_entries()
     try:
-        code = windows.shell_execute(prog, args, elevate=elevate, cwd=os.path.dirname(file))
+        if elevate:
+            code = windows.run_elevated(file, sha256, windows.msi_arguments(scope, msi_log) if kind == "msi" else args, msi=kind == "msi")
+        else:
+            code = windows.shell_execute(prog, args, cwd=os.path.dirname(file))
     except (OSError, TimeoutError) as e:
         raise InstallError(f"couldn't run the installer: {e}") from None
+    _elevated_refusal(code)
     meaning = windows.exit_meaning(code)
     if meaning == "cancelled":
         raise Cancelled()
@@ -1085,6 +1091,15 @@ def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Po
     else:
         log.warning("%s: no Uninstall entry appeared; AppKata can't uninstall it", app["name"])
     return rec
+
+def _elevated_refusal(code: int) -> None:
+    """Raise for what windows.run_elevated() says of a file it didn't start (R15.7.5)."""
+    from . import windows
+    if code == windows.CHANGED:
+        raise InstallError("the downloaded file changed after AppKata checked it; nothing was installed")
+    if code == windows.NOT_STARTED:
+        raise InstallError("Windows couldn't make the administrators' copy of the installer or start it; nothing was installed")
+
 
 def _retain(rec: dict, keep: int) -> list[dict]:
     """Keep up to `keep` older versions in the record (R4.3.1.5), and return the rest: the caller
@@ -1385,7 +1400,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             _activate(rec, app, portable, target)
             retired = _retain(rec, portable.keep)
         elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
-            rec.update(_run_installer(app, file, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
+            rec.update(_run_installer(app, file, got, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
         elif kind == "msix" and OS == "windows":            # R15.7.4
             from . import windows
             try:
@@ -1401,14 +1416,20 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             m = re.search(r"Installing\s+\d+/\d+…?\s+(\S+)|(\w+(?:\.\w+){2,})", p.stdout + p.stderr)
             rec["flatpak"] = m.group(1) or m.group(2) if m else ""
         elif kind in ("deb", "rpm"):
-            # through the package backend, dry run first (R16.3.5, R16.8)
+            # Through the package manager's command line, dry run first (R16.3.5), and never
+            # PackageKit: the command that runs as root installs its own copy of this file, and
+            # only when the copy is the file whose SHA-256 was just taken (R4.4, R16.8.5).
             if kind == "deb":
                 pkg = subprocess.run(["dpkg-deb", "-f", file, "Package"], capture_output=True, text=True).stdout.strip()
             else:
                 pkg = subprocess.run(["rpm", "-qp", "--qf", "%{NAME}", file], capture_output=True, text=True).stdout.strip()
-            be = pkgbackend.backend()
-            _apply(be, "install", [os.path.abspath(file)], app.get("confirmed", False), progress, cancel,
-                   app.get("onWait"))
+            be = pkgbackend.Cli("apt" if kind == "deb" else "dnf")
+            try:
+                be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"))
+            except NeedsConfirmation:
+                raise
+            except PackageError as e:
+                raise InstallError(str(e)) from None
             rec["package"], rec["manager"] = pkg, be.manager
         else:
             raise InstallError(f"installing {kind} files isn't supported on {OS} yet")
@@ -1847,14 +1868,15 @@ def install_msvcrt() -> str:
     os.makedirs(folder, exist_ok=True)
     file = os.path.join(folder, "vc_redist.x64.exe")
     try:
-        download(windows.VC_REDIST_URL, file)
+        got = download(windows.VC_REDIST_URL, file)
         status, signer = windows.authenticode(file)
         if status != "Valid" or signer != "Microsoft Corporation":
             raise InstallError("the Visual C++ run-time download isn't signed by Microsoft; nothing was installed")
-        try:
-            code = windows.shell_execute(file, "/install /quiet /norestart", elevate=True)
+        try:        # with administrator rights: from a copy held to the file whose signature was just read (R15.7.5)
+            code = windows.run_elevated(file, got, "/install /quiet /norestart")
         except (OSError, TimeoutError) as e:
             raise InstallError(f"couldn't run the Visual C++ run-time installer: {e}") from None
+        _elevated_refusal(code)
         meaning = windows.exit_meaning(code)
         if meaning == "cancelled":
             raise Cancelled()

@@ -168,6 +168,14 @@ Flatpak came from; or the package manager, against the keys of the repository a 
 from (R16.3.6). Unverified downloads can still be installed. A failed check blocks the install
 and explains why.
 
+A file that is installed with administrator rights (a `.deb` or `.rpm`, R16.8.5; a Windows
+installer AppKata elevates, R15.7.5) is in a folder the user's other programs can change, and is
+read again after the dry run and the password or UAC prompt. So the command that runs with those
+rights takes its own copy of the file, in a folder only administrators can change, compares the
+copy's SHA-256 with the one AppKata took of the download, and installs that copy. A file that
+changed after AppKata's check is not installed: "the downloaded file changed after AppKata checked
+it; nothing was installed".
+
 The chip of an installed app is the result of its own install, kept in its install record: a
 later release changes nothing in it. A file that isn't installed yet, the one Install or Update
 would take, has not been checked, so its chip is a forecast and is worded as one: **Checksum

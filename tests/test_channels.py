@@ -189,6 +189,47 @@ def test_packagekit_backend():
     assert e.value.lines == ["Removes oldlib"]
 
 
+# ---------------------------------------------------------------- a release's own package file (R16.8.5; CR1, #327)
+@pytest.mark.parametrize("manager, command", [
+    ("apt", ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "/bin/sh", "-c", "<script>", "appkata-install", "<file>", "ab" * 32,
+             "demo_1.0_all.deb", "apt-get", *pkgbackend.APT_OPTS, "install"]),
+    ("dnf", ["pkexec", "env", "/bin/sh", "-c", "<script>", "appkata-install", "<file>", "ab" * 32, "demo_1.0_all.deb", "dnf", "-y", "install"]),
+])
+def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_and_installs(monkeypatch, manager, command):
+    """What pkexec is asked to run is the script, with the file and the SHA-256 AppKata checked as
+    its words: never the package manager on the downloaded file. tests/test_install_review.py runs
+    the script; here are its words and its text."""
+    ran = []
+    file = os.path.abspath(os.path.join("downloads", "demo", "demo_1.0_all.deb"))
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(pkgbackend.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None: ran.append(cmd))
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"]))
+    script = pkgbackend.file_install_script()
+    pkgbackend.Cli(manager).install_file(os.path.relpath(file), "AB" * 32)
+    assert ran == [[{"<script>": script, "<file>": file}.get(word, word) for word in command]]
+    assert "demo" not in script and "mktemp -d '/var/cache'/appkata-install.XXXXXX" in script      # the same text for every file
+    steps = [script.index(step) for step in ('cp -- "$1" "$copy"', 'sha256sum < "$copy"', '!= "$2"', 'exit 65', '"$@" "$copy"')]
+    assert steps == sorted(steps)                       # copied, hashed, compared, and only then handed on
+    # a plan that needs the user's OK runs nothing as root
+    ran.clear()
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["other"]))
+    with pytest.raises(pkgbackend.NeedsConfirmation):
+        pkgbackend.Cli(manager).install_file(file, "ab" * 32)
+    assert ran == []
+
+
+def test_packagekit_is_never_handed_a_file():
+    """InstallFiles takes a path, which PackageKit reads as root later, and no checksum: a release's
+    package file goes through the command line (above), and PackageKit is asked for names alone."""
+    pk = FakePk()
+    with pytest.raises(pkgbackend.PackageError, match="no package called"):
+        pkgbackend.PackageKit(pk, manager="apt").apply("install", [os.path.join(os.sep, "downloads", "hello_2.10_amd64.deb")])
+    assert [method for method, _ in pk.calls] == ["Resolve"]
+
+
 # ---------------------------------------------------------------- Flatpak (R16.6)
 META = """[Application]
 name=org.example.App

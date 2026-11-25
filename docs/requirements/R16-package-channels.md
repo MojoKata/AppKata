@@ -305,6 +305,14 @@ R16.8.4. Reading uses the command line and files: `dpkg-query`, `rpm -q`, `apt l
 `dnf check-update` and `dnf repoquery`, the AppStream catalog (R16.2.2), and `flatpak` (which never
 needs administrator rights for `--user`).
 
+R16.8.5. **A package file from a release** (`.deb`, `.rpm`; R4.3.3) is always installed through
+the command line (R16.8.2), also where PackageKit is running: PackageKit takes a file by its
+path, reads it as root later, and can't be held to the file AppKata checked. After the dry run
+(R16.3.5) one command runs through `pkexec`. It copies the file to a new folder under `/var/cache`
+that only root can change, compares the copy's SHA-256 with the download's (R4.4), hands the copy
+to `apt-get install` or `dnf install`, and removes the folder. When the two differ, nothing is
+installed.
+
 R16.9. **The Audit** (R13) records channel installs, adoptions (R16.4.2), uninstalls, updates, the
 **Updates** choice, and what changed outside AppKata (R16.4.1, R16.5.4), with the actor **System**.
 

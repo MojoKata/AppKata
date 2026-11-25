@@ -5,6 +5,7 @@ Flatpak remote with a tiny runtime and app), plus one signed distribution packag
 Usage: channels_e2e.py --manager apt|dnf [--pkg hello] [--packagekit] [--no-flatpak]"""
 
 import argparse
+import glob
 import json
 import os
 import shutil
@@ -18,6 +19,7 @@ os.environ.setdefault("APPKATA_DATA", tempfile.mkdtemp())
 
 from appkata_core import autoupdate, channels, flatpak, foreign, install, pkgbackend, sync  # noqa: E402
 from appkata_core.db import DB  # noqa: E402
+from appkata_core.forges import Asset  # noqa: E402
 
 FAIL = []
 
@@ -43,10 +45,14 @@ def app(db: DB, name: str, settings: dict) -> dict:
 
 
 # ---------------------------------------------------------------- a local package repository
-def deb(repo: str, name: str, version: str, depends: str = "") -> None:
+def deb(repo: str, name: str, version: str, depends: str = "", postinst: str = "") -> None:
     d = tempfile.mkdtemp()
     os.makedirs(f"{d}/DEBIAN")
     os.makedirs(f"{d}/usr/share/doc/{name}")
+    if postinst:
+        with open(f"{d}/DEBIAN/postinst", "w") as f:
+            f.write(f"#!/bin/sh\n{postinst}\n")
+        os.chmod(f"{d}/DEBIAN/postinst", 0o755)
     with open(f"{d}/DEBIAN/control", "w") as f:
         f.write(f"Package: {name}\nVersion: {version}\nArchitecture: all\nMaintainer: t <t@t>\n"
                 f"Description: AppKata test package\n" + (f"Depends: {depends}\n" if depends else ""))
@@ -192,6 +198,101 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
     ok(f"{distro_pkg} uninstalled", not pkgbackend.installed_version(distro_pkg, mgr))
 
 
+# ---------------------------------------------------------------- a release's own package file (R4.4, R16.8.5)
+RAN_AS_ROOT = "/tmp/akfile-ran-as-root"          # what the other package's script would leave
+POLKIT_RULE = "/etc/polkit-1/rules.d/00-appkata-e2e.rules"
+USER = "akuser"
+
+
+def serve(folder: str) -> str:
+    """A web server on this machine for a "release": its address."""
+    import functools
+    import http.server
+    import threading
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=folder))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{httpd.server_address[1]}"
+
+
+def other_package() -> str:
+    """Another akfile, whose script runs as root when it is installed: what a program of the user's
+    would put where the downloaded file was."""
+    d = tempfile.mkdtemp()
+    os.chmod(d, 0o755)
+    deb(d, "akfile", "6.6-6", postinst=f"touch {RAN_AS_ROOT}")
+    return f"{d}/akfile_6.6-6_all.deb"
+
+
+def release_file(db: DB, mgr: str, other: str) -> None:
+    """A release's .deb, installed by whoever runs this: root, or a user through the real pkexec."""
+    root = os.geteuid() == 0
+    print(f"== a release's package file, as {'root' if root else 'a user, through pkexec'}", flush=True)
+    rel = tempfile.mkdtemp()
+    deb(rel, "akfile", "1.0-1")
+    a = {**app(db, "akfile", {}), "installVersion": "1.0", "version": "1.0"}
+    asset = Asset("akfile_1.0-1_all.deb", serve(rel) + "/akfile_1.0-1_all.deb")
+    asked, transaction = [], pkgbackend.PkTransport.transaction
+    pkgbackend.PkTransport.transaction = lambda self, method, *args, **kw: asked.append(method) or transaction(self, method, *args, **kw)
+
+    def left():
+        return glob.glob(f"{pkgbackend.STAGING}/appkata-install.*")
+    rec = install.install(db, a, asset, "deb", [asset])
+    ok("installed, from the copy only root can change (R16.8.5)",
+       pkgbackend.installed_version("akfile", mgr) == "1.0-1" and (rec["package"], rec["manager"]) == ("akfile", mgr), rec)
+    ok("the copy's folder is gone, and this user couldn't have made or changed it",
+       not left() and (root or not os.access(pkgbackend.STAGING, os.W_OK)), left())
+    ok("PackageKit was never handed the file", "InstallFiles" not in asked, asked)
+    install.uninstall(db, a["url"])
+    ok("uninstalled", not pkgbackend.installed_version("akfile", mgr))
+    # the file is swapped after AppKata's check, as a program of the user's could: here after the dry
+    # run, before the command that runs as root reads it
+    simulate = pkgbackend.Cli.simulate
+
+    def swapping(self, action, names):
+        plan = simulate(self, action, names)
+        if action == "install" and os.path.sep in names[0]:
+            shutil.copy(other, names[0])
+        return plan
+    pkgbackend.Cli.simulate = swapping
+    try:
+        install.install(db, a, asset, "deb", [asset])
+        ok("a file swapped after its check is refused on the administrator's side (R4.4)", False, "it was installed")
+    except install.InstallError as e:
+        ok("a file swapped after its check is refused on the administrator's side (R4.4)", str(e) == pkgbackend.CHANGED_TEXT, e)
+    finally:
+        pkgbackend.Cli.simulate, pkgbackend.PkTransport.transaction = simulate, transaction
+    ok("nothing of the other file was installed, and its script never ran",
+       not pkgbackend.installed_version("akfile", mgr) and not os.path.exists(RAN_AS_ROOT) and not left(),
+       (pkgbackend.installed_version("akfile", mgr), os.path.exists(RAN_AS_ROOT), left()))
+
+
+def release_file_as_a_user(mgr: str, other: str) -> None:
+    """The same through the real pkexec: as a user with none of root's rights, whom polkit is told
+    to let through without the password no test can type."""
+    sh("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq polkitd pkexec dbus >/dev/null 2>&1")
+    os.makedirs("/run/dbus", exist_ok=True)
+    if not os.path.exists("/run/dbus/system_bus_socket"):
+        sh("dbus-daemon --system --fork")
+    os.makedirs(os.path.dirname(POLKIT_RULE), exist_ok=True)
+    with open(POLKIT_RULE, "w") as f:
+        f.write(f'polkit.addRule(function(action, subject) {{ if (subject.user == "{USER}") {{ return polkit.Result.YES; }} }});\n')
+    polkitd = subprocess.Popen(["/usr/lib/polkit-1/polkitd", "--no-debug"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(2)
+        sh(f"id {USER} >/dev/null 2>&1 || useradd -m {USER}")
+        p = subprocess.run(["runuser", "-u", USER, "--", "env", "-u", "APPKATA_DATA", f"HOME=/home/{USER}", sys.executable,
+                            os.path.abspath(__file__), "--manager", mgr, "--release-file-as-user", other], capture_output=True, text=True)
+        print(p.stdout, end="", flush=True)
+        ok("as a user, through the real pkexec", p.returncode == 0 and "FAIL" not in p.stdout, (p.stdout + p.stderr)[-2000:])
+    finally:
+        polkitd.terminate()
+        os.remove(POLKIT_RULE)
+
+
 # ---------------------------------------------------------------- Flatpak
 def build_flatpaks(repo: str, version: int) -> None:
     w = tempfile.mkdtemp()
@@ -282,12 +383,20 @@ def main() -> int:
     ap.add_argument("--packagekit", action="store_true")
     ap.add_argument("--no-flatpak", action="store_true")
     ap.add_argument("--no-local", action="store_true")
+    ap.add_argument("--release-file-as-user", default="", help=argparse.SUPPRESS)      # release_file_as_a_user()'s own run
     a = ap.parse_args()
     if not a.packagekit:
         os.environ["APPKATA_NO_PACKAGEKIT"] = "1"
     db = DB(os.path.join(os.environ["APPKATA_DATA"], "appkata.db"))
+    if a.release_file_as_user:
+        release_file(db, a.manager, a.release_file_as_user)
+        return 1 if FAIL else 0
     ok("channels are on here", channels.enabled() and channels.manager() == a.manager, channels.manager())
     packages(db, a.manager, a.pkg, not a.no_local)
+    if a.manager == "apt":
+        other = other_package()
+        release_file(db, a.manager, other)
+        release_file_as_a_user(a.manager, other)
     if not a.no_flatpak and flatpak.available():
         flatpaks(db)
     detection(a.manager)
