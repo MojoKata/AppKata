@@ -891,6 +891,82 @@ def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pai
     assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
 
 
+# The review's pass 4, P4-1: the check above refused an `@` in what urlsplit reads as the host part,
+# and two more spellings carry another host past it. A `\` in the host: this computer's lookup takes
+# it for an escape, so `127.0.0.1\x.images.example.com` is looked up as `127.0.0.1x.images.example.com`,
+# which a project's own domain can answer with a public address, and the proxy is sent the host as
+# written, which a browser's reading of an address ends at the `\`. And a `?` or `#` right after the
+# host, with no path: urlsplit's host part ends there, urllib sends a proxy the whole address over
+# http, and one that ends the host part only at the first `/` reads 10.0.0.5 out of
+# `images.example.com?@10.0.0.5`, which was judged as images.example.com. How it slipped past: P3-1's
+# tests wrote a local address before an `@`, the one character the check looked for, and every
+# address in them had a path. The class is "the host part holds more than the host judged", so the
+# rule is now what a host part may hold, and these write a local address in it with what isn't a
+# host's, over http and https, the name judged a public one and one only the proxy knows, and the
+# Source's own: none reaches the proxy.
+HOST_PARTS = [
+    "127.0.0.1\\x.images.example.com",                   # looked up as 127.0.0.1x.images.example.com
+    "127.0.0.1%5cx.images.example.com",                  # the same, escaped: the Host header has the `\`
+    "images.example.com?@10.0.0.5",                      # the query, before any path
+    "images.example.com#@10.0.0.5",                      # the fragment, which urllib sends a proxy too
+    "images.example.com?x@169.254.169.254:80",           # any address, on any port
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("host_part", HOST_PARTS)
+def test_behind_a_proxy_an_address_whose_host_part_is_more_than_a_host_is_refused(pair, monkeypatch, tmp_path, host_part, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(http, f"{scheme}://{host_part}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+@pytest.mark.parametrize("host_part", ["git.example.org?@10.0.0.5", "git.example.org#@10.0.0.5"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_behind_a_proxy_the_sources_own_host_part_is_held_to_the_rule_too(pair, monkeypatch, tmp_path, scheme, host_part):
+    # the Source's own host may be local, and is asked for without a look at its addresses: what
+    # follows it in the host part is refused before that
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(names(Http({"git.example.org": "SECRET"}, timeout=5)), f"{scheme}://{host_part}/shot.png",
+                         str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "is a host and its port and nothing else" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_host_is_refused(pair, monkeypatch):
+    # a redirect's `?` or `#` right after its host is no way in: urllib gives an address with no
+    # path the path `/` before it follows it
+    a, b = pair
+    behind_a_proxy(monkeypatch, a)
+    http = names(Http(timeout=5), {"localhost": ["127.0.0.1"]})          # B's name: a Source's host, asked directly
+    b.redirects["/o/r/avatar"] = "http://127.0.0.1\\x.avatars.example.com/avatar.png"
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        http.bytes(f"https://{b.at}/o/r/avatar")
+    assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
+
+
+@pytest.mark.parametrize("url", [
+    "http://images.example.com/@x/shot.png",                   # an `@` after the first `/` is the path's
+    "http://images.example.com/shot.png?u=a@b#@c",
+    "https://img_1.cdn-example.com.:8443/shot.png",            # a `_`, a name's trailing dot, a port
+    "https://images.example.com:/shot.png",                    # a `:` that names no port
+    "https://[2606:4700::1111]/shot.png",                      # an IPv6 address
+    "https://bücher.example/shot.png",                         # a name outside ASCII
+    "https://b%C3%BCcher.example/shot.png",                    # the same, escaped
+])
+def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url):
+    seen = []
+    _ask(names(Http(opener=recording({}, seen))), url, token_host="git.example.org")
+    assert [u for u, _ in seen] == [url]
+
+
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
 # CR1's #275: Http chose the token's header from the host's name, so a GitLab without "gitlab" in its
 # name (three of the hosts forges.KNOWN lists) was sent "Authorization: token", which GitLab has no use

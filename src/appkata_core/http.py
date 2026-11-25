@@ -153,18 +153,34 @@ def _is_for(parts, whose: str) -> bool:
     return _host(parts) in token_hosts(whose)
 
 
+# An address's host part as it is written (_http_address): a host, then a `:` and a port where it
+# names one. And the host, its escapes decoded: a name of letters, digits, `-`, `_` and dots (one
+# outside ASCII is sent in its IDNA form, which its lookup makes too), or an IPv6 address in brackets.
+_HOST_PART = re.compile(r"(\[[^\]]*\]|[^:\[\]]*)(?::[0-9]*)?")
+_A_HOST = re.compile(r"[\w.-]+|\[[0-9a-f:.]+\]")
+
+
 def _http_address(url: str):
     """An address in its parts, or Unreachable when it isn't an http or https one with a host: the
     only addresses Http opens, whoever asks (CR1 #266). A project's icon address can say file:, which
     on Windows can name a host to log in to over SMB, or ftp: or data:.
 
-    Nor one with a user part before its host (`user@`, `10.0.0.5%2f@`), the Source's own host's
-    too: urllib sends that part with the host, decoded, as the host it asks for (a proxy's Host
-    header and tunnel's CONNECT, a connection's lookup), and a proxy may read a host out of it, such
-    as 10.0.0.5 out of `10.0.0.5/@images.example.com`, where the check reads only the host after the
-    `@` (the review's pass 3, P3-1). No address Http asks for needs one: without a proxy too, the
-    whole of it is taken for the host, and no such host is found. The part isn't said, since it may
-    be a password."""
+    Nor one whose host part, all that comes between its `//` and the first `/` after them, is more
+    than a host and its port (_HOST_PART, _A_HOST), the Source's own host's too. urllib sends a proxy
+    all of it: the host it asks for, decoded, in the Host header and a tunnel's CONNECT, and over
+    http the whole address. The check reads one host out of that, and a proxy may read another (the
+    review's passes 3 and 4):
+    - a user part (`user@`, `10.0.0.5%2f@`), where the check read the host after the `@` and a proxy
+      may read 10.0.0.5 out of `10.0.0.5/@images.example.com` (P3-1);
+    - a `\\`, which this computer's lookup takes for an escape and a browser's reading of an address
+      for a `/`: `127.0.0.1\\x.images.example.com` is looked up as `127.0.0.1x.images.example.com`,
+      which a project's own domain can answer with a public address (P4-1);
+    - a `?` or `#` right after the host, with no path before it: urlsplit's host part ends there,
+      and a proxy that ends it only at the first `/` reads 10.0.0.5 out of
+      `images.example.com?@10.0.0.5` (P4-1).
+    No address Http asks for needs any of these: an image's address has a path, and the host of one
+    with a user part is found by no lookup. A user part isn't said, since it may be a password: the
+    refusal names what comes after its last `@`."""
     try:
         parts = urlsplit(url)
         parts.port
@@ -172,8 +188,13 @@ def _http_address(url: str):
         parts = None
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
         raise Unreachable(f"{url[:200]!r} isn't an http or https address")
-    if "@" in parts.netloc:
-        raise Unreachable(f"an address with a user part before its host ({parts.hostname}) isn't asked for")
+    written = url.partition("//")[2].partition("/")[0]        # the host part: up to the first `/`, as a proxy may read it
+    said = unquote(written)
+    if "@" in said:
+        raise Unreachable(f"an address with a user part before its host ({said.rpartition('@')[2][:200]}) isn't asked for")
+    host = _HOST_PART.fullmatch(written)
+    if host is None or _A_HOST.fullmatch(unquote(host[1]).lower()) is None:
+        raise Unreachable(f"an address whose host part is more than a host and its port ({parts.hostname[:200]}) isn't asked for")
     return parts
 
 
@@ -468,10 +489,11 @@ class Http:
         review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`, `127.0.0.1.` or
         `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as a name, and
         the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone. An address
-        with a user part, which urllib sends as part of the host, is refused before any of this, by
-        _http_address (the review's pass 3, P3-1)."""
+        whose host part is more than a host and its port (a user part, a `\\`, a `?` or `#` before
+        any path), which urllib sends to a proxy along with the host, is refused before any of this,
+        by _http_address (the review's passes 3 and 4, P3-1 and P4-1)."""
         parts = _http_address(url)
-        host = unquote(parts.hostname).lower()     # as it is sent: Request.host, which has no user part here (_http_address)
+        host = unquote(parts.hostname).lower()     # as it is sent: Request.host, which is the host alone here (_http_address)
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:
