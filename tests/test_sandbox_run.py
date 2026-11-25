@@ -52,8 +52,8 @@ class Env:
         # the generator's view of "home" too (expanduser, the protected folders), not just the app's
         monkeypatch.setenv("HOME", str(self.home))
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(self.rt))
-        for v in ("XDG_DATA_HOME", "APPKATA_APPS", "APPKATA_DATA"):
-            monkeypatch.delenv(v, raising=False)
+        for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA"):
+            monkeypatch.delenv(v, raising=False)     # this user's places are where a home has them (conftest.own_home)
         self.env = {"HOME": str(self.home), "XDG_RUNTIME_DIR": str(self.rt), "PATH": os.environ["PATH"],
                     "LANG": "C.UTF-8"}
 

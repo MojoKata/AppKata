@@ -9,12 +9,15 @@ failure gives the line the list would need.
 How the class slipped past: a test that skips says why and the run still passes, and the tiers'
 results were read as counts ("128 passed, 6 skipped"). In one run three VMs couldn't resolve names,
 so the test that exists for their DNS skipped, and tier 1 skipped the ISO download test on every
-run: its image has no curl."""
+run: its image has no curl.
+
+And every test's own home (issue #718), below: `own_home` and the check of AppKata's files in the real one."""
 
 import functools
 import json
 import os
 import re
+import stat
 
 import pytest
 
@@ -118,7 +121,8 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if _modules:
+    _home_changed[:] = home_changes(_home_before, home_state())
+    if _modules or _home_changed:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if out := os.environ.get("APPKATA_DURATIONS"):
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
@@ -131,3 +135,94 @@ def pytest_terminal_summary(terminalreporter):
         terminalreporter.section(f"{len(_modules)} failed: modules skipped whole, against tests/skips/", red=True)
         for line in _modules:
             terminalreporter.line(line)
+    if _home_changed:
+        terminalreporter.section(f"{len(_home_changed)} failed: AppKata's files in the real home changed during the run"
+                                 " (a test wrote there, or another process did)", red=True)
+        for line in _home_changed[:40]:
+            terminalreporter.line(line)
+
+
+# ---- every test's own home (issue #718) ----
+# A test ran with the run's HOME: in a container that is a throwaway, on a developer's machine their
+# own. The test that builds the demo's Trusts cloned them into ~/.local/share/appkata/trusts on every
+# local run, and a launcher, its command link and its menu entry turned up in ~/bin and
+# ~/.local/share/applications, and nothing said so. Now each test's home is its own, and a run fails
+# when AppKata's files in the real one changed while it ran, whoever wrote them: a fixture of a wider
+# scope, a thread a test left running, a test that set HOME back. Or no test at all: the AppKata
+# installed there updating an app, another checkout's tests. The check can't tell, so its heading
+# says both. What other programs keep in ~/bin and the menu folder is theirs and doesn't count: a
+# tool installed there while the tests ran failed a run in which every test passed.
+REAL_HOME = os.path.expanduser("~")      # read as the suite loads, before any test has a home of its own
+OWNED = ("bin/apps", ".local/share/appkata")     # AppKata's folders in a home: the apps, its data; all that is in them
+# what names a home's places, and where a home has each
+OWN = {"HOME": "", "XDG_DATA_HOME": ".local/share", "XDG_CONFIG_HOME": ".config", "XDG_CACHE_HOME": ".cache",
+       "XDG_STATE_HOME": ".local/state", "APPKATA_DATA": ".local/share/appkata", "APPKATA_APPS": "bin/apps"}
+
+
+@pytest.fixture(autouse=True)
+def own_home(monkeypatch, tmp_path):
+    """Every test's home is its tmp_path: HOME, the XDG folders and AppKata's own two variables
+    (platform.data_dir, apps_dir) each name the place a home has for it, under tmp_path, so what the
+    test, or a program it starts, writes to "~" lands in the folder pytest gives it. Nothing is made
+    there until something writes. A test with a made-up user sets that user's HOME and deletes the
+    rest (tests/test_sandbox_run.py's Env); a test that needs the real home says so, by setting
+    HOME to conftest.REAL_HOME."""
+    for var, place in OWN.items():
+        monkeypatch.setenv(var, os.path.normpath(os.path.join(str(tmp_path), place)))
+
+
+def _command_link(path):
+    """Whether path is a link into an apps folder (install.py's command link, bin/<app> to
+    bin/apps/<app>/...): this home's, or a test's own, which is <its home>/bin/apps too."""
+    try:
+        target = os.path.normpath(os.path.join(os.path.dirname(path), os.readlink(path)))
+    except OSError:                          # not a link
+        return False
+    parts = target.split(os.sep)
+    return ("bin", "apps") in zip(parts, parts[1:])
+
+
+def _menu_entry(path):
+    """Whether path has a name AppKata gives a menu entry: its own appkata.desktop (selfinstall.py),
+    an app's appkata-<app>.desktop (install.py), appkata-links.desktop (desktop.py)."""
+    name = os.path.basename(path)
+    return name == "appkata.desktop" or (name.startswith("appkata-") and name.endswith(".desktop"))
+
+
+# the folders of a home that AppKata shares with other programs, and which entries of each are its own
+SHARED = {"bin": _command_link, ".local/share/applications": _menu_entry}
+
+
+def home_state(home=REAL_HOME):
+    """{path: (kind, size, modified)} of AppKata's files in a home: all that is in its own folders
+    (OWNED), and in the folders it shares (SHARED) the command links and the menu entries, not the
+    folders themselves or what else is there. A link is itself, not what it names."""
+    paths = []
+    for top in OWNED:
+        root = os.path.normpath(os.path.join(home, top))
+        paths += [root] + [os.path.join(d, n) for d, dirs, files in os.walk(root) for n in dirs + files]
+    for top, appkatas in SHARED.items():
+        folder = os.path.normpath(os.path.join(home, top))
+        try:
+            paths += [p for p in (os.path.join(folder, n) for n in os.listdir(folder)) if appkatas(p)]
+        except OSError:                      # no such folder
+            pass
+    out = {}
+    for path in paths:
+        try:
+            st = os.lstat(path)
+        except OSError:                      # not there, or gone since it was listed
+            continue
+        out[path] = (stat.S_IFMT(st.st_mode), st.st_size, st.st_mtime_ns)
+    return out
+
+
+def home_changes(before, after):
+    """What differs between two states of a home, a line each: new, gone, changed."""
+    kinds = (("new", after.keys() - before.keys()), ("gone", before.keys() - after.keys()),
+             ("changed", {p for p in before.keys() & after.keys() if before[p] != after[p]}))
+    return [f"{kind}: {path}" for kind, paths in kinds for path in sorted(paths)]
+
+
+_home_before = home_state()
+_home_changed = []   # the real home's changes over the run, which fail it (pytest_sessionfinish)
