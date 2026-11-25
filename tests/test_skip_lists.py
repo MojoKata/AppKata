@@ -32,7 +32,7 @@ def test_a_skip_the_list_doesnt_name_fails_and_so_does_a_listed_test_that_ran(mo
 def test_every_tier_runs_against_a_list():
     for script in ("scripts/test-tier1.sh", "scripts/test-sandbox.sh", "scripts/sandbox/vm-launcher.sh",
                    "scripts/sandbox/vm-desktop.sh", "scripts/test-windows-vm.sh"):
-        text = open(os.path.join(ROOT, script)).read()
+        text = open(os.path.join(ROOT, script), encoding="utf-8").read()
         assert text.count("pytest") and "APPKATA_SKIPS" in text, f"{script} runs pytest without APPKATA_SKIPS"
     assert {"tier1", "launcher-mint22.3", "launcher-lmde7", "launcher-vm-24.04", "launcher-vm-26.04", "windows"} <= set(LISTS)
     assert [n for n in LISTS if n.startswith("desktop-")], "the desktop VMs' lists"
@@ -46,7 +46,7 @@ def test_each_listed_test_exists_and_says_why_it_may_skip():
             assert os.path.isfile(os.path.join(ROOT, path)), f"{name}: {test}: no such file"
             func = re.sub(r"\[.*\]$", "", rest.split("::")[-1]) if rest else ""
             if func and func != "*":
-                assert re.search(rf"^\s*(async )?def {re.escape(func)}\(", open(os.path.join(ROOT, path)).read(), re.M), \
+                assert re.search(rf"^\s*(async )?def {re.escape(func)}\(", open(os.path.join(ROOT, path), encoding="utf-8").read(), re.M), \
                     f"{name}: {test}: no such test"
             assert why, f"{name}: {test} says no reason"
     conftest.listed.cache_clear()
@@ -88,7 +88,7 @@ def _takes(name):
 def test_tiers_take_the_modules_listed():
     for script, kind in (("scripts/test-sandbox.sh", "launcher"), ("scripts/sandbox/vm-launcher.sh", "launcher-vm"),
                          ("scripts/sandbox/vm-desktop.sh", "desktop")):
-        lines = open(os.path.join(ROOT, script)).read().splitlines()
+        lines = open(os.path.join(ROOT, script), encoding="utf-8").read().splitlines()
         at = next(i for i, line in enumerate(lines) if "APPKATA_SKIPS" in line and not line.lstrip().startswith("#"))
         run = [lines[at]]
         while run[-1].rstrip().endswith("\\"):           # the command, to its last continued line

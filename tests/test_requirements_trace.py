@@ -130,8 +130,12 @@ def test_every_backend_slot_is_wired_to_the_ui_or_listed():
                   if f.endswith(".qml"))
     python = "".join(_read(os.path.join("src/appkata", f)) for f in os.listdir(os.path.join(ROOT, "src/appkata")) if f.endswith(".py"))
     exposed = re.findall(r"@(?:Slot|Property)\([^\n]*\)\n(?:    @Slot\([^\n]*\)\n)*    def (\w+)\(", backend)
+    # Used means asked of the backend: `backend.<name>` in the QML, or `self.<name>` or `backend.<name>`
+    # in the application's Python. CR1 #485: the name anywhere counted, so `tokens` (a word of the
+    # help text, a key of the settings), `addSource` and `addTrust` (the views' own signals) passed
+    # for used, and `tokens` handed every stored API token whole to the QML.
     unwired = sorted(n for n in set(exposed) if not n.startswith("demo")
-                     and not re.search(rf"\b{n}\b", qml)
-                     and len(re.findall(rf"\b{n}\b", python)) < 2)          # its def, and nothing else
+                     and not re.search(rf"\bbackend\.{n}\b", qml)
+                     and not re.search(rf"\b(?:self|backend)\.{n}\b", python))
     assert set(unwired) - set(STILL_UNWIRED) == set(), f"slots the UI never uses: {sorted(set(unwired) - set(STILL_UNWIRED))}"
     assert set(STILL_UNWIRED) - set(unwired) == set(), f"now wired (drop from the list): {sorted(set(STILL_UNWIRED) - set(unwired))}"

@@ -12,9 +12,13 @@ On a worker thread it never does: the thread has no Qt event loop, and ends."""
 
 import ast
 import glob
+import io
 import json
 import os
 import threading
+import time
+import types
+from http.client import IncompleteRead, InvalidURL
 
 import pytest
 
@@ -22,7 +26,7 @@ import written
 
 pytest.importorskip("PySide6")
 
-from appkata_core import foreign, sandbox, sync      # noqa: E402
+from appkata_core import audit, channels, foreign, sandbox, sync      # noqa: E402
 from appkata_core.db import now                      # noqa: E402
 
 URL = "https://github.com/example/demo"
@@ -459,3 +463,186 @@ def test_no_worker_thread_of_the_application_makes_a_timer():
             sources[os.path.relpath(path, written.path("src")).replace(os.sep, "/")] = f.read()
     assert {"appkata/backend.py", "appkata/channelui.py", "appkata_core/install.py"} <= set(sources)
     assert timers_within_reach(sources) == []
+
+
+# ---------------------------------------------------------------- an API token's host (R11.1.6; CR1, #297)
+def test_a_token_is_kept_under_the_one_address_it_belongs_to(be):
+    """Settings' host field took any text as the key, and Http looked a token up under another: what
+    is typed is kept as a Source's host is written, which is the key every request looks up."""
+    be.setToken("Git.Example.org:3000", "on-the-port")
+    be.setToken("https://git.example.org:443/o/r", "on-the-default-port")
+    kept = {"git.example.org:3000": "on-the-port", "git.example.org": "on-the-default-port"}
+    assert be.db.get("tokens") == kept == be.http.tokens
+    assert [row["host"] for row in be.tokenHosts] == ["git.example.org", "git.example.org:3000"]
+    be.setToken("git.example.org:3000", "")                        # the row's trash button
+    assert be.db.get("tokens") == {"git.example.org": "on-the-default-port"} == be.http.tokens
+
+
+def test_a_tokens_row_and_its_audit_line_show_its_host_in_its_script_and_it_is_kept_as_it_is_sent(be):
+    """The review's pass 8, P8-1, as the owner decided it: a token is kept under its host in the form
+    it is sent, the key every rule compares, and Settings' row and the Audit showed that key, so a
+    token typed `übung.lan` for the Source `übung.lan` was listed as `xn--bung-zra.lan`."""
+    be.setToken("Übung.lan", "typed-in-its-script")
+    be.setToken("https://gitea.xn--bung-zra.lan:3000/o/r", "pasted-in-its-idna-form")
+    be.setToken("[::1]:3000", "an-address")
+    kept = {"xn--bung-zra.lan": "typed-in-its-script", "gitea.xn--bung-zra.lan:3000": "pasted-in-its-idna-form",
+            "[::1]:3000": "an-address"}
+    assert be.db.get("tokens") == kept == be.http.tokens
+    assert [row["host"] for row in be.tokenHosts] == ["[::1]:3000", "gitea.übung.lan:3000", "übung.lan"]
+    said = [(e["action"], e["subject"]) for e in audit.page(be.db, kind="setting")][::-1]
+    assert said == [("set an API token for", "übung.lan"), ("set an API token for", "gitea.übung.lan:3000"),
+                    ("set an API token for", "[::1]:3000")]
+    be.setToken("übung.lan", "")                                    # the row's trash button, with the host it shows
+    assert be.db.get("tokens") == {k: v for k, v in kept.items() if k != "xn--bung-zra.lan"} == be.http.tokens
+    assert audit.page(be.db, kind="setting")[0]["subject"] == "übung.lan"
+
+
+@pytest.mark.parametrize("typed, said", [
+    ("Straße.example", "straße.example: a name with ß in it"), ("https://stra%C3%9Fe.example:3000/o/r", "straße.example:3000: a name with ß in it"),
+    ("σίσυφος.example", "σίσυφος.example: a name with ς in it"),
+    ("می\u200cخواهم.example", "می\u200cخواهم.example: a name with a zero-width non-joiner (U+200C) in it"),
+    ("ශ්\u200dරී.example", "ශ්\u200dරී.example: a name with a zero-width joiner (U+200D) in it"),
+])
+def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_isnt_kept_and_a_toast_says_why(be, typed, said):
+    """The review's pass 7, P7-1: such a name's IDNA 2003 form, which Http sends a name in, is
+    another host than the one it names, and a token typed for it was kept under that other host."""
+    toasts = []
+    be.toast.connect(lambda kind, text: toasts.append((kind, text)))
+    logged = audit.count(be.db)
+    be.setToken(typed, "a-token")
+    assert be.db.get("tokens", {}) == {} == be.http.tokens and audit.count(be.db) == logged
+    assert [kind for kind, _ in toasts] == ["error"] and toasts[0][1].startswith(f"No token kept for {said} is two different hosts")
+
+
+@pytest.mark.parametrize("typed, kept", [
+    ("straße.example", {}),                                         # refused, as above
+    ("git.example.org", {"git.example.org": "made-once-1234"}),
+])
+def test_settings_plus_empties_the_token_field_only_once_the_token_is_kept(be, typed, kept):
+    """The review's pass 12, P12-2: Settings' "+" emptied the token field after every setToken, and
+    since pass 7 setToken can refuse a host and keep nothing, so a pasted token, which a forge shows
+    once, was lost along with the refusal. The real dialog, offscreen, against the real Backend."""
+    from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QUrl
+    from PySide6.QtQml import QQmlApplicationEngine
+    toasts = []
+    be.toast.connect(lambda kind, text: toasts.append(kind))
+    engine = QQmlApplicationEngine()
+    for name, value in (("backend", be), ("appVersion", "test"), ("themeOverride", ""), ("tourMode", False), ("platformOs", "linux")):
+        engine.rootContext().setContextProperty(name, value)
+    engine.loadData(b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "../src/appkata/qml"\n'
+                    b'ApplicationWindow { width: 1920; height: 1040; visible: true; SettingsDialog { objectName: "settings" } }',
+                    QUrl.fromLocalFile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings-tokens.qml")))
+    assert engine.rootObjects(), "Settings did not load"
+    root = engine.rootObjects()[0]
+    try:
+        dlg = root.findChild(QObject, "settings")
+        QMetaObject.invokeMethod(dlg, "show")                       # as Main.qml opens Settings
+        within = dlg.findChildren(QObject)
+        host = next(o for o in within if o.property("placeholder") == "host or host:port")
+        token = next(o for o in within if o.property("placeholder") == "Paste a token")
+        plus = next(o for o in within if o.property("tip") == "Add token")
+        host.setProperty("text", typed)
+        token.setProperty("text", "made-once-1234")
+        assert plus.property("enabledButton")
+        plus.clicked.emit()
+        assert be.db.get("tokens", {}) == kept
+        if kept:
+            assert (token.property("text"), toasts) == ("", [])
+        else:                                                       # both fields as typed, to add again
+            assert (host.property("text"), token.property("text"), toasts) == (typed, "made-once-1234", ["error"])
+    finally:
+        root.deleteLater()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)      # before the backend goes
+
+
+# ---------------------------------------------------------------- the Add source preview (R7.2; CR1, #269)
+
+class Answer(io.BytesIO):
+    """A forge's answer to one request, as Http reads one."""
+
+    def __init__(self, url, body):
+        super().__init__(json.dumps(body).encode())
+        self.url, self.headers = url, {}
+
+    def geturl(self):
+        return self.url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def a_forge_that_answers(info):
+    """Http's opener for a host that says it runs Forgejo, and answers `info` for the project itself:
+    what a forge can answer, or the error that opening its address ends in."""
+    def open_(req, timeout=0):
+        if req.full_url.endswith("/api/v1/version"):
+            return Answer(req.full_url, {"version": "11.0.1+gitea-1.22.0"})
+        if isinstance(info, BaseException):
+            raise info
+        return Answer(req.full_url, info)
+    return open_
+
+
+@pytest.mark.parametrize("info, says", [
+    (["a", "list"], "unexpected error (AttributeError"),            # a forge's answer of another shape
+    ({"name": "r", "full_name": 7}, "unexpected error (AttributeError"),
+    (RuntimeError("anything at all"), "unexpected error (RuntimeError: anything at all)"),
+    (InvalidURL("URL can't contain control characters"), "can't be sent"),      # Http's own errors, as before
+    (IncompleteRead(b"half", 96), "cut its answer short"),
+], ids=["a-list", "a-number-for-a-name", "RuntimeError", "InvalidURL", "IncompleteRead"])
+def test_the_add_source_preview_answers_whatever_asking_the_forge_ends_in(be, monkeypatch, info, says):
+    """The preview's thread caught a ValueError and a SourceError: anything else ended it, and the Add
+    source dialog waited for an answer that never came."""
+    from appkata_core import http
+    waits = types.SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=lambda seconds: None)
+    monkeypatch.setattr(http, "time", waits)                 # a cut answer is asked for three times: no waiting between
+    be.http = http.Http(opener=a_forge_that_answers(info))
+    got = []
+    be.sourcePreview.connect(got.append)
+    be.previewSource("https://git.example.org/o/r")
+    assert wait(lambda: got), "the preview never answered"
+    assert got[0]["ok"] is False and says in got[0]["error"] and got[0]["host"] == "git.example.org", got
+
+
+# ---------------------------------------------------------------- a Source that is to be asked again later (R2.10; CR1, #277)
+def a_forge_that_says_come_back(status, headers, asked):
+    """Http's opener for hosts whose every answer is this failing status with these headers."""
+    import urllib.error
+
+    def open_(req, timeout=0):
+        asked.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, status, "err", dict(headers), None)
+    return open_
+
+
+@pytest.mark.parametrize("status, headers, hint", [
+    (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(time.time()) + 600)}, True),    # a forge's own rate limit
+    (429, {"Retry-After": "600"}, True), (429, {}, True),
+    (503, {"Retry-After": "600"}, False),                              # a forge that is overloaded or being maintained
+    (502, {"Retry-After": "600"}, False), (500, {"Retry-After": "600"}, False),
+    (429, {"Retry-After": "9" * 30}, True),                            # no time a clock can show: the row is still shown
+], ids=["403-limit", "429-retry-after", "429", "503-retry-after", "502-retry-after", "500-retry-after", "429-no-time"])
+def test_a_rate_limit_hints_at_a_token_and_a_forge_being_maintained_says_only_until_when(be, monkeypatch, status, headers, hint):
+    """Since any failing answer's Retry-After is heard, a forge being maintained had "add a token in
+    Settings" on its rows, which no token helps. Two Sources on the host, through a whole Sync: the
+    one whose request was answered and the one refused after it read the same."""
+    import datetime
+    from appkata_core import http
+    monkeypatch.setattr(channels, "enabled", lambda: False)        # none of this machine's package channels
+    sources = ["https://git.example.org/o/r", "https://git.example.org/o/s"]
+    for url in sources:
+        be.db.x("INSERT INTO sources(url, settings, added_at) VALUES(?,?,?)", (url, json.dumps({"forge": "forgejo"}), now()))
+    asked = []
+    be.http = http.Http(opener=a_forge_that_says_come_back(status, headers, asked))
+    sync.sync_all(be.db, be.http, workers=1)
+    be.reload()
+    shown = {row["url"]: row["errorText"] for row in be.sourceItems}
+    assert set(sources) <= set(shown) and len([url for url in asked if "git.example.org" in url]) == 1
+    for url in sources:
+        extra = json.loads(be.db.one("SELECT error_extra FROM apps WHERE url=?", (url,))["error_extra"])
+        until = "Rate limited until " + datetime.datetime.fromtimestamp(extra["reset"]).strftime("%H:%M")
+        assert shown[url] == until + (" · add a token in Settings" if hint else ""), shown

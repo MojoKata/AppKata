@@ -21,7 +21,7 @@ from appkata_core import versions as vcmp
 from appkata_core.catalog import authority_view, short_fp
 from appkata_core.db import DB, now
 from appkata_core.forges import Asset
-from appkata_core.http import Http, SourceError
+from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_host_shown, token_key, two_hosts
 from appkata_core import APPKATA_REPO, __version__ as APPKATA_VERSION
 from appkata_core.platform import data_dir
 
@@ -442,7 +442,12 @@ class Backend(QObject):
         if code == "RateLimited":
             import datetime as dt
             t = dt.datetime.fromtimestamp(extra.get("reset", 0)).strftime("%H:%M")
-            return f"Rate limited until {t} · add a token in Settings"
+            # the hint is for a forge's own rate limit, which a token raises. A forge that is
+            # overloaded or being maintained says when to come back as well (a 503 with a
+            # Retry-After), and no token changes that: its row says until when, and no more
+            # (CR1 #277)
+            hint = " · add a token in Settings" if extra.get("status") in (None, *LIMIT_STATUSES) else ""
+            return f"Rate limited until {t}{hint}"
         if code == "Renamed":
             return f"Moved to {extra.get('new_url', '')}"
         return {"NoReleases": "No releases found", "NotFound": "Repository not found",
@@ -598,21 +603,30 @@ class Backend(QObject):
             self._ensure_own_trust()
             self.reload()
 
-    @Property("QVariant", notify=prefsChanged)
-    def tokens(self):
-        return self.db.get("tokens", {})
-
-    @Slot(str, str)
-    def setToken(self, host: str, token: str) -> None:
+    @Slot(str, str, result=bool)
+    def setToken(self, host: str, token: str) -> bool:
+        """A token is kept for one address (R11.1.6): the host as a Source's is written, with its
+        port when the forge is on one, which is the key Http looks it up under (token_key). None is
+        kept for a name IDNA 2003 and IDNA 2008 read apart, which is two hosts (two_hosts): it was
+        kept under its IDNA 2003 form, another host (the review's pass 7, P7-1). Says whether it
+        kept or removed the token, so Settings' "+" empties its field only then and a refused token
+        isn't lost (the review's pass 12, P12-2)."""
+        host = token_key(host)
+        reason = token and two_hosts(host)
+        if reason:
+            self.toast.emit("error", f"No token kept for {host}: {reason}; typed in its IDNA 2008 form (xn--…), it is")
+            return False
         t = self.db.get("tokens", {})
         if token:
-            t[host.lower()] = token
+            t[host] = token
         else:
-            t.pop(host.lower(), None)
+            t.pop(host, None)
         self.db.put("tokens", t)
         self.http.tokens = t
-        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", host.lower())
+        # said as Settings' row shows it, in its script (token_host_shown; the review's pass 8, P8-1)
+        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", token_host_shown(host))
         self.prefsChanged.emit()
+        return True
 
     # ---------------------------------------------------------------- sync
     @Property(bool, notify=syncChanged)
@@ -1296,12 +1310,13 @@ class Backend(QObject):
                            exists=bool(self.db.one("SELECT 1 FROM sources WHERE url=?", (repo.url,))))
             except (ValueError, SourceError) as e:
                 out.update(ok=False, error=str(e))
+            except Exception as e:        # noqa: BLE001 — the dialog waits for an answer (CR1 #269)
+                # as a Sync does: a forge's answer of another shape ended this thread, and the Add
+                # source dialog was never told
+                log.exception("previewing %s: an unexpected error", text)
+                out.update(ok=False, error=f"unexpected error ({type(e).__name__}: {str(e)[:200]}); the app log has the details")
             self.sourcePreview.emit(out)
         threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str, bool)
-    def addSource(self, text: str, and_install: bool) -> None:
-        self.addSourceWith(text, and_install, {})
 
     @Slot(str, bool, "QVariant")
     def addSourceWith(self, text: str, and_install: bool, settings) -> None:
@@ -1454,10 +1469,6 @@ class Backend(QObject):
                                     "signers": [{**s, "shortFp": short_fp(s["fingerprint"]),
                                                  **catalog.avatar_for(s["name"] or s["email"], s["fingerprint"])} for s in p.signers]})
         threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str)
-    def addTrust(self, text: str) -> None:
-        self.addTrustScored(text, 3)
 
     @Slot(str, int)
     def addTrustScored(self, text: str, score: int) -> None:
@@ -2671,7 +2682,10 @@ class Backend(QObject):
 
     @Property("QVariant", notify=prefsChanged)
     def tokenHosts(self):
-        return [{"host": h, "hint": "••••" + t[-4:] if len(t) > 4 else "••••"} for h, t in sorted(self.db.get("tokens", {}).items())]
+        """Settings' rows (R11.1.6): each token's host in its script, as a Source's address has it,
+        where its key is in the form it is sent (token_host_shown; the review's pass 8, P8-1)."""
+        rows = [{"host": token_host_shown(h), "hint": "••••" + t[-4:] if len(t) > 4 else "••••"} for h, t in self.db.get("tokens", {}).items()]
+        return sorted(rows, key=lambda row: row["host"])
 
     @Slot(str)
     def openFolder(self, path: str) -> None:
