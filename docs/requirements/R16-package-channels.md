@@ -246,7 +246,8 @@ R16.6.1. The App Detail panel shows each channel the app has, with who publishes
 
 - **Flathub · verified**: published by the project itself.
 - **Flathub · community**: packaged by someone else.
-- **Ubuntu (universe)**, **Fedora**, or the repository's name (R16.1.2).
+- **Ubuntu (universe)**, **Fedora**, or the repository's name (R16.1.2); **Package** for a package
+  no repository's key checked (R16.3.6), whose repository AppKata can't name.
 - The link check (R16.1.4).
 
 These describe the channel, not the app: they never change the app's Trust or Rating (R10.6).
