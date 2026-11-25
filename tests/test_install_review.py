@@ -578,28 +578,45 @@ def test_an_app_starts_from_its_menu_entry_whatever_appkatas_own_folder_holds_or
 
 
 @linux_only
-def test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu(env, server, tmp_path, monkeypatch):
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+def test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu(env, server, tmp_path, monkeypatch, sandboxed):
     # #689's review, P3-B3: the menu script was written as UTF-8 text, so an install folder whose
     # name has a byte that isn't UTF-8 (a Latin-1 name on a UTF-8 system; Python gives it as a
     # surrogate escape) stopped the install with Python's own "'utf-8' codec can't encode" error,
     # and the app couldn't be installed there at all, which R4.3.1.1 says no folder's name causes.
     # The script holds the path as its bytes. AppKata's own folder is the entry's, and an entry is
     # UTF-8 text: a byte that isn't is refused before anything is placed, with the reason.
+    # P4-1: a sandboxed app's launcher, which holds the folder's path too, was still written as
+    # text: its install stopped with the same error and left run.<pid>.tmp beside the launcher, and
+    # the launcher was compared as text at AppKata's start. It holds the path's bytes, and is the
+    # launcher AppKata would write today, so the start leaves it be.
+    from appkata_core import sandbox
+    app = {**APP, "sandbox": sandbox.resolve_template("standard") if sandboxed else None}
     a = _start_script_archive(*server)
     folder = tmp_path / os.fsdecode(b"apps-\xe9\xff")
-    rec = install.install(env, APP, a, "tarball", [a], portable=install.Portable(folder=str(folder)))
-    assert rec["exec"].startswith(str(folder)) and "launcher" not in rec
+    port = install.Portable(folder=str(folder))
+    rec = install.install(env, app, a, "tarball", [a], portable=port)
     entry, script = next(f for f in rec["files"] if f.endswith(".desktop")), str(tmp_path / "data" / "menu" / rec["id"])
+    assert rec["exec"].startswith(str(folder)) and ("launcher" in rec) is sandboxed
     assert os.fsencode(shlex.quote(rec["exec"])) in open(script, "rb").read()
-    if (glib := _glib_starts(entry)) is not None:
-        assert glib == "found my files\n[]", glib                           # GLib starts it from the menu
     words = _exec_words(_entry(entry)["Desktop Entry"]["Exec"])
-    started = subprocess.run([w for w in words if w != "%U"] + ["x"], capture_output=True, text=True)
-    assert (started.returncode, started.stdout, started.stderr) == (0, "found my files\n[x]", ""), started
-    assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(script) and not os.path.exists(folder / rec["id"])
+    if sandboxed:
+        launcher = str(folder / rec["id"] / "run")
+        assert rec["exec"] == rec["launcher"] == launcher and words == ["/bin/sh", script, "--appkata-menu", "%U"]
+        assert b"\nappdir=" + os.fsencode(shlex.quote(rec["current"]["path"])) + b"\n" in open(launcher, "rb").read()   # the folder's own bytes
+        assert subprocess.run(["sh", "-n", launcher]).returncode == 0 and os.access(launcher, os.X_OK)
+        assert install.launcher_is_current(rec, app, port)                                  # the start leaves it be
+        assert sorted(os.listdir(folder / rec["id"])) == ["1.2.0", "current", "run"]       # nothing beside it
+    else:
+        if (glib := _glib_starts(entry)) is not None:
+            assert glib == "found my files\n[]", glib                           # GLib starts it from the menu
+        started = subprocess.run([w for w in words if w != "%U"] + ["x"], capture_output=True, text=True)
+        assert (started.returncode, started.stdout, started.stderr) == (0, "found my files\n[x]", ""), started
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == []
+    assert not os.path.lexists(script) and not os.path.exists(folder / rec["id"])
     monkeypatch.setenv("APPKATA_DATA", str(tmp_path / os.fsdecode(b"data-\xff")))
     with pytest.raises(install.InstallError, match="has a byte that isn't UTF-8 in it, which a menu entry can't hold"):
-        install.install(env, APP, a, "tarball", [a], portable=install.Portable(folder=str(tmp_path / "apps")))
+        install.install(env, app, a, "tarball", [a], portable=install.Portable(folder=str(tmp_path / "apps")))
     assert not (tmp_path / "apps" / rec["id"]).exists() and not os.path.exists(entry)
 
 

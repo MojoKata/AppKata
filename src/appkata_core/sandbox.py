@@ -2402,13 +2402,13 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # is a waiting `sh` with this file open that has yet to read its teardown, and a sandbox change,
     # an update or the startup pass rewrites it while apps run. Truncating the inode made such a shell
     # find EOF (no teardown, exit 0, the socket left behind) or read the new text at its old offset
-    # (round five, R5-3). The old inode stays whole for the shells that hold it.
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path))
-    os.chmod(tmp, 0o755)
-    os.replace(tmp, path)
-    return path
+    # (round five, R5-3). The old inode stays whole for the shells that hold it. Its text is written
+    # as the paths' own bytes, UTF-8 or not, by the helper that writes the menu files, which also
+    # removes the file beside when the write fails (#689's review, P4-1: written as text, an install
+    # folder whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error,
+    # and left run.<pid>.tmp beside the launcher).
+    from .install import _write_whole
+    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path)), 0o755)
 
 
 # -------------------------------------------------------------------------- AppImage extraction (R17.7)

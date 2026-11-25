@@ -675,6 +675,34 @@ def test_a_sandbox_chosen_in_install_options_for_an_installed_app_applies_at_onc
     assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
 
 
+def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
+    # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
+    # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder
+    # stopped the install. "Show the launch command" and the Audit's hash of it read it back as
+    # UTF-8 text, which such a launcher isn't: App Detail and the change's audit row stopped with
+    # Python's decoding error. The command is shown with the byte as the replacement character,
+    # and the hash is of the bytes written, as it always was of a UTF-8 launcher's.
+    import hashlib
+    _review(be, "online-app")
+    target = _tarball_install(be, tmp_path / os.fsdecode(b"\xe9t\xe9"))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps({**rec, "root": os.path.dirname(target)}), URL))
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    with open(rec["launcher"], "rb") as f:
+        data = f.read()
+    assert rec["launcher"] == os.path.join(target, "run") and os.fsencode(target) in data
+    assert be.sandboxLaunchCommand(URL) == data.decode("utf-8", "replace") and "�t�" in be.sandboxLaunchCommand(URL)
+    assert be.sandboxInfo(URL)["launcherHash"] == hashlib.sha256(data).hexdigest()[:16]
+    assert be._heal_launchers() == []                                     # AppKata's start finds it up to date
+    be.setSandbox(URL, {"template": "strict", "overrides": {}})
+    row = be.db.one("SELECT action, detail FROM audit ORDER BY id DESC LIMIT 1")
+    with open(rec["launcher"], "rb") as f:
+        assert row["action"] == "set the sandbox of" and hashlib.sha256(f.read()).hexdigest()[:16] in row["detail"]
+
+
 def test_follow_reviewers_off_uses_the_users_default_and_never_badges(be, monkeypatch):
     # Round two, R6 (17.15): with "Follow reviewers' suggestions" off, the reviews' Sandbox lines were
     # dropped but the reviewed baseline (standard) still applied instead of the user's own default,

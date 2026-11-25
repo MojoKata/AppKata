@@ -861,16 +861,18 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
     set (`app["sandbox"]`). The launcher is the enforcement (R17.4), and only an install, an update
     or a sandbox change rewrote it, so one written by an older AppKata -- before a launcher fix --
     kept running as written (round four, R4-4); the startup pass uses this to catch up, and it
-    restores a hand-edited launcher the same way. False when there is no launcher or no grant set."""
+    restores a hand-edited launcher the same way. False when there is no launcher or no grant set.
+    The launcher is compared as the bytes it is written as, its paths UTF-8 or not (#689's review,
+    P4-1)."""
     lp = rec.get("launcher")
     gs = app.get("sandbox")
     if not lp or not os.path.exists(lp) or not gs or not rec.get("current") or not rec.get("target"):
         return False
     portable = _where_it_is(rec, portable)
     appdir, exec_rel, appimage_path = _launcher_program(rec, rec["target"])
-    want = sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path)
+    want = os.fsencode(sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path))
     try:
-        with open(lp) as f:
+        with open(lp, "rb") as f:
             if f.read() != want:
                 return False
     except OSError:

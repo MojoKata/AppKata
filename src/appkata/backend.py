@@ -2187,9 +2187,9 @@ class Backend(QObject):
 
     def _launcher_hash(self, url: str) -> str:
         """The first 16 hex digits of the SHA-256 of the app's launcher text, or "" when it has none:
-        what the Audit records of a launcher (R17.4; review 2, F11)."""
-        text = self.sandboxLaunchCommand(url)
-        return hashlib.sha256(text.encode()).hexdigest()[:16] if text else ""
+        what the Audit records of a launcher (R17.4; review 2, F11), of its bytes as written."""
+        data = self._launcher_bytes(url)
+        return hashlib.sha256(data).hexdigest()[:16] if data else ""
 
     def _sandbox_detail(self, url: str, before: dict | None, after: dict | None, **extra) -> dict:
         """An Audit entry's detail for a sandbox change (R17.16; review 2, F11: it said only the template
@@ -2208,19 +2208,25 @@ class Backend(QObject):
         out.update(extra)
         return out
 
-    @Slot(str, result=str)
-    def sandboxLaunchCommand(self, url: str) -> str:
-        """The generated launcher text, for "Show the launch command" (R17.4)."""
+    def _launcher_bytes(self, url: str) -> bytes:
+        """The app's launcher as it is on disk, b"" when it has none. It holds its paths as their own
+        bytes, UTF-8 or not (#689's review, P4-1)."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         rec = json.loads(row["record"] or "{}") if row else {}
         lp = rec.get("launcher")
         if lp and os.path.exists(lp):
             try:
-                with open(lp) as f:
+                with open(lp, "rb") as f:
                     return f.read()
             except OSError:
                 pass
-        return ""
+        return b""
+
+    @Slot(str, result=str)
+    def sandboxLaunchCommand(self, url: str) -> str:
+        """The generated launcher text, for "Show the launch command" (R17.4): a byte of a path that
+        isn't UTF-8 is shown as the replacement character."""
+        return self._launcher_bytes(url).decode("utf-8", "replace")
 
     @Slot(str, "QVariant")
     def setSandbox(self, url: str, config) -> None:
