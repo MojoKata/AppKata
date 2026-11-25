@@ -690,6 +690,38 @@ def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_l
     assert sb.bus_sockets() == [] and sb.protected_folder(str(folder)) == ""
 
 
+# PR #694's review, P3-2 and P3-B5: bus_sockets() looked for the leading `/` before it unescaped the
+# path, so an address that escapes it (`%2F`: legal, though dbus never writes it) named no file and
+# a grant of the socket's folder passed; and it kept an escaped NUL, so every folder check raised
+# ValueError (from os.path.realpath) in such a session, where the launcher refuses the address
+# cleanly. How it slipped past: P2-1 tested each form on the launcher's shell, which unescapes
+# first, and the grant-time reader on the forms dbus writes. Now the path is judged once unescaped,
+# an escaped NUL ends it (as libdbus and sd-bus read it; GIO refuses the address), and an address
+# that names a file AppKata can't read refuses every folder, as the launcher then shares no
+# working directory: the file could be in any.
+def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_where_it_cannot_be_read(tmp_path, monkeypatch):
+    folder, beside = tmp_path / "tmp", str(tmp_path / "project")
+    sock = str(folder / "dbus-MZ8lHbtZ8K")
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw", f"+{beside}": "rw"}})
+    for address in ("unix:path=" + sock.replace("/", "%2F"), f"unix:path={sock}%00zz", f"unix:path={tmp_path}/first,path={sock}"):
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sock in sb.bus_sockets() and sb.bus_files()[1], address
+        assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket" and sb.protected_folder(beside) == "", address
+        assert sb.strip_protected(gs)[1] == [(str(folder), "a folder above the session bus's socket")], address
+        assert f"# Refused folder grant {folder}: a folder above" in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+    # a path that isn't absolute, a broken escape, a newline: the file could be anywhere
+    for address in ("unix:path=relative/bus", "unix:path=/tmp/dbus-%zz", "unix:path=/tmp/dbus-%2", "unix:path=/tmp/a%0Ab",
+                    "unix:path=%00/tmp/x", "unix:path=", f"unix:abstract=/tmp/x;unix:path={sock},path=bus"):
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sb.protected_folder(beside) == ("a folder the session bus's socket could be in (its address names a file AppKata "
+                                               "can't read)") and sb.protected_folder("$cwd") == "", address   # $cwd: the launcher's own rule
+        assert not sb.bus_files()[1] and sb.protected_folder("~") == "your whole home folder", address       # a reason of its own stays its own
+        assert sorted(p for p, _ in sb.strip_protected(gs)[1]) == sorted([str(folder), beside]), address
+    for address in ("unix:path", "unix:guid=0123", "tcp:host=localhost,port=4000", "unix:abstract=/tmp/x"):   # no file named: nothing to read
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+        assert sb.bus_files() == ([], True) and sb.protected_folder(beside) == "", address
+
+
 # PR #694's review, P2-1: the launcher's own rules (the working directory, the cover of a granted
 # folder) read the socket from a plain `unix:path=` address alone, while bus_sockets() reads every
 # form, so a session whose address was a list, put `guid=` first or escaped a byte -- or named a link

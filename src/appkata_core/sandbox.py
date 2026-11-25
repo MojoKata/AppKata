@@ -26,7 +26,6 @@ import shlex
 import shutil
 import subprocess
 import time
-import urllib.parse
 
 from .platform import OS, data_dir
 
@@ -547,29 +546,66 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     return roots
 
 
-def bus_sockets(address: str | None = None) -> list[str]:
-    """The socket files of the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS
-    when None): each `unix:path=` in it, a list's too, unescaped as bytes, as the launcher's shell
-    reads them (a byte that isn't UTF-8 kept as the file system keeps it: PR #694's review, P2-1).
-    The bus is where its socket is, and that need not be the runtime folder: dbus-run-session and
-    dbus-launch put it under /tmp (R17.5), where a grant of /tmp, or a tool run there, showed the
-    app the unfiltered bus (the review of PR #694, P1-2). An abstract socket has no file, and with
-    no address the bus is the runtime folder's, which is protected already."""
+def bus_files(address: str | None = None) -> tuple[list[str], bool]:
+    """The socket files the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS when
+    None), and whether it names none AppKata can't read: the rule the launcher's shell reads an
+    address by too (_BUS_BLOCK). Each `unix:` entry of a list and every `path=` key in it (GIO takes
+    the last of two, libdbus the first), each %XX unescaped as the byte it is (a byte that isn't
+    UTF-8 kept as the file system keeps it: PR #694's review, P2-1) before the path is judged, and a
+    path ending at an escaped NUL, where the clients that take one end it (libdbus, sd-bus; GIO
+    refuses the address). PR #694's review, P3-2: the leading `/` was looked for before the
+    unescaping, so `%2F` there dropped the file; P3-B5: a NUL was kept, and every folder check
+    raised. A broken escape, a path that isn't absolute and a newline name a file AppKata can't
+    read (it can't tell where such a file is). The bus is where its socket is, and that need not
+    be the runtime folder: dbus-run-session and dbus-launch put it under /tmp (R17.5), where a
+    grant of /tmp, or a tool run there, showed the app the unfiltered bus (the review of PR #694,
+    P1-2). An abstract socket has no file, and with no address the bus is the runtime folder's,
+    which is protected already."""
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "") if address is None else address
-    out = []
+    files, readable = [], True
     for entry in addr.split(";"):
         transport, _, keys = entry.partition(":")
-        if transport == "unix":
-            out += [os.fsdecode(urllib.parse.unquote_to_bytes(v)) for k, _, v in (kv.partition("=") for kv in keys.split(","))
-                    if k == "path" and v.startswith("/")]
-    return out
+        if transport != "unix":
+            continue
+        for key, eq, value in (kv.partition("=") for kv in keys.split(",")):
+            if key != "path" or not eq:
+                continue
+            path, rest = b"", os.fsencode(value)
+            while rest:
+                head, pct, rest = rest.partition(b"%")
+                path += head
+                if not pct:
+                    break
+                code, rest = rest[:2], rest[2:]
+                if not re.fullmatch(rb"[0-9A-Fa-f]{2}", code):
+                    path = None
+                    break
+                if code == b"00":
+                    break
+                path += bytes([int(code, 16)])
+            if path is None or not path.startswith(b"/") or b"\n" in path:
+                readable = False
+            else:
+                files.append(os.fsdecode(path))
+    return files, readable
+
+
+def bus_sockets(address: str | None = None) -> list[str]:
+    """The socket files of the session bus `address` names that AppKata can read (:func:`bus_files`)."""
+    return bus_files(address)[0]
+
+
+# Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
+BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
 
 def protected_folder(path: str, apps_root: str | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
     since sharing a parent shares everything beneath it — and the session bus's own socket file and
-    anything above it, wherever it is (:func:`bus_sockets`; a folder beside it may be shared). Reviews
+    anything above it, wherever it is (:func:`bus_sockets`; a folder beside it may be shared), and
+    every folder where the address names a socket file AppKata can't read, which could be in any
+    (:func:`bus_files`; the launcher shares no folder then either; PR #694's review, P3-2). Reviews
     and the Customize picker both go through this; the CLI tool's `$cwd` has its own run-time rule
     (R17.3.3)."""
     if path == "$cwd":
@@ -586,13 +622,14 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
         return "your whole home folder"
     if p == "/" or home.startswith(p + os.sep):
         return "everything, your home folder included"
-    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in bus_sockets()]:
+    sockets, readable = bus_files()
+    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in sockets]:
         r = os.path.realpath(root)
         if p == r or p.startswith(r + os.sep):
             return what
         if r.startswith(p + os.sep):
             return f"a folder above {what}"
-    return ""
+    return "" if readable else BUS_UNREADABLE
 
 
 # -------------------------------------------------------------------------- secrets (R17.3.1, review 2 F8)

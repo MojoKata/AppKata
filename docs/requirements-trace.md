@@ -60,7 +60,7 @@ differ from its list (review 3, harness B).
 | R17.3.1 | Mint's Nemo has ~/.local/share/nemo/scripts | test_protected_folders_are_never_granted |
 | R17.3.1 | Such a grant is dropped — the launcher | test_launcher_and_summary_refuse_protected_folders, test_a_custom_sandbox_cannot_share_a_protected_folder |
 | R17.3.1 | A grant is judged when the launcher is written, by AppKata's own session's bus | test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket, test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_grant_of_its_folder |
-| R17.3.1 | The list is _protected_roots() and bus_sockets() in | test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies, statement |
+| R17.3.1 | The list is _protected_roots() and bus_files() in | test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_lies, test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_where_it_cannot_be_read, statement |
 | R17.3.1 | A folder is named from / or ~ | test_a_folder_not_named_from_the_root_or_home_is_refused_and_never_bound, test_a_review_naming_a_relative_folder_never_opens_the_real_home |
 | R17.3.1 | Sandbox folders: home bound the real /home). | statement |
 | R17.3.1 | Secrets are refused when a review asks | test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can, test_the_users_own_secret_folder_stands_with_a_warning |
