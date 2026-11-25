@@ -459,7 +459,7 @@ def test_appkata_asks_about_the_very_bwrap_a_launcher_runs(found, tmp_path, monk
     launchers = sb.host_path(str(tmp / "home/bin/apps"))
     assert shutil.which("bwrap", path=launchers) == runs                    # what every launcher runs
     assert sb.bwrap_path() == runs and f"profile appkata-sandbox {runs} flags=" in sb.profile_text()     # the profile names it
-    assert f"{shlex.quote(runs)} --ro-bind" in sb.setup_script()             # and the setup probes it, as the user
+    assert sb.setup_command()[-1] == runs                                     # and the setup probes it, as the user
     assert sb.have_tools() and "bubblewrap" not in sb.missing_tools()
     assert sb.userns_works(refresh=True) and sb.nested_userns_works(refresh=True)
     from appkata_core import appkind

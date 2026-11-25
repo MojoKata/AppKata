@@ -1124,41 +1124,56 @@ def bus_warning() -> dict:
                     "trust offline."}
 
 
-def _bwrap_probe_words(bwrap: str) -> str:
-    """The userns_works() probe as shell words, for the setup script to run as the user."""
-    return " ".join(shlex.quote(w) for w in [
-        bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
-        "--proc", "/proc", "--dev", "/dev", "--unshare-user", "--die-with-parent", "--", "/usr/bin/true"])
+# What the one-time setup runs as root behind pkexec (R17.10): write and load the profile, then run
+# the bwrap probe (userns_works') *as the user who asked* (pkexec sets PKEXEC_UID) -- loading a
+# profile is not the goal, bwrap working for the user is. If it doesn't, the profile is unloaded and
+# removed in the same run, so a failed setup leaves nothing behind (review 2, F2: on Ubuntu 26.04 a
+# profile loaded beside Ubuntu's own left bwrap unable to start for anyone, and it stayed, across
+# reboots). Its text is the same whatever the paths: the profile's file, its text and the bwrap are
+# its arguments, $1 to $3, never part of the script (#689's review, P2-B2: bwrap's path was written
+# into a heredoc, and one holding a line break and the heredoc's end ran what followed it as root).
+SETUP_SCRIPT = (
+    "set -e\n"
+    'profile=$1 text=$2 bwrap=$3\n'
+    'printf "%s" "$text" > "$profile"\n'
+    'apparmor_parser -r "$profile"\n'
+    'if [ -n "${PKEXEC_UID:-}" ] && command -v setpriv >/dev/null 2>&1; then\n'
+    '  gid=$(getent passwd "$PKEXEC_UID" | cut -d: -f4)\n'
+    '  if ! setpriv --reuid="$PKEXEC_UID" --regid="${gid:-$PKEXEC_UID}" --clear-groups -- "$bwrap" --ro-bind /usr /usr'
+    ' --symlink usr/lib /lib --symlink usr/lib64 /lib64 --proc /proc --dev /dev --unshare-user --die-with-parent'
+    ' -- /usr/bin/true >/dev/null 2>&1; then\n'
+    '    apparmor_parser -R "$profile" >/dev/null 2>&1 || true\n'
+    '    rm -f "$profile"\n'
+    '    echo "the profile loaded, but bwrap still couldn\'t create a user namespace for you, so it was removed again" >&2\n'
+    "    exit 3\n"
+    "  fi\n"
+    "fi\n")
+# The paths an AppArmor profile's attachment names as they are: any other character is a glob (`*`,
+# `{`, `[`), ends the name (white space) or the rule (a line break), so a bwrap whose real path
+# holds one is refused before any prompt, saying why (#689's review, P2-B2).
+_PROFILE_NAMES = re.compile(r"/[A-Za-z0-9._+/-]*")
 
 
-def setup_script(bwrap: str | None = None) -> str:
-    """What the one-time setup runs as root behind pkexec (R17.10): write and load the profile, then
-    run the bwrap probe *as the user who asked* (pkexec sets PKEXEC_UID) -- loading a profile is not
-    the goal, bwrap working for the user is. If it doesn't, the profile is unloaded and removed in the
-    same run, so a failed setup leaves nothing behind (review 2, F2: on Ubuntu 26.04 a profile loaded
-    beside Ubuntu's own left bwrap unable to start for anyone, and it stayed, across reboots)."""
+def setup_command(bwrap: str | None = None) -> list[str]:
+    """The one-time setup's command (:data:`SETUP_SCRIPT`, with its arguments), for pkexec to run as
+    root. Raises SandboxError for a bwrap whose real path a profile can't name as it is."""
     bwrap = bwrap or bwrap_path()
-    p = shlex.quote(PROFILE_PATH)
-    return (
-        "set -e\n"
-        f"cat > {p} <<'AAEOF'\n{profile_text(bwrap)}AAEOF\n"
-        f"apparmor_parser -r {p}\n"
-        'if [ -n "${PKEXEC_UID:-}" ] && command -v setpriv >/dev/null 2>&1; then\n'
-        '  gid=$(getent passwd "$PKEXEC_UID" | cut -d: -f4)\n'
-        f'  if ! setpriv --reuid="$PKEXEC_UID" --regid="${{gid:-$PKEXEC_UID}}" --clear-groups -- {_bwrap_probe_words(bwrap)} >/dev/null 2>&1; then\n'
-        f"    apparmor_parser -R {p} >/dev/null 2>&1 || true\n"
-        f"    rm -f {p}\n"
-        '    echo "the profile loaded, but bwrap still couldn\'t create a user namespace for you, so it was removed again" >&2\n'
-        "    exit 3\n"
-        "  fi\n"
-        "fi\n")
+    if not _PROFILE_NAMES.fullmatch(bwrap):
+        raise SandboxError(f"the bwrap AppKata found, {bwrap!r}, has characters an AppArmor profile can't name "
+                           "(only letters, digits and . _ + - /), so its profile isn't set up. Install bubblewrap "
+                           "from your system's packages (sudo apt install bubblewrap) and restart AppKata")
+    return ["/bin/sh", "-c", SETUP_SCRIPT, "appkata-setup", PROFILE_PATH, profile_text(bwrap), bwrap]
 
 
-def _run_privileged(script: str, what: str) -> None:
-    if not shutil.which("pkexec"):
+def _run_privileged(command: list[str], what: str) -> None:
+    """Run `command` as root behind pkexec's one prompt. pkexec is the system's (:data:`HOST_PATH`),
+    never one first on AppKata's own PATH, where a login's ~/.local/bin comes first (#689's review,
+    P2-B2)."""
+    pkexec = shutil.which("pkexec", path=HOST_PATH)
+    if not pkexec:
         raise SandboxError("pkexec isn't available to ask for administrator rights")
     try:
-        p = subprocess.run(["pkexec", "/bin/sh", "-c", script], capture_output=True, text=True, timeout=120)
+        p = subprocess.run([pkexec, *command], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         raise SandboxError(f"couldn't run the {what}: {e}") from None
     if p.returncode == 126:
@@ -1179,7 +1194,7 @@ def install_profile() -> bool:
     if others := other_bwrap_profiles():
         raise SandboxError(f"this system has its own AppArmor profile for bwrap ({', '.join(others)}); "
                            "AppKata's beside it would stop bwrap working, so it isn't installed")
-    _run_privileged(setup_script(), "AppArmor setup")
+    _run_privileged(setup_command(), "AppArmor setup")
     # The script checked as the user; check again from here, in case this process differs.
     if not userns_works(refresh=True):
         raise SandboxError("the AppArmor profile loaded, but bwrap still can't create a user namespace here")
@@ -1192,8 +1207,8 @@ def remove_profile() -> bool:
     status "conflict", AppKata's profile left beside the system's own after an upgrade (R17.10.2)."""
     if OS != "linux":
         raise SandboxError("AppArmor setup is only needed on Linux")
-    p = shlex.quote(PROFILE_PATH)
-    _run_privileged(f"apparmor_parser -R {p} >/dev/null 2>&1 || true\nrm -f {p}\n", "AppArmor repair")
+    _run_privileged(["/bin/sh", "-c", 'apparmor_parser -R "$1" >/dev/null 2>&1 || true\nrm -f "$1"\n', "appkata-repair", PROFILE_PATH],
+                    "AppArmor repair")
     userns_works(refresh=True)
     nested_userns_works(refresh=True)
     return True

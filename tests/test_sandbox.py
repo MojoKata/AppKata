@@ -913,7 +913,7 @@ def test_setup_counts_only_when_bwrap_then_works(monkeypatch, works):
     else:
         with pytest.raises(sb.SandboxError, match="still can't create a user namespace"):
             sb.install_profile()
-    assert ran and ran[0][:2] == ["pkexec", "/bin/sh"] and "apparmor_parser -r" in ran[0][-1]
+    assert ran and ran[0][:3] == ["/usr/bin/pkexec", "/bin/sh", "-c"] and "apparmor_parser -r" in ran[0][3]
 
 
 # ---------------------------------------------------------------- Ubuntu 25.04+: the system's own bwrap profile (R17.10.2)
@@ -988,7 +988,7 @@ def test_a_setup_whose_check_fails_for_the_user_leaves_nothing_installed(tmp_pat
     tool("getent", 'echo "kata:x:1000:1001::/home/kata:/bin/sh"\n')
     if check != "no-setpriv":
         tool("setpriv", f'echo "setpriv $1 $2 $3" >> {log}\nexit {0 if check == "passes" else 1}\n')
-    r = subprocess.run(["/bin/sh", "-c", sb.setup_script("/usr/bin/bwrap")], env={"PATH": str(stub), "PKEXEC_UID": "1000"},
+    r = subprocess.run(sb.setup_command("/usr/bin/bwrap"), env={"PATH": str(stub), "PKEXEC_UID": "1000"},
                        capture_output=True, text=True, timeout=30)
     calls = log.read_text().splitlines()
     assert calls[0] == f"apparmor_parser -r {d / 'appkata-sandbox'}"
@@ -999,6 +999,60 @@ def test_a_setup_whose_check_fails_for_the_user_leaves_nothing_installed(tmp_pat
     else:
         assert r.returncode == 0, r.stderr
         assert (d / "appkata-sandbox").read_text() == sb.PROFILE_TEXT and not any(" -R " in c for c in calls)
+
+
+_BWRAP_FOLDERS = {"a line break": "real\nAAEOF\ntouch {ran}\n#", "a space": "my tools", "a brace": "x{a,b}",
+                  "a quote and a dollar": "it's $(touch {ran})", "plain": "tools-1.0_x+y"}
+
+
+@pytest.mark.parametrize("folder", list(_BWRAP_FOLDERS))
+def test_the_apparmor_setup_has_no_path_in_its_script_and_profiles_only_a_path_it_can_name(tmp_path, monkeypatch, folder):
+    # #689's review, P2-B2: the one-time setup wrote bwrap's real path into the script pkexec runs as
+    # root, inside a heredoc, so a path holding a line break and the heredoc's end ran what followed
+    # it as root; a space or a brace made a profile apparmor_parser refused, with its own message
+    # alone. And pkexec was run by name, on AppKata's own PATH, where ~/.local/bin comes first. The
+    # script's text is the same whatever the paths: the profile's file, its text and the bwrap the
+    # probe runs are its arguments. A bwrap whose path an AppArmor profile can't name as it is (only
+    # letters, digits and . _ + - /) is refused before any prompt, saying why. pkexec is the
+    # system's. Here the setup runs for real, as the user, with stand-ins for the root-only tools.
+    d = _apparmor_dir(tmp_path, monkeypatch, {})
+    monkeypatch.setattr(sb, "OS", "linux")
+    ran = tmp_path / "ROOT-RAN"
+    bwrap = tmp_path / _BWRAP_FOLDERS[folder].replace("{ran}", str(ran)) / "bwrap"
+    bwrap.parent.mkdir(parents=True)
+    bwrap.write_text("#!/bin/sh\nexit 0\n")
+    bwrap.chmod(0o755)
+    monkeypatch.setattr(sb, "bwrap_path", lambda *a, **k: str(bwrap))
+    stub, system, theirs, log = tmp_path / "stub", tmp_path / "system", tmp_path / "home" / ".local" / "bin", tmp_path / "log"
+    for folder_ in (stub, system, theirs):
+        folder_.mkdir(parents=True)
+    for real in ("cat", "rm", "cut", "touch"):                                 # the script's PATH is the stand-ins alone
+        (stub / real).symlink_to(subprocess.run(["sh", "-c", f"command -v {real}"], capture_output=True, text=True).stdout.strip())
+    for where, name, body in ((stub, "apparmor_parser", f'echo "apparmor_parser $*" >> {log}\n'), (stub, "getent", 'echo "kata:x:1000:1001::/h:/bin/sh"\n'),
+                              (stub, "setpriv", "exit 0\n"), (system, "pkexec", "exit 0\n"), (theirs, "pkexec", "exit 0\n")):
+        (where / name).write_text("#!/bin/sh\n" + body)
+        (where / name).chmod(0o755)
+    monkeypatch.setattr(sb, "HOST_PATH", str(system))
+    monkeypatch.setenv("PATH", f"{theirs}:{system}")                          # a login's: the user's own folder first
+    prompts, real_run = [], subprocess.run
+
+    def run(cmd, **kw):                         # pkexec's prompt, approved: what it runs, as the user here
+        prompts.append(cmd)
+        return real_run(cmd[1:], env={"PATH": str(stub), "PKEXEC_UID": "1000"}, capture_output=True, text=True, timeout=30)
+    monkeypatch.setattr(sb.subprocess, "run", run)
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
+    if folder != "plain":
+        with pytest.raises(sb.SandboxError, match="an AppArmor profile can't name"):
+            sb.install_profile()
+        assert prompts == [] and not ran.exists() and not (d / "appkata-sandbox").exists()     # no prompt, nothing run or written
+        return
+    assert sb.install_profile() is True
+    (pkexec, shell, c, script, *args), = prompts
+    assert (pkexec, shell, c) == (str(system / "pkexec"), "/bin/sh", "-c")   # the system's pkexec, not the one first on PATH
+    assert str(bwrap) not in script and str(d) not in script                  # no path is part of the script's text
+    assert str(bwrap) in args and (d / "appkata-sandbox").read_text() == sb.profile_text(str(bwrap))
+    assert log.read_text().splitlines() == [f"apparmor_parser -r {d / 'appkata-sandbox'}"]
 
 
 def test_a_chromium_app_gets_no_sandbox_only_where_its_own_cannot_run():

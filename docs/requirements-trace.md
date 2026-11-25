@@ -188,6 +188,7 @@ differ from its list (review 3, harness B).
 | R17.10 | A system without the restriction needs no setup; | harness:launcher-lmde7, test_this_system_boots_what_testing_md_says |
 | R17.10 | The profile names the bwrap actually installed (the | test_profile_names_the_bwrap_actually_installed, test_setup_counts_only_when_bwrap_then_works |
 | R17.10 | The setup checks bwrap as the user who | test_a_setup_whose_check_fails_for_the_user_leaves_nothing_installed |
+| R17.10 | A bwrap whose real path holds anything but | test_the_apparmor_setup_has_no_path_in_its_script_and_profiles_only_a_path_it_can_name |
 | R17.10 | Once an app has a launcher it keeps one | test_an_app_with_a_launcher_keeps_it_on_a_broken_host, test_a_launcher_says_plainly_when_bwrap_is_missing, test_app_detail_says_an_app_that_keeps_its_launcher_on_a_broken_host_cant_start, test_the_lifecycle_invariants_hold_over_random_walks_but_the_listed |
 | R17.10 | A failed check is asked again a minute | test_a_failed_userns_probe_is_asked_again_a_minute_later_and_a_pass_stands |
 | R17.10.1 | What the profile costs. | statement |
