@@ -895,6 +895,25 @@ def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pai
     assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
 
 
+# The review's pass 5, P5-B2: the refusal of an address urlsplit can't read, or that has no host or
+# another scheme, said 200 characters of the address, its user part too, where the refusals above
+# name only what follows the last `@`. How it slipped past: P4-B2's test held the refusals of
+# addresses urlsplit reads. The class is "a refusal says a user part", so these have a user part
+# and meet the first refusal: a port that isn't one, a password with a `/`, no host, ftp.
+@pytest.mark.parametrize("url, said", [
+    ("https://user:pw@images.example.com:99999/x", "images.example.com:99999/x"),
+    ("https://user:pw@images.example.com:8x/x", "images.example.com:8x/x"),
+    ("http://user:p/w@images.example.com/x", "images.example.com/x"),         # urlsplit's port: "p"
+    ("http://user:pw@/x", "/x"),
+    ("ftp://user:pw@images.example.com/x", "images.example.com/x"),
+])
+def test_the_refusal_of_an_address_that_isnt_an_http_one_says_no_user_part(url, said):
+    seen = []
+    with pytest.raises(Unreachable) as refused:
+        names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
+    assert str(refused.value) == f"{said!r} isn't an http or https address" and seen == []
+
+
 # The review's pass 4, P4-1: the check above refused an `@` in what urlsplit reads as the host part,
 # and two more spellings carry another host past it. A `\` in the host: this computer's lookup takes
 # it for an escape, so `127.0.0.1\x.images.example.com` is looked up as `127.0.0.1x.images.example.com`,

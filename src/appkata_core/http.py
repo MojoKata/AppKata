@@ -198,15 +198,16 @@ def _http_address(url: str):
     - escaped brackets, which the check reads as a name, `[127.0.0.1]`, and http.client as the
       brackets of an address, 127.0.0.1, which a proxy is sent (P5-2).
     No address Http asks for needs any of these: an image's address has a path, and the host of one
-    with a user part is found by no lookup. A user part isn't said, since it may be a password: the
-    refusal names what comes after its last `@`."""
+    with a user part is found by no lookup. A user part isn't said, since it may be a password: no
+    refusal names what comes before the last `@`, of the host part or, where urlsplit can't read the
+    address, of the whole of it (the review's pass 5, P5-B2)."""
     try:
         parts = urlsplit(url)
         parts.port
     except ValueError:
         parts = None
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
-        raise Unreachable(f"{url[:200]!r} isn't an http or https address")
+        raise Unreachable(f"{url.rpartition('@')[2][:200]!r} isn't an http or https address")
     written = url.partition("//")[2].partition("/")[0]        # the host part: up to the first `/`, as a proxy may read it
     said = unquote(written)
     if "@" in said:
