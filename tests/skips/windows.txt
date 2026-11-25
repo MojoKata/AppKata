@@ -12,6 +12,10 @@ tests/test_dialog_contract.py::*  # could not import 'PySide6': No module named 
 tests/test_doc_links.py::test_every_link_between_the_documents_leads_somewhere  # a copy without the screenshots' images (the Windows tier's), which the documents link to
 tests/test_doccheck.py::test_every_id_cited_names_an_item_and_the_indexes_match_their_files  # not a git work tree (the Windows VM's copy of the sources)
 tests/test_install_review.py::test_a_failed_first_install_takes_nothing_that_was_there_before_it  # the Linux install layout
+tests/test_install_review.py::test_a_failed_move_back_to_the_fixed_name_that_cant_be_undone_is_named  # the Linux install layout
+tests/test_install_review.py::test_a_failed_sandbox_change_puts_back_the_links_it_removed_or_moved  # the Linux install layout
+tests/test_install_review.py::test_a_failed_sandbox_change_removes_the_command_link_it_made  # the Linux install layout
+tests/test_install_review.py::test_a_file_left_beside_an_apps_files_that_cant_be_removed_is_logged_with_why  # the Linux install layout
 tests/test_install_review.py::test_a_file_of_the_users_at_the_command_links_place_stops_the_install_whatever_the_path  # the Linux install layout
 tests/test_install_review.py::test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_command_links  # the Linux install layout
 tests/test_install_review.py::test_a_menu_file_whose_write_fails_is_left_as_it_was  # the Linux install layout
@@ -20,6 +24,9 @@ tests/test_install_review.py::test_a_program_started_from_its_menu_entry_is_star
 tests/test_install_review.py::test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry  # the Linux install layout
 tests/test_install_review.py::test_a_refused_install_leaves_everything_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place  # the Linux install layout
+tests/test_install_review.py::test_a_sandbox_change_on_a_disk_that_stays_full_leaves_the_app_as_it_was  # the Linux install layout
+tests/test_install_review.py::test_a_sandbox_change_removes_what_one_stopped_part_way_left_beside_the_apps_files  # the Linux install layout
+tests/test_install_review.py::test_a_sandbox_change_that_cant_be_put_back_names_what_isnt_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_whose_menu_file_cant_be_written_leaves_the_app_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (R17.1)
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
@@ -30,6 +37,7 @@ tests/test_install_review.py::test_an_app_starts_from_its_menu_entry_whatever_ap
 tests/test_install_review.py::test_an_archive_with_nothing_but_helpers_has_no_program  # the Linux install layout
 tests/test_install_review.py::test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu  # the Linux install layout
 tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes  # the Linux install layout
+tests/test_install_review.py::test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_fails_part_way_leaves_the_previous_version_running_and_no_download  # the Linux install layout
 tests/test_install_review.py::test_an_update_that_shows_the_app_to_be_a_command_line_tool_takes_its_menu_entry_away  # the Linux install layout
 tests/test_install_review.py::test_appimage_with_forge_digest  # the Linux install layout
@@ -43,6 +51,7 @@ tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linu
 tests/test_install_review.py::test_the_install_notice_says_why_no_command_was_added_and_says_it_once  # could not import 'PySide6': No module named 'PySide6'
 tests/test_install_review.py::test_the_menu_entry_starts_the_app_through_its_script_whatever_the_install_folder_holds  # the Linux install layout
 tests/test_install_review.py::test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says  # the Linux install layout
+tests/test_install_review.py::test_the_sweep_removes_only_what_a_stopped_change_or_write_left_beside_an_apps_files  # the Linux install layout
 tests/test_install_review.py::test_the_versions_an_app_has_are_there_until_the_new_one_is_installed  # the Linux install layout
 tests/test_install_review.py::test_uninstalling_says_what_it_did_not_remove  # the Linux install layout
 tests/test_install_review.py::test_versions_kept_side_by_side  # the Linux install layout
