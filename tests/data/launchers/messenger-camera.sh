@@ -48,11 +48,27 @@ while [ -n "$rest" ]; do
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
     case "${p#*=}" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
-    case "$p" in
-      abstract=*) busabs=1; continue ;;
-      path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
-      [!=]*=*) continue ;;
-      *) busbare=1; continue ;;
+    case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
+    # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
+    # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it
+    # can't unescape is neither.
+    k=${p%%=*}
+    case "$k" in *%*)
+      n=$k; k=
+      while [ -n "$n" ]; do
+        case "$n" in
+          %[0-9A-Fa-f][0-9A-Fa-f]*) x=${n#%}; x=${x%"${x#??}"}; n=${n#%??}
+            case "$x" in 00) k=; break ;; 0[aA]) k="$k%" ;; *) k="$k$(printf "\\$(printf %o "$((0x$x))")")" ;; esac ;;
+          %*) k=; break ;;
+          *%*) k="$k${n%%"%"*}"; n=%${n#*%} ;;
+          *) k="$k$n"; n= ;;
+        esac
+      done ;;
+    esac
+    case "$k" in
+      abstract) busabs=1; continue ;;
+      path) p=${p#*=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
     esac
     f=
     while [ -n "$p" ]; do

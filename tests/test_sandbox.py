@@ -444,6 +444,10 @@ BUS_ADDRESSES = {
     # took `path=` and `abstract=` as an entry's first key alone (PR #694's review, P4-B1a)
     "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,path=/tmp/dbus-MZ8lHbtZ8K": "/tmp/dbus-MZ8lHbtZ8K",
     "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,abstract=/tmp/dbus-MZ8lHbtZ8K": None,
+    # a key's name escaped: no program writes it, and GIO, the proxy's, reads it unescaped, as it
+    # reads a value (PR #694's review, P6-1: the launcher matched the key as written, and started none)
+    "unix:pa%74h=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
+    "unix:abstr%61ct=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
 }
 
 
@@ -788,7 +792,10 @@ def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_w
     folder, beside = tmp_path / "tmp", str(tmp_path / "project")
     sock = str(folder / "dbus-MZ8lHbtZ8K")
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw", f"+{beside}": "rw"}})
-    for address in ("unix:path=" + sock.replace("/", "%2F"), f"unix:path={sock}%00zz", f"unix:path={tmp_path}/first,path={sock}"):
+    # ...and a key's name unescaped, as GIO reads it, where libdbus and sd-bus take it as written
+    # (PR #694's review, P6-1: `pa%74h=` named no file, and GIO connects to it)
+    for address in ("unix:path=" + sock.replace("/", "%2F"), f"unix:path={sock}%00zz", f"unix:path={tmp_path}/first,path={sock}",
+                    f"unix:pa%74h={sock}", f"unix:path={tmp_path}/first,%70ath={sock}"):
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
         assert sock in sb.bus_files()[0] and sb.bus_files()[1], address
         assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket" and sb.protected_folder(beside) == "", address
@@ -823,6 +830,8 @@ BUS_FORMS = {
     # path at an escaped NUL; the launcher read the first alone, and counted the NUL unreadable
     "a second path=": "unix:path={up}/elsewhere/none,path={tmp}/dbus-MZ8lHbtZ8K",
     "an escaped NUL": "unix:path={tmp}/dbus-MZ8lHbtZ8K%00zz",
+    # P6-1: GIO unescapes a key's name, so this is its `path=`; the launcher read the key as written
+    "an escaped key": "unix:pa%74h={tmp}/dbus-MZ8lHbtZ8K,guid=0123",
 }
 
 
@@ -842,7 +851,7 @@ def test_a_tool_run_where_the_session_bus_socket_is_is_not_shown_it(tmp_path, mo
     os.makedirs(run_in, exist_ok=True)
     proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), template="cli-tool", cwd=run_in)
     sock.close()
-    assert (proxy is not None) is (form in ("plain", "guid first", "a link to it")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
+    assert (proxy is not None) is (form in ("plain", "guid first", "a link to it", "an escaped key")) and r.returncode == 0, (r.stdout, r.stderr)   # the proxy takes those (R17.5)
     if where == "the socket's folder":
         assert run_in not in _binds(app) and app[app.index("--chdir") + 1] == str(tmp_path / "home"), app
         assert f"Demo runs sandboxed and can't see {run_in}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
@@ -920,6 +929,9 @@ BUS_READS = [
     "unix:path=relative/bus", "unix:path=./bus", "unix:path=", "unix:path=/nowhere/%zz", "unix:path=/nowhere/%2", "unix:path=/nowhere/a%",
     "unix:path=/nowhere/a%0Ab", "unix:path=/nowhere/a%0ab", "unix:path=/nowhere/a\nb",
     "unix:path", "unix:", "unix:abstract=/nowhere/x,guid=1", "unix:runtime=yes", "tcp:host=localhost,port=4000", ";;", "nonsense",
+    # a key's name unescaped, as GIO reads it (P6-1), once, exactly, and never into a newline
+    "unix:pa%74h=/nowhere/a/bus", "unix:path=/nowhere/a/first,%70ath=/nowhere/b/second", "unix:p%61th=relative/bus",
+    "unix:%70%61%74%68=/nowhere/a%20b", "unix:PA%54H=/nowhere/a/bus", "unix:p%2561th=/nowhere/a/bus", "unix:pa%0ath=/nowhere/a/bus",
 ]
 
 
@@ -968,6 +980,12 @@ BUS_KEY_ORDERS = {
     "unix:path=/nowhere/a/bus,guid=%zz": "",
     "unix:path=/nowhere/a/bus,guid=%00": "",
     "unix:abstract=/tmp/dbus-x%2,guid=0123": "",
+    # a key's name as GIO reads it, unescaped (P6-1), and matched exactly: `PA%54H` is not `path`
+    "unix:pa%74h=/nowhere/a/bus,guid=0123": "file /nowhere/a/bus",
+    "unix:abstr%61ct=/tmp/dbus-x,guid=0123": "abstract",
+    "unix:path=/nowhere/a/first,pa%74h=/nowhere/b/second": "",
+    "unix:path=/nowhere/a/bus,%61bstract=/tmp/dbus-x": "",
+    "unix:PA%54H=/nowhere/a/bus,guid=0123": "",
 }
 
 
@@ -1011,7 +1029,10 @@ def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatc
 BUS_KEY_SHAPES = ["path=/nowhere/a/bus", "path=/nowhere/b/bus", "path=relative/bus", "path=/nowhere/a%20b", "path=",
                   "abstract=/tmp/dbus-x", "abstract=/tmp/dbus-a%20b", "guid=0123", "guid=", "foo=1", "tmpdir=/tmp",
                   "guid", "", "=0123", "guid=%zz", "guid=%2", "guid=%00", "foo=%", "guid=%41", "abstract=/tmp/dbus-%zz",
-                  "abstract=/tmp/dbus-a%00b"]
+                  "abstract=/tmp/dbus-a%00b",
+                  # a key's name escaped (P6-1): GIO unescapes it once and matches it exactly
+                  "pa%74h=/nowhere/b/bus", "abstr%61ct=/tmp/dbus-y", "PA%54H=/nowhere/a/bus", "p%2561th=/nowhere/a/bus",
+                  "pa%0ath=/nowhere/a/bus"]
 
 _GIO_TAKES = """import json, sys
 from gi.repository import Gio, GLib
@@ -1041,6 +1062,85 @@ def test_the_proxy_is_shown_a_bus_only_where_its_own_gdbus_takes_the_address():
     r = subprocess.run(["python3", "-I", "-c", _GIO_TAKES, *to_proxy], capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == {}, r.stdout
+
+
+# PR #694's review, P6-1: GDBus unescapes an address's key names as well as its values, so
+# `unix:pa%74h=<socket>` is `path=` to GIO -- to every GLib and GTK program of that session, and to
+# the proxy -- while libdbus and sd-bus take a key as written and refuse it. The launcher and
+# bus_files() matched `path=` and `abstract=` as written, so neither saw that socket: a granted
+# folder, or a tool's working folder, showed the app the unfiltered bus, and `abstr%61ct=` went
+# without the warning. How it slipped past: P5-1's harness asked GIO only whether it refuses an
+# address the proxy is shown, never which socket it then reaches, and no key shape had an escape in
+# its name. This holds every reader to the socket GIO's own connect reaches, with a live socket at
+# every file and abstract name the key shapes name: for each shape alone and each pair in both
+# orders, a file it reaches is one bus_files() and the launcher's $bussocks name (or they count the
+# address unreadable, which shows no folder at all), an abstract socket it reaches is warned of
+# (bus_warning(), $busabs), and the bus the launcher shows the proxy is the one GIO reaches.
+_GIO_REACHES = r"""import json, socket, sys
+from gi.repository import Gio, GLib
+job = json.load(sys.stdin)
+ears = {}
+for at in job["files"] + ["\0" + n for n in job["names"]]:
+    ears[at] = socket.socket(socket.AF_UNIX)
+    ears[at].bind(at)
+    ears[at].listen(8)
+    ears[at].setblocking(False)
+def took(ear):
+    try:
+        ear.accept()[0].close()
+        return True
+    except BlockingIOError:
+        return False
+reached = {}
+for a in job["addresses"]:
+    try:
+        Gio.dbus_address_get_stream_sync(a, None)[0].close(None)
+    except GLib.Error:
+        pass
+    reached[a] = [at.replace("\0", "@", 1) for at, ear in ears.items() if took(ear)]
+print(json.dumps(reached))
+"""
+
+
+def test_every_reader_of_the_bus_address_names_the_socket_gio_reaches(tmp_path, monkeypatch):
+    if subprocess.run(["python3", "-c", "from gi.repository import Gio"], capture_output=True).returncode:
+        pytest.skip("needs python3-gi")
+    monkeypatch.setattr(sb, "OS", "linux")
+    root, name = os.path.join(os.path.realpath(tmp_path), "s"), f"appkata-{os.getpid()}-{os.urandom(4).hex()}"   # $bussocks is `pwd -P`'s
+    os.makedirs(f"{root}/a")
+    os.makedirs(f"{root}/b")
+    live = lambda shape: shape.replace("/nowhere/", f"{root}/").replace("/tmp/dbus-", f"{name}-")   # noqa: E731
+    files = [f"{root}/a/bus", f"{root}/b/bus", f"{root}/a b"]
+    names = [f"{name}-x", f"{name}-y", f"{name}-a b"]
+    addresses = sorted({"unix:" + ",".join(map(live, keys)) for n in (1, 2) for keys in itertools.product(BUS_KEY_SHAPES, repeat=n)})
+    job = json.dumps({"files": files, "names": names, "addresses": addresses})
+    r = subprocess.run(["python3", "-I", "-c", _GIO_REACHES], input=job, capture_output=True, text=True, timeout=300, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    reached = json.loads(r.stdout)
+    script = ('set -u\nrt=/nowhere-rt\nfor DBUS_SESSION_BUS_ADDRESS in "$@"; do (\n' + sb._BUS_BLOCK +
+              'printf "%s" "$bussocks" | tr "\\n" "\\t"; echo "|$busok|${busabs:-0}|${busat:--}|$busfile"\n); done\n')
+    r = subprocess.run(["sh", "-c", script, "sh", *addresses], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0 and r.stderr == "" and len(r.stdout.splitlines()) == len(addresses), r.stderr
+    wrong = {}
+    for a, line in zip(addresses, r.stdout.splitlines()):
+        socks, busok, busabs, busat, busfile = line.split("|")
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", a)
+        want, readable = sb.bus_files()
+        got, warns = reached[a], bool(sb.bus_warning())
+        said = []
+        for at in got:
+            if at.startswith("@"):
+                said += [] if warns and busabs == "1" else ["an abstract socket it isn't warned of"]
+            else:
+                said += [] if not readable or at in want else ["a file bus_files() doesn't name"]
+                said += [] if busok == "0" or at in socks.split("\t") else ["a file $bussocks doesn't name"]
+        if busat == "file" and got != [busfile]:
+            said.append(f"the proxy shown {busfile}, and GIO reaches {got}")
+        if busat == "abstract" and not (len(got) == 1 and got[0].startswith("@")):
+            said.append(f"the proxy shown an abstract socket, and GIO reaches {got}")
+        if said:
+            wrong[a] = f"GIO reaches {got or 'nothing'}: {'; '.join(said)}"
+    assert not wrong, f"{len(wrong)} of {len(addresses)}:\n" + "\n".join(f"{a}  {w}" for a, w in wrong.items()).replace(root, "S").replace(name, "N")
 
 
 # PR #694's review, P5-B1: the cover matched a socket file only *under* a granted path, so a grant of
@@ -2160,6 +2260,8 @@ def test_the_display_leak_warning_clears_only_gnome_wayland(monkeypatch, tmp_pat
     ("unix:path=/tmp/dbus-AbCdEf,guid=0123", False),                      # the same on dbus 1.14 and later
     ("unix:path=/run/user/1000/bus;unix:abstract=/tmp/dbus-x", True),     # any address of a list counts
     ("unix:guid=0123,abstract=/tmp/dbus-AbCdEf", True),                   # in any place among its keys (PR #694's review, P4-B1b)
+    ("unix:abstr%61ct=/tmp/dbus-AbCdEf,guid=0123", True),                 # its name unescaped, as GIO reads it (P6-1)
+    ("unix:ABSTR%41CT=/tmp/dbus-AbCdEf", False),                          # ...and matched exactly: GIO connects to none
     (" unix:abstract=/tmp/dbus-AbCdEf", False),                           # ...and as the clients read an entry: none takes this one
     ("", False),
 ])

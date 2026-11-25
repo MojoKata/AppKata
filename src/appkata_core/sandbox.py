@@ -552,21 +552,37 @@ def _bus_keys(address: str):
     AppKata reads an address, as libdbus, GIO and sd-bus do and as the launcher's shell does
     (_BUS_BLOCK). A list's entries are split at `;`, an entry's keys at `,`, and a key counts in
     any place among them (PR #694's review, P4-B1b: bus_warning() took `abstract=` as an entry's
-    first key alone, so `unix:guid=…,abstract=…`, which the clients connect to, went unwarned)."""
+    first key alone, so `unix:guid=…,abstract=…`, which the clients connect to, went unwarned). A
+    key is named as GDBus names it, unescaped (_bus_key)."""
     for entry in address.split(";"):
         transport, _, keys = entry.partition(":")
         if transport == "unix":
             for key, eq, value in (kv.partition("=") for kv in keys.split(",")):
                 if eq:
-                    yield key, value
+                    yield _bus_key(key), value
+
+
+def _bus_key(key: str) -> str:
+    """An address's key as GDBus reads it, each %XX unescaped once, and as written where it can't
+    unescape one (a `%` not followed by two hex digits, or `%00`: it refuses the entry). GDBus, GIO's
+    and so the proxy's and every GTK program's, unescapes a key's name as it unescapes a value, while
+    libdbus and sd-bus take it as written: `unix:pa%74h=<socket>` is `path=` to GIO and to no other
+    client, and a raw `path=` is `path=` to all three, so the files the unescaped keys name are every
+    file a client connects to (PR #694's review, P6-1: matched as written, that socket was in no
+    reader's list, and a granted folder showed it). The match after is exact: `PA%54H` isn't `path`."""
+    raw = os.fsencode(key)
+    if b"%" not in raw or not re.fullmatch(rb"(?:[^%]|%[0-9A-Fa-f]{2})*", raw):
+        return key
+    name = re.sub(rb"%([0-9A-Fa-f]{2})", lambda m: bytes([int(m.group(1), 16)]), raw)
+    return key if b"\0" in name else os.fsdecode(name)
 
 
 def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     """The socket files the session bus `address` names (AppKata's own DBUS_SESSION_BUS_ADDRESS when
     None), and whether it names none AppKata can't read: the rule the launcher's shell reads an
     address by too (_BUS_BLOCK). Each `unix:` entry of a list and every `path=` key in it (GIO takes
-    the last of two, libdbus the first), each %XX unescaped as the byte it is (a byte that isn't
-    UTF-8 kept as the file system keeps it: PR #694's review, P2-1) before the path is judged, and a
+    the last of two, libdbus the first; the key's name unescaped, as GIO reads it, _bus_key), each
+    %XX unescaped as the byte it is (a byte that isn't UTF-8 kept as the file system keeps it: PR #694's review, P2-1) before the path is judged, and a
     path ending at an escaped NUL, where the clients that take one end it (libdbus, sd-bus; GIO
     refuses the address). PR #694's review, P3-2: the leading `/` was looked for before the
     unescaping, so `%2F` there dropped the file; P3-B5: a NUL was kept, and every folder check
@@ -2044,8 +2060,10 @@ set -- -- "$appdir/$exe" "$@"
 # socket file the address names, by bus_files()'s rule (PR #694's review, P2-1: the launcher read a
 # plain `unix:path=` alone, so a list, `guid=` first or an escaped byte left the file shown): each
 # `unix:` entry of a list, every `path=` among its keys (P3-B4: the first alone, and GIO takes the
-# last of two), %XX unescaped as a byte, a path ending at an escaped NUL as libdbus and sd-bus end it
-# (P3-B4: it counted as unreadable, and the cover never asked); each as `pwd -P` names folders, the
+# last of two), a key's name unescaped first, as GDBus reads it, and matched exactly (_bus_key; P6-1:
+# matched as written, `pa%74h=`, which is GIO's `path=`, named no file, and a granted folder or a
+# tool's working folder showed its socket), %XX unescaped as a byte, a path ending at an escaped NUL
+# as libdbus and sd-bus end it (P3-B4: it counted as unreadable, and the cover never asked); each as `pwd -P` names folders, the
 # way the working directory is compared, and a link as its target too; one a line. $busok is 0
 # where an entry names a file the launcher can't read (a path that isn't absolute, a broken escape,
 # a newline): no working directory and no granted folder is shown then. An abstract socket has no file;
@@ -2080,11 +2098,27 @@ while [ -n "$rest" ]; do
   while [ -n "$keys" ]; do
     p=${keys%%,*}; keys=${keys#*,}
     case "${p#*=}" in *%00*|*%|*%?|*%[!0-9A-Fa-f]*|*%?[!0-9A-Fa-f]*) busesc=1 ;; esac
-    case "$p" in
-      abstract=*) busabs=1; continue ;;
-      path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
-      [!=]*=*) continue ;;
-      *) busbare=1; continue ;;
+    case "$p" in [!=]*=*) ;; *) busbare=1; continue ;; esac
+    # The key's name as GDBus reads it, each %XX unescaped once, then matched exactly. An escaped
+    # newline, which `$(...)` would drop, stands as a `%`, which neither name holds; a name it
+    # can't unescape is neither.
+    k=${p%%=*}
+    case "$k" in *%*)
+      n=$k; k=
+      while [ -n "$n" ]; do
+        case "$n" in
+          %[0-9A-Fa-f][0-9A-Fa-f]*) x=${n#%}; x=${x%"${x#??}"}; n=${n#%??}
+            case "$x" in 00) k=; break ;; 0[aA]) k="$k%" ;; *) k="$k$(printf "\\\\$(printf %o "$((0x$x))")")" ;; esac ;;
+          %*) k=; break ;;
+          *%*) k="$k${n%%"%"*}"; n=%${n#*%} ;;
+          *) k="$k$n"; n= ;;
+        esac
+      done ;;
+    esac
+    case "$k" in
+      abstract) busabs=1; continue ;;
+      path) p=${p#*=}; paths=$((paths+1)); busfile=$p ;;
+      *) continue ;;
     esac
     f=
     while [ -n "$p" ]; do

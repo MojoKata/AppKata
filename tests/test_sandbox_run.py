@@ -1153,7 +1153,7 @@ def test_a_glib_app_asks_the_portal_about_the_network_only_with_the_grant_and_wo
 # ---------------------------------------------------------------- the session's bus, wherever it listens (R17.5, CR1.5-18)
 
 @needs_proxy
-@pytest.mark.parametrize("session", ["no-address", "dbus-run-session", "guid-first"])
+@pytest.mark.parametrize("session", ["no-address", "dbus-run-session", "guid-first", "an-escaped-key"])
 def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
     # CR1.5-18: the proxy's own bwrap bound /usr, /etc and the runtime folder, so the proxy reached
     # a bus only there. A `dbus-run-session` bus is a socket under /tmp since dbus 1.14: the proxy
@@ -1165,10 +1165,14 @@ def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
     # dbus-run-session, whose address also carries the `,guid=…` every such address does; and that
     # address with `guid=` first, which libdbus and GIO read as well, and where the launcher started
     # no proxy, since it took the path or the abstract name as the first key alone (PR #694's
-    # review, P4-B1a; at the merge base the proxy was given the address whole).
+    # review, P4-B1a; at the merge base the proxy was given the address whole). And that address with
+    # its key's name escaped, which GIO, the proxy's, reads unescaped, and the launcher read as
+    # written, so it started no proxy, and showed a granted folder the socket (P6-1).
     session_bus = _Bus(env) if session == "no-address" else _RunSession(env)
     transport, _, keys = session_bus.addr.partition(":")
     addr = transport + ":" + ",".join(sorted(keys.split(","), key=lambda k: not k.startswith("guid="))) if session == "guid-first" else session_bus.addr
+    if session == "an-escaped-key":
+        addr = addr.replace("unix:path=", "unix:pa%74h=", 1).replace("unix:abstract=", "unix:abstr%61ct=", 1)
     said = {} if session == "no-address" else {"DBUS_SESSION_BUS_ADDRESS": addr}
     calls = (_OWN.format("io.appkata.web") + "; " + _CALL.format("NetworkMonitor.GetAvailable") + "; " +
              _CALL.format('FileChooser.OpenFile "" Pick "{}"') + "; true")
@@ -1177,6 +1181,7 @@ def test_standard_apps_reach_the_session_bus_wherever_it_listens(env, session):
         if session != "no-address":             # neither in the runtime folder nor named plainly
             assert str(env.rt) not in addr and "guid=" in addr, addr
             assert addr.startswith("unix:guid=") is (session == "guid-first"), addr
+            assert ("%" in addr) is (session == "an-escaped-key"), addr
         portal = _DesktopPortal(env, session_bus)
         try:
             r = env.run(env.app("web", sb.resolve_template("online-app")), calls, env=said)
@@ -1201,7 +1206,9 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
     # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
     # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
     # And a grant of the socket file itself, or of a link to it, which the cover matched no part of
-    # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it.
+    # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it. And an
+    # address with its key's name escaped, `pa%74h=`, which is GIO's `path=` and which the launcher
+    # read as written, so it covered nothing and shared the tool's folder (P6-1).
     folder = env.home.parent / "shared"
     folder.mkdir()
     bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
@@ -1219,12 +1226,18 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
         files = env.app("files", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{sock}": "rw", f"+{link}": "ro"}}))
         assert "Refused folder grant" not in open(files).read()
         r3 = env.run(files, probe(sock) + probe(link, "-LINK") + "echo DONE", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        escaped = {"DBUS_SESSION_BUS_ADDRESS": bus.addr.replace("unix:path=", "unix:pa%74h=", 1)}
+        r4 = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe(sock) + "echo DONE", cwd=str(folder), env=escaped)
+        r5 = env.run(viewer, probe(sock) + f"echo DONE; ls {folder} >/dev/null && echo LISTED", env=escaped)
     finally:
         bus.close()
     assert r.returncode == 0 and r.stdout.split() == ["DONE"], (r.stdout, r.stderr)
     assert f"can't see {folder}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
     assert r2.returncode == 0 and r2.stdout.split() == ["DONE", "LISTED"], (r2.stdout, r2.stderr)      # the folder is the app's, but not the bus
     assert r3.returncode == 0 and r3.stdout.split() == ["DONE"], (r3.stdout, r3.stderr)
+    assert "%74" in escaped["DBUS_SESSION_BUS_ADDRESS"], escaped
+    assert r4.returncode == 0 and r4.stdout.split() == ["DONE"] and f"can't see {folder}" in r4.stderr, (r4.stdout, r4.stderr)
+    assert r5.returncode == 0 and r5.stdout.split() == ["DONE", "LISTED"], (r5.stdout, r5.stderr)
 
 
 @needs_proxy
