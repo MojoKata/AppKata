@@ -880,6 +880,54 @@ def test_behind_a_proxy_a_local_address_in_another_script_is_still_refused(pair,
     assert a.seen == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
 
 
+# The review's pass 10, P10-1: the proxy's rule (_bypassed) asks of a host with its name in its
+# script too, each `xn--` part read back by Python's idna codec (_in_its_script), and a name with a
+# part the codec can't read back is kept as it is sent: a catch of the codec's UnicodeError, which no
+# test held. Such a name is asked for, since the codec makes an ASCII name's IDNA form without
+# reading its `xn--` parts (_http_address). Without the catch, behind a proxy, an image on
+# xn--zz.example.org, whose name this computer can't look up, raised a UnicodeDecodeError out of
+# Http's check (_allowed), which no SourceError handler passes over: that app's sync ended on its
+# row as an unexpected error, and the next image wasn't tried (R3.1.1). And a request whose name was
+# looked up here, or a redirect's, was refused as one that can't be sent. How it slipped past: every
+# `xn--` name in the tests was one the codec reads back. The class is "a name the codec takes one
+# way and not the other", so these are names with an `xn--` part the codec can't read back, at each
+# place the proxy's rule is asked: Http's check, a redirect's check and its opener, over http and
+# https.
+@pytest.mark.parametrize("host, script", [
+    ("xn--bung-zra.lan:3000", "übung.lan:3000"),          # each `xn--` part read back, and the port as it is
+    ("xn--31bq9g.example", "गिट.example"),
+    ("git.example:8443", "git.example:8443"),             # no such part
+    ("[::1]:8080", "[::1]:8080"),                         # an IPv6 address
+    ("xn--zz.example.org", "xn--zz.example.org"),         # a part the codec can't read back: as it is sent
+    ("xn--a.example.org:8443", "xn--a.example.org:8443"),
+])
+def test_a_host_part_in_its_script_has_each_idna_part_read_back_or_is_as_it_is_sent(host, script):
+    assert http_._in_its_script(host) == script
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("name", ["xn--zz.example.org", "xn--a.example.org"])
+@pytest.mark.parametrize("asked", [
+    "by-a-name-not-looked-up-here",        # Http's check asks the proxy's rule, outside the request's own errors
+    "by-a-redirect",                       # a redirect's check asks it
+    "by-a-name-looked-up-here",            # the check doesn't need it, and the opener asks it alone
+])
+def test_behind_a_proxy_a_name_whose_idna_part_the_codec_cant_read_back_is_asked_for_through_it(pair, monkeypatch, tmp_path, asked, scheme, name):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https", no_proxy="localhost")     # B, a Source's host, is asked directly
+    looked_up = names if asked == "by-a-name-looked-up-here" else knows_only
+    http = looked_up(Http(timeout=5), {"localhost": ["127.0.0.1"]})
+    url = f"{scheme}://{name}/shot.png"
+    if asked == "by-a-redirect":
+        b.redirects["/o/r/shot"] = url
+        assert http.bytes(f"https://{b.at}/o/r/shot") == PNG        # a Source's request, redirected there
+    else:
+        assert sync._save_image(http, url, str(tmp_path / "shot"), token_host="git.example.org").endswith("shot.png")
+    assert [p for p, _ in a.seen] == ([f"CONNECT {name}:443", "/shot.png"] if scheme == "https" else [url])
+    assert http._proxied(http_._http_address(url))                  # and Http's rule says it went through the proxy
+
+
 # The review's pass 3, P3-1: the check reads the host after an address's `@`, and urllib sends all
 # that comes before the path, the user part too and decoded, as the host: a proxy is sent
 # `10.0.0.5/@images.example.com` in the Host header and a tunnel's CONNECT, and one that reads a
