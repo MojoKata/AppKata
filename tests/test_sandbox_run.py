@@ -420,7 +420,56 @@ _DIRECT_NAMES = {"notifications": ("org.freedesktop.Notifications", "/org/freede
                  "tray": ("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "StatusNotifierHostRegistered")}
 
 
-def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap):
+# A connection that owns a name and broadcasts on an interface and an object of its own beside the
+# name's: what a proxy with a --call rule on the name lets through of its broadcasts.
+_BROADCASTER = """
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+Gio.bus_own_name_on_connection(bus, "org.appkata.Leak", Gio.BusNameOwnerFlags.NONE, None, None)
+def tick():
+    bus.emit_signal(None, "/org/appkata/Other", "org.appkata.Other", "Said", None)
+    return True
+GLib.timeout_add(100, tick)
+GLib.MainLoop().run()
+"""
+_LISTENER = """
+import sys
+from gi.repository import Gio, GLib
+conn = Gio.DBusConnection.new_for_address_sync(sys.argv[1], Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+heard = set()
+conn.signal_subscribe(None, None, None, None, None, Gio.DBusSignalFlags.NONE, lambda c, s, p, i, m, a: heard.add(f"{i}.{m}"))
+loop = GLib.MainLoop()
+GLib.timeout_add(1500, loop.quit)
+loop.run()
+print(*sorted(heard))
+"""
+
+
+def _the_proxy_keeps_broadcasts_to_their_rules(env, bus, tmp_path) -> bool:
+    """Whether this xdg-dbus-proxy lets through only the broadcasts its rules name. 0.1.6 and 0.1.7
+    let every broadcast of a name's owner through once any --call or --broadcast rule names the
+    name (upstream's 0.1.8 fixed it: CVE-2026-93676, GHSA-r7hp-698j-2h6c); 0.1.5 never did, and
+    Debian's 0.1.6-1+deb13u2 carries the fix while still saying 0.1.6, so it is asked of the proxy."""
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    sock = str(tmp_path / "leak-proxy")
+    sender = subprocess.Popen(["python3", "-c", _BROADCASTER], env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proxy = subprocess.Popen(["xdg-dbus-proxy", bus.addr, sock, "--filter", "--call=org.appkata.Leak=org.appkata.Leak.*@/org/appkata/Leak"],
+                             env=on_bus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            owned = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method",
+                                    "org.freedesktop.DBus.NameHasOwner", "org.appkata.Leak"], env=on_bus, capture_output=True, text=True).stdout
+            if os.path.exists(sock) and "true" in owned:
+                break
+            time.sleep(0.1)
+        heard = subprocess.run(["python3", "-c", _LISTENER, f"unix:path={sock}"], env=on_bus, capture_output=True, text=True, timeout=30).stdout
+    finally:
+        proxy.terminate()
+        sender.terminate()
+    return "org.appkata.Other.Said" not in heard
+
+
+def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap, keeps=True):
     """CR1.5-3: `--talk=NAME` is no grant of one service. xdg-dbus-proxy gives it to the connection
     that owns NAME -- every object and interface it serves, by its unique name too -- and on
     Cinnamon the desktop's own shell owns org.freedesktop.Notifications: a `standard` app's
@@ -462,7 +511,10 @@ def _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bu
     # the Properties calls a tray library makes (Qt: IsStatusNotifierHostRegistered) pass; the other services have none
     assert ("PROPERTY ANSWERED" if cap == "tray" else "PROPERTY REFUSED org.freedesktop.DBus.Error.AccessDenied") in out, r.stdout
     hears = [l for l in out if l.startswith("HEARD")]
-    assert hears == [f"HEARD {name}.{signal}" if heard != [False] else "HEARD"], r.stdout     # the service's own signal, and not the shell's
+    if keeps:                       # the service's own signal, and not the shell's
+        assert hears == [f"HEARD {name}.{signal}" if heard != [False] else "HEARD"], r.stdout
+    else:                           # a proxy without the fix lets all the owner broadcasts through (R17.17), and only that
+        assert len(hears) == 1 and set(hears[0].split()[1:]) == {f"{name}.{signal}", "org.appkata.Shell.Said"}, r.stdout
     out2 = r2.stdout.splitlines()                                                       # and without the capability, not even the service
     assert not [l for l in out2 if "ANSWERED" in l] and "OWNER HIDDEN org.freedesktop.DBus.Error.NameHasNoOwner" in out2, (r2.stdout, r2.stderr)
     assert "HEARD" in out2, r2.stdout
@@ -476,9 +528,13 @@ def test_standard_apps_reach_the_filtered_bus_when_there_is_one(env, tmp_path):
                     'echo "A=$DBUS_SESSION_BUS_ADDRESS"; [ -S "$XDG_RUNTIME_DIR/bus" ] && echo BUS',
                     env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
         assert "BUS" in r.stdout and f"A=unix:path={env.rt}/bus" in r.stdout, (r.stdout, r.stderr)
-        # and what they reach on it by a capability's direct name is that service alone (CR1.5-3)
+        # and what they reach on it by a capability's direct name is that service alone (CR1.5-3); what
+        # they hear of its owner's broadcasts, that service's signal alone where the proxy has the fix
+        # for GHSA-r7hp-698j-2h6c, and everything the owner broadcasts where it hasn't (Ubuntu 26.04's
+        # 0.1.7, an LMDE 7 not yet updated: the VMs found it, R17.17)
+        keeps = _the_proxy_keeps_broadcasts_to_their_rules(env, bus, tmp_path)
         for cap in _DIRECT_NAMES:
-            _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap)
+            _a_direct_name_reaches_its_service_and_nothing_else_its_owner_serves(env, bus, tmp_path, cap, keeps)
     finally:
         bus.close()
 
