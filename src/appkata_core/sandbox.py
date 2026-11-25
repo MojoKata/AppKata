@@ -2246,14 +2246,17 @@ esac
 # {visible}: the granted folders (and, for a CLI tool, the directory it runs in), where a file is
 # already in view and keeps its real path; the granted folders only where the launcher shows them,
 # which it doesn't where the session bus's address names a file it can't read ($busok 0, the cover
-# below; PR #694's review, P3-B4), so a file there is handed over instead.
-_FORWARD_BLOCK = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
+# below; PR #694's review, P3-B4), so a file there is handed over instead. build_launcher puts the
+# line that decides that ($folders) between the note and the lines that run; _FORWARD_BLOCK is the
+# two without it, as tests/test_sandbox_adversarial.py runs them, its folders named outright.
+_FORWARD_NOTE = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
-{shown}if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
+"""
+_FORWARD_RUN = """if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
   if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then
     n=0
     while IFS= read -r w; do
@@ -2274,6 +2277,7 @@ EOF
   fi
 fi
 """
+_FORWARD_BLOCK = _FORWARD_NOTE + _FORWARD_RUN
 
 # Lazy, sandboxed AppImage extraction (R17.7): run the publisher's own runtime inside a Strict bwrap
 # that can write only a staging dir. Redone when $appdir (the derived cache) is missing or was made from
@@ -2572,7 +2576,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
-        fwd = _FORWARD_BLOCK.format(helper=q(forward), incwd=incwd, visible=" ".join(visible), shown=shown)
+        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731
