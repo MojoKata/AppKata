@@ -709,6 +709,66 @@ def test_a_sandbox_change_that_cant_be_written_says_so_and_leaves_the_app_as_it_
     assert len(toasts) == 1 and not os.path.exists(rec["launcher"]) and not be.sandboxInfo(URL)["active"]
 
 
+# What App Detail and the Sandbox dialog say of an app's sandbox (sandboxInfo's own words for it)
+_SHOWN = ("source", "template", "level", "grants", "chips", "network", "customized", "active", "launcherHash", "reviewBadge",
+          "isCli")
+
+
+@pytest.mark.parametrize("how", ["the Sandbox dialog, Strict", "the Sandbox dialog, Off", "Install options, Strict",
+                                 "a corrected kind"])
+def test_a_sandbox_change_that_cant_be_written_takes_its_choice_back_with_it(be, tmp_path, monkeypatch, how):
+    # #689's review, P5-3: a Save whose change was taken back (the menu entry's write failing on a
+    # full disk) kept the choice saved. App Detail and the Sandbox dialog showed it as in force,
+    # Strict and no network, while the app ran with the network; the Audit's "set the sandbox of"
+    # row named the old launcher's hash as written for Strict; and a failed Off stayed sandboxed
+    # under "Off", which AppKata's start never rewrites. The choice goes back with the change, and a
+    # failed change has no Audit entry (R13.3).
+    from appkata_core import install
+    if how == "a corrected kind":           # the kind the user says the app is, as the dialog saves it (R17.3.3):
+        monkeypatch.setattr(be, "_is_cli", lambda url, eff=None: be._install_settings(url).get("cliKind") == "cli")
+    else:                                   # with no review, the default for that kind applies
+        _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    shown, settings = {k: be.sandboxInfo(URL)[k] for k in _SHOWN}, be._install_settings(URL)
+    audited = [(r["action"], r["subject"]) for r in be.db.all("SELECT action, subject FROM audit")]
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full_once(path, data, mode):
+        if path.endswith(".desktop") and not failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+    monkeypatch.setattr(install, "_write_whole", full_once)
+    monkeypatch.setattr(be, "_install", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no install expected")))
+    strict = {"template": "strict", "overrides": {}}
+
+    def save():
+        if how == "the Sandbox dialog, Strict":
+            be.setSandbox(URL, strict)
+        elif how == "the Sandbox dialog, Off":
+            be.setSandbox(URL, {"template": "off"})
+        elif how == "Install options, Strict":
+            be.installWith(URL, {"kind": "tarball", "appMenu": True, "install": False, "sandbox": strict})
+        else:
+            be.installWith(URL, {"kind": "tarball", "appMenu": True, "install": False, "cliKind": "cli"})
+    save()
+    assert failed and toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: [Errno 28] No space left on device")]
+    assert json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"]) == rec      # it runs as it did
+    assert {k: be.sandboxInfo(URL)[k] for k in _SHOWN} == shown                 # and is shown as it runs
+    assert {k: v for k, v in be._install_settings(URL).items() if k in be._SANDBOX_KEYS + ("cliKind",)} == \
+           {k: v for k, v in settings.items() if k in be._SANDBOX_KEYS + ("cliKind",)}
+    assert [r["action"] for r in be.db.all("SELECT action FROM audit")][len(audited):] in ([], ["chose how to install"])                            # no sandbox change to audit
+    save()                                                                      # saved again, with room on the disk
+    assert len(toasts) == 1 and be.sandboxInfo(URL)["template"] == {"the Sandbox dialog, Off": "off", "a corrected kind": "cli-tool"}.get(how, "strict")
+    assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
+
+
 def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be, tmp_path, monkeypatch):
     # #689's review, C-1 (its checker's note on P4-1): _regenerate_launcher caught InstallError and
     # OSError alone. Any other error (P4-1's UnicodeEncodeError was one) left the Sandbox dialog's
@@ -750,10 +810,12 @@ def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be,
     be._heal_launchers()                                                    # AppKata's start goes on past Demo
     with open(launchers[other], "rb") as f:
         assert f.read() != b"#!/bin/sh\n# hand-edited\n"
+    audited = be.db.one("SELECT COUNT(*) AS n FROM audit")["n"]
     be.setSandbox(URL, {"template": "strict", "overrides": {}})
     assert toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: a stand-in for an error AppKata doesn't expect")]
-    row = be.db.one("SELECT action, subject FROM audit ORDER BY id DESC LIMIT 1")
-    assert (row["action"], row["subject"]) == ("set the sandbox of", "Demo") and reloads == [1]
+    # the window is refreshed, and the choice goes back with the change, which isn't audited (P5-3)
+    assert reloads == [1] and be.sandboxInfo(URL)["template"] == "online-app"
+    assert be.db.one("SELECT COUNT(*) AS n FROM audit")["n"] == audited
 
 
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):

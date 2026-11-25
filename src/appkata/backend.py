@@ -844,6 +844,7 @@ class Backend(QObject):
             return
         kind_was = self._is_cli(url)
         before_options = self._resolved_sandbox(url)          # what the Audit compares a sandbox change with (R17.16)
+        settings_before = self._install_settings(url)         # what goes back if it can't be applied (P5-3)
         saved = {k: c[k] for k in self._PORTABLE_KEYS if k in c and not (k == "cliKind" and c[k] not in ("cli", "gui"))}
         if c.get("sandbox") is not None and sandbox.config_error(c["sandbox"]):
             self._toast.emit("error", f"That sandbox choice can't be applied: {sandbox.config_error(c['sandbox'])}.")
@@ -869,18 +870,18 @@ class Backend(QObject):
             before = self._resolved_sandbox(url)
             self._pin_sandbox(url, None)
             self._pin_sandbox(url, self._resolved_sandbox(url))
-            self._apply_sandbox(url)
-            r = self._resolved_sandbox(url)
-            self._audit("you", "app", "set the sandbox of", a["name"], url,
-                        self._sandbox_detail(url, before, r, kind="command-line tool" if self._is_cli(url) else "app"))
+            if self._apply_sandbox(url, settings_before, self._SANDBOX_KEYS + ("cliKind",)):     # else both went back (P5-3)
+                r = self._resolved_sandbox(url)
+                self._audit("you", "app", "set the sandbox of", a["name"], url,
+                            self._sandbox_detail(url, before, r, kind="command-line tool" if self._is_cli(url) else "app"))
             self.reload()
         elif c.get("sandbox") is not None and a and a.get("installed") and not a.get("foreign"):
             # Install options... on an installed app: the sandbox choice applies now, as the Sandbox
             # dialog's does, and is audited like it (R17.16). Round four, R4-3: it was saved and shown
             # in App Detail as in force while the launcher kept the old grants until the next update.
-            self._apply_sandbox(url)
-            r = self._resolved_sandbox(url)
-            self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
+            if self._apply_sandbox(url, settings_before):       # else the choice went back with it (P5-3)
+                r = self._resolved_sandbox(url)
+                self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
             self.reload()
 
     # ---------------------------------------------------------------- package channels (R16)
@@ -2253,6 +2254,7 @@ class Backend(QObject):
             cfg = {"template": cfg["template"], "overrides": sandbox.as_overrides(cfg["template"], cfg["custom"])}
         row = self.db.one("SELECT install FROM app_settings WHERE url=?", (url,))
         saved = json.loads(row["install"] or "{}") if row and row["install"] else {}
+        settings_before = json.loads(json.dumps(saved))         # what goes back if it can't be applied (P5-3)
         before = self._resolved_sandbox(url)
         if cfg is None:             # back to the reviewers' suggestion / the default: adopt it now (R17.11)
             saved.pop("sandbox", None)
@@ -2264,8 +2266,9 @@ class Backend(QObject):
         r = self._resolved_sandbox(url)
         if cfg is None and a and a.get("installed"):
             self._pin_sandbox(url, r)
-        if a and a.get("installed") and not a.get("foreign"):
-            self._apply_sandbox(url)
+        if a and a.get("installed") and not a.get("foreign") and not self._apply_sandbox(url, settings_before):
+            self.reload()           # the choice went back with the change, and a failed change isn't audited (R13.3)
+            return
         self._audit("you", "app", "set the sandbox of", a["name"] if a else url, url, self._sandbox_detail(url, before, r))
         self.reload()
 
@@ -2301,9 +2304,10 @@ class Backend(QObject):
         """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
         Returns "", or why it couldn't: the app is then as it was, install.rewrite_launcher having
         taken the change back (#689's review, P4-B3). An error AppKata doesn't expect is logged with
-        its traceback and returned the same way, so the Sandbox dialog's Save still audits the
-        choice it saved and refreshes the window, and AppKata's start goes on to the next app (C-1:
-        only InstallError and OSError were caught, and any other error left both half-way)."""
+        its traceback and returned the same way, so the Sandbox dialog's Save still puts the choice
+        back (:meth:`_apply_sandbox`) and refreshes the window, and AppKata's start goes on to the
+        next app (C-1: only InstallError and OSError were caught, and any other error left both
+        half-way)."""
         a = self._app(url)
         if not a:
             return ""
@@ -2318,13 +2322,36 @@ class Backend(QObject):
             return str(e) or type(e).__name__
         return ""
 
-    def _apply_sandbox(self, url: str) -> None:
-        """A sandbox choice the user has just saved for an installed app, applied now (R17.4). Where
-        it can't be (a full disk), the app runs as it did and a toast says why, where nothing did
-        (#689's review, P4-B3)."""
-        if why := self._regenerate_launcher(url):
-            self._toast.emit("error", f"Couldn't change the sandbox of {(self._app(url) or {}).get('name', url)}, "
-                                      f"so it runs as it did: {why}")
+    # the keys of an app's settings row that say which sandbox it runs with (R17.11): the user's
+    # choice, the grant set it was pinned to, and the review suggestion it was chosen knowing
+    _SANDBOX_KEYS = ("sandbox", "sandboxPinned", "sandboxReviewSeen")
+
+    def _apply_sandbox(self, url: str, settings_before: dict, keys: tuple[str, ...] = _SANDBOX_KEYS) -> bool:
+        """A sandbox choice the user has just saved for an installed app, applied now (R17.4).
+        Returns whether it was. Where it can't be (a full disk), the app runs as it did
+        (install.rewrite_launcher takes the change back, #689's review, P4-B3), a toast says why, and
+        the choice goes back with it: the app's settings get back the `keys` they had before the
+        Save (`settings_before`; a corrected kind's too, whose default the change was), so App
+        Detail and the Sandbox dialog show the sandbox the app runs with, the same Save made again
+        makes the change, and the caller writes no Audit entry, a failed change being none (R13.3).
+
+        #689's review, P5-3: the choice stayed saved, so App Detail and the dialog showed it as in
+        force (Strict and no network, while the app ran with the network), the Audit's row named the
+        old launcher's hash as written for it, and a failed Off stayed sandboxed under "Off", which
+        AppKata's start never rewrites."""
+        why = self._regenerate_launcher(url)
+        if not why:
+            return True
+        saved = self._install_settings(url)
+        for k in keys:
+            if k in settings_before:
+                saved[k] = settings_before[k]
+            else:
+                saved.pop(k, None)
+        self._set_install_settings(url, saved)
+        self._toast.emit("error", f"Couldn't change the sandbox of {(self._app(url) or {}).get('name', url)}, "
+                                  f"so it runs as it did: {why}")
+        return False
 
     def _heal_launchers_at_startup(self) -> None:
         """The startup pass, on its own thread: warm the bwrap probe (a 15 s timeout at worst) so the
