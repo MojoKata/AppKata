@@ -536,7 +536,8 @@
     216,
     220,
     221,
-    639
+    639,
+    734
    ],
    "files": [
     "DEVELOP.md",
@@ -11416,6 +11417,20 @@
    "size": "small",
    "proof": "The mockups rendered again (the project's screenshot script, as docs/build.md says), and the screenshots page's checks.",
    "note": "Found by U03's fourth batch (2026-11-24) after #704's fix, and filed by the coordinator. The rendered SVGs and PNGs of the Settings mockups change with render.js; the unit lists them as the render makes them."
+  },
+  {
+   "finding": 734,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "depends_on": [
+    380
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's first batch (2026-11-25) after #380's fix, and filed by the coordinator; U13 holds the file."
   }
  ],
  "shared_files": [
