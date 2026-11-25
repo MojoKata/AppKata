@@ -292,6 +292,7 @@
     "tests/test_backend.py",
     "tests/test_forges.py",
     "tests/test_requirements_trace.py",
+    "tests/test_skip_lists.py",
     "tests/test_sync.py"
    ],
    "oversize": "22 findings: 16 from the review, and six more that the unit's own batches found in its own files (#681, #682, #683, #695, #697, #705), which are cheapest fixed while the unit is in them."
