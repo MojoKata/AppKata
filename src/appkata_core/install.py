@@ -1632,6 +1632,12 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
 
 
 _SPACE = " \t\n\r\f"           # what GLib's key file reader takes for white space (g_ascii_isspace: no \v)
+# A key's name as GLib's g_key_file_is_key_name allows it: no `=`, `[` or `]`, not ending in a space,
+# and a locale in brackets of letters and digits (any script's), `_`, `-`, `.` and `@`. GLib steps over
+# a character's continuation bytes (0x80-0xBF) with it, valid or not, so one after an allowed
+# character is taken with it, and one first in the locale isn't (#689's review, P4-B4: a lone such
+# byte refused the whole file, which GLib loads and the menu shows).
+_KEY = re.compile(r"[^=\[\]]*[^=\[\] ](\[(?:[\w.@-][\udc80-\udcbf]*)*\])?")
 _ESCAPES = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
 
 
@@ -1676,7 +1682,7 @@ def _key_file(path: str) -> dict | None:
             continue
         key, eq, value = line.partition("=")
         key = key.rstrip(_SPACE)
-        if not eq or keys is None or not re.fullmatch(r"[^=\[\]]*[^=\[\] ](\[[\w.@-]*\])?", key):
+        if not eq or keys is None or not _KEY.fullmatch(key):
             return None
         value = value.lstrip(_SPACE)
         if key == "Encoding" and keys is next(iter(groups.values())) and value.lower() != "utf-8":
@@ -1730,12 +1736,115 @@ def _shown_on_this_desktop(only: list[str] | None, never: list[str] | None) -> b
     return only is None
 
 
-def _installed_program(word: str) -> bool:
-    """Whether the program an entry names (`TryExec`, the first word of `Exec`) is here to run: a
-    path that is an executable file, or a name found on the PATH."""
-    if os.sep in word:
-        return os.path.isfile(word) and os.access(word, os.X_OK)
-    return bool(shutil.which(word))
+def _runs(path: str) -> bool:
+    """Whether GLib takes `path` for a program (g_file_test's IS_EXECUTABLE, not a folder)."""
+    return os.access(path, os.X_OK) and not os.path.isdir(path)
+
+
+def _found_program(program: str, working_dir: str | None = None) -> str | None:
+    """Where GLib 2.80 finds `program` (`g_find_program_for_path`, which GDesktopAppInfo asks of an
+    entry's `TryExec` and of the first word of its `Exec`, `working_dir` the entry's `Path`), or
+    None: a relative path is taken from `working_dir` first where there is one; a path, or a
+    relative one with a `/`, is tried as it is, from the working directory; failing that, a
+    program not named by an absolute path is looked for in each folder of the PATH (an empty one
+    is the working directory, none at all `/bin:/usr/bin:.`), a relative one joined to
+    `working_dir` again. So `./prog` and `../bin/prog` are found on the PATH (#689's review,
+    P4-3: only the working directory was looked in, and Open passed over an entry the menu shows
+    and starts)."""
+    path = os.path.join(working_dir, program) if working_dir and not os.path.isabs(program) else program
+    if os.path.isabs(path) or os.sep in program:
+        if _runs(path):
+            return os.path.join(os.getcwd(), path)
+        if os.path.isabs(program):
+            return None
+    search = os.environ.get("PATH")
+    for folder in ("/bin:/usr/bin:." if search is None else search).split(os.pathsep):
+        candidate = os.path.join(folder, program) if folder else program
+        if working_dir and not os.path.isabs(candidate):
+            candidate = os.path.join(working_dir, candidate)
+        if _runs(candidate):
+            return os.path.join(os.getcwd(), candidate)
+    return None
+
+
+def _exec_argv(command: str) -> list[str] | None:
+    """The words of an entry's `Exec`, split as GLib splits it (`g_shell_parse_argv`), or None where
+    GLib can't, and then loads no entry: a quote left open, a backslash or a `#` ending it, nothing
+    in it. White space is a space, a tab or a line break, so a carriage return or a vertical tab is
+    part of a word; a `#` that starts it or follows a space or a line break begins a comment to the
+    end of the line; outside quotes a backslash takes the next character as it is, and drops a
+    line break; single quotes take everything up to the next; inside double quotes a backslash
+    escapes only `"`, `\\`, `$`, a backtick and a line break, and is kept before anything else.
+    #689's review, P4-B5: shlex.split, which splits at a carriage return, knows no comment and
+    keeps a backslash before `$` in double quotes, took `Exec=prog` and a carriage return for
+    `prog`, which GLib looks for as `prog` and the carriage return, and doesn't show."""
+    tokens, token, quote, odd, i, n = [], "", "", False, 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote == "\\":            # the character after a backslash outside quotes
+            if c != "\n":
+                token += "\\" + c
+            quote = ""
+        elif quote == "#":           # a comment, to the end of its line, the line break too
+            while i < n and command[i] != "\n":
+                i += 1
+            quote = ""
+            if i == n:
+                break
+            c = command[i]
+        elif quote:                  # in quotes, kept as written; a double quote after an odd run of backslashes doesn't end them
+            if c == quote and not (quote == '"' and odd):
+                quote = ""
+            token += c
+        elif c in " \t\n":
+            if token:
+                tokens.append(token)
+            token = ""
+        elif c in "'\"":
+            token, quote = token + c, c
+        elif c == "\\" or (c == "#" and (i == 0 or command[i - 1] in " \n")):
+            quote = c
+        else:
+            token += c
+        odd = not odd if c == "\\" else False
+        i += 1
+    if token:
+        tokens.append(token)
+    return [_unquoted(t) for t in tokens] if tokens and not quote else None
+
+
+def _unquoted(word: str) -> str:
+    """One word of an `Exec` as :func:`_exec_argv` found it, its quotes and escapes taken off as
+    GLib takes them (`g_shell_unquote`)."""
+    out, i, n = [], 0, len(word)
+    while i < n:
+        c = word[i]
+        if c == "\\":
+            if i + 1 < n and word[i + 1] != "\n":
+                out.append(word[i + 1])
+            i += 2
+        elif c == "'":
+            end = word.index("'", i + 1)
+            out.append(word[i + 1:end])
+            i = end + 1
+        elif c == '"':
+            i += 1
+            while word[i] != '"':
+                if word[i] == "\\" and word[i + 1] in '"\\`$\n':
+                    i += 1
+                out.append(word[i])
+                i += 1
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _installed_program(word: str, working_dir: str | None = None) -> bool:
+    """Whether the program an entry names (`TryExec`, the first word of `Exec`) is here to run, as
+    GLib finds it (:func:`_found_program`, `working_dir` the entry's `Path`)."""
+    return _found_program(word, working_dir) is not None
 
 
 def _menu_entry(path: str):
@@ -1747,7 +1856,8 @@ def _menu_entry(path: str):
     `NoDisplay` and `Hidden` were read, and a package's entry for KDE alone was opened on GNOME),
     the file read as GLib reads it (:func:`_key_file`), and its booleans as GLib's: `true` or `1`,
     white space after it allowed, and anything else not true (P2-2: `NoDisplay=1` was shown, and
-    `NoDisplay=True` hidden)."""
+    `NoDisplay=True` hidden), `Exec` split as GLib splits it (:func:`_exec_argv`) and a program
+    found as GLib finds it (:func:`_found_program`, from the entry's `Path` first; P4-B5, P4-3)."""
     entry = _key_file(path)
     if entry is None or _key_string(entry.get("Type")) != "Application":
         return None
@@ -1755,14 +1865,12 @@ def _menu_entry(path: str):
         return None
     if not _shown_on_this_desktop(_key_string(entry.get("OnlyShowIn"), True), _key_string(entry.get("NotShowIn"), True)):
         return None
-    if (try_exec := _key_string(entry.get("TryExec"))) and not _installed_program(try_exec):
+    folder = _key_string(entry.get("Path"))
+    if (try_exec := _key_string(entry.get("TryExec"))) and not _installed_program(try_exec, folder):
         return None
     if command := _key_string(entry.get("Exec")):
-        try:
-            words = shlex.split(command)
-        except ValueError:          # GLib can't read it either
-            return None
-        if not words or not _installed_program(words[0]):
+        words = _exec_argv(command)
+        if not words or not _installed_program(words[0], folder):
             return None
     return entry
 
@@ -1794,13 +1902,10 @@ def _package_entries(package: str, manager: str) -> list[str]:
             continue
         for name in names:
             entry = _menu_entry(os.path.join(folder, name))
-            try:
-                words = shlex.split(_key_string(entry.get("Exec")) or "") if entry is not None else []
-            except ValueError:
-                continue
+            words = (_exec_argv(_key_string(entry.get("Exec")) or "") or []) if entry is not None else []
             while words and (os.path.basename(words[0]) == "env" or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0])):
                 words = words[1:]
-            program = words and (words[0] if os.path.isabs(words[0]) else shutil.which(words[0]))
+            program = words and _found_program(words[0], _key_string(entry.get("Path")))
             if program and os.path.realpath(program) in files:
                 found.append(os.path.join(folder, name))
     return found

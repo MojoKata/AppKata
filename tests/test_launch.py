@@ -154,6 +154,8 @@ def _a_system(tmp_path, monkeypatch, own, others, program="prog"):
     for name in ("nvim", "prog", "other"):
         (bin_ / name).write_text("#!/bin/sh\n")
         (bin_ / name).chmod(0o755)
+    # on the PATH, where an entry's program is looked for as GLib looks (install._found_program)
+    monkeypatch.setenv("PATH", f"{bin_}{os.pathsep}{os.environ.get('PATH', '')}")
     listed = [str(bin_ / program), str(tmp_path / "usr" / "share" / "doc")]
     for name, text in {**own, **others}.items():
         (apps / name).write_text(text)
@@ -223,7 +225,8 @@ def test_a_package_with_no_menu_entry_is_not_opened_by_a_program_of_its_name(db,
 # What a desktop's menu shows of an entry, by the Desktop Entry Specification as GLib applies it (the
 # reader the menus of the desktops AppKata supports use), on each desktop of $XDG_CURRENT_DESKTOP
 # here: {case: (the entry's lines after its Name, as text or as bytes, the desktops it shows on)}.
-# `{bin}` is a folder on the PATH with `prog`, `my prog` and a file that can't run, `notes.txt`.
+# `{bin}` is a folder on the PATH with `prog`, `my prog`, `a$b` and a file that can't run, `notes.txt`;
+# `{lib}` one not on it with `tool`; both are in the working directory.
 _DESKTOPS = ("GNOME", "ubuntu:GNOME", "X-Cinnamon", "KDE", "")
 _ALL, _GNOME = set(_DESKTOPS), {"GNOME", "ubuntu:GNOME"}
 _MENU_CASES = {
@@ -299,6 +302,32 @@ _MENU_CASES = {
     "a NUL in a value, which ends it": (b"Type=Application\nExec=prog\nNoDisplay=true\x00 and more\n", set()),
     "a NUL in a key": (b"Type=Application\nExec=prog\nNo\x00Display=true\n", set()),
     "a NUL starting a line, a comment": (b"Type=Application\nExec=prog\n\x00NoDisplay=true\n", _ALL),
+    # #689's review, P4-B4: GLib steps over a character's continuation bytes with it, so a lone one in a
+    # locale after a letter is taken, and one first in it isn't
+    "a lone continuation byte in a key's locale, after a letter": (b"Type=Application\nExec=prog\nName[de_DE\xa0.UTF-8]=x\n", _ALL),
+    "a lone continuation byte first in a key's locale": (b"Type=Application\nExec=prog\nName[\xa0de]=x\n", set()),
+    "continuation bytes after a letter of another script": (b"Type=Application\nExec=prog\nName[\xc3\xa9\x80\xbf]=x\n", _ALL),
+    # P4-B5: Exec split as GLib splits it, not as a POSIX shell (shlex) does
+    "a carriage return ending the file, after Exec's program": ("Type=Application\nExec=prog\r", set()),
+    "a carriage return after Exec's program, escaped": ("Type=Application\nExec=prog\\r --x\n", set()),
+    "a vertical tab after Exec's program": ("Type=Application\nExec=prog\v --x\n", set()),
+    "a comment before Exec's program": ("Type=Application\nExec=# a note\\nprog %U\n", _ALL),
+    "a # ending Exec, which GLib can't read": ("Type=Application\nExec=prog #\n", set()),
+    "a # after a tab, not a comment": ("Type=Application\nExec=prog\t#x\n", _ALL),
+    "a $ escaped in double quotes": ('Type=Application\nExec="{bin}/a\\\\$b" %U\n', _ALL),
+    "a backslash before a letter in double quotes, kept": ('Type=Application\nExec="{bin}/\\\\prog"\n', set()),
+    "single quotes": ("Type=Application\nExec='{bin}/my prog' %U\n", _ALL),
+    # P4-3: a program by a relative path, found as GLib 2.80 finds it: from the working directory (here
+    # the test's folder, where bin/ is), then in each folder of the PATH, and first from the entry's Path
+    "its program by a relative path, on the PATH": ("Type=Application\nExec=./prog\n", _ALL),
+    "its program by a relative path out and back, on the PATH": ("Type=Application\nExec=../bin/prog\n", _ALL),
+    "its program by a path from the working directory": ("Type=Application\nExec=bin/prog\n", _ALL),
+    "its program by a relative path found nowhere": ("Type=Application\nExec=./no-such-program-here\n", set()),
+    "TryExec by a relative path, on the PATH": ("Type=Application\nExec=prog\nTryExec=./prog\n", _ALL),
+    "its program by name, in the entry's Path": ("Type=Application\nPath={lib}\nExec=tool\n", _ALL),
+    "its program by name, not in the entry's Path or the PATH": ("Type=Application\nPath={bin}\nExec=tool\n", set()),
+    "TryExec by a relative path, in the entry's Path": ("Type=Application\nPath={lib}\nExec=prog\nTryExec=./tool\n", _ALL),
+    "its program by a relative path from the entry's Path": ("Type=Application\nPath={lib}\nExec=../bin/prog\n", _ALL),
 }
 
 
@@ -328,20 +357,23 @@ def test_open_takes_only_an_entry_the_desktops_menu_shows(tmp_path, monkeypatch,
     # menu: a package whose first entry by name was KDE's was opened by it on GNOME or Cinnamon.
     # The class is every rule a menu applies to an entry, so each case is held to GLib's own answer
     # where it is here, and to the specification's everywhere.
-    bin_ = tmp_path / "bin"
-    bin_.mkdir()
-    for name in ("prog", "my prog"):
-        (bin_ / name).write_text("#!/bin/sh\n")
-        (bin_ / name).chmod(0o755)
+    bin_, lib = tmp_path / "bin", tmp_path / "lib"
+    for folder, names in ((bin_, ("prog", "my prog", "a$b")), (lib, ("tool",))):
+        folder.mkdir()
+        for name in names:
+            (folder / name).write_text("#!/bin/sh\n")
+            (folder / name).chmod(0o755)
     (bin_ / "notes.txt").write_text("not a program\n")
     path_env = f"{bin_}:/usr/bin:/bin"
     monkeypatch.setenv("PATH", path_env)
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+    monkeypatch.chdir(tmp_path)                                     # GLib's working directory, and AppKata's
     paths = []
     for i, (case, (lines, _)) in enumerate(_MENU_CASES.items()):
         p = tmp_path / f"entry-{i}.desktop"
         lines = lines if isinstance(lines, bytes) else lines.encode()
-        p.write_bytes(f"[Desktop Entry]\nName={case}\n".encode() + lines.replace(b"{bin}", os.fsencode(bin_)))
+        lines = lines.replace(b"{bin}", os.fsencode(bin_)).replace(b"{lib}", os.fsencode(lib))
+        p.write_bytes(f"[Desktop Entry]\nName={case}\n".encode() + lines)
         paths.append(str(p))
     want = {case: desktop in shown for case, (_, shown) in _MENU_CASES.items()}
     assert {case: install._menu_entry(p) is not None for case, p in zip(_MENU_CASES, paths)} == want
