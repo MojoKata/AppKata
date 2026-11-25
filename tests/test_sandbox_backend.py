@@ -675,6 +675,40 @@ def test_a_sandbox_chosen_in_install_options_for_an_installed_app_applies_at_onc
     assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
 
 
+def test_a_sandbox_change_that_cant_be_written_says_so_and_leaves_the_app_as_it_was(be, tmp_path, monkeypatch):
+    # #689's review, P4-B3: turning a sandbox Off with the menu entry's write failing (a full disk)
+    # left the launcher removed under a record that still named it, and the Sandbox dialog's Save
+    # said nothing: _regenerate_launcher only logged it. The change is taken back (install's
+    # test_a_sandbox_change_whose_menu_file_cant_be_written_leaves_the_app_as_it_was), and a toast
+    # says it wasn't made.
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    with open(rec["launcher"], "rb") as f:
+        launcher = f.read()
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full_once(path, data, mode):
+        if path.endswith(".desktop") and not failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+    monkeypatch.setattr(install, "_write_whole", full_once)
+    be.setSandbox(URL, {"template": "off"})
+    assert failed and toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: [Errno 28] No space left on device")]
+    assert json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"]) == rec
+    with open(rec["launcher"], "rb") as f:
+        assert f.read() == launcher and be.sandboxInfo(URL)["active"]          # it runs sandboxed, as it did
+    be.setSandbox(URL, {"template": "off"})                                   # saved again, with room on the disk
+    assert len(toasts) == 1 and not os.path.exists(rec["launcher"]) and not be.sandboxInfo(URL)["active"]
+
+
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
     # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
     # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder

@@ -1100,7 +1100,9 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
     entry, its launcher and marker and its folder go (a folder or a private home that was there
     before stays). An update: the new version's files go, and the previous version's stable link,
     launcher, menu entry and command link are made again as its record has them (`_activate`, with
-    the record's own options). Never raises: the install's own error is the one to report."""
+    the record's own options); an app that ran unsandboxed loses the private home the attempt made
+    for it (#689's review, P4-B3), so it is still one that has none (R17.13). Never raises: the
+    install's own error is the one to report."""
     try:
         with _ACTIVATE_LOCK:
             app_id, new = app_id_of(rec, app), rec.get("current") or {}
@@ -1141,6 +1143,8 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
                     os.replace(moved, back)
             again = json.loads(json.dumps(prev))
             _activate(again, {**app, "sandbox": prev.get("sandbox")}, _options_of(prev, portable), target)
+            if OS == "linux" and was.get("home") is False and not prev.get("launcher"):
+                sandbox.remove_sandbox_home(app_id)         # made by the attempt's launcher, with its owner
             db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps(again), app["url"]))
     except Exception:       # noqa: BLE001
         log.exception("couldn't take back all of %s's failed install in %s", app.get("name"), target)
@@ -1368,7 +1372,14 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     itself again, so it goes back to the fixed-name layout of R4.10.2, without its kept versions
     (R4.10.5). If a step after the rename fails, the layout, the links, the launcher and the
     record are put back as they were. An app in that layout has no `current` link whatever the
-    options say, here as at its install."""
+    options say, here as at its install.
+
+    Whatever step fails, the app is put back as its stored record has it, and the error is raised
+    for the caller to report: its launcher, its app-menu script and entry and its command link, as
+    a failed update is (R4.6; #689's review, P4-B3: the sandbox turned Off and the entry's write
+    failing on a full disk left the launcher removed under a record that still named it, the
+    script running the program, the entry passing it --appkata-menu and no command link, and
+    nothing repaired it)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (app["url"],))
     if not row:
         return {}
@@ -1377,7 +1388,7 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
         return rec
     portable = _where_it_is(rec, portable)
     stored, target, gs = json.loads(row["record"]), rec["target"], app.get("sandbox")
-    retired, moved = [], None
+    retired, moved, was = [], None, _was_there(app_id_of(rec, app), rec["target"])
     try:
         if (app.get("autoUpdate") and rec.get("launcher") and (not gs or sandbox.level_of(gs) == "off")
                 and not rec.get("selfUpdating") and not rec.get("selfInstalled")):
@@ -1396,7 +1407,9 @@ def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
                     os.replace(aside, fixed)
             except OSError:
                 log.exception("couldn't move %s back to %s", fixed, before)
-            _undo_portable(db, app, {**rec, "current": stored["current"]}, stored, portable, target, {})
+        # the launcher, the menu files and the links made again as the stored record has them: the
+        # activation removed some before it failed (an Off removes the launcher first)
+        _undo_portable(db, app, {**rec, "current": stored["current"]}, stored, portable, target, was)
         raise
     if moved:                   # a sandboxed AppImage's unpacked copies: it runs Off now (R17.7)
         for k in [stored["current"]] + stored.get("kept", []):

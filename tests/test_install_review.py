@@ -1989,6 +1989,40 @@ def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_link
     assert install.uninstall(env, APP["url"], remove_sandbox=True) == []
 
 
+@linux_only
+@pytest.mark.parametrize("fails", ["the menu script", "the menu entry"])
+@pytest.mark.parametrize("change", list(_CHANGES))
+def test_a_sandbox_change_whose_menu_file_cant_be_written_leaves_the_app_as_it_was(env, server, tmp_path, change, fails):
+    # #689's review, P4-B3: a sandbox change rewrites the launcher, the menu script and entry and
+    # the command link, and stores the record last. With the sandbox turned Off and the entry's
+    # write failing (a full disk), the launcher was gone (an Off removes it first) and the command
+    # link too, the script ran the program, the entry still passed --appkata-menu, and the stored
+    # record named the removed launcher, so Open started nothing; nothing repaired it. Only the
+    # move back to an app's own updater's layout was taken back. Whatever step fails, the app is
+    # put back as its stored record has it, as a failed update is (R4.6), and the error is raised
+    # for the Sandbox dialog to say.
+    from appkata_core import sandbox
+    before, after = (sandbox.resolve_template(t) if t else None for t in _CHANGES[change])
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    was = install.install(env, {**APP, "installVersion": "1.0", "sandbox": before}, a, "appimage", [a], portable=p)
+    assert os.readlink(tmp_path / "cmd" / "demo-tool") == was["exec"] and ("launcher" in was) is bool(before)
+    kept = _left(tmp_path, env)
+    script, entry = str(tmp_path / "data" / "menu" / was["id"]), str(tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop")
+    full = {"the menu script": script, "the menu entry": entry}[fails]
+    real = install._write_whole
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(install, "_write_whole", _failing_once(real, lambda path, data, mode: path == full))
+        with pytest.raises(OSError, match="No space left on device"):
+            install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
+    assert _changed(kept, _left(tmp_path, env)) == {}                    # the app as it was, every file and its record
+    assert _menu_starts(script) == was["exec"] and os.access(was["exec"], os.X_OK)    # what the menu and Open start
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)     # and the change, made again, is made
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"]) and ("launcher" in rec) is bool(after)
+    assert os.readlink(tmp_path / "cmd" / "demo-tool") == rec["exec"] == _menu_starts(script) and os.access(rec["exec"], os.X_OK)
+    assert ("--appkata-menu" in _exec_words(_entry(entry)["Desktop Entry"]["Exec"])) is bool(after)
+
+
 # ---------------------------------------------------------------- the program of an archive (CR1.3-17)
 
 _ELF, _SCRIPT = b"\x7fELF\x02\x01\x01" + b"\0" * 57, b"#!/bin/sh\nexec true\n"

@@ -869,7 +869,7 @@ class Backend(QObject):
             before = self._resolved_sandbox(url)
             self._pin_sandbox(url, None)
             self._pin_sandbox(url, self._resolved_sandbox(url))
-            self._regenerate_launcher(url)
+            self._apply_sandbox(url)
             r = self._resolved_sandbox(url)
             self._audit("you", "app", "set the sandbox of", a["name"], url,
                         self._sandbox_detail(url, before, r, kind="command-line tool" if self._is_cli(url) else "app"))
@@ -878,7 +878,7 @@ class Backend(QObject):
             # Install options... on an installed app: the sandbox choice applies now, as the Sandbox
             # dialog's does, and is audited like it (R17.16). Round four, R4-3: it was saved and shown
             # in App Detail as in force while the launcher kept the old grants until the next update.
-            self._regenerate_launcher(url)
+            self._apply_sandbox(url)
             r = self._resolved_sandbox(url)
             self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
             self.reload()
@@ -2265,7 +2265,7 @@ class Backend(QObject):
         if cfg is None and a and a.get("installed"):
             self._pin_sandbox(url, r)
         if a and a.get("installed") and not a.get("foreign"):
-            self._regenerate_launcher(url)
+            self._apply_sandbox(url)
         self._audit("you", "app", "set the sandbox of", a["name"] if a else url, url, self._sandbox_detail(url, before, r))
         self.reload()
 
@@ -2297,16 +2297,28 @@ class Backend(QObject):
                     {"suggested": ", ".join(saved["sandboxReviewSeen"] or [])})
         self.reload()
 
-    def _regenerate_launcher(self, url: str) -> None:
-        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4)."""
+    def _regenerate_launcher(self, url: str) -> str:
+        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
+        Returns "", or why it couldn't: the app is then as it was, install.rewrite_launcher having
+        taken the change back (#689's review, P4-B3)."""
         a = self._app(url)
         if not a:
-            return
+            return ""
         gs = self._sandbox_for_install(url)
         try:
             install.rewrite_launcher(self.db, {**a, "sandbox": gs}, self._app_options(url))
         except (install.InstallError, OSError) as e:
             log.warning("couldn't regenerate the launcher for %s: %s", url, e)
+            return str(e)
+        return ""
+
+    def _apply_sandbox(self, url: str) -> None:
+        """A sandbox choice the user has just saved for an installed app, applied now (R17.4). Where
+        it can't be (a full disk), the app runs as it did and a toast says why, where nothing did
+        (#689's review, P4-B3)."""
+        if why := self._regenerate_launcher(url):
+            self._toast.emit("error", f"Couldn't change the sandbox of {(self._app(url) or {}).get('name', url)}, "
+                                      f"so it runs as it did: {why}")
 
     def _heal_launchers_at_startup(self) -> None:
         """The startup pass, on its own thread: warm the bwrap probe (a 15 s timeout at worst) so the
