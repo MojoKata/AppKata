@@ -1466,7 +1466,7 @@ class Backend(QObject):
         if and_uninstall:
             try:
                 left = install.uninstall(self.db, url)
-            except install.InstallError as e:
+            except (install.InstallError, PackageRefused) as e:     # a refused plan is said here as it was: no dialog on this road
                 self.toast.emit("error", str(e))
                 return
         a = self._app(url)

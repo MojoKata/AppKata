@@ -846,3 +846,66 @@ def test_same_file_is_said_only_of_a_reviewers_whole_sha256(be, written, same, i
     a_review_of(be.db, "1.0", [["SHA-256", written]])
     be.reload()
     assert be.detail(URL)["sameFileAs"] == (["Desk"] if same else [])
+
+
+# ---------------------------------------------------------------- a plan AppKata refuses (R16.3.5, R16.4.3; CR1, #742)
+# How it slipped past: the dialog's refused form was drawn by no test of the backend, so nothing
+# saw that no refusal ever got there: install.py made an install error of each on its way.
+NEEDED = "It would remove ubuntu-desktop, which this computer needs."
+
+
+@pytest.fixture
+def refusing(monkeypatch):
+    """A package manager whose plan for anything removes the desktop's metapackage, which AppKata
+    refuses to run. Returns what it was told to run."""
+    from appkata_core import pkgbackend
+
+    class Refusing(pkgbackend.Backend):
+        name, manager, ran = "fake", "apt", []
+
+        def simulate(self, action, names):
+            return pkgbackend.Plan(install=list(names) if action == "install" else [], upgrade=list(names) if action == "upgrade" else [],
+                                   remove=(list(names) if action == "remove" else []) + ["ubuntu-desktop"])
+
+        def facts(self, names):
+            return pkgbackend.Facts()
+
+        def run(self, action, names, progress=None, cancel=None, on_wait=None):
+            self.ran.append((action, names))
+
+    Refusing.ran = []
+    monkeypatch.setattr(pkgbackend, "backend", lambda: Refusing())
+    monkeypatch.setattr(pkgbackend, "installed_version", lambda name, manager=None: "1.0-1")
+    monkeypatch.setattr(channels, "enabled", lambda: False)             # none of this machine's package channels
+    return Refusing.ran
+
+
+@pytest.mark.parametrize("road", ["install", "update", "uninstall"])
+def test_a_refused_plan_is_shown_in_the_plan_dialog_as_refused(be, refusing, road):
+    source(be, published("1.0"))
+    if road != "install":
+        installed_as(be, "1.0", {**PACKAGE, "verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"})
+    shown, toasts = [], []
+    be.planConfirm.connect(shown.append)
+    be.toast.connect(lambda kind, text: toasts.append((kind, text)))
+    if road == "install":
+        be._install_channel(URL, {"channel": "package", "value": "demo"}, "")
+    elif road == "update":
+        be._install_channel(URL, {}, "", update=True)
+    else:
+        be.uninstall(URL)
+    assert wait(lambda: shown), toasts
+    assert not wait(lambda: len(shown) > 1 or toasts, 0.3), (shown, toasts)                 # the dialog, once, and no error line beside it
+    assert dict(shown[0]) == {"url": URL, "name": "Demo", "action": "update" if road == "update" else road, "lines": [NEEDED], "refused": True}
+    assert refusing == [] and bool(be.db.one("SELECT 1 FROM installs WHERE url=?", (URL,))) == (road != "install")
+
+
+def test_removing_a_source_with_its_app_says_a_refused_plan_as_an_error_and_removes_nothing(be, refusing):
+    # the one road with no plan dialog: the refusal is the error line it was, and the Source stays
+    source(be, published("1.0"))
+    installed_as(be, "1.0", dict(PACKAGE))
+    toasts = []
+    be.toast.connect(lambda kind, text: toasts.append((kind, text)))
+    be.removeSource(URL, True)
+    assert toasts == [("error", NEEDED)] and refusing == []
+    assert be.db.one("SELECT 1 FROM sources WHERE url=?", (URL,)) and be.db.one("SELECT 1 FROM installs WHERE url=?", (URL,))

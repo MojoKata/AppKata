@@ -622,6 +622,37 @@ def test_adopt(db, monkeypatch, fake_pkgs):
 
 
 # ---------------------------------------------------------------- what checked a channel's copy (R16.3.6; CR1, #318)
+# R16.3.5, R16.4.3 (CR1.3-53): a plan that would remove what the computer needs is refused, and the
+# refusal reaches the caller as one. How it slipped past: the tests of a refusal stopped at
+# pkgbackend's own `apply`, and the backend's dialog for one was reached by no test, so nothing saw
+# that install.py turned every refusal into a plain install error on the way.
+@pytest.mark.parametrize("road", ["install", "update", "uninstall"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK to another plan"])
+def test_a_plan_appkata_refuses_reaches_the_caller_as_a_refusal_and_runs_nothing(db, fake_pkgs, road, confirmed):
+    app, rec = {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "package": "keepassxc", "manager": "apt", "pkgVersion": "2.7.6-1"}
+    if road != "install":
+        fake_pkgs.installed["keepassxc"] = "2.7.6-1"
+        db.x("INSERT INTO installs(url, name, version, kind, record) VALUES(?,?,?,?,?)", (KEEPASSXC, "KeePassXC", "2.7.6", "apt", json.dumps(rec)))
+    before = db.all("SELECT * FROM installs")
+    fake_pkgs.plan_ = {"install": pkgbackend.Plan(install=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "update": pkgbackend.Plan(upgrade=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "uninstall": pkgbackend.Plan(remove=["keepassxc", "ubuntu-desktop"])}[road]
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$") as e:
+        if road == "install":
+            install.install_channel(db, app, {"channel": "package", "value": "keepassxc"}, confirmed=confirmed)
+        elif road == "update":
+            install.update_channel(db, KEEPASSXC, confirmed=confirmed)
+        else:
+            install.uninstall(db, KEEPASSXC, confirmed=confirmed)
+    assert not isinstance(e.value, install.InstallError) and fake_pkgs.ran == [] and db.all("SELECT * FROM installs") == before
+
+
+def test_a_package_error_that_is_no_refusal_is_an_install_error(db, fake_pkgs, monkeypatch):
+    monkeypatch.setattr(FakeBackend, "run", lambda self, *a, **k: (_ for _ in ()).throw(pkgbackend.PackageError("apt-get failed: no space left")))
+    with pytest.raises(install.InstallError, match="no space left"):
+        install.install_channel(db, {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "value": "keepassxc"})
+
+
 # How it slipped past: every record of a channel's copy was written "signed" by a fixed name, and
 # no test asked what the tools say of the copy. These hold the record to apt's and flatpak's own
 # words (recorded from Ubuntu 24.04, apt 2.7.14 and Flatpak 1.14.6; scripts/channels_e2e.py asks

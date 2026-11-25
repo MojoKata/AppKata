@@ -3513,6 +3513,24 @@ def test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_wi
 
 
 @linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK"])
+def test_a_releases_package_whose_plan_is_refused_is_refused_as_such_and_nothing_of_it_stays(env, server, package_tools, monkeypatch, kind,
+                                                                                               confirmed):
+    """R16.3.5 (CR1.3-53): "A plan that removes a package marked essential or protected, or a
+    metapackage of the desktop ... is refused." install() made a plain install error of it, so the
+    backend's dialog for a refused plan was never shown."""
+    from appkata_core import pkgbackend
+    out, staging = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["ubuntu-desktop"]))
+    monkeypatch.setattr(pkgbackend.Cli, "facts", lambda self, names: pkgbackend.Facts())
+    a, _ = _package_file(server, kind)
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$"):
+        install.install(env, {**APP, "installVersion": "1.0", "confirmed": confirmed}, a, kind, [a])
+    assert os.listdir(out) == [] and os.listdir(staging) == [] and _downloads() == [] and env.one("SELECT * FROM installs") is None
+
+
+@linux_only
 def test_a_package_whose_plan_needs_the_users_ok_is_copied_nowhere_before_it_is_given(env, server, package_tools, monkeypatch):
     from appkata_core import pkgbackend
     out, staging = package_tools

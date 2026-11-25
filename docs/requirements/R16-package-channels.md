@@ -134,7 +134,10 @@ R16.3.5. **Installing a package.** Through the package backend (R16.8):
 2. A plan that removes or downgrades anything, or upgrades packages other than new dependencies,
    is shown in a confirmation listing those packages; **Install** is red and the default is
    **Cancel**. A plan that removes a package marked essential or protected, or a metapackage of
-   the desktop (`ubuntu-desktop`, `task-gnome-desktop`, `@workstation-product`…), is refused.
+   the desktop (`ubuntu-desktop`, `task-gnome-desktop`, `@workstation-product`…), is refused:
+   a dialog titled "Can't install <app>" (or "Can't uninstall <app>", R16.4.3) says what the plan
+   would remove ("It would remove ubuntu-desktop, which this computer needs.") and has **Close**
+   alone. Nothing is installed, updated or removed.
 3. The record holds the package name, the manager, the repository, and whether the package was
    already marked as a dependency (R16.4.3).
 

@@ -27,7 +27,7 @@ import logging
 import threading
 
 from . import applog, appkind, flatpak, pkgbackend, sandbox
-from .pkgbackend import NeedsConfirmation, PackageError
+from .pkgbackend import NeedsConfirmation, PackageError, Refused
 from .assets import checksums_for
 from .db import DB, now
 from .forges import Asset
@@ -1578,7 +1578,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             be = pkgbackend.Cli("apt" if kind == "deb" else "dnf")
             try:
                 be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"), package=pkg)
-            except NeedsConfirmation:
+            except (NeedsConfirmation, Refused):        # each has its dialog (:func:`_apply`)
                 raise
             except PackageError as e:
                 raise InstallError(str(e)) from None
@@ -1955,7 +1955,8 @@ def remove_version(db: DB, url: str, version: str) -> None:
 def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
               remove_sandbox: bool = False) -> list[str]:
     """Reverse what install recorded (R4.7). User data in the home folder is kept. A
-    package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`.
+    package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`,
+    and one whose removal would take what the computer needs raises Refused (:func:`_apply`).
     `remove_sandbox`: also delete the app's private sandbox home (R17.14).
 
     Returns what the record names and is still there afterwards, for the caller to say: only what
@@ -2443,9 +2444,15 @@ class NeedsFlathub(InstallError):
 
 
 def _apply(be, action: str, names: list[str], confirmed: bool, progress, cancel, on_wait) -> None:
+    """Have the package backend install, upgrade or remove, after its dry run (R16.3.5, R16.4.3).
+    Two of its answers go to the caller as they are, for the plan dialog: a plan that needs the
+    user's OK (`NeedsConfirmation`), and one AppKata refuses because it would remove what the
+    computer needs (`Refused`). Every other failure is an install error. `Refused` was made one
+    too, so the dialog that shows a refused plan, in red and with Close alone, was never reached:
+    the refusal was a line in a toast (CR1.3-53)."""
     try:
         be.apply(action, names, confirmed=confirmed, progress=progress, cancel=cancel, on_wait=on_wait)
-    except NeedsConfirmation:
+    except (NeedsConfirmation, Refused):
         raise
     except PackageError as e:
         raise InstallError(str(e)) from None
