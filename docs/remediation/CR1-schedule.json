@@ -330,6 +330,7 @@
     "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md",
     "scripts/sandbox/exposure.py",
     "src/appkata/backend.py",
+    "src/appkata/qml/AppDetail.qml",
     "src/appkata/qml/SandboxDialog.qml",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
@@ -347,7 +348,8 @@
     "tests/test_sandbox.py",
     "tests/test_sandbox_backend.py",
     "tests/test_sandbox_docs_current.py",
-    "tests/test_sandbox_run.py"
+    "tests/test_sandbox_run.py",
+    "tests/test_sandbox_ui_surfaces.py"
    ]
   },
   {
