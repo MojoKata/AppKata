@@ -2283,6 +2283,21 @@ def fake_home(tmp_path, monkeypatch):
     ("~/.local/lib/python3.12/site-packages", True), ("~/.local/share/nemo/scripts", True), ("~/.local/share/nemo/actions", True),
     ("~/.config/chromium/NativeMessagingHosts", True), ("~/.config/google-chrome/NativeMessagingHosts", True),
     ("~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts", True), ("~/.config/microsoft-edge/NativeMessagingHosts", True),
+    # what else the supported desktops load code from or start programs by (CR1.5-9, #384): Cinnamon's
+    # folders, bash-completion's files, im-config's, the compositors' and window managers'
+    # configurations, PipeWire's, an editor's extensions, and Cargo's and Go's programs
+    ("~/.local/share/cinnamon", True), ("~/.local/share/cinnamon/applets", True), ("~/.local/share/cinnamon/desklets", True),
+    ("~/.local/share/cinnamon/extensions/x@y", True), ("~/.local/share/cinnamon/search_providers", True),
+    ("~/.local/share/cinnamon/panel-launchers", True), ("~/.cinnamon", True), ("~/.cinnamon/panel-launchers", True),
+    ("~/.bash_completion", True), ("~/.config/bash_completion", True), ("~/.local/share/bash-completion", True),
+    ("~/.local/share/bash-completion/completions", True), ("~/.xinputrc", True),
+    ("~/.config/sway", True), ("~/.config/sway/config.d", True), ("~/.sway", True), ("~/.config/i3", True), ("~/.i3", True),
+    ("~/.config/hypr", True), ("~/.config/labwc", True), ("~/.config/openbox", True), ("~/.config/river", True),
+    ("~/.config/niri", True), ("~/.config/wayfire.ini", True), ("~/.config/pipewire", True),
+    ("~/.config/pipewire/pipewire.conf.d", True), ("~/.vscode/extensions", True), ("~/.vscode", True),
+    ("~/.vscode-oss/extensions", True), ("~/.cargo/bin", True), ("~/.cargo", True), ("~/go/bin", True), ("~/go", True),
+    ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
+    ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
     ("~/.local/share/fonts", False), ("~/.config/git-extras", False), ("~/.bashrc.dev", False),
     ("~/.config/chromium", True), ("~/.config/google-chrome/Default", False), ("~/.local/share/nemo", True),   # above a hosts folder; a sibling
@@ -2327,6 +2342,53 @@ def test_launcher_and_summary_refuse_protected_folders(fake_home):
     chips = sb.summary(gs, custom)
     assert "~/Apps/x · refused: AppKata's installed apps" in chips and "~/bin/apps" in chips
     assert "~/bin/apps · refused: AppKata's installed apps" in sb.summary(gs)       # the default root, as before
+
+
+# CR1.5-9 (#384): the never-shared list is kept by hand, and places of the kinds it names were not in
+# it on the desktops AppKata supports: Cinnamon's applet, desklet and extension folders (Mint's
+# desktop, where GNOME's and KDE's were listed), bash-completion's files, im-config's ~/.xinputrc,
+# the compositors' and window managers' configurations, PipeWire's, an editor's extensions and the
+# folders Cargo and Go put on PATH. How it slipped past: the list was tested on its members, and
+# "allowed" was the answer for any place not in it. The members are in the list above now; the
+# finding's own road is here, and what the platform's own programs name as the places they load
+# from is asked of the platform in tests/test_sandbox_run.py
+# (a part of test_every_file_the_distributions_default_bashrc_sources_is_refused).
+LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions and panel launchers",
+         "~/.local/share/cinnamon/applets/weather@mockturtl": "Cinnamon's applets, desklets, extensions and panel launchers",
+         "~/.cinnamon": "Cinnamon's panel launchers",
+         "~/.bash_completion": "your shell's startup files", "~/.config/bash_completion": "your shell's startup files",
+         "~/.local/share/bash-completion/completions": "your shell's completion scripts",
+         "~/.xinputrc": "your session's startup files",
+         "~/.config/sway": "your window manager's configuration, which starts programs",
+         "~/.config/i3/config": "your window manager's configuration, which starts programs",
+         "~/.config/pipewire": "PipeWire's configuration, which can start programs",
+         "~/.vscode/extensions": "your editor's extensions", "~/.vscode": "a folder above your editor's extensions",
+         "~/.cargo/bin": "programs on your PATH", "~/go": "a folder above programs on your PATH"}
+
+
+def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):
+    # the finding's own case: a review's line through config_from_review and choose
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": ", ".join(LATER) + ", ~/go/src/proj:ro, ~/Notes"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    assert source == "reviews" and set(LATER) <= set(gs["folders"])            # a review's line is kept as written...
+    assert sb.strip_secrets(gs)[1] == []                                       # ...is no secret, which only a review is refused...
+    chips = sb.summary(gs)
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", gs, apps_root="/home/kata/bin/apps")
+    for p, why in LATER.items():
+        assert f"{p} · refused: {why}" in chips, (p, chips)                    # ...shown as refused...
+        assert f"# Refused folder grant {p}: {why} (R17.3.1)." in text
+        assert f"bind-try /home/kata/{p[2:]} " not in text                     # ...and never mounted
+    assert "~/go/src/proj · read-only" in chips and "--ro-bind-try /home/kata/go/src/proj /home/kata/go/src/proj" in text
+    assert "~/Notes" in chips and "--bind-try /home/kata/Notes /home/kata/Notes" in text
+    # the user's own pick, as the Sandbox dialog saves it (Backend.setSandbox): dropped, with the same reason
+    kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {p: "rw" for p in [*LATER, "~/Notes"]}})
+    assert set(kept["folders"]) == {"~/Notes"} and dict(refused) == LATER
+    # a command-line tool run from one of them is not given it (R17.3.3): the same list, in its launcher
+    tool = sb.build_launcher("tool", "Tool", "/home/kata/bin/apps/tool/1", "bin/tool", sb.resolve_template("cli-tool"), apps_root="/home/kata/bin/apps")
+    listed = shlex.split(next(line for line in tool.splitlines() if line.startswith('for d in "$hm" ')).split('"$hm" ', 1)[1].split(' "$rt"')[0])
+    for p in LATER:
+        if not LATER[p].startswith("a folder above"):
+            assert any(("/home/kata/" + p[2:] + "/").startswith(d + "/") for d in listed), (p, listed)
 
 
 # CR1.5-5 (#380, the owner's decision of 2026-11-24): the never-shared check knew the home, what is

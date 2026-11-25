@@ -2268,6 +2268,7 @@ def test_every_file_the_distributions_default_bashrc_sources_is_refused():
     # Ubuntu and Mint, ~/.bashrc.d/* on Fedora -- must each be refused, since a line appended to one
     # runs in every new terminal exactly as one in ~/.bashrc. On a host whose skel sources nothing the
     # test says so and passes; in the Mint container it finds ~/.bash_aliases.
+    _what_the_desktops_own_programs_load_from_the_home_is_refused()      # CR1.5-9: the same question of other programs
     found = []
     for rc in ("/etc/skel/.bashrc", "/etc/bash.bashrc", "/etc/bashrc", "/etc/skel/.profile", "/etc/skel/.zshrc"):
         if os.path.exists(rc):
@@ -2279,6 +2280,97 @@ def test_every_file_the_distributions_default_bashrc_sources_is_refused():
         assert sb.protected_folder(path), f"{path} is sourced by the host's default shell files and would be shared"
     if not found:
         pytest.skip("this host's default shell files source nothing under the home")
+
+
+# CR1.5-9 (#384): the same class a round later. The list had GNOME's and KDE's extension folders and
+# not Cinnamon's, the shell's startup files and not bash-completion's. So these expectations too come
+# from the platform: what the programs installed here name, in their own files, as the places in the
+# home they load code from. Where a program isn't installed its part finds nothing (the launcher
+# containers have neither Cinnamon nor bash-completion; the desktop images have Cinnamon and
+# im-config, and a stock Mint or Ubuntu all three), so each reader is first held to the lines of the
+# versions it was written from, quoted here. It is a part of the test above, not one of its own:
+# tests/skips/tier1.txt names every test of this file, and is another unit's.
+
+def _home_path(expr: str) -> str:
+    """A shell word that names a place in the home, as `~/...`: `$HOME/.x`, `~/.x`,
+    `${XDG_DATA_HOME:-$HOME/.local/share}/x` (the place the variable has when it is unset)."""
+    import re
+    return re.sub(r"\$\{XDG_\w+_HOME:-([^}]+)\}", r"\1", expr).replace("$HOME", "~").rstrip("/")
+
+
+def _bash_completion_loads(text: str) -> list[str]:
+    """The places in the home bash-completion's own script, or its profile script, reads code from:
+    the user file it sources, the folder it loads a command's completion from at a tab, and a file
+    under the user's configuration folder it sources."""
+    import re
+    out = [m.group(1) for m in re.finditer(r"BASH_COMPLETION_USER_FILE:-([^}\s]+)\}", text)]
+    out += [m.group(1) for m in re.finditer(r"(\$\{XDG_DATA_HOME:-[^}]+\}/bash-completion)", text)]
+    out += [m.group(1) for m in re.finditer(r"^\s*\.\s+\"?((?:\$\{XDG_\w+_HOME:-[^}]+\}|\$HOME|~)/[^\s\"]+)", text, re.M)]
+    return sorted({_home_path(p) for p in out})
+
+
+def _cinnamon_loads(main_js: str, launchers_js: str) -> list[str]:
+    """The places in the home Cinnamon's shell imports code from (the folders of its user data
+    folder that main.js puts on the importer's path) and the folders its panel-launchers applet
+    reads launchers from."""
+    import re
+    out = []
+    if "imports.searchPath.unshift(global.userdatadir)" in main_js:
+        for m in re.finditer(r"let types = \[([^\]]+)\]", main_js):
+            out += ["~/.local/share/cinnamon/" + t for t in re.findall(r"'([^']+)'", m.group(1))]
+    for m in re.finditer(r"GLib\.get_user_data_dir\(\)\s*\+\s*[\"']([^\"']+)[\"']", launchers_js):
+        out.append("~/.local/share" + m.group(1).rstrip("/"))
+    for m in re.finditer(r"GLib\.get_home_dir\(\)\s*\+\s*[\"']([^\"']+)[\"']", launchers_js):
+        out.append("~" + m.group(1).rstrip("/"))
+    return sorted(set(out))
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _loaded_from_the_home() -> dict[str, str]:
+    """{a place in the home: the program here that loads code from it}, by this system's own files."""
+    found = {}
+    for script in ("/usr/share/bash-completion/bash_completion", "/etc/bash_completion", "/etc/profile.d/bash_completion.sh"):
+        for path in _bash_completion_loads(_read(script)):
+            found[path] = script
+    cinnamon = "/usr/share/cinnamon"
+    for path in _cinnamon_loads(_read(f"{cinnamon}/js/ui/main.js"), _read(f"{cinnamon}/applets/panel-launchers@cinnamon.org/applet.js")):
+        found[path] = cinnamon
+    for line in _read("/usr/share/im-config/xinputrc.common").splitlines():     # the file im-config's Xsession hook sources
+        if line.startswith("IM_CONFIG_XINPUTRC_USR="):
+            found[_home_path(line.split("=", 1)[1].strip().strip('"'))] = "im-config"
+    return found
+
+
+def _what_the_desktops_own_programs_load_from_the_home_is_refused():
+    # the readers, on the lines they were written from: bash-completion 2.11 (Mint 22.3, Ubuntu 24.04)
+    # and 2.16 (LMDE 7), Cinnamon 6.6.9's js/ui/main.js and its panel-launchers applet, im-config 0.57
+    assert _bash_completion_loads(
+        '    local -a dirs=(${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions)\n'
+        'user_completion=${BASH_COMPLETION_USER_FILE:-~/.bash_completion}\n'
+        '    local user_file=${BASH_COMPLETION_USER_FILE:-~/.bash_completion}\n'
+        '        dirs=("${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions")\n'
+        '        [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/bash_completion" ] &&\n'
+        '            . "${XDG_CONFIG_HOME:-$HOME/.config}/bash_completion"\n'
+        '        relative_include_base="$HOME/.ssh"\n            . /usr/share/bash-completion/bash_completion\n') == [
+            "~/.bash_completion", "~/.config/bash_completion", "~/.local/share/bash-completion"]
+    assert _cinnamon_loads(
+        "    imports.searchPath.unshift(global.datadir);\n    imports.searchPath.unshift(global.userdatadir);\n"
+        "    let types = ['applets', 'desklets', 'extensions', 'search_providers'];\n",
+        'const CUSTOM_LAUNCHERS_PATH = GLib.get_user_data_dir() + "/cinnamon/panel-launchers/";\n'
+        "const OLD_CUSTOM_LAUNCHERS_PATH = GLib.get_home_dir() + '/.cinnamon/panel-launchers/';\n") == [
+            "~/.cinnamon/panel-launchers", "~/.local/share/cinnamon/applets", "~/.local/share/cinnamon/desklets",
+            "~/.local/share/cinnamon/extensions", "~/.local/share/cinnamon/panel-launchers", "~/.local/share/cinnamon/search_providers"]
+    assert [_home_path(w) for w in ("$HOME/.xinputrc", "~/.x/", "${XDG_CONFIG_HOME:-$HOME/.config}/y")] == ["~/.xinputrc", "~/.x", "~/.config/y"]
+    # ...and what this system's own copies name
+    for path, where in sorted(_loaded_from_the_home().items()):
+        assert path.startswith("~/") and sb.protected_folder(path), f"{where} loads {path}, which would be shared"
 
 
 # ---------------------------------------------------------------- a degraded host (round five)

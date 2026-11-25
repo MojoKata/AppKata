@@ -544,7 +544,9 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
     runtime folder (the real, unfiltered session bus lives there, in a login session; where else
-    it can be is :func:`bus_files`'s)."""
+    it can be is :func:`bus_files`'s). The list is of the places known to AppKata, kept by hand: it
+    is not complete, and a program it doesn't know can read its code from somewhere else in the
+    home (R17.3.1 and R17.17 say so)."""
     from .platform import apps_dir
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
@@ -575,6 +577,23 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
              (h(".local", "share", "nemo", "scripts"), "file-manager scripts"),
              (h(".local", "share", "nemo", "actions"), "file-manager actions"),
              (h(".local", "lib"), "programs and Python modules on your own paths"),
+             # More places of the same two kinds, on the desktops AppKata supports (CR1.5-9: the list is
+             # kept by hand, and these were not in it, so a review's `Sandbox folders:
+             # ~/.local/share/cinnamon` was an ordinary folder). Cinnamon, Mint's desktop, imports its
+             # applets, desklets, extensions and search providers from ~/.local/share/cinnamon and
+             # starts the panel's own launchers from there and from ~/.cinnamon; bash-completion loads
+             # ~/.local/share/bash-completion/completions/<command> at a tab (its two startup files are
+             # with the shell's, below); PipeWire's configuration has a list of programs to start; an
+             # editor runs its extensions whenever it starts; and Cargo's and Go's folders of programs
+             # are on PATH wherever those tools are set up (A1.11 says which of these was run or read).
+             (h(".local", "share", "cinnamon"), "Cinnamon's applets, desklets, extensions and panel launchers"),
+             (h(".cinnamon"), "Cinnamon's panel launchers"),
+             (h(".local", "share", "bash-completion"), "your shell's completion scripts"),
+             (h(".config", "pipewire"), "PipeWire's configuration, which can start programs"),
+             (h(".vscode", "extensions"), "your editor's extensions"),
+             (h(".vscode-oss", "extensions"), "your editor's extensions"),
+             (h(".cargo", "bin"), "programs on your PATH"),
+             (h("go", "bin"), "programs on your PATH"),
              (h(".gitconfig"), "your git configuration (hooks, aliases)"),
              (h(".config", "git"), "your git configuration (hooks, aliases)"),
              (h(".ssh"), "SSH keys"),
@@ -587,8 +606,18 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
         # what the distributions' default .bashrc sources in turn: Ubuntu's and Mint's ~/.bash_aliases,
         # Fedora's ~/.bashrc.d/* (round five, R5-2)
         ".bash_aliases", ".bashrc.d",
+        # what bash-completion sources as every interactive shell starts, on Mint and Ubuntu by
+        # default: its user file, and the one its profile script reads first (CR1.5-9)
+        ".bash_completion", ".config/bash_completion",
         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".config/fish", ".kshrc", ".cshrc", ".tcshrc")]
-    roots += [(h(f), "your session's startup files") for f in (".xsessionrc", ".xprofile", ".xinitrc", ".Xresources", ".xsession")]
+    # ~/.xinputrc: im-config's Xsession hook sources it as the session starts, on the Debian family
+    roots += [(h(f), "your session's startup files") for f in (".xsessionrc", ".xprofile", ".xinitrc", ".Xresources", ".xsession",
+                                                               ".xinputrc")]
+    # a compositor's or a window manager's own configuration starts programs (`exec` lines, an
+    # autostart script): the ones R17.9 names, and i3 and Openbox (CR1.5-9)
+    roots += [(h(*parts), "your window manager's configuration, which starts programs") for parts in (
+        (".config", "sway"), (".sway",), (".config", "i3"), (".i3",), (".config", "hypr"), (".config", "labwc"),
+        (".config", "openbox"), (".config", "river"), (".config", "niri"), (".config", "wayfire.ini"))]
     # a browser's native-messaging manifests name programs the browser starts, as the user, on an
     # extension's request; Firefox's folder is above, the Chromium family keeps theirs per profile
     # folder under ~/.config (named one by one: the match is on exact roots, not patterns)

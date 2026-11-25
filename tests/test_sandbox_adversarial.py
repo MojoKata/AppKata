@@ -179,6 +179,46 @@ def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, t
         assert not {path, named} & set(kept["folders"]) and [p for p, _ in refused] == [named]
 
 
+# CR1.5-9 (#384): places in the home that code runs from later, which the never-shared list had not
+# heard of (Cinnamon's folders, bash-completion's files, a window manager's configuration, an
+# editor's extensions, Cargo's and Go's programs), each written the ways a line can write a path, with
+# what is inside it and above it: all refused, none ever a bind, and the folder beside it as asked.
+LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local/share/cinnamon/extensions/", "~//.local/share/cinnamon/desklets",
+         "/home/kata/.local/share/cinnamon/search_providers", "~/.cinnamon", "~/.cinnamon/panel-launchers/x.desktop", "~/.bash_completion",
+         "/home/kata/.bash_completion", "~/.config/bash_completion", "~/.local/share/bash-completion", "~/.local/share/bash-completion/completions/git",
+         "~/.xinputrc", "~/.config/sway", "~/.config/sway/config", "~/.sway", "~/.config/i3", "~/.i3/config", "~/.config/hypr/hyprland.conf",
+         "~/.config/labwc/autostart", "~/.config/openbox", "~/.config/river/init", "~/.config/niri", "~/.config/wayfire.ini",
+         "~/.config/pipewire", "~/.config/pipewire/pipewire.conf.d/x.conf", "~/.vscode/extensions", "~/.vscode", "~/./.vscode/extensions/a.b-1.0",
+         "~/.vscode-oss/extensions", "~/.cargo/bin", "~/.cargo", "~/.cargo/bin/cargo", "~/go/bin", "~/go", "~/Notes/../go/bin",
+         "~/.config/sway/it's", "~/.cargo/bin/new\nline", "~/go/bin/$(id)"]
+
+
+@pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])
+def test_a_place_code_runs_from_later_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps = "/home/kata/bin/apps"
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+~/Notes": mode}})
+        assert sb.protected_folder(path, apps), path                 # refused, with a reason
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        words = _bwrap_words(text)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/home/kata/Notes", "/home/kata/Notes") in grants   # the folder beside it, as asked
+        full = os.path.expanduser(path)
+        mine = {full, os.path.normpath(full), os.path.realpath(full)}
+        assert not [g for g in grants if set(g) & mine], grants     # and this one never, by any of its names
+        assert "# Refused folder grant" in text
+        named = sb.folder_path(path)
+        assert any(c.startswith(named + " · refused") for c in sb.summary(gs, apps)), sb.summary(gs, apps)
+        kept, refused = sb.strip_protected(gs, apps)
+        assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == [named]
+
+
 def test_parse_folders_keeps_every_hostile_path_whole():
     for path in HOSTILE:
         if "," in path:

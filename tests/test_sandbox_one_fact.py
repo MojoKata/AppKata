@@ -233,6 +233,11 @@ def _folders(env: Env) -> dict[str, str]:
         "inside ~/.ssh": f"{h}/.ssh/sub", "~/.cache": f"{h}/.cache", "~/Documents": f"{h}/Documents",
         "Firefox's profiles (a secret)": f"{h}/.mozilla/firefox/x.default", "the runtime folder": str(env.rt),
         "inside the runtime folder": f"{env.rt}/sub", "a folder under /tmp, outside the home": str(env.home.parent / "elsewhere"),
+        # places code runs from later, which the never-shared list gained (CR1.5-9): the folder, in it, above it
+        "Cinnamon's applets": f"{h}/.local/share/cinnamon/applets", "inside an applet": f"{h}/.local/share/cinnamon/applets/a@b",
+        "a window manager's configuration": f"{h}/.config/sway", "an editor's extensions": f"{h}/.vscode/extensions",
+        "above an editor's extensions": f"{h}/.vscode", "Cargo's programs": f"{h}/.cargo/bin", "above Go's programs": f"{h}/go",
+        "a Go project": f"{h}/go/src/proj",
     }
     for p in corpus.values():
         if p != "/":
