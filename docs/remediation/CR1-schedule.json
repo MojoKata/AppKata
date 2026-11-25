@@ -36,16 +36,21 @@
    "name": "The Windows suite is collected again: scripts/mutate.py loads without SIGUSR1",
    "findings": [
     710,
-    719
+    719,
+    718
    ],
    "files": [
+    "scripts/areas.py",
     "scripts/mutate.py",
+    "tests/conftest.py",
     "tests/skips/windows.txt",
     "tests/test_coverage_site.py",
     "tests/test_demo_remake.py",
     "tests/test_imports_on_windows.py",
     "tests/test_mutate.py",
+    "tests/test_own_home.py",
     "tests/test_publish.py",
+    "tests/test_sandbox_run.py",
     "tests/test_tour_data.py"
    ]
   },
@@ -10903,6 +10908,19 @@
    "size": "medium",
    "proof": "Tier 1: a search of src/ and scripts/ finds a caller for each of the nine that stays and no definition of each that goes, and the tests of one that goes go with it (split_settings in tests/test_core.py, argv_kind in tests/test_sandbox_exposure.py); the check #694's round 4 wrote (every function of a module is one something names) passes over src/ and scripts/.",
    "note": "Found by a check written in #694's round 4 (U09's pull request), and filed by the coordinator. No unit holds most of the nine files it names (U27 holds four; U04, U08 and U19 three each), so it is a small unit of its own, the last: by then each file's own unit has merged, and has used its function or left it. #253 (U23) decides git_version and already takes split_settings out; this unit removes what is left of the nine, each with its tests. A function that something should call and doesn't is a finding of its own."
+  },
+  {
+   "finding": 718,
+   "readiness": "ready",
+   "files": [
+    "tests/conftest.py",
+    "tests/test_own_home.py",
+    "tests/test_sandbox_run.py",
+    "scripts/areas.py"
+   ],
+   "size": "medium",
+   "proof": "tests/test_own_home.py (tier 1): what a test writes to its home lands in its tmp_path, and a pytest run on a made-up user's home fails when a test reached it. Then the whole suite outside a container with the real home's bin, .local/share/appkata and .local/share/applications listed before and after, tier 1 and the launcher tier in their containers, and `scripts/test-windows-vm.sh --tests`: no test relies on the real home.",
+   "note": "Filed by the coordinator from CR1 Part 2's runs (2026-11-25), and fixed in this unit's pull request at the coordinator's word: tests this unit touched were among those writing into the real home (tests/test_demo_remake.py's build cloned the demo's Trusts there on every local run). tests/conftest.py is also U21's and U38's, which come after this unit; scripts/areas.py and tests/test_sandbox_run.py are shared files. What wrote sandboxes/app4 and the 22:06 demo isn't found: it now lands in its test's tmp_path, or fails the run."
   }
  ],
  "shared_files": [
