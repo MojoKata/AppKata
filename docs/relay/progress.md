@@ -348,3 +348,237 @@ before and after: empty.
     being ignored; it now answers in the helper's own form, after the second "--".
 8. Two of batch 1's tests quoted the tool's line whole ("… is handed over either way."); they
     quote the new ending.
+
+## Batch 3
+
+Where a grant's path really leads: #665, #391, #401. Fable 5.2, high effort. Nothing was taken
+over: the worktree was clean at the start.
+
+**The merge of U04's tip**: 0bc5b38, "Merge U04's branch in at 0bff619". No conflict outside
+`docs/relay/`, which stayed this unit's (the brief's `restore` line). U04's tip moved once after
+that (158f5c2, its batch 2's new findings #737 and #738 in the schedule): not in this batch. It
+touches `docs/remediation/CR1-schedule.json` alone and conflicts there with this branch's record of
+#736 (`git merge-tree`), both sides adding records at the end, as batch 2 met; batch 4 takes it in.
+
+**Counts**: fixed 3, no defect 0, remedy changed 0, set aside 0, still left 0, new 3 (none fixed:
+one High, two Low). Beside them, the coordinator's item: R17.4's sentence on the helper's answer
+(batch 2's doubt), 9902711.
+
+**Files touched**: `src/appkata_core/sandbox.py`, `tests/test_sandbox.py`,
+`tests/test_sandbox_adversarial.py`, `tests/test_sandbox_run.py`,
+`tests/data/launchers/online-app-appimage-with-folders.sh` (written again by `UPDATE_GOLDEN=1`, in
+#665's commit; the other goldens unchanged),
+`docs/requirements/R17-app-sandboxing/R17.3-templates.md`,
+`docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md`, `docs/requirements-trace.md`.
+
+### The findings
+
+**#665, fixed, 457857a.** The remedy is the finding's, with one rule added (see **Needs your eye**).
+At each launch, before bwrap, the launcher asks where each granted folder leads (`readlink -m`) and
+compares it with where it led when the launcher was written, baked beside it
+(`g1=<folder>; leads "$g1" <where it led> || g1=`). A grant that leads elsewhere is dropped for that
+launch: not mounted, no visible folder to the file-argument helper, nothing of it covered or shown
+empty for the session bus, and a line on stderr. A grant through the user's own link stands. The
+grants' binds are words put before "$@" just ahead of bwrap now (text of the bwrap command can't
+be dropped at a launch), in their order. And `refused_folders()`, which the chips,
+`strip_protected()` and `build_launcher()` share, refuses a grant when a link on its way lies in
+another folder of the same set. The note beside the guard that called the source side safe is
+corrected. Tests:
+- tier 1, `tests/test_sandbox.py`: `test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said`
+    (the launcher run whole with a stand-in bwrap, seven grants, their ways changed or not once it
+    is written: the finding's links, a nested folder made as a link, the user's own link moved, a
+    user's link left alone, a folder not there; then no `readlink` that answers, and an unreadable
+    bus address), `test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_the_launcher_is_written`
+    (the rule at writing: a link in the outer folder, out of it, a loop, one that leads nowhere, a
+    link that is the grant, a link outside every grant that leads into one, the user's link in no
+    granted folder, a link in a refused folder; the chips, `strip_protected` and the launcher).
+    Changed with it: `test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket`'s
+    "a link pointed there later" (dropped now, not covered), the helper's words in
+    `test_launcher_hands_over_file_arguments_only_for_standard_apps`, and
+    `tests/test_sandbox_adversarial.py`'s reader of the launcher's binds (`_bwrap_words`).
+    Shown failing: the tree of 0bc5b38 (`git archive`) with the new test files and goldens over
+    it, in the scratch home: both new tests, the eight "pointed there later" cases, the helper's
+    words and the golden failed.
+- tier 2, `_a_link_put_above_a_nested_grant_mounts_nothing_of_the_users`, a part of
+    `test_nested_folder_grants_cannot_reopen_the_symlink_hole`: the finding's run with the inner
+    grant read-only (`~/.ssh`) and read-write (`~/.config/autostart`), a folder no list names
+    (`~/Documents`) with the launcher written again after each, a nested folder made as a link
+    after the launcher was written, a command-line tool run once above its own folder and then
+    elsewhere, and the user's own link (it stands; moved, it is dropped; written again, it is
+    given). Shown failing on the 0bc5b38 tree in both containers (Mint 22.3: bwrap 0.9.0; LMDE 7:
+    bwrap 0.12.0): the app listed `~/.ssh` and read the key (`id_ed25519`, `SECRET-KEY`, twice:
+    by the victim's path and by the grant's). With the launch check alone (the rule at writing
+    switched off in a scratch copy) the third case failed in the Mint container: the launcher
+    written again had no refusal. With the fix: passed in both; the whole launcher tier at
+    457857a, Mint 22.3 147 passed, 5 skipped, LMDE 7 147 passed, 5 skipped.
+
+**#391, fixed, 0aba660.** `sandbox.folder_path()` is a folder's one name (from `~` in the home, from
+`/` elsewhere, no doubled slash, no `.` step, no slash last); `normalize()` names every set's
+folders so, `apply_overrides()` adds and removes by that name. A `..` is refused for everyone
+(`DOTDOT`). Tests:
+- tier 1, `tests/test_sandbox.py`: `test_a_folder_is_kept_shown_and_mounted_under_one_name_and_never_with_a_dotdot`
+    (25 ways of writing a folder, each read-write and read-only: the override, a saved set read
+    back, the chip, the Audit's phrase, the launcher's bind), `test_a_review_cannot_write_a_folder_so_that_it_reads_as_another_and_two_ways_of_writing_one_are_one_grant`
+    (the finding's line through `config_from_review` and `choose`; two ways of writing one folder).
+    Shown failing on the 457857a tree: all 26 failed, at the name function, which is new; the
+    fault itself by a scratch script on both trees: before, the chips of the finding's line were
+    `/home/kata/Notes/`, `~/Documents/../.config/google-chrome/Default`, `~/Media// · read-only`;
+    after, `~/Documents/../.config/google-chrome/Default · refused: not a full path (it has a ..
+    in it: name the folder it leads to)`, `~/Media · read-only`, `~/Notes`.
+- Changed with it, in U05's test files: tests that quoted a folder as written where that was a
+    full path in the test's home or `//proc` quote its name (`sb.folder_path`), and three that
+    built a grant set before `_launched()` set the home it is for set the home first. The other
+    test files that name the sandbox (38, other units' among them) passed unchanged.
+
+**#401, fixed, 9f56bec.** A path with a control character (Unicode's Cc) is "not a full path" in
+`protected_folder()`; `secret_folder()` and `system_folder()` say nothing of it; `parse_folders()`
+and `folder_path()` keep it with U+FFFD where each such character was, so no grant set, chip,
+launcher or record holds one, and the refusal is shown like the others. Tests:
+- tier 1: `tests/test_sandbox_adversarial.py`'s `HOSTILE` gains ten paths (`~/a<NUL>b`, a bare
+    NUL, a NUL before `..`, BEL, ESC, backspace, DEL, NEL, CR), held by
+    `test_a_hostile_folder_path_is_bound_whole_or_refused_and_the_launcher_stays_valid_shell` and
+    `test_parse_folders_keeps_every_hostile_path_whole`; `tests/test_sandbox.py`'s
+    `test_a_review_whose_folder_has_a_control_character_breaks_nothing_and_is_refused` (the
+    finding's road, a review's section to the launcher). Shown failing on the 0aba660 tree: the
+    twelve control cases of the hostile test (three with `ValueError: lstat: embedded null
+    character in path`, the others bound where they are refused now), the parse test and the
+    road test; a scratch script on that tree: `protected_folder`, `strip_secrets`, `summary` and
+    `build_launcher` each raised the ValueError for the finding's line.
+
+**The coordinator's item, 9902711.** R17.4's sentence on the helper's answer says each kind of line
+("=" an argument, "!" why one was not handed over, printed as text and no argument, any other
+nothing). Its trace row gains #651's test and a new one,
+`test_a_line_of_the_answer_that_says_why_is_printed_as_text_and_is_no_argument`. No code changes.
+
+After the last commit (9902711): the whole launcher tier in the Mint 22.3 container, 147 passed, 5
+skipped, and in the LMDE 7 container, 147 passed, 5 skipped; the whole tier 1 suite in its
+container under a 3 GB cap, 5131 passed, 138 skipped, none failed; the 38 other test files that
+name the sandbox in the scratch home, 2751 passed, 2 skipped. After each fix: the unit's own tier 1
+files and the document checks whole in the scratch home (2564 passed at #401's), and the touched
+run tests in the Mint 22.3 container.
+
+How #665 slipped past, as a class: a bind source that lies under a folder the app can write on the
+host. The launcher's other sources are not such (the private home and the install folder are
+mounted whole and nothing above them is the app's; the identity marker was moved out of the private
+home in an earlier round), so the members are a grant under another grant and a grant under a
+folder a tool was run in: both are in the run test, and what remains of the second is **New** 1.
+
+### Needs your eye
+
+- 457857a (#665): the line a user sees when a grant is dropped at a launch: "<App> runs sandboxed
+    and isn't given <folder> this time: it led to <where> when AppKata wrote this launcher and
+    leads to <where> now, so a link on the way there was made or changed since. AppKata judges the
+    folder again the next time it starts." (<where> now is "nowhere that can be followed" when
+    `readlink` gives no answer.) R17.4 gains two sentences ("A folder grant's source is the host's
+    own folder …", "One that leads elsewhere …").
+- 457857a (#665): **a rule the record doesn't name.** R17.3.1 gains "A grant is refused the same
+    way when a link on the way to its folder lies in another folder the same app is granted …",
+    and the chip, the launcher's note and the dialog's toast say "a link in ~/Projects, which the
+    app can change, is on the way to it". Why: where a folder leads is baked into the launcher, so
+    once a link moves it the launcher's text differs and AppKata's start writes it again; judged
+    afresh there, the app's link became the folder's place for every folder no list names (shown
+    in tier 2). It holds for a read-only outer folder too, and for the user's own link in a granted
+    folder (the folder the link names can be granted itself). It is not the alternative the brief
+    keeps for the owner: a nested grant with no link on its way stands.
+- 457857a (#665): a grant whose link was pointed at the session bus's folder after the launcher was
+    written (PR #694's P5-B1) was mounted with the socket covered; it is dropped at that launch.
+    The user's own link moved after the launcher was written is dropped the same way until AppKata
+    starts again.
+- 0aba660 (#391): **`..` is refused for everyone**, the choice the brief left to the batch: "not a
+    full path (it has a .. in it: name the folder it leads to)". A `..` that leads to a
+    never-shared folder still says that reason. R17.3.1 gains "A path with a `..` in it is refused
+    the same way too …" and "A grant is kept, shown … and mounted under one name …". What the user
+    sees change: a folder written `/home/<user>/Notes/` shows as `~/Notes`; a folder written two
+    ways is one grant, read-only where one of the two is.
+- 9f56bec (#401): the reason "not a full path (it has a control character in it, shown as �)", and
+    the folder shown with `�` where the character was. A newline or a tab in a folder's name was
+    bound until now; both are refused. R17.3.1 gains "So is a path with a control character in it
+    …".
+- 9902711: R17.4's sentence on the helper's answer, rewritten.
+
+### Needs a run
+
+The VMs (the coordinator's). #665's check is `readlink -m`, which GNU coreutils has; Ubuntu 26.04's
+coreutils are another make, and where `readlink -m` gave no answer every folder grant would be
+dropped at every launch, with the line. The same cases under Ubuntu's kernel and AppArmor profiles:
+
+```
+scripts/test-sandbox.sh launcher-vm -k "nested_folder_grants or home_folder_or_the_keys or file_argument_is_handed_over or session_bus_socket or relative_folder"
+scripts/test-sandbox.sh launcher-vm26 -k "nested_folder_grants or home_folder_or_the_keys or file_argument_is_handed_over or session_bus_socket or relative_folder"
+```
+
+### Guard
+
+The guard (`triage.py guard U05 --on U04 --base origin/cr1-u04-downloads-checksums`, from the main
+checkout's `agents/` since the coordinator's note) passes on every commit, with no file outside
+U05's plan (but `docs/relay/`). `tests/test_sandbox_properties.py` is U16's and reads a grant's
+bind from the launcher's text (`--bind-try P P` in it, P the second word of its line): the new
+lines keep both (`[ P = "$g1" ] && set -- --bind-try P P "$@"`), so that file is unchanged. The
+tier 2 checks are a helper inside a run test `tests/skips/tier1.txt` already names, as settled.
+
+### New
+
+1. **High. A launcher written again takes an app's link for a folder's place, where the link lies
+    in a folder the app could write by another road than its own grants.** #665's rule at writing
+    knows the set's own folders. It doesn't know (a) the folders a command-line tool was run in
+    (`$cwd`, read-write), (b) a folder handed over through the document portal (#736's road), (c)
+    another app's read-write grant above this app's. `src/appkata_core/sandbox.py`,
+    `refused_folders()` and `build_launcher()` (where a folder leads is `os.path.realpath()` at
+    each writing). The case, run at 457857a in the Mint 22.3 container (a scratch test, not in the
+    repository): a `cli-tool` with `~/src5/proj/data` granted read-only is run once in
+    `~/src5/proj`, where it does `mv data data.old; ln -s ../../Documents data`. Run from
+    elsewhere, the grant is dropped (#665). The launcher written again (AppKata's next start)
+    bakes `~/Documents` as where the folder leads, and the launch after reads
+    `~/Documents/taxes.txt` at `~/src5/proj/data` ("TAXES"). The never-shared folders stay refused
+    (the path is judged by where it leads); a folder of the secret list (`~/.aws`, the password
+    store) is not, since a pinned set is the user's. High as #665, by its outcome; it needs a tool
+    the user gave a folder inside a place it is run in, and AppKata started once between. Not
+    fixed here: not small. The fix I would make: where a folder led when it was granted is kept
+    with the grant (the pin in the install record), every launcher is written with that, and only
+    the user's own save in the Sandbox dialog, or an install, judges where it leads anew; then
+    the line's last sentence ("AppKata judges the folder again the next time it starts") changes.
+2. **Low. A1.2.3's sketch of the launcher shows a folder grant as text of the bwrap command**
+    (`docs/architecture/A1-app-sandboxing/A1.2-approach.md`, line 154, `--bind-try
+    "$HOME/Documents" "$HOME/Documents" \  # a grant`), and A1.2 says nothing of the launch check
+    or of a link in another granted folder. Not U05's file; with #734, U13's.
+3. **Low. The review badge and the Audit name a refused folder among what a set adds.**
+    `sandbox.changes()`, through `suggestion_text()` (`backend.py`, the badge's text and
+    `hasSuggestion`) and the Audit's entry: a review that asks `~/.ssh`, or
+    `~/Documents/../.cache`, reads "A reviewer suggests adding ~/Documents/../.cache (read-only)",
+    though the chips show it refused and nothing is mounted. As it was before this batch for every
+    never-shared folder (`Backend._suggestion()` strips the secret folders alone); #391's own
+    words name the badge, so it is said here. Not fixed: it changes when a suggestion counts as
+    one (`backend.py` and the backend's tests).
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `~/.local/share/appkata` and `~/.local/share/applications`
+before and after: empty.
+
+### Doubts for the coordinator
+
+1. **The rule at writing (Needs your eye) is mine.** Without it #665's fix holds only until
+    AppKata next starts. With it the roads of **New** 1 remain.
+2. A live race stays, as the guard's note says of its own: a second instance still running can put
+    a link on a grant's way between the launcher's asking and bwrap's mounts.
+3. A loop of links on a grant's way (`sub -> sub`): `readlink -m` and `os.path.realpath()` both give
+    the path back, so the grant stands and bwrap then fails the launch on it ("Can't find source
+    path"), as before this batch. At writing, a loop in another granted folder is refused by the
+    new rule.
+4. `readlink` is run by bare name, on the launcher's own PATH (#407). Where it gives no answer
+    (not coreutils') every grant is dropped, with the line: closed, not open.
+5. #401 takes U+FFFD (`�`) in a folder's path for the mark of a control character, so a folder
+    whose real name holds `�` is refused, with a reason that says "control character". Other
+    characters that mislead a reader are not refused: the bidi controls (U+202E; category Cf, as a
+    zero-width joiner in a name is), a no-break space.
+6. Named from `~`, a grant set means what it says under the home it is read in. Three tests built a
+    set under one HOME and ran its launcher under another; they set the home first now. A full
+    path under the home was kept as written before, and is `~/…` now.
+7. `folder_path()` leaves a path as written where `os.sep` is not `/` (no sandbox there, R17.1):
+    the Windows tier is not one I could run.
+8. The grants' binds come after the sound sockets, the identity marker and the `xdg-open` shim in
+    bwrap's words now (they were before them); no grant can name those places (`/`, `/run`, the
+    runtime folder are never shared), so nothing they mount changes.
+9. The cover of a bus socket in a granted folder still asks `readlink -f` for where the grant
+    leads; with the launch check that is where it led when written, for a grant that stands. Left
+    as it was.
