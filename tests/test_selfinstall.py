@@ -244,14 +244,15 @@ def test_a_write_of_appkatas_own_install_that_fails_part_way_leaves_what_was_the
     assert _files(folders) == before                                    # every file as it was, nothing beside them
 
 
-def test_appkatas_start_removes_what_a_stopped_write_of_its_own_install_left(env, monkeypatch, tmp_path):
+def test_appkatas_start_removes_what_a_stopped_write_of_its_own_install_left(env, monkeypatch, tmp_path, caplog):
     # #689's review, P7-B3: a copy of the AppImage stopped part-way (AppKata killed, the power gone)
     # stayed beside the install for good, 100 MB of it, and so would a stopped write of the menu
     # entry or an icon, now that each is written beside its place. AppKata's start removes them, in
     # the install folder its record names and in the one Settings names (a first install that
     # stopped has no record), once the process that wrote them is gone: `appkata --install-self`
     # runs beside a running AppKata, so what a running process writes is kept, as is anything
-    # beside them not of their shape.
+    # beside them not of their shape. The App log names what it removed, in one line (P7-B1b).
+    import logging
     from appkata_core import sandbox
     monkeypatch.setenv("HOME", str(env["home"]))
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -276,12 +277,15 @@ def test_appkatas_start_removes_what_a_stopped_write_of_its_own_install_left(env
         be = Backend(db_path=str(tmp_path / "appkata.db"), heal=False)
         try:
             be._prefs["installDir"] = str(elsewhere)                    # Settings' install folder, since moved
+            caplog.set_level(logging.INFO, logger="appkata.selfinstall")
             be._heal_launchers_at_startup()
         finally:
             be._timer.stop()
         assert [f for f in stopped if os.path.lexists(f)] == []
         assert [f for f in kept if not os.path.lexists(f)] == []
         assert os.path.isfile(rec["current"]["path"]) and os.path.isfile(selfinstall.desktop_entry_path())
+        said = [r.getMessage() for r in caplog.records if r.name == "appkata.selfinstall" and r.getMessage().startswith("removed")]
+        assert said == ["removed what a stopped write of AppKata's own install left beside its files: " + ", ".join(stopped)], said
     finally:
         running.kill()
         running.wait()

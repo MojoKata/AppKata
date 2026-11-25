@@ -1483,40 +1483,59 @@ def _kept_paths(rec: dict, app_id: str, root: str) -> list[str]:
     return list(dict.fromkeys(p for p in paths + [f for f in rec.get("files", []) if _is_menu_file(f)] if p))
 
 
-def _sweep_beside(paths: list[str]) -> list[str]:
+def _shared_paths() -> list[str]:
+    """The files every launcher write writes beside the app's own (sandbox.write_launcher), which
+    belong to no app: the seccomp filter, the file-argument helper and the xdg-open shim."""
+    return [sandbox.seccomp_path(), sandbox.forward_path(), os.path.join(sandbox.shims_dir(), "xdg-open")]
+
+
+def _sweep_beside(paths: list[str], kinds: tuple[str, ...] = ("was", "tmp")) -> list[str]:
     """Remove what a process stopped part-way (killed, the power gone) left beside these files: a
     hard link a sandbox change kept (`<path>.<pid>.was`, :func:`_keep_aside`) and a file a write
-    hadn't finished (`<path>.<pid>.tmp`, :func:`_write_whole`); nothing else beside them. Called
-    with the activation lock held, so no change or write of this process is under way. Returns
-    what it removed; one it can't remove is logged with why (R14.2) and left for the next time.
-    #689's review, P6-B2: only the app's next sandbox change removed a .was, and nothing a .tmp,
-    so an uninstall left the old menu script and entry, identity marker and owner record beside
-    where they were. P7-B1a: a removal that failed was logged without its reason."""
+    hadn't finished (`<path>.<pid>.tmp`, :func:`_write_whole`), of the `kinds` asked for; nothing
+    else beside them. Called with the activation lock held, so no change or write of this process
+    is under way. Returns what it removed; one it can't remove is logged with why (R14.2) and left
+    for the next time. #689's review, P6-B2: only the app's next sandbox change removed a .was, and
+    nothing a .tmp, so an uninstall left the old menu script and entry, identity marker and owner
+    record beside where they were. P7-B1a: a removal that failed was logged without its reason."""
     gone = []
     for p in paths:
-        for left in glob.glob(glob.escape(p) + ".*.was") + glob.glob(glob.escape(p) + ".*.tmp"):
-            if re.fullmatch(r"[0-9]+", left[len(p) + 1:-4]) and not os.path.isdir(left):
-                try:
-                    os.remove(left)
-                    gone.append(left)
-                except OSError as e:
-                    log.warning("couldn't remove %s: %s", left, e.strerror or e)
+        for kind in kinds:
+            for left in glob.glob(glob.escape(p) + ".*." + kind):
+                if re.fullmatch(r"[0-9]+", left[len(p) + 1:-len(kind) - 1]) and not os.path.isdir(left):
+                    try:
+                        os.remove(left)
+                        gone.append(left)
+                    except OSError as e:
+                        log.warning("couldn't remove %s: %s", left, e.strerror or e)
     return gone
 
 
 def sweep_left_beside(db: DB) -> list[str]:
-    """AppKata's start, for every portable app it installed: remove what a process stopped part-way
-    left beside the app's files (:func:`_sweep_beside`), as the app's next sandbox change and its
-    uninstall do. Returns what it removed."""
+    """AppKata's start: remove what a process stopped part-way left beside the files of every
+    portable app it installed (:func:`_sweep_beside`), as the app's next sandbox change and its
+    uninstall do, and beside the files all the sandboxed apps' launchers share
+    (:func:`_shared_paths`: a write's `.tmp` only, nothing keeping them aside). The App log gets a
+    line for each app whose files it removed something beside, naming what, and one for the shared
+    files. Returns what it removed. #689's review, P7-B1b: the start removed them and said nothing
+    of it, though it logs each launcher and command link it changes; P7-B2: the shared files are
+    written the same way at every launcher write, and no sweep reached what a stopped one left."""
     if OS != "linux":
         return []
     gone = []
     with _ACTIVATE_LOCK:
-        for row in db.all("SELECT name, record FROM installs"):
+        for row in db.all("SELECT name, record FROM installs ORDER BY name"):
             rec = json.loads(row["record"] or "{}")
             if rec.get("current") and rec.get("target"):
-                gone += _sweep_beside(_kept_paths(rec, app_id_of(rec, {"name": row["name"]}),
-                                                  rec.get("root") or os.path.dirname(rec["target"])))
+                here = _sweep_beside(_kept_paths(rec, app_id_of(rec, {"name": row["name"]}),
+                                                 rec.get("root") or os.path.dirname(rec["target"])))
+                if here:
+                    log.info("removed what a stopped change or write left beside the files of %s: %s", row["name"], ", ".join(here))
+                gone += here
+        here = _sweep_beside(_shared_paths(), ("tmp",))
+        if here:
+            log.info("removed what a stopped write left beside the files every sandboxed app's launcher uses: %s", ", ".join(here))
+        gone += here
     return gone
 
 

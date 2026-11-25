@@ -223,8 +223,8 @@ def sweep_left_beside(db: DB, root: str) -> list[str]:
     `AppKata-<version>-<arch>.AppImage.<pid>.tmp`, a copy, in its install folder (the one its record
     names, and `root`'s, where a first install may have stopped). Only one whose process is gone:
     `appkata --install-self` runs beside a running AppKata, and may be writing it. Returns what it
-    removed; one it can't remove is logged with why and left for the next start (#689's review,
-    P7-B3)."""
+    removed, which the App log names in one line; one it can't remove is logged with why and left
+    for the next start (#689's review, P7-B3, P7-B1b)."""
     if OS != "linux":
         return []
     rec = _record(db)
@@ -242,6 +242,8 @@ def sweep_left_beside(db: DB, root: str) -> list[str]:
                 gone.append(f)
             except OSError as e:
                 log.warning("couldn't remove %s: %s", f, e.strerror or e)
+    if gone:
+        log.info("removed what a stopped write of AppKata's own install left beside its files: %s", ", ".join(gone))
     return gone
 
 

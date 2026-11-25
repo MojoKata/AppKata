@@ -1049,6 +1049,46 @@ def test_appkatas_start_removes_what_a_stopped_change_left_beside_an_apps_files(
     assert beside() == [] and all(os.path.isfile(f) and os.path.isfile(f + ".mine") for f in files)
 
 
+def test_appkatas_start_removes_what_a_stopped_write_left_beside_the_launchers_shared_files_and_logs_what_it_removed(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-B2 and P7-B1b, the owner's decisions (option A each). Every launcher write
+    # writes the files all the sandboxed apps' launchers share -- the seccomp filter, the
+    # file-argument helper and the xdg-open shim -- through <path>.<pid>.tmp, and no sweep reached
+    # what a stopped write left beside them. And AppKata's start removed what it found beside an
+    # app's files and said nothing of it, though it logs each launcher and command link it changes.
+    # The start removes the shared files' leftovers too (a .tmp only: nothing keeps them aside, so a
+    # .was beside them isn't AppKata's), and the App log has one line for each app whose files it
+    # removed something beside, naming what, and one for the shared files (R17.4).
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    shared = [p for p in (sb.seccomp_path(), sb.forward_path(), os.path.join(sb.shims_dir(), "xdg-open")) if os.path.isfile(p)]
+    assert shared[-2:] == [sb.forward_path(), os.path.join(sb.shims_dir(), "xdg-open")], shared
+    apps = [f"{rec['launcher']}.4241.was", f"{sb.identity_path('demo')}.4242.tmp"]          # beside Demo's own files
+    stopped = [f"{p}.4242.tmp" for p in shared]                                            # and beside the shared ones
+    kept = [f"{p}.4242.was" for p in shared] + [f"{p}.abc.tmp" for p in shared] + [f"{shared[0]}.4242.tmp.d", f"{shared[0]}.mine"]
+    for f in apps + stopped + kept:
+        open(f, "w").close()
+    os.mkdir(f"{shared[-1]}.77.tmp")                                                       # a folder of the shape
+    kept.append(f"{shared[-1]}.77.tmp")
+    caplog.set_level(logging.INFO, logger="appkata.install")
+    be._heal_launchers_at_startup()
+    assert [f for f in apps + stopped if os.path.lexists(f)] == [] and [f for f in kept if not os.path.lexists(f)] == []
+    assert all(os.path.isfile(p) for p in shared)
+    said = [r.getMessage() for r in caplog.records if r.name == "appkata.install" and r.getMessage().startswith("removed")]
+    assert said == ["removed what a stopped change or write left beside the files of Demo: " + ", ".join(apps),
+                    "removed what a stopped write left beside the files every sandboxed app's launcher uses: " + ", ".join(stopped)], said
+    caplog.clear()
+    be._heal_launchers_at_startup()                                                        # nothing left: nothing said
+    assert [r for r in caplog.records if r.getMessage().startswith("removed")] == []
+    assert install.sweep_left_beside(be.db) == []
+
+
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
     # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
     # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder

@@ -208,7 +208,8 @@ folder (R4.3.1), usually from `~/Downloads`, and AppKata hasn't installed itself
 Each file Install writes (the copy, the entry, the icon) is written whole beside its place and
 renamed over it, so a write that fails (a full disk, a quota) leaves what was there before, never
 part of a file, and nothing beside it. What a write stopped part-way (AppKata killed, the power
-gone) left beside them is removed at AppKata's next start, once the process that wrote it is gone.
+gone) left beside them is removed at AppKata's next start, once the process that wrote it is gone,
+and the App log (R14) names what was removed.
 
 The step is recorded in the Audit. `appkata --install-self` does the same without asking (for
 scripts and tests). An AppImage already in the install folder is never asked about. AppKata isn't
