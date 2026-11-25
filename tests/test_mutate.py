@@ -5,7 +5,11 @@ and the baseline each area keeps in docs/hardening/mutation/.
 How it would slip past: mutmut runs only in the mutate workflow, by hand, hours at a time, so a
 mistake in the tools around it (a module no job holds, an outcome counted as another, a survivor
 kept without its change) shows only in a baseline that is quietly wrong. These run the tools on
-small made-up runs instead."""
+small made-up runs instead.
+
+On Windows the file loads, scripts/mutate.py with it, and its tests are skipped: the tools run on
+Linux (a run in tier 1's container, the baseline's commands on the development machine), and the
+tests are written for that, in paths, line ends and git (issue #710)."""
 
 import argparse
 import importlib.util
@@ -21,6 +25,8 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 _spec = importlib.util.spec_from_file_location("appkata_mutate", os.path.join(ROOT, "scripts", "mutate.py"))
 mutate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mutate)
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="mutation testing's tools, which run on Linux")
 
 
 def meta(mutants, rel, codes, name=None):
@@ -147,6 +153,20 @@ def test_outcomes_are_counted_by_file_and_the_odd_ones_as_other(tmp_path):
     assert mutate.counts(by_file) == {"mutants": 9, "killed": 3, "timeout": 1, "survived": 2, "no tests": 1,
                                       "other": 1, "not run": 1}  # fmt: skip
     assert by_fn["appkata_core.urls.x_f"]["killed"] == 3
+
+
+def test_a_stopped_workers_exit_code_is_read_where_the_signal_doesnt_exist(monkeypatch):
+    # Windows' Python has no signal.SIGUSR1 (issue #710: the file didn't load there, so the Windows
+    # tier collected no test). It loads, and the exit code a run on Linux gave a worker it stopped
+    # still counts as killed.
+    import signal
+
+    assert mutate.OUT_OF_MEMORY == -10 and mutate.OUTCOME[-10] == "killed"
+    monkeypatch.delattr(signal, "SIGUSR1", raising=False)
+    spec = importlib.util.spec_from_file_location("appkata_mutate_no_sigusr1", os.path.join(ROOT, "scripts", "mutate.py"))
+    there = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(there)
+    assert there.OUT_OF_MEMORY == -10 and there.OUTCOME == mutate.OUTCOME
 
 
 def test_a_later_directorys_outcome_wins_and_an_outcome_beats_none(tmp_path):
