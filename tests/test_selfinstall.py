@@ -184,7 +184,7 @@ def test_a_fresh_start_lists_appkata_by_its_name_and_icon_before_any_sync(env, m
     monkeypatch.setenv("HOME", str(env["home"]))
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from appkata.backend import Backend
-    be = Backend(db_path=str(tmp_path / "fresh.db"))
+    be = Backend(db_path=str(tmp_path / "fresh.db"), heal=False)
     assert not be.lastSync
     me = [a for a in be.installedItems if a["url"] == APPKATA_REPO]
     assert len(me) == 1 and me[0]["name"] == "AppKata", me

@@ -17,16 +17,55 @@ URL = "https://github.com/example/demo"
 
 @pytest.fixture
 def be(tmp_path, monkeypatch):
+    """A Backend whose home is the test's folder. It runs no start-up pass (a test that wants one
+    calls it), and every thread the test started has ended before monkeypatch gives HOME back, so
+    nothing it does reaches the real home (#689's review, P6-C1)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from appkata.backend import Backend
-    b = Backend(db_path=str(tmp_path / "appkata.db"))
+    before = set(threading.enumerate())
+    b = Backend(db_path=str(tmp_path / "appkata.db"), heal=False)
     b.db.x("INSERT INTO trusts(url, name, enabled, score) VALUES(?,?,1,3)", ("https://example.org/trust", "Alice"))
     b._is_cli = lambda url, eff=None: False
     b._sandbox_kind = lambda url: "appimage"
-    return b
+    yield b
+    b._timer.stop()
+    late = [t for t in set(threading.enumerate()) - before if not isinstance(t, threading._DummyThread)]
+    for t in late:
+        t.join(timeout=30)
+    assert [t.name for t in late if t.is_alive()] == [], "a thread the test started outlives it, and would run with the real HOME"
+
+
+def test_the_fixtures_backend_starts_no_thread_that_could_outlive_the_test(request, monkeypatch):
+    # #689's review, P6-C1: the fixture's Backend started AppKata's start-up pass on a thread of its
+    # own. Run late (a loaded machine), it read the test's database after the test had given HOME
+    # back, and wrote the test's Demo into the real ~/bin: ~/bin/apps/demo/run and ~/bin/demo.
+    # A test that wants the pass calls it, on its own thread or not, and waits for it.
+    started = []
+    real = threading.Thread.start
+    monkeypatch.setattr(threading.Thread, "start", lambda self: started.append(self.name) or real(self))
+    request.getfixturevalue("be")
+    assert started == []
+
+
+def test_no_backend_a_test_builds_runs_appkatas_start_up_pass_on_its_own(tmp_path):
+    # P6-C1's class: a Backend built with the default (heal=True) starts that pass on a thread the
+    # test doesn't wait for; four of them did, in three files. Each passes heal=False now.
+    import ast
+    folder = os.path.dirname(os.path.abspath(__file__))
+    healing = []
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".py"):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for call in ast.walk(tree):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Backend"
+                        and not any(k.arg == "heal" and isinstance(k.value, ast.Constant) and k.value.value is False
+                                    for k in call.keywords)):
+                    healing.append(f"{name}:{call.lineno}")
+    assert healing == []
 
 
 def _review(be, template: str) -> None:

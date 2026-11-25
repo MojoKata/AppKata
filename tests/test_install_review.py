@@ -2195,7 +2195,7 @@ def test_install_options_on_windows_show_the_folder_an_installed_app_is_in(tmp_p
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from appkata.backend import Backend
-    be = Backend(db_path=str(tmp_path / "appkata.db"))
+    be = Backend(db_path=str(tmp_path / "appkata.db"), heal=False)
     for module in (platform, install):
         monkeypatch.setattr(module, "OS", "windows")
     assets = [{"name": "Demo-1.0-win-x64.zip", "url": "https://example.org/Demo-1.0-win-x64.zip", "size": 1000}]

@@ -572,7 +572,7 @@ def _a_backend_with_the_users_bwrap_in_bin(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from appkata.backend import Backend
     from test_sandbox_backend import URL, _review
-    be = Backend(db_path=str(tmp / "appkata.db"))
+    be = Backend(db_path=str(tmp / "appkata.db"), heal=False)
     be.db.x("INSERT INTO trusts(url, name, enabled, score) VALUES(?,?,1,3)", ("https://example.org/trust", "Alice"))
     be._is_cli = lambda url, eff=None: False
     be._sandbox_kind = lambda url: "tarball"
