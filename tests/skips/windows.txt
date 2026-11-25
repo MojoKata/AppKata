@@ -53,6 +53,7 @@ tests/test_install_review.py::test_an_app_starts_from_its_menu_entry_whatever_ap
 tests/test_install_review.py::test_an_app_whose_name_has_no_ascii_letter_or_digit_gets_its_id_in_the_file_named_after_it  # the Linux install layout
 tests/test_install_review.py::test_an_archive_with_nothing_but_helpers_has_no_program  # the Linux install layout
 tests/test_install_review.py::test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu  # the Linux install layout
+tests/test_install_review.py::test_an_install_that_couldnt_use_its_releases_checksum_file_keeps_why_in_its_record  # the Linux install layout
 tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes  # the Linux install layout
 tests/test_install_review.py::test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files  # the Linux install layout
 tests/test_install_review.py::test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_without_asking  # the Linux install layout

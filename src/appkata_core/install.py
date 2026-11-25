@@ -194,23 +194,44 @@ def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
         return b""
 
 
-def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
-    """(hex, source) of the checksum to compare with: the forge digest, or the first of the
-    release's checksum files that lists this file (R4.4). Each one is tried (assets.checksums_for):
-    the first found was the only one read, so a list for another platform's files, or one of
-    another kind of digest, left a file Unverified that the next list covered (CR1.3-6)."""
+_SUMS_MAX = 1 << 20        # how much of a checksum file is read
+
+
+def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str, str]:
+    """(hex, source, why not) of the checksum to compare with: the forge digest, or the first of
+    the release's checksum files that lists this file (R4.4). Each one is tried
+    (assets.checksums_for): the first found was the only one read, so a list for another
+    platform's files, or one of another kind of digest, left a file Unverified that the next list
+    covered (CR1.3-6).
+
+    With no checksum to give, `why not` says what became of each checksum file the release has:
+    one that couldn't be read, doesn't list the file, or is longer than what is read of it. The
+    install goes on Unverified as R4.4 allows, and it went on saying nothing, as if the release
+    published none (CR1.3-29). "" when the release has none."""
     if asset.digest.startswith("sha256:"):
-        return asset.digest.split(":", 1)[1].lower(), "forge digest"
+        return asset.digest.split(":", 1)[1].lower(), "forge digest", ""
+    why = []
     for sums in checksums_for(asset, assets):
+        name = one_line(sums.name)[:80]         # the release's own text, on its way to a tooltip
         try:
             req = urllib.request.Request(sums.url, headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=30) as r:
-                text = r.read(1 << 20).decode("utf-8", "replace")
-        except OSError:
+                data = r.read(_SUMS_MAX + 1)
+        except urllib.error.HTTPError as e:
+            why.append(f"couldn't read {name} (HTTP {e.code})")
             continue
+        except OSError:
+            why.append(f"couldn't read {name}")
+            continue
+        cut = len(data) > _SUMS_MAX
+        text = data[:_SUMS_MAX].decode("utf-8", "replace")
+        if cut:                                 # never a line that was cut: its name may be another file's start
+            text = text[:text.rfind("\n") + 1]
         if found := _sha256_in(text, asset.name):
-            return found, sums.name
-    return "", ""
+            return found, sums.name, ""
+        why.append(f"{name} is longer than 1 MB, and the part AppKata reads doesn't list this file" if cut
+                   else f"{name} doesn't list this file")
+    return "", "", "; ".join(why)
 
 
 def _sha256_in(text: str, name: str) -> str:
@@ -1320,10 +1341,12 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         log.info("downloaded %s (%d bytes, sha256 %s)", name, os.path.getsize(file), got)
         if phase:
             phase("Verifying")
-        want, how = expected_sha256(asset, assets)
+        want, how, why_not = expected_sha256(asset, assets)
         if want and got != want:
             raise InstallError(f"the download doesn't match its checksum ({how}); nothing was installed")
         verified = "checksum" if want else "unverified"
+        if why_not:
+            log.warning("%s was checked against no checksum: %s", name, why_not)
         if OS == "windows":
             from . import windows
             if portable.motw:            # R15.11.1
@@ -1357,7 +1380,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             phase("Installing")
         if moving_from.get("installer") and kind in ("exe", "msi"):
             _uninstall_windows(app["name"], moving_from)
-        rec: dict = {"id": app_id, "files": [], "links": [], "verified": verified, "checksum_source": how, "root": portable.root,
+        rec: dict = {"id": app_id, "files": [], "links": [], "verified": verified, "checksum_source": how,
+                     **({"checksum_reason": why_not} if why_not else {}), "root": portable.root,
                      **({"selfInstalled": True} if prev.get("selfInstalled") else {}),
                      "signer": signer, "motw": portable.motw}
         if OS == "windows":

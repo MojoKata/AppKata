@@ -164,6 +164,12 @@ lists the file: the file's own first (`<file>.sha256`, `<file>.sha256sum`), then
 lists (`SHA256SUMS`, `checksums.txt`) in the release's order. A checksum of another kind
 (`<file>.sha512`, `SHA512SUMS`) is not read.
 
+When a release has checksum files and none of them gives the file's SHA-256, the file is installed
+as Unverified, as one whose release publishes none is, and the Unverified chip's tooltip says what
+became of each: it couldn't be read, it doesn't list the file, or it is longer than the 1 MB AppKata
+reads of it and that part doesn't list the file ("Its release has a checksum file, but this download
+was checked against none: couldn't read SHA256SUMS (HTTP 404)").
+
 A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
 `.minisig`, a sigstore bundle) is not checked.
 

@@ -136,7 +136,7 @@ def test_a_file_is_checked_against_the_first_of_its_releases_checksum_files_that
     with two such files. Here each of them, in each order, as a release publishes them."""
     others, used = _CHECKSUM_FILES[release]
     a, files = _release_with(server, others)
-    assert install.expected_sha256(a, files) == ((_SHA, used) if used else ("", ""))
+    assert install.expected_sha256(a, files)[:2] == ((_SHA, used) if used else ("", ""))
     # the same release with another file under that name: stopped wherever a SHA-256 of it is published
     a, files = _release_with(server, others, data=b"tampered")
     if used:
@@ -150,6 +150,65 @@ def test_a_release_with_a_sha512_and_sha256sums_is_installed_as_checked(env, ser
     a, files = _release_with(server, _CHECKSUM_FILES["a .sha512 beside the file, and SHA256SUMS"][0])
     rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
     assert (rec["verified"], rec["checksum_source"]) == ("checksum", "SHA256SUMS")
+
+
+def _long_list(end, at=1 << 20):
+    """A checksum list of other files that is `at` bytes long and ends with the text `end`."""
+    line = _OTHER + "  filler-{:08d}.bin\n"
+    n, rest = divmod(at - len(end), len(line.format(0)))
+    return "".join(line.format(i) for i in range(n - 1)) + f"{_OTHER}  {'x' * (len(line.format(0)) - 67 + rest)}\n" + end
+
+
+_MINE = f"{_SHA}  App.AppImage\n"
+_NO_ANSWER = "http://127.0.0.1:1/"          # nothing listens there: the connection is refused
+# A release's checksum files, as _CHECKSUM_FILES has them (a text that starts "http" is where the file
+# is said to be) -> what the install is checked against, and the reason kept when that is nothing
+_NO_CHECKSUM = {
+    "a list that answers 404": ([("SHA256SUMS", None)], "", "couldn't read SHA256SUMS (HTTP 404)"),
+    "a list on a server that doesn't answer": ([("SHA256SUMS", _NO_ANSWER)], "", "couldn't read SHA256SUMS"),
+    "a list without the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "", "SHA256SUMS doesn't list this file"),
+    "a list of another kind of digest": ([("checksums.txt", f"{_SHA512}  App.AppImage\n")], "", "checksums.txt doesn't list this file"),
+    "an empty list": ([("SHA256SUMS", "")], "", "SHA256SUMS doesn't list this file"),
+    "the file listed after the first 1 MB":
+        ([("SHA256SUMS", _long_list("") + _MINE)], "", "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the first 1 MB ends inside the line of a file whose name starts as this one's":
+        ([("SHA256SUMS", _long_list(f"{_OTHER}  App.AppImage") + ".zsync\n" + _MINE)], "",
+         "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the file's own .sha256 answers 404 and the list is without it":
+        ([("App.AppImage.sha256", None), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "",
+         "couldn't read App.AppImage.sha256 (HTTP 404); SHA256SUMS doesn't list this file"),
+    # ...and where there is a checksum, or no checksum file at all, there is nothing to say
+    "a list that answers 404, then one with the file": ([("SHA256SUMS", None), ("checksums.txt", _MINE)], "checksums.txt", ""),
+    "the file listed at the end of the first 1 MB": ([("SHA256SUMS", _long_list(_MINE) + f"{_OTHER}  later.bin\n")], "SHA256SUMS", ""),
+    "a list of just 1 MB, the file on its last line": ([("SHA256SUMS", _long_list(_MINE.rstrip()))], "SHA256SUMS", ""),
+    "no checksum file": ([], "", ""),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], "", ""),
+}
+
+
+def _release_of(server, others):
+    a, files = _release_with(server, [(n, None if str(t).startswith("http") else t) for n, t in others])
+    return a, [Asset(f.name, t + f.name) if str(t := dict(others).get(f.name)).startswith("http") else f for f in files]
+
+
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_a_checksum_file_that_gives_no_checksum_is_said_with_the_reason(server, release):
+    """R4.4 (CR1.3-29): a checksum file that is there and can't be used is not "none exists". The
+    install went on as Unverified with no word of it, as if the release published nothing."""
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    assert install.expected_sha256(a, files) == (_SHA if used else "", used, why)
+
+
+@linux_only
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_an_install_that_couldnt_use_its_releases_checksum_file_keeps_why_in_its_record(env, server, tmp_path, caplog, release):
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    assert (rec["verified"], rec["checksum_source"], rec.get("checksum_reason")) == ("checksum" if used else "unverified", used, why or None)
+    assert ("checked against no checksum: " + why in caplog.text) == bool(why)
 
 
 def test_the_checksum_files_of_a_release_are_the_files_own_then_its_lists_and_never_another_digests():

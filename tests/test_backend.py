@@ -680,7 +680,15 @@ def installed_as(be, version, record):
     ({"verified": "signed", "signer": "Demo Ltd", "checksum_source": ""}, "", "signed", ""),
     ({"verified": "adopted"}, SHA, "unverified", "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"),
     ({}, SHA, "unverified", ""),                                                                  # a record that names no check
-], ids=["unverified-then-a-digest", "forge-digest-then-none", "sums-file-then-none", "signed", "adopted", "no-result"])
+    # its release had a checksum file that gave no checksum: the chip says so (CR1, #328)
+    ({"verified": "unverified", "checksum_source": "", "checksum_reason": "couldn't read SHA256SUMS (HTTP 404)"}, SHA, "unverified",
+     "Its release has a checksum file, but this download was checked against none: couldn't read SHA256SUMS (HTTP 404)"),
+    ({"verified": "unverified", "checksum_reason": "App.AppImage.sha256 doesn't list this file; SHA256SUMS doesn't list this file"}, "",
+     "unverified", "Its release has a checksum file, but this download was checked against none: "
+                   "App.AppImage.sha256 doesn't list this file; SHA256SUMS doesn't list this file"),
+    ({"verified": "signed", "signer": "Demo Ltd", "checksum_reason": "couldn't read SHA256SUMS"}, "", "signed", ""),
+], ids=["unverified-then-a-digest", "forge-digest-then-none", "sums-file-then-none", "signed", "adopted", "no-result",
+        "a-checksum-file-that-couldnt-be-read", "checksum-files-without-the-file", "signed-whatever-the-checksum-file"])
 def test_an_installed_apps_chip_is_what_its_own_install_checked_whatever_the_next_release_publishes(be, record, next_digest, chip, tip):
     """The chip was read from the file of the release Update would take: Checksum for a file that was
     never checked once a later release had a digest, Unverified for a checked one once it had none."""
