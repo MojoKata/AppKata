@@ -703,6 +703,26 @@ def test_password_service_counts_the_name_held_where_the_bus_cannot_be_asked(tmp
                         "the passwords it holds.\n"), (case, r.stderr)
 
 
+# PR #694's review, P3-B3: the never-answering stand-in above sleeps on every ask, so the first
+# (NameHasOwner) times out and the second (ListActivatableNames) is never made: nothing held that
+# second ask's `timeout 5`, and taking it off both tools' lines passed every test, while a bus that
+# answers the first ask and then goes silent would hold the launch for good without it (gdbus's own
+# --timeout doesn't bound the connecting: P2-B3). How it slipped past: one stand-in stood for every
+# silent bus. This one answers "no owner" as each tool does, and never answers the list.
+@pytest.mark.parametrize("tool", ["gdbus", "busctl"])
+def test_password_service_counts_the_name_held_where_the_bus_answers_the_first_ask_alone(tmp_path, monkeypatch, tool):
+    owner, _ = _ANSWERS[tool]
+    answer = f'#!/bin/sh\ncase "$*" in *NameHasOwner*) echo {shlex.quote(owner(False))} ;; *) exec sleep 60 ;; esac\n'
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    began = time.monotonic()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={tool: answer}, hide=("gdbus",) if tool == "busctl" else ())
+    assert time.monotonic() - began < 20, tool                                       # bounded: `timeout 5`, not the bus
+    assert r.returncode == 0 and proxy is not None and "--own=org.freedesktop.secrets" not in proxy, (proxy, r.stderr)
+    assert r.stderr == ("AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), "
+                        "so Demo runs without Password service: offering that name through the bus filter could reach such a program and "
+                        "the passwords it holds.\n"), r.stderr
+
+
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
 # refusing the runtime folder alone, and dbus-run-session and dbus-launch put the bus under /tmp
 # (BUS_ADDRESSES): a tool run in /tmp, or a grant of /tmp, showed the app the bus's socket file, and
