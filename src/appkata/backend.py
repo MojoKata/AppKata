@@ -2859,15 +2859,12 @@ def _release_of(releases: list[dict], asset: dict) -> dict:
 
 
 def _same_digest(theirs: str, mine: str) -> bool:
-    """A digest from a review's Details, possibly shortened as "3c1f…9e07", is this one (R10.3.4)."""
-    theirs, mine = (theirs or "").strip().lower().removeprefix("sha256:"), (mine or "").strip().lower()
-    if not theirs or not mine:
-        return False
-    for sep in ("…", "..."):
-        if sep in theirs:
-            pre, _, suf = theirs.partition(sep)
-            return len(pre) + len(suf) >= 6 and mine.startswith(pre) and mine.endswith(suf)
-    return mine.startswith(theirs) if len(theirs) >= 7 else False
+    """A SHA-256 or a Flatpak commit from a review's Details is this one (R10.3.4): the same 64
+    hexadecimal digits, all of them. A shortened one ("3c1f…9e07", a digest's first digits) is no
+    match, whatever it starts and ends with: a file that shares that much of a digest is made in
+    minutes, and the pill says a reviewer had this very file (CR1, #466)."""
+    theirs, mine = (theirs or "").strip().lower().removeprefix("sha256:"), (mine or "").strip().lower().removeprefix("sha256:")
+    return bool(re.fullmatch(r"[0-9a-f]{64}", theirs)) and theirs == mine
 
 
 def _clean_source_settings(st: dict, track_default: bool = False) -> dict:

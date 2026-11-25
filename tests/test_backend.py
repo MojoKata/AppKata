@@ -779,3 +779,19 @@ def test_a_file_not_yet_installed_is_compared_by_the_digest_its_release_gives(be
     a_review_of(be.db, "1.0", [["SHA-256", REPLACED]])
     be.reload()
     assert be.detail(URL)["sameFileAs"] == ["Desk"] and be.reviewData(URL)["details"] == []
+
+
+# ---------------------------------------------------------------- only a whole digest is the same file (R10.3.4; CR1, #466)
+@pytest.mark.parametrize("written, same", [
+    (DOWNLOADED, True), ("sha256:" + DOWNLOADED.upper(), True),
+    (DOWNLOADED[:4] + "…" + DOWNLOADED[-4:], False),               # as R10's example wrote it
+    (DOWNLOADED[:7], False), (DOWNLOADED[:32], False), ("…" + DOWNLOADED[-6:], False), (DOWNLOADED[:63], False),
+], ids=["whole", "whole-with-its-prefix", "both-ends", "first-7", "first-32", "last-6", "all-but-one"])
+@pytest.mark.parametrize("is_installed", [True, False], ids=["installed", "about-to-be-installed"])
+def test_same_file_is_said_only_of_a_reviewers_whole_sha256(be, written, same, is_installed):
+    source(be, published("1.0", digest="" if is_installed else DOWNLOADED))
+    if is_installed:
+        installed_as(be, "1.0", {"sha256": {"1.0": DOWNLOADED}})
+    a_review_of(be.db, "1.0", [["SHA-256", written]])
+    be.reload()
+    assert be.detail(URL)["sameFileAs"] == (["Desk"] if same else [])
