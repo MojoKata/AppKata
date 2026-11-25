@@ -2094,7 +2094,12 @@ def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_p
     ("git.example.org:443", "git.example.org"),                       # the default port, typed out
     ("https://git.example.org:3000/o/r", "git.example.org:3000"),     # a whole address, pasted
     ("https://git.example.org/", "git.example.org"), ("git.example.org/o/r", "git.example.org"),
-    ("http://git.example.org/", "git.example.org:80"),                # plain http's own port: another address (P1-2)
+    # a pasted address's port is the one it writes out, and a scheme alone names none: the Source
+    # `http://git.example.org/o/r` is on `git.example.org`, whose key it is (review pass 2, P2-B2)
+    ("http://git.example.org/", "git.example.org"), ("http://git.example.org/o/r", "git.example.org"),
+    ("git.example.org:80", "git.example.org:80"), ("http://git.example.org:80/o/r", "git.example.org:80"),
+    ("https://git.example.org:80/", "git.example.org:80"), ("http://git.example.org:443/", "git.example.org"),
+    ("ssh://git.example.org/o/r", "git.example.org"), ("http://git.example.org:3000/o/r", "git.example.org:3000"),
     ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
     ("git.example.org:port", "git.example.org:port"),                 # no address: kept as typed
     # one host in whichever form it is typed: as it is sent (review pass 7, P7-2)
@@ -2157,6 +2162,13 @@ def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
     meant. The requirement, the field and its help text say it, and the example they give is a key."""
     r11, r9 = " ".join(reqdocs.item("R11.1.6").split()), " ".join(reqdocs.item("R9.2.2").split())
     assert "A token belongs to one address" in r11 and "a name alone means the default port" in r11
+    # a pasted address's port is the one it writes out (review pass 2, P2-B2)
+    assert "with the port it writes out and no other: `http://git.lan/o/r` is kept as `git.lan`, as its Source's host is" in r11
+    assert "`git.lan:80` and `http://git.lan:80/o/r` as `git.lan:80`; a port written `:443` is the same as none" in r11
+    for pasted, kept in (("http://git.lan/o/r", "git.lan"), ("git.lan:80", "git.lan:80"), ("http://git.lan:80/o/r", "git.lan:80"),
+                         ("git.lan:443", "git.lan")):
+        assert http_.token_key(pasted) == kept
+    assert http_.token_key("http://git.lan/o/r") == urls.parse("http://git.lan/o/r").host      # the Source's own host
     assert "A host is one address" in r9 and "a name alone means the default port" in r9
     assert "nor to another port of its own" in r9
     assert "`http://git.example.org/` is on port 80, another host than `https://git.example.org/`" in r9         # P1-2

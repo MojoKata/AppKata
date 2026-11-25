@@ -90,12 +90,17 @@ def token_key(host: str) -> str:
     """The host a token is kept under, from what was typed for it (R11.1.6) or what a caller names:
     one address, written as a Source's host is (urls.parse), `git.example.org` or, on a port,
     `git.example.org:3000`. A name alone is the default port, so https's own port is left out, and so
-    is the rest of a whole address where one was pasted. The name is as every rule compares hosts
-    (_one_host), in the form it is sent: one typed `übung.example` is kept as `xn--bung-zra.example`,
-    the Source's own host however its Source and its token were typed."""
+    is the rest of a whole address where one was pasted. A pasted address's port is the one it
+    writes out, and its scheme names none, as a Source's address has it (urls.parse): the Source
+    `http://git.lan/o/r` is on `git.lan`, whose token a pasted `http://git.lan/o/r` was kept apart
+    from, as `git.lan:80`, a key no Source has, and so sent with none of its requests (the review's
+    pass 2, P2-B2, as the owner decided it); `http://git.lan:80/o/r` is `git.lan:80`. The name is as
+    every rule compares hosts (_one_host), in the form it is sent: one typed `übung.example` is kept
+    as `xn--bung-zra.example`, the Source's own host however its Source and its token were typed."""
     text = host.strip().lower()
     try:
-        parts = urlsplit(text if "://" in text else "https://" + text)
+        # read as https, a Source's: the port is the one written, or none
+        parts = urlsplit(text if "://" in text else "https://" + text)._replace(scheme="https")
         parts.port
     except ValueError:
         return text
