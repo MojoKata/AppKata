@@ -7,3 +7,5 @@
 #308  small  CR1.3-10 Downloads accept any URL scheme a release gives, file: included, and follow redirects from https: to http:.
 #314  small  CR1.3-16 A download whose chunked response breaks part-way is neither retried nor resumed, and fails with a raw `IncompleteRead` instead of an install error.
 #731  small  CR1.3-52 Two archive versions whose names come out as one folder name (1.0 beta and 1.0_beta) share a folder: the later takes it and the earlier is no longer kept. (Added by the coordinator after batch 1: found by batch 1.)
+#740  small  CR1.6-33 A channel copy's Verified outlives the copy: when the package or Flatpak is changed outside AppKata, its record keeps the old verdict. (Added by the coordinator after batch 3: found by batch 3; sync.py is now in U04's files.)
+#742  small  CR1.3-53 A plan the package manager refuses never reaches the dialog that says so. (Added by the coordinator after batch 3: found by batch 3.)
