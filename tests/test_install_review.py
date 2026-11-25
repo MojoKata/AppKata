@@ -2462,9 +2462,11 @@ def test_install_options_on_windows_show_the_folder_an_installed_app_is_in(tmp_p
 
 def _own(tmp_path, env, app_id="demo-tool"):
     """What an install changed that isn't the app's own: every difference `_left` sees from before
-    it, but the app's folder, its downloads and its row. Returns a function to call after it."""
+    it, but the app's folder, its downloads, its command link (in the tests' `cmd`), its menu
+    entry with its script, and its row. Returns a function to call after it."""
     before = _left(tmp_path, env)
-    own = tuple(os.path.join(*p, "") for p in (("apps", app_id), ("data", "downloads", app_id)))
+    own = tuple(os.path.join(*p, "") for p in (("apps", app_id), ("data", "downloads", app_id), ("cmd", app_id),
+                                               ("data", "menu", app_id), ("xdg", "applications", f"appkata-{app_id}.desktop")))
 
     def others():
         return {k: v for k, v in _changed(before, _left(tmp_path, env)).items()
@@ -2608,3 +2610,74 @@ def test_no_name_is_joined_to_a_folder_unless_it_names_a_file_in_it(tmp_path, na
         with pytest.raises(install.InstallError, match="isn't a name in"):
             install._place("appimage", str(file), APP, str(folder), "1.0", name)
         assert file.read_bytes() == b"\x7fELF" and os.listdir(folder) == [] and os.listdir(tmp_path / "apps") == ["demo-tool"]
+
+
+# ---------------------------------------------------------------- a release's version as a part of a path (CR1.3-9)
+
+def _other_app(env, server, p):
+    """Another app in the same install folder, installed and running."""
+    b = _tarball(server, "other-1.0.tar.gz", {"other-1.0/other": 0o755})
+    rec = install.install(env, {**APP, "url": APP["url"] + "-other", "name": "Other", "repo": "demo/other", "installVersion": "1.0"},
+                          b, "tarball", [b], portable=p)
+    assert _runs(rec["exec"]) == "other-1.0/other"
+    return rec
+
+
+@linux_only
+@pytest.mark.parametrize("version", ["..", ".", "...", ".hidden", "../.."])
+def test_a_release_whose_version_is_dots_gets_a_folder_in_the_apps_own_and_takes_no_other_apps(env, server, tmp_path, version):
+    # CR1.3-9: R4.3.1 unpacks an archive "into a folder named after its version", and the name kept
+    # the version's dots: for `..` that folder was the install folder itself, with every app in it,
+    # and for `.` the app's own, with its kept versions. A version is whatever the host that
+    # answers as the forge sends. The app is installed all the same, in a folder of its own.
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=2)
+    other = _other_app(env, server, p)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    others = _own(tmp_path, env)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**APP, "installVersion": version}, a, "tarball", [a], portable=p)
+    home = tmp_path / "apps" / "demo-tool"
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+    assert os.path.dirname(rec["current"]["path"]) == str(home) and not os.path.basename(rec["current"]["path"]).startswith(".")
+    assert rec["current"]["version"] == version and _runs(rec["exec"]) == "tool-next/tool" == _runs(tmp_path / "cmd" / "demo-tool")
+    assert [k["version"] for k in rec["kept"]] == ["1.0"] and os.path.isdir(rec["kept"][0]["path"])      # its kept version too
+    back = install.switch_to(env, dict(APP), "1.0", p)                      # which it goes back to, and returns from
+    assert _runs(back["exec"]) == "tool-1.0/tool" and [k["version"] for k in back["kept"]] == [version]
+    assert _runs(install.switch_to(env, dict(APP), version, p)["exec"]) == "tool-next/tool"
+    assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(home)
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_a_version_is_always_one_plain_name_in_the_apps_folder(monkeypatch, system):
+    # the class, for whatever a version holds: never empty, `.` or `..`, never a hidden name, never
+    # a path; and the versions people release are named as they were
+    import itertools
+    from appkata_core import sandbox
+    monkeypatch.setattr(install, "OS", system)
+    for v, name in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), ("v2", "v2"), ("nightly/2026 11", "nightly_2026_11"),
+                    ("", "unknown"), ("..", "_.."), (".", "_."), ("...", "_..."), (".5", "_.5"), ("../..", "_.._.."),
+                    ("/", "_"), ("\\", "_"), ("日本", "_")):
+        assert install._safe(v) == (name if system == "linux" or not name.endswith(".") else name.rstrip(".") + "_"), v
+    folder = os.path.join(os.path.abspath(os.sep), "apps", "demo-tool")
+    for v in ("".join(c) for n in range(6) for c in itertools.product("./\\ a_", repeat=n)):
+        s = install._safe(v)
+        assert s and s not in (".", "..") and not s.startswith(".") and "/" not in s and "\\" not in s, (v, s)
+        assert os.path.dirname(install._in_folder(folder, s)) == folder, (v, s)
+        assert system != "windows" or s[-1] not in ". ", (v, s)
+        assert os.path.dirname(sandbox.extracted_dir(folder, v)) == folder                # an extracted AppImage's folder
+        name = install._appimage_name("Tool.AppImage", v)                       # and an AppImage's own file
+        assert os.path.dirname(install._in_folder(folder, name)) == folder and name.startswith("Tool"), (v, name)
+
+
+def test_no_version_is_placed_in_a_folder_that_isnt_in_the_apps_own(tmp_path, monkeypatch):
+    # the check at the place of use (_in_folder), should a version's name ever come out as a path
+    folder, file = tmp_path / "apps" / "demo-tool", tmp_path / "downloaded.tar.gz"
+    (tmp_path / "apps" / "other-app" / "1.0").mkdir(parents=True)
+    file.write_bytes(b"an archive")
+    for name in ("..", ".", "../other-app", "/x", "a/b"):
+        monkeypatch.setattr(install, "_safe", lambda v, name=name: name)
+        with pytest.raises(install.InstallError, match="isn't a name in"):
+            install._place("tarball", str(file), APP, str(folder), "1.0", "tool.tar.gz")
+        assert os.listdir(folder) == [] and os.listdir(tmp_path / "apps" / "other-app") == ["1.0"] and file.exists()

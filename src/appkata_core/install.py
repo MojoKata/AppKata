@@ -594,7 +594,15 @@ def command_link_refusal(name: str, link: str) -> str:
 
 
 def _safe(v: str) -> str:
+    """A version as one name, or a part of one, in an app's folder (R4.3.1): a version's own
+    folder, the version in an AppImage's file name, the folder an AppImage is extracted to
+    (sandbox.extracted_dir). Never empty, and never starting with a dot: the dots were kept, so
+    a release whose version was `..` had the install folder itself for its version's folder, and
+    :func:`_place` emptied it, every app AppKata installed; `.` was the app's own folder, with its
+    kept versions (CR1.3-9). A version is what the host that answers as the forge says it is."""
     s = re.sub(r"[^A-Za-z0-9._+-]+", "_", v or "unknown")
+    if s.startswith("."):
+        s = "_" + s
     if OS == "windows":
         from .windows import safe_name
         s = safe_name(s)
@@ -724,7 +732,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
             _remove_path(staging)
             raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
-    vdir = os.path.join(target, "app" if fixed else _safe(version))
+    vdir = _in_folder(target, "app" if fixed else _safe(version))
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
     try:

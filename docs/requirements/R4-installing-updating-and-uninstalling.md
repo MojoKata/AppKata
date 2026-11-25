@@ -47,6 +47,9 @@ folder, `<install folder>/<app>/`, holding its versions side by side: an AppImag
 versioned file (`LocalSend-1.18.2-x86_64.AppImage`: the release's own file name, with the version
 added when the name holds none or is another version's, so `Tool-x86_64.AppImage` is kept as
 `Tool-x86_64-2.0.AppImage`), an archive unpacked into a folder named after its version (`2.1/`).
+A version is written in these names with `_` for each run of characters other than ASCII letters,
+digits, `.`, `_`, `+` and `-`, and with `_` before one that starts with a dot (`_..`), so no
+version's folder is the app's folder itself, the install folder above it, or hidden.
 
 An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
 is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
