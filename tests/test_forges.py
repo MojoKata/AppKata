@@ -2157,6 +2157,29 @@ def test_on_a_local_forge_only_the_sources_own_address_may_be_local(tmp_path, so
     assert [u for u, _ in seen] == ([url] if fetched else [])
 
 
+# The review's pass 8, P8-1, as the owner decided it: Settings' row and the Audit's line showed a
+# token's key, its host in the form it is sent, so a token typed `übung.lan` for the Source
+# `übung.lan` was listed as `xn--bung-zra.lan`. A row shows its host in its script, and what a row
+# shows is its key again, which the row's trash button removes.
+@pytest.mark.parametrize("key, shown", [
+    ("xn--bung-zra.lan", "übung.lan"), ("gitea.xn--bung-zra.lan:3000", "gitea.übung.lan:3000"),
+    ("xn--31bq9g.example", "गिट.example"), ("git.example.org", "git.example.org"), ("git.example.org.", "git.example.org."),
+    ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
+    ("xn--zz.example.org", "xn--zz.example.org"),                   # a part the codec can't read back: as it is kept
+    ("xn--strae-oqa.example", "xn--strae-oqa.example"),             # IDNA 2008's form, which IDNA 2003 can't read back
+    ("straße.example", "straße.example"), ("a..b.example.org", "a..b.example.org"),     # kept as written: no IDNA form
+])
+def test_a_tokens_host_is_shown_in_its_script_and_what_is_shown_is_its_key(key, shown):
+    assert http_.token_host_shown(key) == shown and http_.token_key(shown) == key
+
+
+def test_r11_1_6_says_a_tokens_row_shows_its_host_in_its_script():
+    r11 = " ".join(reqdocs.item("R11.1.6").split())
+    assert ("A row, and the Audit's line for a token, show its host in its own script, as a Source's address has it "
+            "(`übung.lan`), while the token is kept under the host in the form it is sent (`xn--bung-zra.lan`)") in r11
+    assert http_.token_host_shown(http_.token_key("übung.lan")) == "übung.lan" and http_.token_key("übung.lan") == "xn--bung-zra.lan"
+
+
 def test_r11_1_6_r9_2_2_and_settings_say_which_host_a_token_is_kept_for():
     """The finding's last part: Settings' host field took any text and nothing said which key was
     meant. The requirement, the field and its help text say it, and the example they give is a key."""

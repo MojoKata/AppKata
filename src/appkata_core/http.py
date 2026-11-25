@@ -560,6 +560,16 @@ def _in_its_script(host: str) -> str:
         return host
 
 
+def token_host_shown(key: str) -> str:
+    """A token's host as Settings' row and the Audit's line show it (R11.1.6): from the key it is kept
+    under (token_key), in the form it is sent, with its name in its script, as a Source's address
+    has it (_in_its_script): `xn--bung-zra.lan:3000` is `übung.lan:3000`. What is shown is the key
+    again (token_key), so a row's trash button removes its own token. The rows and the Audit showed
+    the key, so a token typed `übung.lan` for the Source `übung.lan` was listed as `xn--bung-zra.lan`
+    (the review's pass 8, P8-1, as the owner decided it)."""
+    return _in_its_script(key)
+
+
 def _bypassed(host: str) -> bool:
     """Whether the system says to reach a host directly, `host` being its host part as it is sent
     (_host_part_as_sent): as urllib decides it (urllib.request.proxy_bypass: by the environment's

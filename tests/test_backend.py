@@ -478,6 +478,25 @@ def test_a_token_is_kept_under_the_one_address_it_belongs_to(be):
     assert be.db.get("tokens") == {"git.example.org": "on-the-default-port"} == be.http.tokens
 
 
+def test_a_tokens_row_and_its_audit_line_show_its_host_in_its_script_and_it_is_kept_as_it_is_sent(be):
+    """The review's pass 8, P8-1, as the owner decided it: a token is kept under its host in the form
+    it is sent, the key every rule compares, and Settings' row and the Audit showed that key, so a
+    token typed `übung.lan` for the Source `übung.lan` was listed as `xn--bung-zra.lan`."""
+    be.setToken("Übung.lan", "typed-in-its-script")
+    be.setToken("https://gitea.xn--bung-zra.lan:3000/o/r", "pasted-in-its-idna-form")
+    be.setToken("[::1]:3000", "an-address")
+    kept = {"xn--bung-zra.lan": "typed-in-its-script", "gitea.xn--bung-zra.lan:3000": "pasted-in-its-idna-form",
+            "[::1]:3000": "an-address"}
+    assert be.db.get("tokens") == kept == be.http.tokens
+    assert [row["host"] for row in be.tokenHosts] == ["[::1]:3000", "gitea.übung.lan:3000", "übung.lan"]
+    said = [(e["action"], e["subject"]) for e in audit.page(be.db, kind="setting")][::-1]
+    assert said == [("set an API token for", "übung.lan"), ("set an API token for", "gitea.übung.lan:3000"),
+                    ("set an API token for", "[::1]:3000")]
+    be.setToken("übung.lan", "")                                    # the row's trash button, with the host it shows
+    assert be.db.get("tokens") == {k: v for k, v in kept.items() if k != "xn--bung-zra.lan"} == be.http.tokens
+    assert audit.page(be.db, kind="setting")[0]["subject"] == "übung.lan"
+
+
 @pytest.mark.parametrize("typed, said", [
     ("Straße.example", "straße.example: a name with ß in it"), ("https://stra%C3%9Fe.example:3000/o/r", "straße.example:3000: a name with ß in it"),
     ("σίσυφος.example", "σίσυφος.example: a name with ς in it"),

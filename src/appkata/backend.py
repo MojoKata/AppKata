@@ -20,7 +20,7 @@ from appkata_core import versions as vcmp
 from appkata_core.catalog import authority_view, short_fp
 from appkata_core.db import DB, now
 from appkata_core.forges import Asset
-from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_key, two_hosts
+from appkata_core.http import LIMIT_STATUSES, Http, SourceError, token_host_shown, token_key, two_hosts
 from appkata_core import APPKATA_REPO, __version__ as APPKATA_VERSION
 from appkata_core.platform import data_dir
 
@@ -614,7 +614,8 @@ class Backend(QObject):
             t.pop(host, None)
         self.db.put("tokens", t)
         self.http.tokens = t
-        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", host)
+        # said as Settings' row shows it, in its script (token_host_shown; the review's pass 8, P8-1)
+        self._audit("you", "setting", "set an API token for" if token else "removed the API token for", token_host_shown(host))
         self.prefsChanged.emit()
 
     # ---------------------------------------------------------------- sync
@@ -2410,7 +2411,10 @@ class Backend(QObject):
 
     @Property("QVariant", notify=prefsChanged)
     def tokenHosts(self):
-        return [{"host": h, "hint": "••••" + t[-4:] if len(t) > 4 else "••••"} for h, t in sorted(self.db.get("tokens", {}).items())]
+        """Settings' rows (R11.1.6): each token's host in its script, as a Source's address has it,
+        where its key is in the form it is sent (token_host_shown; the review's pass 8, P8-1)."""
+        rows = [{"host": token_host_shown(h), "hint": "••••" + t[-4:] if len(t) > 4 else "••••"} for h, t in self.db.get("tokens", {}).items()]
+        return sorted(rows, key=lambda row: row["host"])
 
     @Slot(str)
     def openFolder(self, path: str) -> None:
