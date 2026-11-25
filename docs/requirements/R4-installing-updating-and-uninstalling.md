@@ -204,7 +204,12 @@ R4.8.1. **Phases**: Waiting, Downloading, Verifying, Installing. One install run
 - **Catalog tile**: the state mark becomes "Installing 45%".
 - **Header bar**: a turning sync icon in the Apps segment while anything installs.
 
-R4.8.2. **Resuming.** Downloads go to `<data folder>/downloads/<app>/<file>.part`. If the
+R4.8.2. **Resuming.** Downloads go to `<data folder>/downloads/<app>/<file>.part`. `<file>` is
+the release's own name for its file, as one file name: what follows its last `/` or `\`, so a
+release that names its file as a path (`../../x.tar.gz`) reaches no folder but the app's own, here
+and where the file is installed (R4.3.1). A file whose name is then empty, starts with a dot or
+holds a control character, or on Windows is one Windows reserves or can't hold (R15.16), isn't
+installed, and the install says so. If the
 connection breaks, AppKata retries up to three times, continuing from where it stopped with a
 Range request, as long as the server still has the same file (`If-Range` with its ETag or
 Last-Modified date). Otherwise it starts over. A download that still fails, or that was

@@ -601,6 +601,42 @@ def _safe(v: str) -> str:
     return s
 
 
+def _file_name(name: str) -> str:
+    """The name a release's file is downloaded and kept under: its own, as one file name. The name
+    is the release author's text (a GitLab release link's is free text, a Gitea or Forgejo
+    attachment's is its uploader's, and a host that answers as a forge sends what it likes), and it
+    was used as a path as it came: `../../../x.tar.gz` was downloaded over a file three folders
+    above the app's download folder, moved to a place outside the app's folder with the executable
+    bit set, and deleted there when the install failed; a name starting with `/` dropped
+    AppKata's folder altogether (CR1.3-8).
+
+    So every path is made from what this returns: the part after the last `/` or `\\` (both, on
+    every system: a release is made for all of them). What is left is refused when it is no file's
+    name: empty, `.` or `..`; one starting with a dot (a hidden file, and never an installable
+    one); one holding a control character; on Windows one it reserves or can't hold (R15.16; a
+    `:` among them, which names a drive or a stream of another file)."""
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    bad = not base or base.startswith(".") or bool(_CONTROL.search(base))
+    if OS == "windows" and not bad:
+        from .windows import safe_name
+        bad = safe_name(base) != base
+    if bad:
+        raise InstallError(f"the release's file has a name that can't be used ({one_line(name or '')[:120]!r}); "
+                           "nothing was installed")
+    return base
+
+
+def _in_folder(folder: str, name: str) -> str:
+    """`name` as a path directly in `folder`, refused when the two joined are anywhere else. Every
+    name that reaches a path here is cleaned where it comes in (:func:`_file_name`, :func:`_safe`);
+    this is the check at the place of use, before anything is written, moved or deleted there, so
+    a name that got past them some day stops here."""
+    path = os.path.join(folder, name)
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(folder):
+        raise InstallError(f"{name!r} isn't a name in {folder}; nothing was installed")
+    return path
+
+
 def _extract(kind: str, file: str, dest: str) -> None:
     os.makedirs(dest)
     if kind == "tarball":
@@ -674,10 +710,10 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
-        dest = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
-                            else _appimage_name(asset_name, version))
+        dest = _in_folder(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
+                          else _appimage_name(asset_name, version))
         if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
-            dest = os.path.join(target, _appimage_name(asset_name, version, versioned=True))
+            dest = _in_folder(target, _appimage_name(asset_name, version, versioned=True))
         staging = dest + ".new"
         _remove_path(staging)
         try:
@@ -1182,6 +1218,10 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     portable = portable or Portable()
     if app.get("foreign"):
         raise InstallError("installed outside AppKata; uninstall that copy first")   # R4.5.3
+    # The file's name on this computer (R4.8.2): the release's own, as one file name, for the
+    # download, the place it is installed to and what is deleted when it fails. `asset.name`, the
+    # release's, is what the record keeps: it is what the release's checksums and the next sync name.
+    name = _file_name(asset.name)
     rel_version = app.get("installVersion") or app.get("updateTo") or app.get("version", "")
     prev_row = db.one("SELECT record FROM installs WHERE url=?", (app["url"],))
     prev = json.loads(prev_row["record"] or "{}") if prev_row else {}
@@ -1193,6 +1233,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         check_not_running(moving_from.get("target", ""), app["name"])
     portable = _where_it_is(prev, portable)        # an update: the app stays in the folder it is in (R4.3.1)
     tmpdir = os.path.join(downloads_dir(), app_id)          # kept when a download breaks, to resume it
+    file = _in_folder(tmpdir, name)
     os.makedirs(tmpdir, exist_ok=True)
     check_not_running(prev.get("target", ""), app["name"])
     ok = keep = False
@@ -1200,10 +1241,9 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     undo = None             # takes a portable install back, from its first change until its record is stored
     retired: list[dict] = []        # the versions the new record no longer names: removed once it is stored (R4.6)
     try:
-        file = os.path.join(tmpdir, asset.name)
         log.info("downloading %s", asset.url)
         got = download(asset.url, file, progress, cancel)
-        log.info("downloaded %s (%d bytes, sha256 %s)", asset.name, os.path.getsize(file), got)
+        log.info("downloaded %s (%d bytes, sha256 %s)", name, os.path.getsize(file), got)
         if phase:
             phase("Verifying")
         want, how = expected_sha256(asset, assets)
@@ -1231,7 +1271,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             os.makedirs(updates, exist_ok=True)
             for old in os.listdir(updates):
                 os.remove(os.path.join(updates, old))
-            pending = os.path.join(updates, asset.name)
+            pending = _in_folder(updates, name)
             shutil.move(file, pending)
             rec = {**prev, "pendingSetup": pending, "verified": verified, "signer": signer}
             db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
@@ -1258,7 +1298,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             undo = partial(_undo_portable, db, app, rec, prev, portable, target, was)
             _secure_target(portable, target)
             rec.update(target=target, files=prev.get("files", []), links=prev.get("links", []), kept=[], selfUpdating=True)
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name, fixed=True)
+            rec["current"] = _place(kind, file, app, target, rel_version, name, fixed=True)
             was["aside"] = _set_aside(rec["current"])
             # the versions it had go once this one is installed, not before it is placed (R4.6)
             retired = [old for old in ([prev["current"]] + prev.get("kept", []) if prev.get("current") else [])
@@ -1284,7 +1324,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec.update(target=target, links=prev.get("links", []), files=prev.get("files", []),
                        shortcuts=prev.get("shortcuts", []), shims=prev.get("shims", []),
                        kept=([prev["current"]] if prev.get("current") else []) + prev.get("kept", []))
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name,
+            rec["current"] = _place(kind, file, app, target, rel_version, name,
                                     others=tuple(k["path"] for k in rec["kept"] if k.get("version") != rel_version))
             was["aside"] = _set_aside(rec["current"])
             if OS == "windows" and portable.motw:
@@ -1345,8 +1385,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             shutil.rmtree(tmpdir, ignore_errors=True)
         elif keep:
             pass
-        elif os.path.exists(os.path.join(tmpdir, asset.name)):
-            os.remove(os.path.join(tmpdir, asset.name))      # complete but bad (checksum, install): don't resume it
+        elif os.path.exists(file):
+            os.remove(file)                     # complete but bad (checksum, install): don't resume it
 
 
 def kept_versions(db: DB, url: str) -> list[str]:
