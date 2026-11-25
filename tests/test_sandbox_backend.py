@@ -891,6 +891,49 @@ def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be,
     assert be.db.one("SELECT COUNT(*) AS n FROM audit")["n"] == audited
 
 
+@pytest.mark.parametrize("fails", ["the menu entry", "the launcher"])
+def test_a_launcher_appkatas_start_cant_rewrite_is_left_as_it_was_and_not_audited(be, tmp_path, monkeypatch, caplog, fails):
+    # #689's review, P6-1: AppKata's start rewrites a launcher that isn't today's text (an older
+    # AppKata's, or a hand-edited one), and dropped what the rewrite returned. Where it couldn't be
+    # written (a full disk, the menu folder read-only), the rewrite was put back (P5-2) and the start
+    # still wrote "rewrote the launcher of Demo", with the hash of the launcher left on disk, written
+    # for a set it wasn't written for, again at every start while the failure lasted, and logged
+    # that it had brought the launcher up to today's text. A failed operation is no Audit entry; the
+    # App log has it (R13.3), and the next start tries again.
+    import hashlib
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    launcher = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])["launcher"]
+    with open(launcher, "wb") as f:
+        f.write(b"#!/bin/sh\n# hand-edited\n")                            # not today's text: the start rewrites it
+    audit = lambda: [json.loads(r["detail"]) for r in be.db.all(                               # noqa: E731
+        "SELECT detail FROM audit WHERE action='rewrote the launcher of' ORDER BY id")]
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    with monkeypatch.context() as m:
+        m.setattr(install, "_desktop_entry", full) if fails == "the menu entry" else m.setattr(sb, "write_launcher", full)
+        assert be._heal_launchers() == [] and be._heal_launchers() == []      # two starts: nothing rewritten
+    with open(launcher, "rb") as f:
+        assert f.read() == b"#!/bin/sh\n# hand-edited\n"                    # put back, as R17.4 has it
+    assert audit() == []                                                    # and no Audit entry says otherwise
+    assert caplog.text.count("couldn't regenerate the launcher for") == 2 and "up to today's text" not in caplog.text
+    caplog.clear()
+    assert be._heal_launchers() == [URL]                                    # with room, the next start rewrites it
+    with open(launcher, "rb") as f:
+        written = f.read()
+    assert written != b"#!/bin/sh\n# hand-edited\n" and "up to today's text" in caplog.text
+    assert [d["launcher"] for d in audit()] == [hashlib.sha256(written).hexdigest()[:16]]   # once, the launcher it wrote
+    assert be._heal_launchers() == [] and len(audit()) == 1
+
+
 def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
     # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
     # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder

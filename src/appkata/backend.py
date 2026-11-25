@@ -2417,8 +2417,14 @@ class Backend(QObject):
         at again). Returns the URLs
         regenerated. Nothing happens until sandboxing actually works here. An app installed outside
         AppKata (foreign, R4.5) is left alone, as setSandbox leaves it. The apps sandboxed for the first
-        time are named in a notice and audited, by `actor` (R17.13; review 2, F13: nothing said so)."""
-        todo, undo = [], []
+        time are named in a notice and audited, by `actor` (R17.13; review 2, F13: nothing said so).
+
+        A rewrite that can't be written (a full disk) leaves the app as it was (install.rewrite_launcher
+        puts it back) and is neither audited nor returned: _regenerate_launcher has logged why, a
+        failed operation being no Audit entry (R13.3), and the next start tries again (R17.4).
+        #689's review, P6-1: its result was dropped, so a launcher put back was audited as "rewrote
+        the launcher of" with the hash of the old one, at every start while the failure lasted."""
+        todo, undo, done = [], [], []
         for row in self.db.all("SELECT url, record FROM installs"):
             rec = json.loads(row["record"] or "{}")
             if not rec.get("current"):
@@ -2438,14 +2444,17 @@ class Backend(QObject):
             if not install.launcher_is_current(rec, {**a, "sandbox": r["grants"]}, self._app_options(row["url"])):
                 todo.append(row["url"])
         for url in undo:
-            self._regenerate_launcher(url)
-            log.info("AppKata runs unsandboxed again: removed the launcher an older version gave it")
+            if self._regenerate_launcher(url) is None:
+                log.info("AppKata runs unsandboxed again: removed the launcher an older version gave it")
+                done.append(url)
         if not todo or not sandbox.have_tools() or sandbox.support_status()["status"] != "ok":
-            return undo
+            return done
         first = []
         for url in todo:
             had, fresh = self._sandbox_state(url)
-            self._regenerate_launcher(url)
+            if self._regenerate_launcher(url) is not None:
+                continue           # as it was, and logged; no Audit entry (R13.3)
+            done.append(url)
             log.info("brought the launcher of %s up to today's text" if had else "sandboxed %s now that this system supports it", url)
             if not had and self._sandbox_state(url)[0]:
                 first.append((url, (self._app(url) or {}).get("name", url), fresh))
@@ -2455,7 +2464,7 @@ class Backend(QObject):
                             {"by": f"AppKata {APPKATA_VERSION}", "launcher": self._launcher_hash(url),
                              "written for": sandbox.describe(r["template"], r["grants"]) if r else ""})
         self._tell_sandboxed(first, actor)
-        return undo + todo
+        return done
 
     @Slot()
     def setupSandboxSupport(self) -> None:
