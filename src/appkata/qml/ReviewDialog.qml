@@ -95,7 +95,8 @@ Dialog {
                 PopMenu {
                     id: verMenu
                     menuWidth: 260; y: 42
-                    items: (root.r.versionChoices || []).slice(0, 12).map(c => ({ key: c.key === "" ? "*any*" : c.key, text: c.text, note: c.note }))
+                    maxHeight: 460      // every choice is in it, however many releases there are: past this it scrolls (R8.4.1.1)
+                    items: (root.r.versionChoices || []).map(c => ({ key: c.key === "" ? "*any*" : c.key, text: c.text, note: c.note }))
                     onTriggered: key => { root.version = key === "*any*" ? "" : key; root.loadVersion() }
                 }
             }
@@ -233,9 +234,10 @@ Dialog {
         Rectangle {
             visible: cbDetails.checked
             x: 26; width: parent.width - 26; height: detailsCol.height + 14; radius: 9; color: Theme.input; border.color: Theme.border
-            Column { id: detailsCol; x: 12; y: 7
-                Repeater { model: root.r.details || []
-                    Text { text: "- " + modelData[0] + ": " + (modelData[0] === "SHA-256" ? modelData[1].slice(0, 12) + "…" : modelData[1]); color: Theme.muted; font.pixelSize: 12; font.family: Theme.mono } } }
+            Column { id: detailsCol; x: 12; y: 7; width: parent.width - 24
+                Repeater { model: root.r.details || []      // the exact lines (R8.4.5.1): a digest whole, wrapped where the box is narrow
+                    Text { width: detailsCol.width; wrapMode: Text.WrapAnywhere; text: "- " + modelData[0] + ": " + modelData[1]
+                           color: Theme.muted; font.pixelSize: 12; font.family: Theme.mono } } }
         }
     }
     // the sandbox I chose for the app, written as the review's suggestion (R10.3.1, R8.4.7; review 2, F9).

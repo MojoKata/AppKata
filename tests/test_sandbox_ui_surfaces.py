@@ -464,6 +464,140 @@ def test_the_review_dialog_shows_the_sandbox_it_will_write_and_writes_it_only_wh
     assert ("- Sandbox folders (linux): +~/Notes" in path.read_text()) is include
 
 
+# ------------------------------------------------------------------- the review dialog's Version select and Details (CR1, #497)
+
+def _top(item):
+    from PySide6.QtCore import QPointF
+    return item.mapToScene(QPointF(0, 0)).y()
+
+
+def _laid_out():
+    """Let the window lay out what was just opened: a Column places its rows when it is polished."""
+    from PySide6.QtTest import QTest
+    QTest.qWait(60)
+
+
+def _menu(under, first):
+    """The menu under `under` whose first row is this one."""
+    from PySide6.QtCore import QObject
+    for o in under.findChildren(QObject):
+        if o.metaObject().className().startswith("PopMenu"):
+            items = o.property("items")
+            items = items.toVariant() if hasattr(items, "toVariant") else items
+            if items and items[0].get("text") == first:
+                return o
+    raise AssertionError(f"no menu that starts with {first!r}")
+
+
+def _menu_rows(menu):
+    """The menu's rows by their text, from the top down, and the Flickable they scroll in."""
+    from PySide6.QtCore import QObject
+    texts = [o for o in _items(menu) if o.metaObject().className().startswith("QQuickText") and o.property("font").bold()
+             and o.property("visible") is True]
+    return {o.property("text"): o for o in sorted(texts, key=_top)}, menu.findChild(QObject, "rows")
+
+
+def _wheel_to(ui, flick, row):
+    """Turn the mouse wheel over the menu, as a user would, until the row is whole inside it and at rest."""
+    from PySide6.QtCore import QCoreApplication, QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtTest import QTest
+    over = flick.mapToScene(QPointF(flick.width() / 2, flick.height() / 2))
+    for _ in range(100):
+        for _ in range(100):                # a wheel's step is animated: where it comes to rest
+            at = flick.property("contentY")
+            QTest.qWait(20)
+            if flick.property("contentY") == at and not flick.property("moving"):
+                break
+        top = row.mapToItem(flick, QPointF(0, 0)).y()
+        if 0 <= top and top + row.height() <= flick.height():
+            return True
+        away = top + row.height() - flick.height() if top > 0 else -top
+        for _ in range(max(1, min(8, int(away // 100)))):       # a few notches at a time while it is far
+            ev = QWheelEvent(over, ui.mapToGlobal(over.toPoint()), QPoint(0, 0), QPoint(0, -120 if top > 0 else 120), Qt.MouseButton.NoButton,
+                             Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            ev.setTimestamp(int(time.monotonic() * 1000))      # as a real event has: a Flickable reads its wheel's speed from it
+            QCoreApplication.sendEvent(ui, ev)
+            QTest.qWait(15)
+    return False
+
+
+def _click(ui, item):
+    from PySide6.QtCore import QCoreApplication, QPointF, Qt
+    from PySide6.QtTest import QTest
+    QTest.mouseClick(ui, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                     item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).toPoint())
+    QCoreApplication.processEvents()
+
+
+def test_the_review_dialogs_version_select_reaches_every_release_and_every_reviewed_version(ui, be, app, tmp_path):
+    # R8.4.1.1: "A select of the app's releases, newest first, plus Any version", and a review of a
+    # version the user never installed is allowed. The menu showed its first 12 choices and didn't
+    # scroll: with more releases, the installed version (the dialog's starting choice) couldn't be
+    # returned to once another was picked, and an earlier review of an old version couldn't be opened.
+    from appkata_core import review
+    path = tmp_path / "AppKata.md"
+    path.write_text("# My Trust\n")
+    be._prefs["reviewPath"] = str(path)
+    review.save(str(path), "Demo", URL, [], 4, 4, "An editor.", False, False, None, "", None, {})
+    review.save(str(path), "Demo", URL, [], 2, 4, "It lost a file.", False, False, None, "0.5", None, {})    # no longer among the releases
+    one = json.loads(be.db.one("SELECT releases FROM apps WHERE url=?", (URL,))["releases"])[0]
+    newer = [{**one, "tag": f"v{n}.0", "name": f"{n}.0", "version": f"{n}.0", "date": f"2026-02-{n:02d}T00:00:00Z",
+              "assets": [{**one["assets"][0], "name": f"demo-{n}.0-linux-x86_64.tar.gz", "url": f"u{n}"}]} for n in range(25, 1, -1)]
+    be.db.x("UPDATE apps SET releases=? WHERE url=?", (json.dumps(newer + [one]), URL))
+    be.reload()
+    dlg = _part(ui, "review")
+    _call(dlg, "openFor", URL)
+    menu = _menu(dlg, "Any version")
+    assert dlg.property("version") == "1.0"                              # the installed version, the 25th release
+    for pick, note, exists in (("25.0", "", False), ("1.0", "Installed", False), ("0.5", "Reviewed", True)):
+        _call(menu, "open")
+        _laid_out()
+        rows, flick = _menu_rows(menu)
+        assert list(rows) == ["Any version"] + [f"{n}.0" for n in range(25, 0, -1)] + ["0.5"]
+        assert flick.property("interactive") is True and 0 < flick.height() <= 460 < flick.property("contentHeight")
+        assert _wheel_to(ui, flick, rows[pick]), f"{pick} can't be scrolled to"
+        _click(ui, rows[pick])
+        assert menu.property("visible") is False and dlg.property("version") == pick
+        shown = _seen(dlg)
+        assert (pick + (" · " + note if note else "")) in shown, shown        # the select's own box says which
+        cur = dlg.property("cur")
+        assert bool((cur.toVariant() if hasattr(cur, "toVariant") else cur).get("exists")) is exists     # an earlier review opens for editing
+
+
+def test_a_menu_with_no_height_set_is_as_tall_as_its_rows_and_doesnt_scroll(ui, be, app):
+    # PopMenu is every menu's: only one that sets maxHeight scrolls
+    from PySide6.QtCore import QObject
+    menu = _menu(_show(ui, be), "Pin at 1.0")                             # its ⋯ menu
+    _call(menu, "open")
+    _laid_out()
+    flick = menu.findChild(QObject, "rows")
+    assert flick.property("interactive") is False and flick.height() == flick.property("contentHeight") > 0
+    assert menu.property("maxHeight") == 0 and menu.property("height") == flick.height() + 12
+    _call(menu, "close")
+
+
+def test_the_review_dialog_shows_the_details_it_will_write_whole(ui, be, app, tmp_path):
+    # R8.4.5.1: "the exact lines in a small monospace preview". The SHA-256 was cut to 12 digits and
+    # an ellipsis, in the user's one look at what gets published
+    path = tmp_path / "AppKata.md"
+    path.write_text("# My Trust\n")
+    be._prefs["reviewPath"] = str(path)
+    sha = "5e" * 32
+    old = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    be.db.x("UPDATE installs SET asset=?, record=? WHERE url=?", ("demo-1.0-linux-x86_64.tar.gz", json.dumps({**old, "sha256": {"1.0": sha}}), URL))
+    be.reload()
+    dlg = _part(ui, "review")
+    _call(dlg, "openFor", URL)
+    _laid_out()
+    lines = [o.property("text") for o in sorted(_items(dlg), key=lambda o: _top(o) if hasattr(o, "mapToScene") else 0)
+             if isinstance(o.property("text"), str) and o.property("text").startswith("- ") and o.property("visible") is True]
+    assert lines[-2:] == ["- File: demo-1.0-linux-x86_64.tar.gz", "- SHA-256: " + sha], lines
+    assert [t.split(":")[0] for t in lines] == ["- Date", "- Platform", "- Channel", "- File", "- SHA-256"]
+    written = [f"- {k}: {v}" for k, v in be.reviewData(URL)["details"]]
+    assert lines == written                                               # the preview is what Save writes, line for line
+
+
 def test_app_detail_shows_the_launch_command_and_the_audit_records_its_hash(ui, be, app):
     # Review 2, F11: R17.4 said the launcher's text "can be shown in App Detail ('Show the launch command')
     # and is recorded in the Audit"; no QML called sandboxLaunchCommand, and no entry held the text
