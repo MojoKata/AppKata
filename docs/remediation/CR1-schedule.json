@@ -245,7 +245,9 @@
     430,
     556,
     662,
-    667
+    667,
+    737,
+    738
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -268,7 +270,9 @@
     "tests/test_channels.py",
     "tests/test_core.py",
     "tests/test_dialog_contract.py",
-    "tests/test_install_review.py"
+    "tests/test_install_review.py",
+    "tests/test_backend.py",
+    "tests/test_sync.py"
    ]
   },
   {
@@ -11471,6 +11475,36 @@
    "size": "small",
    "proof": "A test installing 1.0 beta and then 1.0_beta keeps both versions.",
    "note": "Found by U04's first batch (2026-11-25) and filed by the coordinator; taken in U04's fourth batch."
+  },
+  {
+   "finding": 737,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [],
+   "related": [
+    465
+   ],
+   "size": "small",
+   "proof": "A test writing a review of a Flatpak install and of a package install: the Channel line names the install's channel and a Flatpak's has its Commit line.",
+   "note": "Found by U04's second batch (2026-11-25) and filed by the coordinator."
+  },
+  {
+   "finding": 738,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_sync.py"
+   ],
+   "depends_on": [],
+   "related": [
+    466
+   ],
+   "size": "small",
+   "proof": "A test of sync after an outside update: the record holds the full commit and App Detail says Same file.",
+   "note": "Found by U04's second batch (2026-11-25), by reading, and filed by the coordinator."
   }
  ],
  "shared_files": [
