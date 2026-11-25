@@ -299,6 +299,7 @@ def test_a_published_release_s_tour_is_brought_from_its_tag_s_run_once(monkeypat
         cs.release_tours(tmp_path / "shots")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in for gh is a POSIX shell script")
 def test_gh_passes_ci_s_token_and_says_none_when_it_fails(monkeypatch, tmp_path, capsys):
     fake = tmp_path / "gh"
     fake.write_text('#!/bin/sh\n[ "$1" = fail ] && { echo "no such thing" >&2; exit 1; }\necho "$GH_TOKEN $*"\n')

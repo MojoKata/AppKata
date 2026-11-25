@@ -12,6 +12,7 @@ and says which listed apps have no synced row, which remake can't fetch."""
 import importlib.util
 import json
 import os
+import shutil
 
 import pytest
 
@@ -121,6 +122,7 @@ def test_restore_stops_on_an_app_the_snapshot_never_had(tmp_path):
                     "the snapshot")
 
 
+@pytest.mark.skipif(not shutil.which("gpg"), reason="needs gpg")
 def test_the_committed_snapshot_covers_what_the_build_lists(tmp_path):
     """tests/data/demo, CI's fallback, has a synced row for every app the demo's build lists: restore
     makes the tour's data from it without the network. The build itself is offline."""
