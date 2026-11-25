@@ -314,7 +314,8 @@
     691,
     692,
     693,
-    707
+    707,
+    714
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.10-ui-text.md",
@@ -326,7 +327,9 @@
     "docs/requirements/R17-app-sandboxing/R17.17-limits.md",
     "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
     "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
+    "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md",
     "scripts/sandbox/exposure.py",
+    "src/appkata/backend.py",
     "src/appkata/qml/SandboxDialog.qml",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
@@ -342,6 +345,8 @@
     "tests/test_docs_facts.py",
     "tests/test_launcher_golden.py",
     "tests/test_sandbox.py",
+    "tests/test_sandbox_backend.py",
+    "tests/test_sandbox_docs_current.py",
     "tests/test_sandbox_run.py"
    ]
   },
@@ -10797,6 +10802,26 @@
    "size": "small",
    "proof": "Tier 1: the launcher run with a stand-in gdbus answering held and not held, its proxy words and its stderr line. The launcher containers with a real gnome-keyring holding the name: an app with Password service starts without the own, says why, and reaches neither the keyring's daemon, the Secret Service nor the name; the sole-provider test keeps passing.",
    "note": "Found by U09's fourth batch (2026-11-24) while fixing #691, and set aside for the owner's choice. The owner decided (2026-11-24): when another program already holds org.freedesktop.secrets at the launch, the launcher starts the app without Password service and says why on stderr; R17.5.1 says so; a password manager keeps the capability where it is the only provider. Fixed in U09's pull request (#694), in its first round of answers to the review."
+  },
+  {
+   "finding": 714,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.5-filtered-session-bus.md",
+    "tests/data/launchers/cli-tool.sh",
+    "tests/data/launchers/developer-every-capability.sh",
+    "tests/data/launchers/messenger-camera.sh",
+    "tests/data/launchers/online-app-appimage-with-folders.sh",
+    "tests/data/launchers/standard-writable-no-x11.sh"
+   ],
+   "depends_on": [
+    393
+   ],
+   "size": "small",
+   "proof": "Tier 1: GIO's own connect asked about every address the launcher shows the proxy, with key shapes whose values GDBus can't unescape (guid=%zz, guid=%2, guid=%00, an abstract name with %zz and %00): none is shown the proxy, the line is on stderr and the app gets APPKATA_NO_BUS=address; a value that unescapes (guid=%41) still gets the proxy.",
+   "note": "Found by the test of U09's fifth round of answers to its review (#694, round 5). Small and in U09's own files, so fixed there (ecc3bc4)."
   }
  ],
  "shared_files": [
