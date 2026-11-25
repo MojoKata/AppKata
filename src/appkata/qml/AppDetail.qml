@@ -408,6 +408,16 @@ Rectangle {
                     Text { width: parent.width - 24; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12
                            text: root.sbx && root.sbx.support ? root.sbx.support.appToolsHint : "" }
                 }
+                Row {     // Password service granted, and a launch here starts the app without it (R17.5.1; PR #694's review, P3-1)
+                    readonly property string note: root.installed && !!root.sbx && root.sbx.level === "standard" && !!root.sbx.active
+                                                   && (root.sbx.caps || []).indexOf("secrets-provide") >= 0
+                                                   && !(root.sbx.support && root.sbx.support.busFilter === false)    // no bus at all: said above
+                                                   ? backend.passwordServiceNote() : ""
+                    visible: note !== ""
+                    width: parent.width; spacing: 8
+                    Icon { name: "warn"; size: 14; color: Theme.warn; anchors.top: parent.top; anchors.topMargin: 1 }
+                    Text { width: parent.width - 24; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12; text: parent.note }
+                }
                 Row {     // Chromium/Electron without their own sandbox under the system's bwrap profile (R17.10.2)
                     visible: !!root.sbx && root.sbx.level !== "off" && !!root.sbx.active && !!root.sbx.ownSandbox
                              && !!root.sbx.support && root.sbx.support.innerSandbox === false

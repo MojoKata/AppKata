@@ -745,6 +745,60 @@ def test_password_service_counts_the_name_held_where_the_bus_answers_the_first_a
                         "the passwords it holds.\n"), r.stderr
 
 
+# PR #694's review, P3-1 (the owner's decision of 2026-11-25): the launcher withheld Password service
+# beside another provider, a running keyring or one the bus could start, which is every desktop that
+# installs gnome-keyring (Mint, LMDE, Ubuntu), and said so only in the app's log: the Sandbox dialog
+# offered the switch with a hint that said what it gives, and App Detail showed the chip. Now both
+# say it, from AppKata's own ask of the session bus, in the launcher's words (_PROVIDE_ASK). How it
+# slipped past: the decision was the launcher's, and its tests read the launcher's stderr; nothing
+# asked what the screens that offer the switch say of it. This is the class's harness: every answer a
+# bus or a host gives the launcher's tests above, for both tools, and two addresses, goes to the
+# launcher and to AppKata's ask under the same PATH and session, and the two must decide alike and
+# ask alike. The screens' text is test_dialog_contract's and test_sandbox_ui_surfaces' to show.
+def _bus_answers(tool, held, startable):
+    owner, names = _ANSWERS[tool]
+    return (f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(held))} ;; '
+            f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if startable else []))} ;; esac')
+
+
+_SESSION = "unix:path={rt}/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf"
+_PROVIDE_ANSWERS = [(f"{tool}, {what}, {where}", tool, _bus_answers(tool, held, start), ("gdbus",) if tool == "busctl" else (), address)
+                    for tool in ("gdbus", "busctl")
+                    for what, held, start in (("owned", True, False), ("activatable", False, True), ("free", False, False))
+                    for where, address in (("no address", None), ("an address", _SESSION))]
+_PROVIDE_ANSWERS += [(case, "gdbus", body, hide, None) for case, body, hide in _UNASKED]
+
+
+@pytest.mark.parametrize("case,tool,body,hide,address", _PROVIDE_ANSWERS, ids=[c[0] for c in _PROVIDE_ANSWERS])
+def test_appkata_asks_the_session_bus_what_the_launcher_asks_and_decides_alike(tmp_path, monkeypatch, case, tool, body, hide, address):
+    asked = tmp_path / "asked"
+    tools = {tool: f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n{body}\n'} if body else {}
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, gs=gs, tools=tools, hide=hide)
+    assert r.returncode == 0 and proxy is not None, (r.stdout, r.stderr)
+    lines = {"held": "AppKata: another program already provides saved passwords", "start": "AppKata: this session bus can start another program",
+             "ask": "AppKata: could not ask this session bus"}
+    launcher = next((why for why, line in lines.items() if r.stderr.startswith(line)), "")
+    assert (r.stderr == "") is (launcher == "") and ("--own=org.freedesktop.secrets" in proxy) is (launcher == ""), (case, r.stderr, proxy)
+    launcher_asked = asked.read_text() if asked.exists() else ""
+    asked.unlink(missing_ok=True)
+    # AppKata in the same session: the same PATH, runtime folder and address as the launcher's run
+    path = str(tmp_path / "bare") if hide else os.environ["PATH"]
+    monkeypatch.setenv("PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
+    if address is None:
+        monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    else:
+        monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address.format(rt=rt))
+    began = time.monotonic()
+    why = sb.password_service_withheld()
+    assert time.monotonic() - began < 15, case                                       # bounded as the launch is
+    assert why == launcher, (case, why, launcher)
+    assert (asked.read_text() if asked.exists() else "") == launcher_asked, case     # the same names, of the same bus
+    assert bool(launcher_asked) is (bool(body) and "timeout" not in hide), case      # a stand-in that is there is asked
+    assert (sb.PROVIDE_NOTES.get(why, "") != "") is (why != ""), why                  # and the screens have words for each reason
+
+
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by
 # refusing the runtime folder alone, and dbus-run-session and dbus-launch put the bus under /tmp
 # (BUS_ADDRESSES): a tool run in /tmp, or a grant of /tmp, showed the app the bus's socket file, and

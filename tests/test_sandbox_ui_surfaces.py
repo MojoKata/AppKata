@@ -228,6 +228,30 @@ def test_app_detail_says_a_chromium_app_runs_without_its_own_sandbox_where_it_mu
     assert _has(_seen(_show(ui, be)), "Runs without its own Chromium sandbox here")
 
 
+@pytest.mark.parametrize("state", ["owned", "activatable", "free"])
+def test_app_detail_says_where_a_launch_here_goes_without_password_service(ui, be, app, tmp_path, monkeypatch, state):
+    # PR #694's review, P3-1 (the owner's decision of 2026-11-25): an app the user gave Password
+    # service showed it among its chips wherever its launches went without it. App Detail now asks
+    # this session's bus as the launcher does, and says why, in the words of the dialog's hint.
+    from test_dialog_contract import NOT_OFFERED, password_bus, runs_past
+    asked = password_bus(tmp_path, monkeypatch, state)
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    be._regenerate_launcher(URL)
+    detail = _show(ui, be)
+    seen = _seen(detail)
+    assert not _has(seen, "Sandboxed", "Password service"), seen
+    assert [t for t in seen if t.startswith("Not offered here")] == ([NOT_OFFERED[state]] if NOT_OFFERED[state] else []), seen
+    assert "NameHasOwner org.freedesktop.secrets" in asked.read_text()
+    runs_past(ui, "Not offered here")                                     # laid out, then scrolled to the sandbox
+    _call(detail, "scrollTo", "sandbox")
+    assert runs_past(ui, "Not offered here") == ([] if NOT_OFFERED[state] else None)
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})          # an app without it: nothing to say, nothing asked
+    be._regenerate_launcher(URL)
+    asked.unlink()
+    seen = _seen(_show(ui, be))
+    assert not any(t.startswith("Not offered here") for t in seen) and not asked.exists(), seen
+
+
 def test_app_detail_says_appkata_updates_a_self_updating_app_while_it_runs_sandboxed(ui, be, app):
     be.db.x("INSERT INTO app_settings(url, install) VALUES(?,?) ON CONFLICT(url) DO UPDATE SET install=excluded.install",
             (URL, json.dumps({"autoUpdate": True})))                  # the user marked it as updating itself

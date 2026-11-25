@@ -15,6 +15,9 @@ Dialog {
     property var gs: ({})                   // the working grant set (level, folders, network, sound, devices, caps, exec_deny)
     property bool customized: false
     property bool expanded: false
+    // where a launch here starts the app without Password service, why, asked when the dialog opens
+    // as the launcher asks it at the launch (R17.5.1; PR #694's review, P3-1); "" where it owns the name
+    property string provideNote: ""
     signal saved(string url)                 // the install card adopts what was saved here
     // the template, when it is made for a folder the user picks: {mode, suggest} (R17.3, review 2 F10)
     readonly property var folderTpl: (function () { const t = (info.templates || []).find(x => x.key === tpl); return t ? t.folder : null })()
@@ -28,6 +31,7 @@ Dialog {
     function openWith(u, preset) {       // preset: the template the install card has picked, not yet saved
         url = u
         info = backend.sandboxInfo(u) || ({})
+        provideNote = backend.passwordServiceNote()
         tpl = info.template || "strict"
         gs = JSON.parse(JSON.stringify(info.grants || {}))
         customized = !!info.customized
@@ -273,6 +277,7 @@ Dialog {
                             onToggled: on => root.toggleIn("caps", "secrets", on) }
                 SbxToggle { label: "Password service"; ic: "key"; warn: true; on: root.has(root.gs.caps, "secrets-provide")
                             hint: "Offer the secret service (org.freedesktop.secrets) to other apps, e.g. KeePassXC. The app then holds every other app's saved passwords."
+                                  + (root.provideNote ? " " + root.provideNote : "")      // said here, on or off, before it is switched on
                             onToggled: on => root.toggleIn("caps", "secrets-provide", on) }
 
                 SbxHeader { text: "ADVANCED · extra hardening inside bwrap (Landlock)" }

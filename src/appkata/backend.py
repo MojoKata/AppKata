@@ -1740,8 +1740,9 @@ class Backend(QObject):
             st["waitingNote"] = self._sandboxed_note([(n, f) for _, n, f in self._waiting_for_sandbox()], waiting=True)
         if getattr(self, "_demo_sandbox", "") in ("x11", "ok"):         # the tour's sandboxed state: a working system
             st = {**st, "status": "ok", "tools": True}
-        if getattr(self, "_demo_sandbox", "") in ("x11", "setup", "ok"):  # the tour: a machine with both tools
-            st = {**st, "busFilter": True, "missing": [], "toolsHint": "", "appToolsHint": "", "brokenHint": ""}
+        if getattr(self, "_demo_sandbox", "") in ("x11", "setup", "ok"):  # the tour: a machine with both tools,
+            st = {**st, "busFilter": True, "missing": [], "toolsHint": "", "appToolsHint": "", "brokenHint": "",
+                  "passwordServiceWithheld": ""}      # and no other program that provides saved passwords (R17.5.1)
         return st
 
     def _is_cli(self, url: str, eff: install.Portable | None = None) -> bool:
@@ -2041,6 +2042,17 @@ class Backend(QObject):
         grants = _plain(grants)
         root = self._app_options(url).root if url else None
         return sandbox.summary_chips(dict(grants) if grants else {}, root, template or None)
+
+    @Slot(result=str)
+    def passwordServiceNote(self) -> str:
+        """What the Sandbox dialog's Password service hint says, and App Detail for an app that has
+        it, where a launch here starts the app without it (R17.5.1): the launcher's own ask of the
+        session bus, made by AppKata the same way when the dialog opens (sandbox.password_service_withheld;
+        PR #694's review, P3-1). "" where the app would own the name, and in the tour, whose support
+        status (_sb_support) is a working system's rather than the machine running it."""
+        st = self._sb_support()
+        why = st["passwordServiceWithheld"] if "passwordServiceWithheld" in st else sandbox.password_service_withheld()
+        return sandbox.PROVIDE_NOTES.get(why, "")
 
     @Slot(str, result="QVariant")
     def sandboxInfo(self, url: str):

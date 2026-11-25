@@ -17,6 +17,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6 import QtQuick                                 # noqa: E402,F401  (rootObjects() as a QQuickWindow, for runs_past)
+
 from appkata_core import sandbox as sb                      # noqa: E402
 from appkata_core import trustfile                          # noqa: E402
 from test_sandbox_backend import URL, _installed, _review, _review_lines, _tarball_install, be   # noqa: E402,F401
@@ -201,6 +203,90 @@ def test_the_network_hint_says_what_an_app_without_the_network_can_still_send_ou
     _pick(dlg, "templateSelect", "strict")                       # no bus: nothing to ask, nothing to say
     assert _prop(dlg, "gs")["level"] == "strict" and _hint(dlg, "Network") == reach
     assert "xdg-dbus-proxy" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("strict"))
+
+
+# What the screens add where a launch here starts an app without Password service (R17.5.1), word for
+# word: the dialog's hint and App Detail (test_sandbox_ui_surfaces)
+PASSWORD_SERVICE = "Offer the secret service (org.freedesktop.secrets) to other apps, e.g. KeePassXC. The app then holds every other app's saved passwords."
+NOT_OFFERED = {
+    "owned": "Not offered here: another program, or a running copy of this app, already provides saved passwords on this computer, so the "
+             "app starts without Password service, which would reach that program and every password it holds.",
+    "activatable": "Not offered here: another program that provides saved passwords is installed (such as gnome-keyring) and starts when "
+                   "an app asks for it, so the app starts without Password service, which could start that program and reach every "
+                   "password it holds.",
+    "free": "",
+}
+
+
+def password_bus(tmp_path, monkeypatch, state):
+    """This session's bus, as a stand-in gdbus first on PATH answers for org.freedesktop.secrets, in
+    gdbus's own shapes (test_sandbox's _ANSWERS): "owned" by another program, "activatable" (the bus
+    can start one), or "free". Returns the file that holds what it was asked."""
+    from test_sandbox import _ANSWERS
+    import shlex
+    fake, asked = tmp_path / "bus-answers", tmp_path / "bus-asked"
+    fake.mkdir()
+    owner, names = _ANSWERS["gdbus"]
+    (fake / "gdbus").write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n'
+                                f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(state == "owned"))} ;; '
+                                f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if state == "activatable" else []))} ;; esac\n')
+    (fake / "gdbus").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/bus")
+    return asked
+
+
+def runs_past(window, start: str) -> list[str] | None:
+    """What layout.py finds drawn outside its box among the texts that begin with `start`, once the
+    layout has settled (two frames that agree: test_layout's _faults), or None where no such text is
+    in view, so the check can't pass on a text scrolled away. The tour never shows these texts (it
+    shows a working system), so this is their layout check."""
+    from PySide6.QtCore import QCoreApplication
+    from appkata import layout
+    last = "unsettled"
+    for _ in range(20):
+        QCoreApplication.processEvents()
+        window.grabWindow()
+        shown = [t for t in layout._texts(window.contentItem()) if str(t.property("text")).startswith(start)
+                 and not layout._shown(t, layout._drawn(t), layout._box(t)[2]).isEmpty()]
+        now = [f["line"] for f in layout.faults(window) if f["text"].startswith(start)] if shown else None
+        if now == last:
+            return now
+        last = now
+    return last
+
+
+@pytest.mark.parametrize("state", list(NOT_OFFERED))
+def test_the_password_service_hint_says_where_a_launch_here_goes_without_it(ui, be, monkeypatch, tmp_path, state):
+    # PR #694's review, P3-1 (the owner's decision of 2026-11-25): the launcher starts an app without
+    # Password service where another program holds org.freedesktop.secrets or the bus can start one,
+    # gnome-keyring's case wherever it is installed, running or not, and the switch's hint said only
+    # what it gives. Now the dialog asks this session's bus when it opens, as the launcher asks it
+    # (test_sandbox's harness holds the two to one rule), and the hint says why, on or off.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    asked = password_bus(tmp_path, monkeypatch, state)
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    dlg = _dialog(ui, "sandbox")
+    _call(dlg, "openFor", URL)
+    want = PASSWORD_SERVICE + (" " + NOT_OFFERED[state] if NOT_OFFERED[state] else "")
+    assert "secrets-provide" in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
+    assert f"--address unix:path={tmp_path}/bus" in asked.read_text() and "NameHasOwner org.freedesktop.secrets" in asked.read_text()
+    _call(dlg, "scrollTo", "advanced")                            # Customize open, and once its groups are
+    runs_past(ui, PASSWORD_SERVICE[:40])                          # laid out, scrolled to the services
+    _call(dlg, "scrollTo", "advanced")
+    assert runs_past(ui, PASSWORD_SERVICE[:40]) == []
+    _call(dlg, "toggleIn", "caps", "secrets-provide", False)     # off, it says so too: before it is switched on
+    assert _hint(dlg, "Password service") == want
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})  # an app without it is told before it asks for it
+    _call(dlg, "openFor", URL)
+    assert "secrets-provide" not in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
+    (tmp_path / "later").mkdir()                                  # and the bus is asked anew at each opening
+    later = password_bus(tmp_path / "later", monkeypatch, "free")
+    _call(dlg, "openFor", URL)
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and later.exists()
+    later.unlink()                                                # the tour shows a working system's, through
+    be.demoSandbox("ok")                                          # its support status, not the machine's running it
+    assert be.passwordServiceNote() == "" and not later.exists()
 
 
 def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be, monkeypatch):
