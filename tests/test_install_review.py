@@ -2134,6 +2134,7 @@ def _stopped_change(tmp_path, env, p, monkeypatch, gs):
         m.setattr(install, "_drop_aside", lambda kept: None)
         install.rewrite_launcher(env, {**APP, "sandbox": gs}, p)
     for f in _KEPT:
+        os.rename(tmp_path / f"{f}.{os.getpid()}.was", tmp_path / f"{f}.4241.was")       # that process's, not this one's
         open(tmp_path / f"{f}.4242.tmp", "w").close()
 
 
@@ -2157,6 +2158,81 @@ def test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files(e
     assert _beside(tmp_path, env) == []
     owner = tmp_path / "data" / "sandboxes" / ".owners" / "demo-tool"
     assert owner.exists() is not home                                   # the private home, kept or not, as asked
+
+
+@linux_only
+def test_a_sandbox_change_removes_what_one_stopped_part_way_left_beside_the_apps_files(env, server, tmp_path, monkeypatch):
+    # #689's review, P6-B3: a sandbox change removes, before it keeps the app's files beside them,
+    # what an earlier change or write stopped part-way left there (_keep_aside), and no test failed
+    # with that removal taken out.
+    from appkata_core import sandbox
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    _stopped_change(tmp_path, env, p, monkeypatch, sandbox.resolve_template("strict"))
+    assert len(_beside(tmp_path, env)) == 10
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": sandbox.resolve_template("standard")}, p)
+    assert _beside(tmp_path, env) == []                                 # none of it, and nothing of its own
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"]) and rec["exec"] == rec["launcher"]
+    assert install.launcher_is_current(rec, {**APP, "sandbox": sandbox.resolve_template("standard")}, p)
+
+
+@linux_only
+def test_a_failed_sandbox_change_puts_back_the_links_it_removed_or_moved(env, server, tmp_path):
+    # #689's review, P6-B3: what a failed change put back by a link was untested: a link at the
+    # place of one of the app's kept files (_keep_aside keeps it by its target, and _put_back makes
+    # it again), as the user's own entry linked in for the app's; and the command link, which the
+    # change pointed elsewhere. Here the sandbox is turned Off with the app menu turned off since
+    # the install, so the change removes both menu links and points the command link at the
+    # program, and then its record can't be stored.
+    from dataclasses import replace
+    from appkata_core import sandbox
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    was = install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    for f in (tmp_path / "data" / "menu" / "demo-tool", tmp_path / "xdg" / "applications" / "appkata-demo-tool.desktop"):
+        shutil.copy(f, mine / f.name)
+        f.unlink()
+        f.symlink_to(mine / f.name)
+    cmd = tmp_path / "cmd" / "demo-tool"
+    assert os.readlink(cmd) == was["launcher"]
+    kept = _left(tmp_path, env)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(env, "x", _failing_once(env.x, lambda sql, *a: sql.startswith("UPDATE installs")))
+        with pytest.raises(OSError, match="No space left on device") as e:
+            install.rewrite_launcher(env, {**APP, "sandbox": None}, replace(p, app_menu=False))
+    assert not isinstance(e.value, install.NotPutBack)                   # all of it put back, as the error says
+    assert _changed(kept, _left(tmp_path, env)) == {}                    # the menu links and the command link too
+    rec = install.rewrite_launcher(env, {**APP, "sandbox": None}, replace(p, app_menu=False))    # and then it is made
+    assert os.readlink(cmd) == rec["exec"] != was["launcher"] and not os.path.lexists(tmp_path / "data" / "menu" / "demo-tool")
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["appimage", "tarball"])
+def test_a_failed_move_back_to_the_fixed_name_that_cant_be_undone_is_named(env, server, tmp_path, monkeypatch, kind):
+    # #689's review, P6-B3: turning the sandbox Off for an app that updates itself moves its current
+    # version to the fixed name (R4.10.2) first; when a later step fails and the version can't be
+    # moved back either, the error names it, so the toast doesn't say the app runs as it did
+    # (R17.4), and no test failed with that taken out.
+    from appkata_core import sandbox
+    home = tmp_path / "apps" / "demo-tool"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    gs = sandbox.resolve_template("standard")
+    a = _version(server, kind, "1.0")
+    install.install(env, {**APP, "installVersion": "1.0", "autoUpdate": True}, a, kind, [a], portable=p)
+    install.rewrite_launcher(env, {**APP, "autoUpdate": True, "sandbox": gs}, p)
+    a = _version(server, kind, "2.0")
+    was = install.install(env, {**APP, "installVersion": "2.0", "sandbox": gs}, a, kind, [a], portable=p)
+    fixed, before = str(home / ("DemoTool.AppImage" if kind == "appimage" else "app")), was["current"]["path"]
+    with monkeypatch.context() as m:
+        m.setattr(env, "x", _failing_once(env.x, lambda sql, *a: sql.startswith("UPDATE installs")))
+        m.setattr(install.os, "replace", _failing_once(os.replace, lambda src, dst: (src, dst) == (fixed, before)))
+        with pytest.raises(install.NotPutBack, match="No space left on device") as e:
+            install.rewrite_launcher(env, {**APP, "autoUpdate": True, "sandbox": None}, p)
+    assert os.path.lexists(fixed) and not os.path.lexists(before)        # the version is at the fixed name
+    assert "the folder of its current version" in e.value.left, e.value.left
 
 
 # ---------------------------------------------------------------- the program of an archive (CR1.3-17)
