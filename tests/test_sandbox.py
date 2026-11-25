@@ -440,7 +440,6 @@ BUS_ADDRESSES = {
     "unix:path={rt}/bus": "{rt}/bus",
     "unix:path=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": "/tmp/dbus-MZ8lHbtZ8K",
     "unix:abstract=/tmp/dbus-MZ8lHbtZ8K,guid=bc7bc2c1f523f8307163d71b6b05ecdf": None,
-    "unix:path=/srv/session,one/bus": "/srv/session",      # a comma ends the path, to the proxy as to the launcher (GDBus)
     # `guid=` first: no program writes it, and libdbus and GIO read it all the same; the launcher
     # took `path=` and `abstract=` as an entry's first key alone (PR #694's review, P4-B1a)
     "unix:guid=bc7bc2c1f523f8307163d71b6b05ecdf,path=/tmp/dbus-MZ8lHbtZ8K": "/tmp/dbus-MZ8lHbtZ8K",
@@ -594,6 +593,10 @@ def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
                                      # in any order of the keys; and a path with an abstract name, which no client takes (P4-B1a)
                                      "unix:guid=0123,path=/tmp/a%20b/bus", "unix:guid=0123,path=/tmp/dbus-one,path={rt}/bus",
                                      "unix:path={rt}/bus,abstract=/tmp/dbus-two", "unix:abstract=/tmp/dbus-two,path={rt}/bus",
+                                     # a key the proxy's GDBus refuses the entry for (P5-1), and a comma inside the path,
+                                     # where the rest is such a key (it was taken as ending the path, and GDBus refused it)
+                                     "unix:path={rt}/bus,", "unix:guid,path={rt}/bus", "unix:path={rt}/bus,,guid=0123",
+                                     "unix:=0123,path={rt}/bus", "unix:abstract=/tmp/dbus-two,", "unix:path=/srv/session,one/bus",
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
 def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
@@ -952,6 +955,13 @@ BUS_KEY_ORDERS = {
     "unix:path=/nowhere/a/bus,guid=0123;unix:abstract=/tmp/dbus-x,guid=0123": "",   # a list
     "unix:tmpdir=/tmp,guid=0123": "",
     "tcp:host=localhost,port=4000": "",
+    # a key the proxy's GDBus refuses the entry for (P5-1): an empty one (a trailing or doubled comma),
+    # one with no `=`, one with nothing before it; libdbus takes the first, and bus_files() reads them
+    "unix:path=/nowhere/a/bus,": "",
+    "unix:path=/nowhere/a/bus,,guid=0123": "",
+    "unix:path=/nowhere/a/bus,guid": "",
+    "unix:path=/nowhere/a/bus,=0123": "",
+    "unix:abstract=/tmp/dbus-x,": "",
 }
 
 
@@ -981,6 +991,49 @@ def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatc
         assert shown == f"proxy={proxy}".encode(), (order, shown)
         seen.add((tuple(sorted(want)), readable, warns))
     assert len(seen) == 1, seen
+
+
+# PR #694's review, P5-1: the launcher showed the proxy an entry with a key that has no `=` (a
+# trailing or doubled comma, a bare `guid`), which its key loop skips, as _bus_keys() does, and which
+# the proxy's own GDBus refuses whole: every connection the app made failed, and nothing said why.
+# How it slipped past: the readings of the address were held to each other (BUS_KEY_ORDERS) and to
+# the forms dbus writes, never to the reader that then connects with it, the proxy's GDBus. This
+# holds the launcher's choice to it: every address the launcher shows the proxy (a socket file or an
+# abstract name) is one GIO's own connect, g_dbus_address_get_stream(), the proxy's, takes -- it may
+# find no bus there, but never refuses the address -- for each key shape alone and each pair in both
+# orders, and every address the tests above read.
+BUS_KEY_SHAPES = ["path=/nowhere/a/bus", "path=/nowhere/b/bus", "path=relative/bus", "path=/nowhere/a%20b", "path=",
+                  "abstract=/tmp/dbus-x", "abstract=/tmp/dbus-a%20b", "guid=0123", "guid=", "foo=1", "tmpdir=/tmp",
+                  "guid", "", "=0123"]
+
+_GIO_TAKES = """import json, sys
+from gi.repository import Gio, GLib
+refused = {}
+for a in sys.argv[1:]:
+    try:
+        Gio.dbus_address_get_stream_sync(a, None)
+    except GLib.Error as e:
+        if e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.INVALID_ARGUMENT):
+            refused[a] = e.message
+print(json.dumps(refused))
+"""
+
+
+def test_the_proxy_is_shown_a_bus_only_where_its_own_gdbus_takes_the_address():
+    if subprocess.run(["python3", "-c", "from gi.repository import Gio"], capture_output=True).returncode:
+        pytest.skip("needs python3-gi")
+    addresses = {"unix:" + ",".join(keys) for n in (1, 2) for keys in itertools.product(BUS_KEY_SHAPES, repeat=n)}
+    addresses |= {*BUS_READS, *(o for a in BUS_KEY_ORDERS for o in _key_orders(a)), *(a.format(rt="/nowhere-rt") for a in BUS_ADDRESSES)}
+    addresses = sorted(addresses)
+    script = 'set -u\nrt=/nowhere-rt\nfor DBUS_SESSION_BUS_ADDRESS in "$@"; do (\n' + sb._BUS_BLOCK + 'echo "${busat:--}"\n); done\n'
+    r = subprocess.run(["sh", "-c", script, "sh", *addresses], capture_output=True, text=True, timeout=120)
+    shown = dict(zip(addresses, r.stdout.splitlines()))
+    assert r.returncode == 0 and r.stderr == "" and len(shown) == len(addresses) == len(r.stdout.splitlines()), r.stderr
+    assert {"file", "abstract", "-"} == set(shown.values()), set(shown.values())
+    to_proxy = [a for a, at in shown.items() if at != "-"]
+    r = subprocess.run(["python3", "-I", "-c", _GIO_TAKES, *to_proxy], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {}, r.stdout
 
 
 # PR #694's review, P5-B1: the cover matched a socket file only *under* a granted path, so a grant of

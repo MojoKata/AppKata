@@ -2056,7 +2056,12 @@ set -- -- "$appdir/$exe" "$@"
 # `path=`, absolute, with no escaped byte, and no `abstract=` ($busfile, bound alone for the proxy);
 # "abstract" for one entry with `abstract=` and no `path=`; "" for any other, which the proxy can't be
 # shown (a list, two paths, of which its GDBus takes the last, an escaped or relative path, a path
-# with an abstract name, which no client takes, another transport).
+# with an abstract name, which no client takes, another transport). $busbare is 1 where a key has no
+# `=` (a trailing or doubled comma leaves an empty one, a comma inside a path the rest of it) or
+# nothing before it: the key loop skips such a key, as _bus_keys() does, but the proxy's GDBus refuses
+# the entry whole, so it is shown nothing (PR #694's review, P5-1: it was given the path and failed
+# every connection the app made, with no word; libdbus takes a trailing comma, so the file the path
+# names stays in $bussocks).
 _BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
@@ -2064,7 +2069,7 @@ upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 # show one, wherever it lies (R17.3.1).
 nl='
 '
-bussocks= busok=1 busabs= paths=0 busfile= rest="$upstream;"
+bussocks= busok=1 busabs= busbare= paths=0 busfile= rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
@@ -2074,7 +2079,8 @@ while [ -n "$rest" ]; do
     case "$p" in
       abstract=*) busabs=1; continue ;;
       path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
-      *) continue ;;
+      [!=]*=*) continue ;;
+      *) busbare=1; continue ;;
     esac
     f=
     while [ -n "$p" ]; do
@@ -2095,11 +2101,12 @@ while [ -n "$rest" ]; do
   done
 done
 # What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
-# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name.
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name, and
+# no key its GDBus refuses the entry for.
 busat=
 case "$upstream" in
   *";"*) ;;
-  *) case "$paths$busabs:$busfile" in
+  *) [ -n "$busbare" ] || case "$paths$busabs:$busfile" in
        1:/*%*) ;;
        1:/*) busat=file ;;
        01:) busat=abstract ;;

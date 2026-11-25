@@ -40,7 +40,7 @@ upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 # show one, wherever it lies (R17.3.1).
 nl='
 '
-bussocks= busok=1 busabs= paths=0 busfile= rest="$upstream;"
+bussocks= busok=1 busabs= busbare= paths=0 busfile= rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
@@ -50,7 +50,8 @@ while [ -n "$rest" ]; do
     case "$p" in
       abstract=*) busabs=1; continue ;;
       path=*) p=${p#path=}; paths=$((paths+1)); busfile=$p ;;
-      *) continue ;;
+      [!=]*=*) continue ;;
+      *) busbare=1; continue ;;
     esac
     f=
     while [ -n "$p" ]; do
@@ -71,11 +72,12 @@ while [ -n "$rest" ]; do
   done
 done
 # What the proxy is shown of the bus (R17.5), from the same keys, in whatever order they come: one
-# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name.
+# entry naming its socket once, by an absolute path with no escaped byte or by an abstract name, and
+# no key its GDBus refuses the entry for.
 busat=
 case "$upstream" in
   *";"*) ;;
-  *) case "$paths$busabs:$busfile" in
+  *) [ -n "$busbare" ] || case "$paths$busabs:$busfile" in
        1:/*%*) ;;
        1:/*) busat=file ;;
        01:) busat=abstract ;;
