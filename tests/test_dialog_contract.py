@@ -184,7 +184,7 @@ def _plan(be):
             "sandbox": {"applicable": True, "source": info["source"], "template": info["template"], "level": info["level"],
                         "chips": info["chips"], "grants": info["grants"], "templates": info["templates"],
                         "recommendedBy": info["reviewBy"], "support": info["support"], "extractMb": 0,
-                        "suggestsOff": info["suggestsOff"], "freshWarning": info["freshWarning"],
+                        "suggestsOff": info["suggestsOff"], "freshWarning": info["freshWarning"], "notYet": info.get("notYet", ""),
                         "byKind": {k: {key: (r := be._resolved_sandbox(URL, kind="appimage", is_cli=k == "cli"))[key] if key != "level"
                                        else sb.level_of(r["grants"]) for key in ("template", "source", "level")}
                                    | {"chips": sb.summary_chips(be._resolved_sandbox(URL, kind="appimage", is_cli=k == "cli")["grants"])}
@@ -314,6 +314,62 @@ def test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save(ui, be, tmp_p
     assert be.sandboxInfo(URL)["freshWarning"] == ""
     dlg = pick("strict")
     assert not any(warning in t for t in _seen(dlg))
+    _call(dlg, "close")
+
+
+_WHY_NOT_YET = {"bubblewrap missing": ("unsupported", "bubblewrap isn't installed, so apps run without a sandbox. Install it ("),
+                "the setup pending": ("setup-needed", "this system needs a one-time setup before the sandbox can run (Set up… in Settings → Sandbox")}
+
+
+@pytest.mark.parametrize("why", list(_WHY_NOT_YET))
+@pytest.mark.parametrize("where", ["sandbox dialog", "install options"])
+def test_where_save_cant_sandbox_an_app_yet_the_dialogs_say_when_the_choice_takes_effect(ui, be, tmp_path, monkeypatch, where, why):
+    # #689's review, P4-B7: where Save can't sandbox an installed app that runs unsandboxed (no
+    # bwrap a launcher in its folder finds, or the system's setup pending), the dialogs said
+    # R17.13's warning that Save resets its settings, and Save then left it unsandboxed, the choice
+    # saved, with no word that it waits. The owner decided (option B): the warning stays, and a line
+    # beside it says the choice takes effect once the sandbox can run for the app, and why (R17.13).
+    # Once the sandbox can run, the line goes, and Save sandboxes it. Install options' own line for
+    # a pending setup ("installing asks whether to set it up now") isn't said where Save asks nothing.
+    from test_sandbox_ui_surfaces import _seen
+    _tarball_install(be, tmp_path)
+    status, said_why = _WHY_NOT_YET[why]
+    host = {"status": status}
+    monkeypatch.setattr(sb, "have_tools", lambda: host["status"] != "unsupported")
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": host["status"], "tools": host["status"] != "unsupported",
+                                                       "missing": ["bubblewrap"] if host["status"] == "unsupported" else [],
+                                                       **({"toolsHint": sb.tools_hints(["bubblewrap"])["system"]}
+                                                          if host["status"] == "unsupported" else {})})
+    monkeypatch.setattr(be, "_install", lambda *a, **k: None)
+    be.setSandbox(URL, {"template": "off"})
+    warning = "Sandboxing Demo gives it an empty private home of its own, as if newly installed"
+    note = "This choice takes effect once the sandbox can run for Demo, which runs unsandboxed until then: " + said_why
+
+    def pick(key):
+        dlg = _dialog(ui, "sandbox" if where == "sandbox dialog" else "install")
+        if where == "sandbox dialog":
+            _call(dlg, "openFor", URL)
+            _pick(dlg, "templateSelect", key)
+        else:
+            _call(dlg, "openWith", _plan(be), True)
+            _pick(dlg, "sandboxSelect", key)
+        return dlg
+    dlg = pick("off")
+    assert not any(warning in t or "takes effect" in t for t in _seen(dlg))     # Off: nothing to say
+    dlg = pick("strict")
+    seen = _seen(dlg)
+    assert any(warning in t for t in seen) and any(t.startswith(note) for t in seen), seen
+    assert not any("installing asks" in t for t in seen), seen
+    _press(dlg, "save")
+    assert be._install_settings(URL)["sandbox"]["template"] == "strict"         # the choice is saved
+    assert not be.sandboxInfo(URL)["active"] and not os.path.exists(tmp_path / "bin" / "apps" / "demo" / "run")    # and waits, as said
+    host["status"] = "ok"                                                       # the sandbox can run for it now
+    assert be.sandboxInfo(URL)["notYet"] == ""
+    dlg = pick("strict")
+    seen = _seen(dlg)
+    assert any(warning in t for t in seen) and not any("takes effect" in t for t in seen), seen
+    _press(dlg, "save")
+    assert be.sandboxInfo(URL)["active"]
     _call(dlg, "close")
 
 

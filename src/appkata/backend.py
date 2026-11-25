@@ -795,7 +795,7 @@ class Backend(QObject):
                               "isCli": self._is_cli(url), "appImage": chosen_card["kind"] == "appimage",
                               "recommendedBy": self._sandbox_reviewer(url),
                               "support": self._sb_support(self._app_options(url).root), "sessionWarning": self._sb_session_warning(),
-                              "freshWarning": self._fresh_warning(url),
+                              "freshWarning": self._fresh_warning(url), "notYet": self._not_yet_note(url),
                               "extractMb": round(img_mb * 2.5) if chosen_card["kind"] == "appimage" and sandbox.level_of(gs) != "off" else 0}
             # the app's kind (R17.3.3, review 2 F4): what the download showed, the user's own choice, and
             # the card as each kind would have it, so the dialog's kind choice moves the card live
@@ -1983,6 +1983,33 @@ class Backend(QObject):
         return (f"Sandboxing {a.get('name', 'it')} gives it an empty private home of its own, as if newly installed: "
                 "its settings and accounts will look reset, and paths it remembers may point nowhere. Your files aren't touched.")
 
+    def _not_yet_note(self, url: str) -> str:
+        """What the Sandbox dialog and Install options say above Save, beside R17.13's warning, when a
+        sandboxed choice is picked for an installed app that Save can't sandbox now: it has no
+        launcher, and the sandbox can't run for it (a launcher in its install folder would find no
+        bwrap, R17.4; the system's one-time setup is pending, or it needs a repair, R17.10). The
+        choice is saved and takes effect once the sandbox can run for the app; the note says so,
+        with why, in the words App Detail and Settings use. "" where Save sandboxes it, or it has a
+        launcher already (kept whatever this system can do, R17.10). It is the gate
+        :meth:`_sandbox_for_install` keeps, asked of what App Detail shows (`_sb_support` for the
+        app's own folder). #689's review, P4-B7: the dialogs warned that Save would reset the app's
+        settings, and Save then left it unsandboxed, with no word that the choice waits."""
+        a = self._app(url) or {}
+        if not a.get("installed") or a.get("foreign") or url == APPKATA_REPO:
+            return ""
+        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
+        if not row or json.loads(row["record"] or "{}").get("launcher"):
+            return ""
+        st = self._sb_support(self._app_options(url).root)
+        why = {"unsupported": st.get("toolsHint") or "bubblewrap isn't installed, so apps run without a sandbox.",
+               "setup-needed": "this system needs a one-time setup before the sandbox can run (Set up… in Settings → Sandbox; "
+                               "it asks for your password once).",
+               "conflict": "AppKata's AppArmor profile from before this system's upgrade conflicts with the system's own "
+                           "(Repair… in its App Detail removes AppKata's)."}.get(st.get("status"))
+        if not why:
+            return ""
+        return f"This choice takes effect once the sandbox can run for {a.get('name', 'it')}, which runs unsandboxed until then: {why}"
+
     def _waiting_for_sandbox(self) -> list[tuple[str, str, bool]]:
         """(url, name, starts fresh) of each installed app that would run sandboxed but has no launcher
         yet, and would get one that starts (:meth:`_launcher_can_start`): what a setup, or tools
@@ -2137,7 +2164,7 @@ class Backend(QObject):
                 "caps": sorted(sandbox.normalize(gs)["caps"]), "execDeny": sandbox.normalize(gs)["exec_deny"],
                 "capLabels": sandbox.CAP_LABELS, "deviceLabels": sandbox.DEVICE_LABELS, "soundLabels": sandbox.SOUND_LABELS,
                 "templates": self.sandboxTemplates, "support": self._sb_support(root),
-                "freshWarning": self._fresh_warning(url), "launcherHash": self._launcher_hash(url),
+                "freshWarning": self._fresh_warning(url), "notYet": self._not_yet_note(url), "launcherHash": self._launcher_hash(url),
                 "sessionWarning": self._sb_session_warning(),
                 # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
                 "busWarning": sandbox.bus_warning() if sandbox.normalize(gs)["network"] else {},
