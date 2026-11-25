@@ -31,7 +31,9 @@ tests/test_install_review.py::test_a_move_back_to_the_fixed_name_that_fails_leav
 tests/test_install_review.py::test_a_program_started_from_its_menu_entry_is_started_by_its_own_path  # the Linux install layout
 tests/test_install_review.py::test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry  # the Linux install layout
 tests/test_install_review.py::test_a_refused_install_leaves_everything_as_it_was  # the Linux install layout
+tests/test_install_review.py::test_a_release_file_named_as_a_path_is_kept_under_its_last_part_in_the_apps_own_folders  # the Linux install layout
 tests/test_install_review.py::test_a_release_whose_version_is_a_name_appkata_keeps_in_the_apps_folder_is_installed_beside_it  # the Linux install layout
+tests/test_install_review.py::test_a_release_whose_version_is_dots_gets_a_folder_in_the_apps_own_and_takes_no_other_apps  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_on_a_disk_that_stays_full_leaves_the_app_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_removes_what_one_stopped_part_way_left_beside_the_apps_files  # the Linux install layout
@@ -43,6 +45,7 @@ tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_
 tests/test_install_review.py::test_an_app_named_after_a_command_is_installed_without_a_command_link  # the Linux install layout
 tests/test_install_review.py::test_an_apps_own_command_link_is_replaced_and_one_that_becomes_a_command_goes_at_the_next_update  # the Linux install layout
 tests/test_install_review.py::test_an_app_starts_from_its_menu_entry_whatever_appkatas_own_folder_holds_or_how_it_is_mounted  # the Linux install layout
+tests/test_install_review.py::test_an_app_whose_name_has_no_ascii_letter_or_digit_gets_its_id_in_the_file_named_after_it  # the Linux install layout
 tests/test_install_review.py::test_an_archive_with_nothing_but_helpers_has_no_program  # the Linux install layout
 tests/test_install_review.py::test_an_install_folder_whose_name_isnt_utf8_installs_and_starts_from_the_menu  # the Linux install layout
 tests/test_install_review.py::test_an_installed_app_stays_in_its_folder_when_the_install_folder_setting_changes  # the Linux install layout
