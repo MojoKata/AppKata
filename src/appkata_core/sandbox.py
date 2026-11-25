@@ -2345,7 +2345,8 @@ def password_service_withheld() -> str:
     _UPSTREAM): one rule in both places, as :data:`BUS_FILTER_AT` is for the proxy (PR #694's
     review, P3-1; the owner's decision of 2026-11-25: the Sandbox dialog and App Detail say it, not
     only the app's log). Each ask is bounded by `timeout 5`, as at the launch, so a bus that never
-    answers holds this ten seconds at most. "" off Linux, where nothing is sandboxed."""
+    answers holds this ten seconds at most: AppKata asks on a worker, never on the window's thread
+    (Backend.askPasswordService; P8-1). "" off Linux, where nothing is sandboxed."""
     if OS != "linux":
         return ""
     script = "set -eu\n" + _RT + "\n" + _UPSTREAM + "\n" + _PROVIDE_ASK + 'printf %s "$why"\n'

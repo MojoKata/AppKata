@@ -121,6 +121,8 @@ class Backend(QObject):
     _refresh = Signal()
     _synced = Signal(object)                     # a sync's worker is done: what was to follow the sync (a callable, or None)
     _toast = Signal(str, str)
+    passwordServiceNoteChanged = Signal()
+    _passwordServiceAnswered = Signal(int, str)  # an opening's number, and its ask's answer: from its worker (R17.5.1)
 
     def __init__(self, db_path: str | None = None, heal: bool = True):
         super().__init__()
@@ -137,6 +139,10 @@ class Backend(QObject):
         self._sync = sync.Progress()
         self._syncing = False
         self._previews: dict[str, sync.Preview] = {}
+        # what the screens add where a launch here starts an app without Password service (R17.5.1):
+        # the answer to the latest opening's ask of the bus, the openings' count, and the one answered
+        self._provide_note, self._provide_opening, self._provide_answered = "", 0, 0
+        self._passwordServiceAnswered.connect(self._password_service_answered)
         self._refresh.connect(self.reload)
         self._synced.connect(self._after_sync)
         self._toast.connect(self.toast)
@@ -2043,16 +2049,45 @@ class Backend(QObject):
         root = self._app_options(url).root if url else None
         return sandbox.summary_chips(dict(grants) if grants else {}, root, template or None)
 
-    @Slot(result=str)
+    @Property(str, notify=passwordServiceNoteChanged)
     def passwordServiceNote(self) -> str:
-        """What the Sandbox dialog's Password service hint says, and App Detail for an app that has
-        it, where a launch here starts the app without it (R17.5.1): the launcher's own ask of the
-        session bus, made by AppKata the same way when the dialog opens (sandbox.password_service_withheld;
-        PR #694's review, P3-1). "" where the app would own the name, and in the tour, whose support
-        status (_sb_support) is a working system's rather than the machine running it."""
+        """What the Sandbox dialog's Password service hint adds, and App Detail for an app that has
+        it, where a launch here starts the app without it (R17.5.1): the answer to the latest
+        opening's ask of the bus (askPasswordService). "" where the app would own the name, and
+        until that answer comes."""
+        return self._provide_note
+
+    @Slot()
+    def askPasswordService(self) -> None:
+        """Ask this session's bus what a launch here decides for Password service, as the launcher
+        asks it (sandbox.password_service_withheld; PR #694's review, P3-1): the Sandbox dialog as it
+        opens, App Detail as it opens on an app that has it. On a worker (P8-1): a bus that takes the
+        connection and never answers holds the ask its five seconds, and held the window as long, at
+        every opening and at every reload of App Detail, whose binding asked again. The note is empty
+        until the answer comes, through a queued signal with the opening's number, so a late answer
+        to an earlier opening is dropped; a reload reads the note and asks nothing. The tour's support
+        status (_sb_support) is a working system's rather than the machine running it: its answer
+        is taken here, and nothing is asked."""
+        self._provide_opening += 1
+        opening = self._provide_opening
         st = self._sb_support()
-        why = st["passwordServiceWithheld"] if "passwordServiceWithheld" in st else sandbox.password_service_withheld()
-        return sandbox.PROVIDE_NOTES.get(why, "")
+        if "passwordServiceWithheld" in st:
+            self._password_service_answered(opening, st["passwordServiceWithheld"])
+            return
+        self._show_password_service_note("")
+        threading.Thread(target=lambda: self._passwordServiceAnswered.emit(opening, sandbox.password_service_withheld()),
+                         name="password service ask", daemon=True).start()
+
+    def _password_service_answered(self, opening: int, why: str) -> None:
+        if opening != self._provide_opening:        # an earlier opening's: the latest one's is on its way
+            return
+        self._provide_answered = opening
+        self._show_password_service_note(sandbox.PROVIDE_NOTES.get(why, ""))
+
+    def _show_password_service_note(self, note: str) -> None:
+        if note != self._provide_note:
+            self._provide_note = note
+            self.passwordServiceNoteChanged.emit()
 
     @Slot(str, result="QVariant")
     def sandboxInfo(self, url: str):
@@ -2543,6 +2578,8 @@ class Backend(QObject):
         screen, so none shows the machine running the tour), or "" (none)."""
         if getattr(self, "_demo_sandbox", "") != mode:
             self._demo_sandbox = mode
+            self._provide_opening += 1          # what this machine's bus said, or will, stays off its screens
+            self._show_password_service_note("")
             self.reload()               # the Apps list's R17.12 rule asks _runs_sandboxed too
             self.prefsChanged.emit()
             self.changed.emit()

@@ -27,8 +27,19 @@ Rectangle {
     signal openSandbox(string url)
     signal showLaunchCommand(string url)          // R17.4's "Show the launch command" (review 2, F11)
     readonly property var sbx: (root.d.sandbox && root.d.sandbox.applicable) ? root.d.sandbox : null
+    // Password service granted, sandboxed at Standard with a bus filter here (without one, the line on the
+    // missing xdg-dbus-proxy says there is no bus at all): the bus is asked as App Detail opens on the app,
+    // or as the app gains it, and a reload keeps that answer (R17.5.1; PR #694's review, P3-1 and P8-1)
+    readonly property bool providesPasswords: installed && !!sbx && sbx.level === "standard" && !!sbx.active
+                                              && (sbx.caps || []).indexOf("secrets-provide") >= 0
+                                              && !(sbx.support && sbx.support.busFilter === false)
+    onProvidesPasswordsChanged: if (providesPasswords) backend.askPasswordService()
     function refresh() { d = url ? backend.detail(url) : ({}); }
-    onUrlChanged: { expanded = 0; refresh(); flick.contentY = 0; versionsShown = d.versionsShown || 6 }
+    onUrlChanged: {
+        const had = providesPasswords
+        expanded = 0; refresh(); flick.contentY = 0; versionsShown = d.versionsShown || 6
+        if (had && providesPasswords) backend.askPasswordService()       // another app that has it: no change to ask on
+    }
     Connections { target: backend; function onChanged() { root.refresh() } }
     readonly property var busy: backend.busy[url]
     readonly property bool installed: ["installed", "update", "held", "pinned", "selfupdating", "system"].indexOf(d.state) >= 0
@@ -409,10 +420,7 @@ Rectangle {
                            text: root.sbx && root.sbx.support ? root.sbx.support.appToolsHint : "" }
                 }
                 Row {     // Password service granted, and a launch here starts the app without it (R17.5.1; PR #694's review, P3-1)
-                    readonly property string note: root.installed && !!root.sbx && root.sbx.level === "standard" && !!root.sbx.active
-                                                   && (root.sbx.caps || []).indexOf("secrets-provide") >= 0
-                                                   && !(root.sbx.support && root.sbx.support.busFilter === false)    // no bus at all: said above
-                                                   ? backend.passwordServiceNote() : ""
+                    readonly property string note: root.providesPasswords ? backend.passwordServiceNote : ""
                     visible: note !== ""
                     width: parent.width; spacing: 8
                     Icon { name: "warn"; size: 14; color: Theme.warn; anchors.top: parent.top; anchors.topMargin: 1 }

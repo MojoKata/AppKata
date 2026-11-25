@@ -792,7 +792,7 @@ def test_appkata_asks_the_session_bus_what_the_launcher_asks_and_decides_alike(t
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address.format(rt=rt))
     began = time.monotonic()
     why = sb.password_service_withheld()
-    assert time.monotonic() - began < 15, case                                       # bounded as the launch is
+    assert time.monotonic() - began < 15, case        # bounded as the launch is (on a worker: test_the_password_service_ask_never_holds_the_window)
     assert why == launcher, (case, why, launcher)
     assert (asked.read_text() if asked.exists() else "") == launcher_asked, case     # the same names, of the same bus
     assert bool(launcher_asked) is (bool(body) and "timeout" not in hide), case      # a stand-in that is there is asked

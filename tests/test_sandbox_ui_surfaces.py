@@ -14,6 +14,7 @@ read back; pressing a button must reach the backend.
 import json
 import os
 import threading
+import time
 
 import pytest
 
@@ -28,6 +29,7 @@ HARNESS = os.path.join(os.path.dirname(__file__), "qml", "SurfacesHarness.qml")
 
 # What these surfaces still don't say, and the finding that keeps each
 STILL_MISSING: dict = {}
+_START = threading.Thread.start        # a worker on its own thread, for a test that needs one (the fixture runs them in line)
 
 
 @pytest.fixture
@@ -250,6 +252,31 @@ def test_app_detail_says_where_a_launch_here_goes_without_password_service(ui, b
     asked.unlink()
     seen = _seen(_show(ui, be))
     assert not any(t.startswith("Not offered here") for t in seen) and not asked.exists(), seen
+
+
+def test_app_detail_asks_the_bus_once_as_it_opens_and_never_holds_the_window(ui, be, app, tmp_path, monkeypatch):
+    # PR #694's review, P8-1: App Detail read its Password service line through a binding every reload
+    # ran again (an install, an update, a setting, the timed background sync), and each read asked the
+    # bus on the GUI thread: on a session bus that takes the connection and never answers, the window
+    # froze for the ask's five seconds as App Detail opened and at every reload. Now it asks once as it
+    # opens on the app, on a worker; the line comes with the answer, and a reload keeps that answer.
+    from test_dialog_contract import password_bus, running
+    monkeypatch.setattr(threading.Thread, "start", _START)
+    asked = password_bus(tmp_path, monkeypatch, "hung")
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    be._regenerate_launcher(URL)
+    began = time.monotonic()
+    detail = _show(ui, be)
+    for _ in range(3):
+        be.reload()                                                       # a sync's, an install's, a setting's
+    assert time.monotonic() - began < 1                                   # no wait on the bus
+    line = lambda: [t for t in _seen(detail) if t.startswith("Not offered here")]   # noqa: E731
+    assert line() == []                                                   # and no words until it answers
+    came, gap = running(lambda: line() == [sb.PROVIDE_NOTES["ask"]], 15)
+    assert came and gap < 1, (line(), gap)                                # the window turned all the while
+    for _ in range(3):
+        be.reload()
+    assert line() == [sb.PROVIDE_NOTES["ask"]] and asked.read_text().count("NameHasOwner") == 1, asked.read_text()
 
 
 def test_app_detail_says_appkata_updates_a_self_updating_app_while_it_runs_sandboxed(ui, be, app):

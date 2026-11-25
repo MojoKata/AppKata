@@ -12,6 +12,7 @@ the dialog showed.
 
 import json
 import os
+import time
 
 import pytest
 
@@ -221,19 +222,54 @@ NOT_OFFERED = {
 def password_bus(tmp_path, monkeypatch, state):
     """This session's bus, as a stand-in gdbus first on PATH answers for org.freedesktop.secrets, in
     gdbus's own shapes (test_sandbox's _ANSWERS): "owned" by another program, "activatable" (the bus
-    can start one), or "free". Returns the file that holds what it was asked."""
+    can start one), or "free"; or "hung", a bus that takes the ask and never answers (a stopped or
+    wedged dbus-daemon), which the ask's `timeout 5` ends. Returns the file that holds what it was asked."""
     from test_sandbox import _ANSWERS
     import shlex
     fake, asked = tmp_path / "bus-answers", tmp_path / "bus-asked"
     fake.mkdir()
     owner, names = _ANSWERS["gdbus"]
-    (fake / "gdbus").write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n'
+    (fake / "gdbus").write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\n' + ("exec sleep 30\n" if state == "hung" else
                                 f'case "$*" in *NameHasOwner*) echo {shlex.quote(owner(state == "owned"))} ;; '
-                                f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if state == "activatable" else []))} ;; esac\n')
+                                f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if state == "activatable" else []))} ;; esac\n'))
     (fake / "gdbus").chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/bus")
     return asked
+
+
+def running(done, seconds):
+    """Run the event loop, as the window does, until done() holds or `seconds` have passed. Returns
+    whether it held, and the longest the GUI thread went between two turns of a 20 ms timer: how long
+    the window went without repainting or taking input."""
+    from PySide6.QtCore import QEventLoop, QTimer
+    loop, last, gaps = QEventLoop(), [time.monotonic()], [0.0]
+
+    def turn():
+        now = time.monotonic()
+        gaps.append(now - last[0])
+        last[0] = now
+        if done():
+            loop.quit()
+    timer = QTimer()
+    timer.timeout.connect(turn)
+    timer.start(20)
+    QTimer.singleShot(int(seconds * 1000), loop.quit)
+    loop.exec()
+    timer.stop()
+    return bool(done()), max(gaps)
+
+
+def answered(be) -> bool:
+    """Whether the latest opening's ask of the bus has its answer on the screens (Backend.askPasswordService)."""
+    return be._provide_answered == be._provide_opening
+
+
+def _open(dlg, be, url):
+    """Open the Sandbox dialog on `url`, and run the window until the bus's answer is on it: the
+    dialog asks on a worker (PR #694's review, P8-1)."""
+    _call(dlg, "openFor", url)
+    assert running(lambda: answered(be), 15)[0], "the bus's answer never came"
 
 
 def runs_past(window, start: str) -> list[str] | None:
@@ -267,7 +303,7 @@ def test_the_password_service_hint_says_where_a_launch_here_goes_without_it(ui, 
     asked = password_bus(tmp_path, monkeypatch, state)
     be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
     dlg = _dialog(ui, "sandbox")
-    _call(dlg, "openFor", URL)
+    _open(dlg, be, URL)
     want = PASSWORD_SERVICE + (" " + NOT_OFFERED[state] if NOT_OFFERED[state] else "")
     assert "secrets-provide" in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
     assert f"--address unix:path={tmp_path}/bus" in asked.read_text() and "NameHasOwner org.freedesktop.secrets" in asked.read_text()
@@ -278,15 +314,53 @@ def test_the_password_service_hint_says_where_a_launch_here_goes_without_it(ui, 
     _call(dlg, "toggleIn", "caps", "secrets-provide", False)     # off, it says so too: before it is switched on
     assert _hint(dlg, "Password service") == want
     be.setSandbox(URL, {"template": "standard", "overrides": {}})  # an app without it is told before it asks for it
-    _call(dlg, "openFor", URL)
+    _open(dlg, be, URL)
     assert "secrets-provide" not in _prop(dlg, "gs")["caps"] and _hint(dlg, "Password service") == want
     (tmp_path / "later").mkdir()                                  # and the bus is asked anew at each opening
     later = password_bus(tmp_path / "later", monkeypatch, "free")
-    _call(dlg, "openFor", URL)
+    _open(dlg, be, URL)
     assert _hint(dlg, "Password service") == PASSWORD_SERVICE and later.exists()
     later.unlink()                                                # the tour shows a working system's, through
     be.demoSandbox("ok")                                          # its support status, not the machine's running it
-    assert be.passwordServiceNote() == "" and not later.exists()
+    _open(dlg, be, URL)
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and be.passwordServiceNote == "" and not later.exists()
+
+
+def test_the_password_service_ask_never_holds_the_window(ui, be, monkeypatch, tmp_path):
+    # PR #694's review, P8-1: the dialog asked the bus on the GUI thread as it opened, so a session bus
+    # that takes the connection and never answers (a stopped or wedged dbus-daemon) held the window,
+    # unpainted and deaf to input, for the ask's five seconds at every opening, for every app. Now it
+    # asks on a worker: the dialog opens at once, and the hint takes its words when the answer comes.
+    # The words are the latest opening's: an earlier opening's answer, come late, is dropped.
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": "Demo", "installed": ""})
+    be.setSandbox(URL, {"custom": sb.to_json(sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]}))})
+    answers = []
+
+    def ask(withheld=sb.password_service_withheld):
+        why = withheld()
+        answers.append(why)
+        return why
+    monkeypatch.setattr(sb, "password_service_withheld", ask)
+    hung = password_bus(tmp_path, monkeypatch, "hung")
+    dlg = _dialog(ui, "sandbox")
+    began = time.monotonic()
+    _call(dlg, "openFor", URL)
+    assert time.monotonic() - began < 1 and _prop(dlg, "visible")                      # open at once,
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE and not answered(be)      # with no words yet
+    assert running(lambda: hung.exists(), 5)[0]                                         # the bus is being asked
+    (tmp_path / "owned").mkdir()                                  # opened again while that ask waits,
+    owned = password_bus(tmp_path / "owned", monkeypatch, "owned")  # on a bus that answers
+    _call(dlg, "openFor", URL)
+    want = PASSWORD_SERVICE + " " + NOT_OFFERED["owned"]
+    came, gap = running(lambda: _hint(dlg, "Password service") == want, 15)
+    assert came and owned.exists() and answers == ["held"], answers                     # its words, with its answer
+    came, longest = running(lambda: len(answers) == 2, 15)        # the first ask ends with its five seconds,
+    assert came and answers == ["held", "ask"], answers
+    running(lambda: False, 0.3)
+    assert _hint(dlg, "Password service") == want and answered(be)  # and its late answer is dropped
+    assert max(gap, longest) < 1, (gap, longest)                  # the window turned all the while
+    be.demoSandbox("ok")                                          # the tour shows a working system's, not
+    assert _hint(dlg, "Password service") == PASSWORD_SERVICE     # what this machine's bus said before it
 
 
 def test_customizing_in_the_sandbox_dialog_round_trips_and_strict_widens(ui, be, monkeypatch):
