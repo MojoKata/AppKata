@@ -35,7 +35,7 @@ STILL_BROKEN = {
 }
 ALL_INVARIANTS = ("never-unsandboxed-unasked", "shown-is-what-runs", "bwrap-alone-sandboxes",
                   "told-when-a-sandbox-starts", "audited-with-what-changed", "reviews-never-change-what-runs",
-                  "a-resave-changes-nothing", "appkata-itself-never-sandboxed")
+                  "a-resave-changes-nothing", "appkata-itself-never-sandboxed", "said-what-save-does")
 
 HOSTS = ("ok", "setup-needed", "conflict", "no-tools", "bwrap-only")
 
@@ -122,6 +122,8 @@ class World:
                 # an app that runs unsandboxed with no private home yet, and what the dialogs say before Save
                 "fresh": self.be._sandbox_state(URL) == (False, True),
                 "warning": self.be._fresh_warning(URL),
+                # and that a sandboxed choice waits until the sandbox can run for it (R17.13; #689's review, P4-B7)
+                "not-yet": self.be.sandboxInfo(URL).get("notYet", ""),
                 "audit": self.be.db.one("SELECT COUNT(*) n FROM audit")["n"]}
 
     def update(self):
@@ -172,6 +174,11 @@ def check(w: World, op: str, before: dict, after: dict, toasts: list) -> set[str
     if not before["launcher"] and after["launcher"] and before["fresh"] and \
             not (op in USER_DIALOG and before["warning"]) and not any("fresh settings" in t for t in toasts):
         broken.add("told-when-a-sandbox-starts")
+    # what the dialog said before Save is what Save did: a sandboxed choice saved for an app with no
+    # launcher gives it one, or the dialog said the choice waits until the sandbox can run for it
+    # (R17.13; #689's review, P4-B7: it warned of the reset, and Save left the app as it was)
+    if op in USER_DIALOG and not before["launcher"] and info["level"] != "off" and bool(before["not-yet"]) is after["launcher"]:
+        broken.add("said-what-save-does")
     if before["baked"] != after["baked"] and after["baked"] and before["baked"]:
         rows = w.be.db.all("SELECT detail FROM audit ORDER BY id DESC LIMIT ?", (after["audit"] - before["audit"],)) \
             if after["audit"] > before["audit"] else []

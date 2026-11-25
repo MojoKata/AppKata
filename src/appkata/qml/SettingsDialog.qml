@@ -146,7 +146,7 @@ Dialog {
             Section { id: secPortable; text: "PORTABLE APPS" }
             Text { width: col.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; bottomPadding: 4
                    text: (root.loc.windows ? "Portable .zip and .exe apps, which run without installing." : "AppImages, tarballs and other apps that run without installing.")
-                         + " Changes apply to new installs and updates; apps already installed stay where they are." }
+                         + " New installs take these settings. An app already installed stays in its folder and keeps the options it was installed with (its Install options change them); the command links folder and Keep older versions apply to it at its next update." }
             SettingRow { label: "Install apps for"; visible: !!root.loc.windows     // R15.4
                 hint: "Everyone on this computer, or just you. Each app can differ, in its Install options."
                 Select { anchors.right: parent.right

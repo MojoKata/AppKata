@@ -184,7 +184,7 @@ def _plan(be):
             "sandbox": {"applicable": True, "source": info["source"], "template": info["template"], "level": info["level"],
                         "chips": info["chips"], "grants": info["grants"], "templates": info["templates"],
                         "recommendedBy": info["reviewBy"], "support": info["support"], "extractMb": 0,
-                        "suggestsOff": info["suggestsOff"], "freshWarning": info["freshWarning"],
+                        "suggestsOff": info["suggestsOff"], "freshWarning": info["freshWarning"], "notYet": info.get("notYet", ""),
                         "byKind": {k: {key: (r := be._resolved_sandbox(URL, kind="appimage", is_cli=k == "cli"))[key] if key != "level"
                                        else sb.level_of(r["grants"]) for key in ("template", "source", "level")}
                                    | {"chips": sb.summary_chips(be._resolved_sandbox(URL, kind="appimage", is_cli=k == "cli")["grants"])}
@@ -317,6 +317,62 @@ def test_sandboxing_an_app_that_runs_unsandboxed_warns_before_save(ui, be, tmp_p
     _call(dlg, "close")
 
 
+_WHY_NOT_YET = {"bubblewrap missing": ("unsupported", "bubblewrap isn't installed, so apps run without a sandbox. Install it ("),
+                "the setup pending": ("setup-needed", "this system needs a one-time setup before the sandbox can run (Set up… in Settings → Sandbox")}
+
+
+@pytest.mark.parametrize("why", list(_WHY_NOT_YET))
+@pytest.mark.parametrize("where", ["sandbox dialog", "install options"])
+def test_where_save_cant_sandbox_an_app_yet_the_dialogs_say_when_the_choice_takes_effect(ui, be, tmp_path, monkeypatch, where, why):
+    # #689's review, P4-B7: where Save can't sandbox an installed app that runs unsandboxed (no
+    # bwrap a launcher in its folder finds, or the system's setup pending), the dialogs said
+    # R17.13's warning that Save resets its settings, and Save then left it unsandboxed, the choice
+    # saved, with no word that it waits. The owner decided (option B): the warning stays, and a line
+    # beside it says the choice takes effect once the sandbox can run for the app, and why (R17.13).
+    # Once the sandbox can run, the line goes, and Save sandboxes it. Install options' own line for
+    # a pending setup ("installing asks whether to set it up now") isn't said where Save asks nothing.
+    from test_sandbox_ui_surfaces import _seen
+    _tarball_install(be, tmp_path)
+    status, said_why = _WHY_NOT_YET[why]
+    host = {"status": status}
+    monkeypatch.setattr(sb, "have_tools", lambda: host["status"] != "unsupported")
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": host["status"], "tools": host["status"] != "unsupported",
+                                                       "missing": ["bubblewrap"] if host["status"] == "unsupported" else [],
+                                                       **({"toolsHint": sb.tools_hints(["bubblewrap"])["system"]}
+                                                          if host["status"] == "unsupported" else {})})
+    monkeypatch.setattr(be, "_install", lambda *a, **k: None)
+    be.setSandbox(URL, {"template": "off"})
+    warning = "Sandboxing Demo gives it an empty private home of its own, as if newly installed"
+    note = "This choice takes effect once the sandbox can run for Demo, which runs unsandboxed until then: " + said_why
+
+    def pick(key):
+        dlg = _dialog(ui, "sandbox" if where == "sandbox dialog" else "install")
+        if where == "sandbox dialog":
+            _call(dlg, "openFor", URL)
+            _pick(dlg, "templateSelect", key)
+        else:
+            _call(dlg, "openWith", _plan(be), True)
+            _pick(dlg, "sandboxSelect", key)
+        return dlg
+    dlg = pick("off")
+    assert not any(warning in t or "takes effect" in t for t in _seen(dlg))     # Off: nothing to say
+    dlg = pick("strict")
+    seen = _seen(dlg)
+    assert any(warning in t for t in seen) and any(t.startswith(note) for t in seen), seen
+    assert not any("installing asks" in t for t in seen), seen
+    _press(dlg, "save")
+    assert be._install_settings(URL)["sandbox"]["template"] == "strict"         # the choice is saved
+    assert not be.sandboxInfo(URL)["active"] and not os.path.exists(tmp_path / "bin" / "apps" / "demo" / "run")    # and waits, as said
+    host["status"] = "ok"                                                       # the sandbox can run for it now
+    assert be.sandboxInfo(URL)["notYet"] == ""
+    dlg = pick("strict")
+    seen = _seen(dlg)
+    assert any(warning in t for t in seen) and not any("takes effect" in t for t in seen), seen
+    _press(dlg, "save")
+    assert be.sandboxInfo(URL)["active"]
+    _call(dlg, "close")
+
+
 @pytest.mark.parametrize("template,button,mode", [("offline-editor", "Documents", "rw"), ("media-player", "Music", "ro"),
                                                   ("developer", None, "rw")])
 def test_a_folder_template_offers_its_folder_in_place_and_keeps_its_name(ui, be, monkeypatch, template, button, mode):
@@ -396,3 +452,133 @@ def test_the_install_card_shows_each_picked_templates_chips_whole(ui, be, monkey
              and o.property("visible") is True and o.property("text")]
     want = sb.summary(sb.resolve_template(key))
     assert sorted(p for p in pills if p in want) == sorted(want), pills
+
+
+# ---------------------------------------------------------------- the command checkbox (CR1.9-31)
+
+def _real_plan(be, monkeypatch, name, installed=""):
+    """What Backend.planFor itself gives the install dialog for an app called `name`, with an
+    AppImage as its one download (the other tests here build their plan by hand)."""
+    from test_sandbox_backend import _plan_with
+    _plan_with(be, monkeypatch, ["App-1.0-x86_64.AppImage"])
+    monkeypatch.setattr(be, "_app", lambda url: {"url": URL, "name": name, "installed": installed, "version": "1.0", "updateTo": ""})
+    return be.planFor(URL)
+
+
+@pytest.mark.parametrize("name", ["python3", "Git", "ls", "Demo"])
+def test_the_install_dialog_offers_no_command_checkbox_to_tick_for_a_name_no_link_is_made_for(ui, be, tmp_path, monkeypatch, name):
+    # CR1.9-31: since CR1.5-31 no command link is made for an app named after a command (R4.3.1.3),
+    # and the install's notice says why afterwards. The dialog didn't know: it still showed
+    # "Command <app> in <folder>" as a checkbox to tick. planFor now carries the installer's own
+    # answer, and with one the checkbox is disabled and unticked, the reason its tip; the option the
+    # dialog sends is what it was, so the link is made once the name is free. A name that is free
+    # leaves the checkbox as it was: ticked from the plan, and the user's to change.
+    from PySide6.QtCore import QObject
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    plan = _real_plan(be, monkeypatch, name)
+    slug = install.slug(name)
+    want = install.command_link_refusal(slug, str(tmp_path / "bin" / slug))
+    assert plan["portable"].get("commandRefusal") == want and plan["portable"]["command"] == slug and plan["portable"]["commandLink"] is True
+    assert bool(want) is (name != "Demo")
+    if name in ("python3", "Git"):
+        assert want == f"{slug} is a name kept for the system's own command"
+    installs = []
+    monkeypatch.setattr(be, "_install", lambda *a, **k: installs.append(a))
+    dlg = _dialog(ui, "install")
+    _call(dlg, "openWith", plan, False)
+    item, box = dlg.findChild(QObject, "commandLink"), dlg.findChild(QObject, "commandLinkBox")
+    assert item.property("refusal") == want and item.property("tip") == (f"No command will be added: {want}." if want else "")
+    assert box.property("enabled") is (not want) and box.property("checked") is (not want)
+    if not want:                                                   # free: the user's to turn off
+        box.setProperty("checked", False)
+        box.toggled.emit()
+        assert _prop(dlg, "commandLink") is False
+    _press(dlg, "save")
+    assert len(installs) == 1 and installs[0][2]["commandLink"] is bool(want)       # refused: the option stays on
+
+
+def test_an_installed_apps_own_command_link_does_not_disable_its_checkbox(ui, be, tmp_path, monkeypatch):
+    # The other side of the name check: an installed app's own command link is on the PATH too
+    # (~/bin comes first on it), and "Install options…" must not take it for someone else's command.
+    from PySide6.QtCore import QObject
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    target = _tarball_install(be, tmp_path)
+    os.symlink(os.path.join(target, "1.0", "bin", "demo"), tmp_path / "bin" / "demo")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"].get("commandRefusal") == ""
+    dlg = _dialog(ui, "install")
+    _call(dlg, "openWith", plan, True)
+    assert dlg.findChild(QObject, "commandLinkBox").property("enabled") is True
+    # and someone else's `demo` there is no refusal either: the install stops at it with its error,
+    # on the PATH as off it (R4.3.1.3; #689's review, P1-B2: it was taken for a command already on
+    # this computer, the checkbox was unticked, and the install went on without a link)
+    os.remove(tmp_path / "bin" / "demo")
+    (tmp_path / "bin" / "demo").write_text("#!/bin/sh\n")
+    (tmp_path / "bin" / "demo").chmod(0o755)
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["commandRefusal"] == ""
+    # while a `demo` elsewhere on the PATH is one
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    os.rename(tmp_path / "bin" / "demo", elsewhere / "demo")
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{elsewhere}")
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["commandRefusal"] == f"demo is already a command on this computer ({elsewhere / 'demo'})"
+
+
+# ---------------------------------------------------------------- an installed app's own folder (CR1.3-12)
+
+def test_what_the_dialogs_show_of_an_installed_app_is_the_folder_it_is_in_not_the_one_settings_names_now(be, tmp_path, monkeypatch):
+    # CR1.3-12, the owner's decision: an installed app keeps its folder through its updates, and only
+    # a new install goes to the folder Settings names now. Whatever the backend says of an installed
+    # app's folder was Settings' own: "Installs to" in Install options, the folders a sandbox's
+    # chips call never shared, and the launcher's place. They are the app's own folder, from its
+    # record, so the chips still judge a folder as the launcher does (round two, R9) once the
+    # setting has changed; a new install's are Settings'.
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    old, new = tmp_path / "bin" / "apps", tmp_path / "elsewhere"
+    assert be._app_options(URL).root == be.portable().root == str(old)
+    target = _tarball_install(be, tmp_path)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps({**rec, "root": str(old)}), URL))      # as an install records it
+    be._prefs["installDir"] = str(new)                               # the setting, changed in Settings
+    assert be.portable().root == str(new) and be._app_options(URL).root == str(old)
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["folder"] == str(old)
+    gs = sb.to_json({**sb.resolve_template("standard"), "folders": {str(old / "another-app"): "rw"}})
+    assert be.summaryChips(gs, URL) == sb.summary_chips(gs, str(old)) != sb.summary_chips(gs, str(new))
+    _review(be, "online-app")
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    assert rec["launcher"] == os.path.join(target, "run") and os.path.exists(rec["launcher"]) and not os.path.lexists(new)
+    assert be._heal_launchers() == []                                # and it is the launcher AppKata would write today
+    # an app that isn't installed goes where Settings says
+    be.db.x("DELETE FROM installs WHERE url=?", (URL,))
+    assert be._app_options(URL).root == str(new) and _real_plan(be, monkeypatch, "Demo")["portable"]["folder"] == str(new)
+
+
+# ---------------------------------------------------------------- Settings' Portable apps hint (CR1.9-33)
+
+def test_settings_portable_apps_hint_says_when_its_settings_apply_as_r11_1_4_does():
+    # CR1.9-33: since CR1.3-12 an installed app keeps its folder through its updates (R4.3.1), but the
+    # hint still said "Changes apply to new installs and updates; apps already installed stay where
+    # they are", as R4.3.1 used to. Which settings apply at an update is a rule the user reads in
+    # Settings and in R11.1.4: the hint's words are R11.1.4's.
+    import re
+    root = os.path.join(os.path.dirname(__file__), "..")
+    qml = open(os.path.join(root, "src", "appkata", "qml", "SettingsDialog.qml"), encoding="utf-8").read()
+    section = qml[qml.index('Section { id: secPortable'):]
+    hint = re.search(r'\+ " ([^"]+)" \}', section[:section.index("SettingRow")]).group(1)
+    req = open(os.path.join(root, "docs", "requirements", "R11-settings.md"), encoding="utf-8").read()
+    r11 = " ".join(req[req.index("R11.1.4. "):req.index("R11.1.4.1. ")].split())
+    said = re.search(r'The group\'s hint says when its settings apply: "([^"]+)"', r11)
+    assert said and said.group(1) == hint
+    assert "updates; apps already installed stay where they are" not in hint
+    for setting in ("Command links folder", "Keep older versions"):          # the two it names are rows of the section
+        assert f'label: "{setting}"' in section

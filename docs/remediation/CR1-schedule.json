@@ -73,17 +73,29 @@
     329,
     331,
     388,
-    661
+    661,
+    688,
+    698,
+    702,
+    704,
+    685
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
     "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
     "docs/requirements-trace.md",
+    "docs/requirements/R11-settings.md",
     "docs/requirements/R17-app-sandboxing/R17.12-self-update.md",
+    "docs/requirements/R17-app-sandboxing/R17.13-enabling-a-sandbox-after-install.md",
     "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
+    "docs/requirements/R2-apps-and-sources.md",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "docs/requirements/R5-main-window.md",
     "src/appkata/backend.py",
+    "src/appkata/qml/InstallDialog.qml",
+    "src/appkata/qml/SandboxDialog.qml",
+    "src/appkata/qml/SettingsDialog.qml",
     "src/appkata_core/appkind.py",
     "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
@@ -95,16 +107,23 @@
     "tests/data/launchers/online-app-appimage-with-folders.sh",
     "tests/data/launchers/standard-writable-no-x11.sh",
     "tests/data/launchers/strict-tarball.sh",
+    "tests/skips/windows.txt",
     "tests/test_appkind.py",
+    "tests/test_dialog_contract.py",
     "tests/test_install_review.py",
     "tests/test_launch.py",
+    "tests/test_launcher_golden.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_adversarial.py",
+    "tests/test_sandbox_backend.py",
+    "tests/test_sandbox_lifecycle.py",
     "tests/test_sandbox_run.py",
+    "tests/test_sandbox_state.py",
     "tests/test_sandbox_transitions.py",
     "tests/test_selfinstall.py",
     "tests/test_windows.py"
-   ]
+   ],
+   "oversize": "21 findings, one over unit_size: #685 was found by this unit's own first batch (2026-11-24), in its own files (the menu entry's Exec=, which #305's fix escapes), and the owner decided its fix (2026-11-24) to be made in this unit's pull request, #689."
   },
   {
    "id": "U04",
@@ -123,7 +142,8 @@
     314,
     328,
     497,
-    628
+    628,
+    699
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -174,7 +194,8 @@
     395,
     400,
     401,
-    666
+    666,
+    701
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -558,7 +579,9 @@
     369,
     374,
     603,
-    650
+    650,
+    686,
+    687
    ],
    "files": [
     "docs/build.md",
@@ -573,6 +596,7 @@
     "src/appkata_core/install.py",
     "src/appkata_core/windows.py",
     "tests/test_audit_log_explore.py",
+    "tests/test_install_review.py",
     "tests/test_windows.py"
    ]
   },
@@ -678,7 +702,8 @@
     389,
     500,
     501,
-    617
+    617,
+    703
    ],
    "files": [
     "docs/requirements-trace.md",
@@ -692,12 +717,15 @@
     "src/appkata/qml/SelfInstallDialog.qml",
     "src/appkata/qml/SettingsDialog.qml",
     "src/appkata/qml/Theme.qml",
+    "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
     "tests/test_dialog_contract.py",
+    "tests/test_install_review.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_backend.py",
-    "tests/test_sandbox_lifecycle.py"
+    "tests/test_sandbox_lifecycle.py",
+    "tests/test_sandbox_transitions.py"
    ]
   },
   {
@@ -751,7 +779,8 @@
     363,
     371,
     372,
-    629
+    629,
+    700
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -1038,7 +1067,8 @@
     507,
     508,
     511,
-    615
+    615,
+    709
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.7-screens.md",
@@ -10798,6 +10828,195 @@
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
   },
   {
+   "finding": 685,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
+    "tests/test_install_review.py",
+    "tests/test_sandbox_transitions.py"
+   ],
+   "depends_on": [
+    305
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: an app installed under a folder whose path holds a % (or a quote, a line break) gets a menu entry whose Exec= starts it through a link in AppKata's own folder, at a path with no %, which GLib (where a system python3 has python3-gi) loads and reads back as that link, and which leads to what the app runs; the link goes with the entry when the menu option is turned off and at uninstall.",
+   "note": "Found by U03's first batch (2026-11-24) after #305's fix, set aside for the owner's choice, and decided by the owner (2026-11-24, option C): the menu entry starts the app through a link AppKata keeps in its own folder, at a path with no %, so the entry's Exec= never holds one; nothing is refused, and R4.3.1 says the entry starts the app through that link. Fixed in U03's pull request (#689), in its first review round."
+  },
+  {
+   "finding": 686,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/desktop.py",
+    "tests/test_audit_log_explore.py"
+   ],
+   "depends_on": [
+    305
+   ],
+   "related": [
+    376,
+    374
+   ],
+   "size": "small",
+   "proof": "tests/test_audit_log_explore.py::test_autostart_and_links, with AppKata started from a path that holds a space, a % and a backslash: both entries' Exec= is what install.desktop_exec gives, and Gio (where the test Python has it) reads the entry back to the same program.",
+   "note": "Found by U03's first batch (2026-11-24) after #305's fix, and filed by the coordinator; its remedy is the issue's: build both entries' Exec= with the function #305 added (install.desktop_exec). #376 and #374 change the same registration of the appkata:// handler."
+  },
+  {
+   "finding": 687,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "related": [
+    348,
+    360,
+    369
+   ],
+   "size": "medium",
+   "proof": "tests/test_windows.py in the Windows VM (scripts/test-windows-vm.sh --tests): an app named git or python3, and one with a reserved name, installs with no .cmd link and the notice says why; an app whose name is free gets its link.",
+   "note": "Found by U03's first batch (2026-11-24): #407's check is Linux's alone. The owner's decision on #407 (2026-11-24) names no platform, so the same rule holds on Windows: no command link for a reserved name or one that already resolves on PATH (with PATHEXT's endings), and the same notice."
+  },
+  {
+   "finding": 688,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/InstallDialog.qml",
+    "src/appkata/backend.py",
+    "tests/test_dialog_contract.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    407
+   ],
+   "size": "small",
+   "proof": "A test that Backend.planFor carries install.command_link_refusal's answer for an app named after a command, and tests/test_dialog_contract.py that the install dialog's command checkbox is disabled with that reason as its hint when the plan carries one.",
+   "note": "Found by U03's first batch (2026-11-24) after #407's fix, and filed by the coordinator. A disabled state and a tooltip in a pattern the dialog has: list it under Needs your eye."
+  },
+  {
+   "finding": 698,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    313
+   ],
+   "related": [
+    309
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: an installed app's options are changed with a file of the user's at the command link's place: the launcher, the record and what runs still agree afterwards.",
+   "note": "Found by U03's second batch (2026-11-24) after #313's fix, and filed by the coordinator: rewrite_launcher keeps the old order of steps."
+  },
+  {
+   "finding": 699,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "related": [
+    307,
+    628
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: a release whose version is `current`, and one whose version is `run`, is refused with a message or installed under an escaped folder name, as #307's rule for a version decides.",
+   "note": "Found by U03's second batch (2026-11-24), and filed by the coordinator. One rule with #307 (a version of `..`) and #628: what a release's version may be as a path part."
+  },
+  {
+   "finding": 700,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_windows.py"
+   ],
+   "related": [
+    358,
+    313
+   ],
+   "size": "medium",
+   "proof": "tests/test_windows.py in the Windows VM (scripts/test-windows-vm.sh --tests): with something already at the junction's path the install ends in an install error that names it, and is taken back.",
+   "note": "Found by U03's second batch (2026-11-24), and filed by the coordinator. #358 changes the same step (the junction's move to a new version)."
+  },
+  {
+   "finding": 701,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "tests/test_sandbox_adversarial.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md"
+   ],
+   "depends_on": [
+    310
+   ],
+   "related": [
+    632,
+    380,
+    384
+   ],
+   "size": "small",
+   "proof": "tests/test_sandbox.py: with apps recorded in two install folders, a grant of either folder (and of a folder inside it) to an app in the other is refused, for a review's grant and for the user's.",
+   "note": "Found by U03's third batch (2026-11-24) and rated Med by the coordinator: sandbox._protected_roots holds only the app's own install folder, and since #310 apps stay in an earlier install folder for good. #632 is the same function's other gap (the command links folder when the install folder isn't the default): one pass over _protected_roots for both."
+  },
+  {
+   "finding": 702,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    310
+   ],
+   "size": "small",
+   "proof": "A test of the backend's plan for an installed app on Windows after the install folder setting changed: the \"Installs to\" folders are the app's own.",
+   "note": "Found by U03's third batch (2026-11-24) after #310's fix, and filed by the coordinator. Windows' side of what #310 did for Linux's line; proven off Windows by the plan's values, and in the Windows VM run at the unit's end."
+  },
+  {
+   "finding": 703,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata/backend.py",
+    "tests/test_install_review.py",
+    "tests/test_sandbox_transitions.py"
+   ],
+   "depends_on": [
+    698
+   ],
+   "related": [
+    468,
+    382,
+    156
+   ],
+   "size": "medium",
+   "proof": "tests/test_install_review.py and tests/test_sandbox_transitions.py: the rewrite is made to fail at each of its steps in turn, and afterwards the launcher, the links and the record agree, and the failure is reported.",
+   "note": "Found by U03's third batch (2026-11-24), and filed by the coordinator. One change with #468 (the backend saves, shows and audits the new sandbox though the rewrite failed) and #382 (>#468): what is in force after a failed rewrite is decided once for all three, by the issue's remedy (take it back)."
+  },
+  {
+   "finding": 704,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/SettingsDialog.qml",
+    "docs/requirements/R11-settings.md",
+    "tests/test_dialog_contract.py"
+   ],
+   "depends_on": [
+    310
+   ],
+   "size": "small",
+   "proof": "tests/test_dialog_contract.py holds the hint's text to R11.1.4's; the document checks.",
+   "note": "Found by U03's third batch (2026-11-24) after #310's fix, and filed by the coordinator: the hint says which settings apply at an update, and that the install folder applies to new installs. A hint's wording: list it under Needs your eye."
+  },
+  {
    "finding": 708,
    "readiness": "ready",
    "files": [
@@ -11071,6 +11290,22 @@
    "size": "small",
    "proof": "tests/test_backend.py, with a real Backend and a stand-in forge that answers a release of another shape: Install ends in an error toast and a line in the App log.",
    "note": "Found by U07's fourth batch (2026-11-24) while writing #293's tests, and filed by the coordinator. The same fault as #483 (the actions outside install): one change."
+  },
+  {
+   "finding": 709,
+   "readiness": "ready",
+   "files": [
+    "screenshots/src/render.js"
+   ],
+   "depends_on": [
+    704
+   ],
+   "related": [
+    511
+   ],
+   "size": "small",
+   "proof": "The mockups rendered again (the project's screenshot script, as docs/build.md says), and the screenshots page's checks.",
+   "note": "Found by U03's fourth batch (2026-11-24) after #704's fix, and filed by the coordinator. The rendered SVGs and PNGs of the Settings mockups change with render.js; the unit lists them as the render makes them."
   }
  ],
  "shared_files": [
@@ -11174,5 +11409,6 @@
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
   "tests/test_windows.py"
- ]
+ ],
+ "set_aside": []
 }

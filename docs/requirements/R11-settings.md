@@ -24,6 +24,11 @@ Stable name for the current version, Command links, the command links folder, an
 versions** (per app; default 2). These are the defaults copied into each newly installed app
 (R4.3.1.6).
 
+The group's hint says when its settings apply: "New installs take these settings. An app already
+installed stays in its folder and keeps the options it was installed with (its Install options
+change them); the command links folder and Keep older versions apply to it at its next update."
+(R4.3.1: an installed app keeps its folder; R4.3.1.3, R4.3.1.5.)
+
 On Windows the group also has **Install apps for** (Just me, Everyone; R15.4), and two install
 folders in place of one: **For me** (default `%LOCALAPPDATA%\Programs`) and **For everyone**
 (default `C:\Programs`). The command links folder defaults to `%LOCALAPPDATA%\AppKata\bin`
