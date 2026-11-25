@@ -1269,6 +1269,42 @@ def test_a_source_on_a_host_of_short_parts_longer_than_any_is_made_and_refused_a
     assert list(http.tokens) == list(http.forges) == [host]      # kept as it is written: it is sent nowhere
 
 
+# The review's pass 9, P9-B4: the bounds above were tested only far past them (a part of 64 ASCII
+# letters, which the codec refuses itself, 8,000 characters, 100,000 parts), so a 63-character part
+# refused, a 253-character name on a port refused, or a name with `。` between two parts counted as
+# one part of 81, passed every test. The class is "a bound tested only far from its edge", so each
+# is asked for at its edge and one past it.
+NAME_253 = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 61])     # the longest name there is, as it is sent
+BOUNDS = [                       # a host part, and the form it is sent in, or None where it is refused
+    pytest.param("a" * 63 + ".example", "a" * 63 + ".example", id="a-part-of-63"),
+    pytest.param("a" * 63 + "­.example", None, id="a-part-of-64-the-codec-would-make-63"),     # a soft hyphen, which it maps to nothing
+    pytest.param(NAME_253 + ".:65535", NAME_253 + ".:65535", id="the-longest-host-and-port"),       # 260 characters
+    pytest.param(NAME_253 + ":" + "65535".zfill(46), NAME_253 + ":" + "65535".zfill(46), id="300-characters"),
+    pytest.param(NAME_253 + ":" + "65535".zfill(47), None, id="301-characters"),
+    *(pytest.param("a" * 40 + dot + "b" * 40 + ".example", "a" * 40 + "." + "b" * 40 + ".example", id=f"a-name-with-{name}")
+      for dot, name in ((".", "a-dot"), ("。", "an-ideographic-dot"), ("．", "a-full-width-dot"), ("｡", "a-half-width-ideographic-dot"))),
+]
+
+
+@pytest.mark.parametrize("host, sent", BOUNDS)
+def test_a_host_part_at_a_bound_is_asked_for_and_one_past_it_isnt(host, sent):
+    seen = []
+    http = names(Http(opener=recording({}, seen)))
+    if sent is None:
+        with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+            http.bytes(f"https://{host}/shot.png", token_host="git.example.org")
+    else:
+        _ask(http, f"https://{host}/shot.png", token_host="git.example.org")
+    assert [url for url, _ in seen] == ([] if sent is None else [f"https://{sent}/shot.png"])
+
+
+@pytest.mark.parametrize("length, kept", [(300, "xn--tda."), (301, "ü.")])
+def test_a_tokens_host_at_a_names_bound_is_kept_in_its_idna_form_and_one_past_it_as_written(length, kept):
+    rest = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 63, "e" * (length - 258)])
+    [key] = Http({f"ü.{rest}": "SECRET"}).tokens
+    assert key == kept + rest
+
+
 # The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host
 # as written: in the Host header, which http.client writes in Latin-1, so a name outside it couldn't
 # be sent at all ("can't be sent (UnicodeEncodeError)"), and over plain http through a proxy, in an
@@ -1482,6 +1518,9 @@ NO_PROXY = [                     # a no_proxy entry, and whether it names übung
     pytest.param("* ", False, id="a-star-before-a-space"),
     pytest.param(".*", False, id="a-star-after-a-dot"),
     pytest.param("*,a..b", False, id="a-star-beside-a-name-with-no-idna-form"),
+    # an entry with no IDNA form beside one that names the host, which still does (review pass 9, P9-B4)
+    pytest.param("a..b, übung.example", True, id="beside-a-name-with-an-empty-part"),
+    pytest.param("a" * 64 + ".example, übung.example", True, id="beside-a-name-with-a-part-of-64"),
 ]
 
 
