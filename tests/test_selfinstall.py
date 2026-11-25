@@ -2,6 +2,9 @@
 
 import json
 import os
+import signal
+import subprocess
+import sys
 
 import pytest
 
@@ -189,3 +192,96 @@ def test_a_fresh_start_lists_appkata_by_its_name_and_icon_before_any_sync(env, m
     me = [a for a in be.installedItems if a["url"] == APPKATA_REPO]
     assert len(me) == 1 and me[0]["name"] == "AppKata", me
     assert me[0]["icon"].endswith(".svg") and "<svg" in open(me[0]["icon"]).read(), me[0]["icon"]
+
+
+def _writes_limited_to(size: int, call: str) -> subprocess.CompletedProcess:
+    """`call` (Python) run by a Python of its own that can write no file past `size` bytes
+    (RLIMIT_FSIZE, as `ulimit -f`), so a write stops part-way with its own error (EFBIG), as on a
+    disk filled meanwhile or a quota, the file as far as it got. Its exit code is 0 when `call`
+    raised that error."""
+    import resource                         # Unix only: this file is skipped on Windows, after its imports
+    code = (f"import errno, sys\nfrom appkata_core import selfinstall\ntry:\n    {call}\n"
+            f"except OSError as e:\n    sys.exit(0 if e.errno == errno.EFBIG else 4)\nsys.exit(5)\n")
+
+    def limit():
+        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (size, size))
+    return subprocess.run([sys.executable, "-B", "-c", code], env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+                          preexec_fn=limit, capture_output=True, text=True, timeout=120)
+
+
+def _files(folders):
+    """Every file and link in `folders`, by its path: a file's bytes, a link's target."""
+    return {os.path.join(d, n): ("-> " + os.readlink(os.path.join(d, n)) if os.path.islink(os.path.join(d, n))
+                                 else open(os.path.join(d, n), "rb").read())
+            for d in folders if os.path.isdir(d) for n in os.listdir(d)}
+
+
+@pytest.mark.parametrize("write", ["the copy", "its menu entry", "its icon"])
+def test_a_write_of_appkatas_own_install_that_fails_part_way_leaves_what_was_there(env, tmp_path, write):
+    # #689's review, P7-B3: AppKata's own install emptied appkata.desktop before writing it, so a
+    # write that failed (a quota, a disk filled meanwhile) left it part-written or empty: AppKata in
+    # no app menu, until the next Install AppKata. Its icons were copied over in the same way, and a
+    # copy of the AppImage that failed left a partial .new beside the install for good, holding the
+    # space. Each is written whole beside its place now and renamed over it (R2.11.3.1). The write
+    # fails here by a file size limit, in a process of its own: the write's own error.
+    db, root, image = env["db"], env["root"], env["image"]
+    if write == "the copy":
+        image.write_bytes(b"\x7fELF" + b"\0" * 65536)
+        call = f"selfinstall.install_self(None, {root!r}, image={str(image)!r}, version='0.2.0')"
+    else:
+        rec = selfinstall.install_self(db, root, version="0.1.0")
+        if write == "its menu entry":
+            call = f"selfinstall.write_desktop_entry({rec['exec']!r})"
+        else:
+            (tmp_path / "appdir/usr/share/icons/hicolor/scalable/apps/appkata.svg").write_text("<svg>" + "2" * 4096 + "</svg>")
+            call = "selfinstall.write_icons()"
+    folders = [selfinstall.target(root), os.path.dirname(selfinstall.desktop_entry_path()),
+               *sorted({os.path.dirname(p) for p in selfinstall.icon_paths().values()})]
+    before = _files(folders)
+    r = _writes_limited_to(64, call)
+    assert r.returncode == 0, (r.returncode, r.stderr)                  # the write failed, with its own error
+    assert _files(folders) == before                                    # every file as it was, nothing beside them
+
+
+def test_appkatas_start_removes_what_a_stopped_write_of_its_own_install_left(env, monkeypatch, tmp_path):
+    # #689's review, P7-B3: a copy of the AppImage stopped part-way (AppKata killed, the power gone)
+    # stayed beside the install for good, 100 MB of it, and so would a stopped write of the menu
+    # entry or an icon, now that each is written beside its place. AppKata's start removes them, in
+    # the install folder its record names and in the one Settings names (a first install that
+    # stopped has no record), once the process that wrote them is gone: `appkata --install-self`
+    # runs beside a running AppKata, so what a running process writes is kept, as is anything
+    # beside them not of their shape.
+    from appkata_core import sandbox
+    monkeypatch.setenv("HOME", str(env["home"]))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(sandbox, "userns_works", lambda refresh=False: False)
+    rec = selfinstall.install_self(env["db"], env["root"], version="0.1.0")
+    elsewhere = tmp_path / "elsewhere"
+    gone = 4194305                                                      # no process has it: Linux's pids are below 2**22
+    running = subprocess.Popen(["sleep", "120"])
+    try:
+        mine = [selfinstall.desktop_entry_path(), *selfinstall.icon_paths().values()]
+        copies = [os.path.join(rec["target"], "AppKata-0.2.0-x86_64.AppImage"),
+                  os.path.join(selfinstall.target(str(elsewhere)), "AppKata-0.2.0-x86_64.AppImage")]
+        stopped = [f"{f}.{gone}.tmp" for f in mine + copies]
+        kept = ([f"{f}.{running.pid}.tmp" for f in mine + copies]
+                + [f"{mine[0]}.abc.tmp", f"{mine[0]}.1.2.tmp", f"{mine[0]}..tmp", f"{copies[0]}.new",
+                   os.path.join(rec["target"], f"notes.{gone}.tmp"), os.path.join(rec["target"], f"AppKata.AppImage.x.{gone}.tmp")])
+        for f in stopped + kept:
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            with open(f, "wb") as out:
+                out.write(b"part of a file")
+        from appkata.backend import Backend
+        be = Backend(db_path=str(tmp_path / "appkata.db"), heal=False)
+        try:
+            be._prefs["installDir"] = str(elsewhere)                    # Settings' install folder, since moved
+            be._heal_launchers_at_startup()
+        finally:
+            be._timer.stop()
+        assert [f for f in stopped if os.path.lexists(f)] == []
+        assert [f for f in kept if not os.path.lexists(f)] == []
+        assert os.path.isfile(rec["current"]["path"]) and os.path.isfile(selfinstall.desktop_entry_path())
+    finally:
+        running.kill()
+        running.wait()

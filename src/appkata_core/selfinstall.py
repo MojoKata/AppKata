@@ -4,17 +4,23 @@ appkata:// handler and autostart pointed at the stable link."""
 
 from __future__ import annotations
 
+import contextlib
+import glob
 import json
+import logging
 import os
+import re
 import shutil
 import subprocess
 
 from . import APPKATA_REPO, __version__, audit, desktop
-from .install import desktop_exec
+from .install import _write_whole, desktop_exec
 from .db import DB, now
 from .platform import OS, arch
 
 STABLE = "AppKata.AppImage"
+
+log = logging.getLogger("appkata.selfinstall")
 
 
 def running_appimage() -> str:
@@ -97,15 +103,32 @@ def _render_png(svg: str, dest: str) -> bool:
 
 
 def write_icons() -> list[str]:
+    """AppKata's icons, each written whole beside its place and renamed over it, as its menu entry
+    is (#689's review, P7-B3: copied in place, so a copy that failed left part of an icon)."""
     src, dst, written = _icon_sources(), icon_paths(), []
     for kind in ("svg", "png"):
         os.makedirs(os.path.dirname(dst[kind]), exist_ok=True)
         if kind in src:
-            shutil.copyfile(src[kind], dst[kind])
+            with open(src[kind], "rb") as f:
+                _write_whole(dst[kind], f.read(), 0o644)
             written.append(dst[kind])
-        elif kind == "png" and "svg" in src and _render_png(src["svg"], dst["png"]):
+        elif kind == "png" and "svg" in src and _render_whole(src["svg"], dst["png"]):
             written.append(dst["png"])
     return written
+
+
+def _render_whole(svg: str, dest: str) -> bool:
+    """:func:`_render_png` to a file beside `dest`, renamed over it once it is written."""
+    tmp = f"{dest}.{os.getpid()}.tmp"
+    try:
+        if _render_png(svg, tmp):
+            os.replace(tmp, dest)
+            return True
+        return False
+    finally:
+        if os.path.lexists(tmp):
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
 
 
 def _exec_value(exec_path: str) -> str:
@@ -125,16 +148,17 @@ def _exec_value(exec_path: str) -> str:
 
 
 def write_desktop_entry(exec_path: str) -> str:
-    """appkata.desktop: its name matches the window's desktop file name (app.setDesktopFileName)."""
+    """appkata.desktop: its name matches the window's desktop file name (app.setDesktopFileName).
+    Written whole beside it and renamed over it (install._write_whole), as an app's entry is, so a
+    write that fails (a full disk, a quota) leaves the entry as it was. #689's review, P7-B3: it
+    was emptied before it was written, so such a write left AppKata in no app menu."""
     exec_value = _exec_value(exec_path)
     p = desktop_entry_path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
     mime = "MimeType=x-scheme-handler/appkata;\n" if desktop.scheme_registered() else ""
-    with open(p, "w") as f:
-        f.write("[Desktop Entry]\nType=Application\nName=AppKata\nComment=A FOSS app store built on git\n"
-                f"Exec={exec_value}\nIcon=appkata\nCategories=System;PackageManager;\n{mime}"
-                "StartupWMClass=appkata\nTerminal=false\n")
-    os.chmod(p, 0o755)
+    _write_whole(p, ("[Desktop Entry]\nType=Application\nName=AppKata\nComment=A FOSS app store built on git\n"
+                     f"Exec={exec_value}\nIcon=appkata\nCategories=System;PackageManager;\n{mime}"
+                     "StartupWMClass=appkata\nTerminal=false\n").encode("utf-8"), 0o755)
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", os.path.dirname(p)], capture_output=True)
     return p
@@ -143,7 +167,9 @@ def write_desktop_entry(exec_path: str) -> str:
 def install_self(db: DB, root: str, image: str | None = None, delete_download: bool = False,
                  version: str = __version__, options: dict | None = None) -> dict:
     """Copy the running AppImage into <root>/appkata/, link AppKata.AppImage to it, record it as
-    AppKata's installed version, and integrate it with the desktop. Returns the install record."""
+    AppKata's installed version, and integrate it with the desktop. Returns the install record.
+    The copy is made beside its place (`<copy>.<pid>.tmp`) and renamed over it, and removed when
+    it fails (#689's review, P7-B3: a failed copy left a partial `.new` there for good)."""
     image = image or running_appimage()
     if not image:
         raise OSError("AppKata isn't running as an AppImage")
@@ -153,10 +179,16 @@ def install_self(db: DB, root: str, image: str | None = None, delete_download: b
     name = f"AppKata-{version}-{arch()}.AppImage"
     dest = os.path.join(t, name)
     if os.path.realpath(image) != os.path.realpath(dest):
-        tmp = dest + ".new"
-        shutil.copyfile(image, tmp)
-        os.chmod(tmp, 0o755)
-        os.replace(tmp, dest)
+        tmp = f"{dest}.{os.getpid()}.tmp"
+        try:
+            shutil.copyfile(image, tmp)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, dest)
+        except BaseException:
+            if os.path.lexists(tmp):
+                with contextlib.suppress(OSError):      # the copy's own error is the one raised
+                    os.remove(tmp)
+            raise
     stable = os.path.join(t, STABLE)
     if os.path.lexists(stable):
         os.remove(stable)
@@ -183,6 +215,45 @@ def install_self(db: DB, root: str, image: str | None = None, delete_download: b
     audit.record(db, "you", "app", "installed AppKata", "AppKata", APPKATA_REPO,
                  {"version": version, "to": dest, "from": image, "deletedDownload": deleted or None})
     return rec
+
+
+def sweep_left_beside(db: DB, root: str) -> list[str]:
+    """AppKata's start: remove what a write of AppKata's own install stopped part-way (killed, the
+    power gone) left beside its files: `<file>.<pid>.tmp` beside its menu entry and its icons, and
+    `AppKata-<version>-<arch>.AppImage.<pid>.tmp`, a copy, in its install folder (the one its record
+    names, and `root`'s, where a first install may have stopped). Only one whose process is gone:
+    `appkata --install-self` runs beside a running AppKata, and may be writing it. Returns what it
+    removed; one it can't remove is logged with why and left for the next start (#689's review,
+    P7-B3)."""
+    if OS != "linux":
+        return []
+    rec = _record(db)
+    found = [(f, f[len(p) + 1:-4]) for p in (desktop_entry_path(), *icon_paths().values())
+             for f in glob.glob(glob.escape(p) + ".*.tmp")]
+    for folder in dict.fromkeys(f for f in (rec.get("target") if rec.get("selfInstalled") else "", target(root)) if f):
+        for f in glob.glob(os.path.join(glob.escape(folder), "AppKata-*.AppImage.*.tmp")):
+            m = re.fullmatch(r"AppKata-.+\.AppImage\.([0-9]+)\.tmp", os.path.basename(f))
+            found.append((f, m.group(1) if m else ""))
+    gone = []
+    for f, pid in found:
+        if re.fullmatch(r"[0-9]+", pid) and not os.path.isdir(f) and not _runs(int(pid)):
+            try:
+                os.remove(f)
+                gone.append(f)
+            except OSError as e:
+                log.warning("couldn't remove %s: %s", f, e.strerror or e)
+    return gone
+
+
+def _runs(pid: int) -> bool:
+    """Whether a process `pid` runs, or may: only one there is none of is taken as gone."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError):      # another user's, which runs; or no pid at all, so none of AppKata's
+        return True
+    return True
 
 
 def launch(rec: dict) -> None:
