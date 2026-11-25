@@ -308,7 +308,8 @@ Dialog {
             Text { visible: !!root.sbx && !!root.sbx.appImage && root.sandboxTpl !== "off" && (root.sbx.extractMb || 0) > 0
                    color: Theme.faint; font.pixelSize: 12
                    text: "Unpacking the AppImage for the sandbox adds about " + (root.sbx ? root.sbx.extractMb : 0) + " MB on disk." }
-            Text { visible: !!root.sbx && root.sbx.support && root.sbx.support.status === "setup-needed" && root.sandboxTpl !== "off"
+            Text { // not where Install options says when the choice takes effect (below): saving there asks nothing
+                   visible: !!root.sbx && root.sbx.support && root.sbx.support.status === "setup-needed" && root.sandboxTpl !== "off" && !notYetTxt.visible
                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                    text: root.sbx && root.sbx.support && root.sbx.support.declined
                          ? "This system needs a one-time setup before the sandbox can run; until then the app runs unsandboxed. Set it up in Settings → Sandbox."
@@ -317,6 +318,11 @@ Dialog {
                 visible: !!root.sbx && !!root.sbx.freshWarning && root.change && root.sandboxTouched && root.sandboxTpl !== "off"
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
                 text: root.sbx ? root.sbx.freshWarning || "" : "" }
+            Text {     // and where Save can't sandbox it yet, when the choice takes effect and why (R17.13; #689's review, P4-B7)
+                id: notYetTxt; objectName: "notYet"
+                visible: !!root.sbx && !!root.sbx.notYet && root.change && root.sandboxTouched && root.sandboxTpl !== "off"
+                width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
+                text: root.sbx ? root.sbx.notYet || "" : "" }
             Text {     // a template made for a folder the user picks, with none yet (R17.3, review 2 F10)
                 visible: !!root.sbxTplEntry && !!root.sbxTplEntry.folder && root.sandboxTpl !== "off"
                          && root.sbxChips.some(c => c[0] === "No folder yet")
