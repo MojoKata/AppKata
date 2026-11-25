@@ -54,7 +54,8 @@
     688,
     698,
     702,
-    704
+    704,
+    685
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.12-decisions.md",
@@ -93,7 +94,8 @@
     "tests/test_sandbox_transitions.py",
     "tests/test_selfinstall.py",
     "tests/test_windows.py"
-   ]
+   ],
+   "oversize": "21 findings, one over unit_size: #685 was found by this unit's own first batch (2026-11-24), in its own files (the menu entry's Exec=, which #305's fix escapes), and the owner decided its fix (2026-11-24) to be made in this unit's pull request, #689."
   },
   {
    "id": "U04",
@@ -10740,6 +10742,23 @@
    "note": "Found by the review pass on #678 (U02, the fix of #592), as its additional finding P1-2, and filed on the owner's word (2026-11-24). #678 added a line to RELEASE.md 7: when the `release` job fails after the signing, look for a partial draft of the tag and delete it before the job runs again. RELEASE_AGENT.md 2, step 2, where the owner is sent in that case, has the failed jobs run again and resumed without that step. The remedy: add the draft check to RELEASE_AGENT.md 2, and name in RELEASE.md's bullet the messages `publish.sh` prints then (\"the run failed\"; after a failed `release` job a later `resume` prints \"the run ended without signing\", which is #635's subject). The finding's alternative, `publish.sh resume` looking for a draft itself, would be a refine."
   },
   {
+   "finding": 685,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
+    "tests/test_install_review.py",
+    "tests/test_sandbox_transitions.py"
+   ],
+   "depends_on": [
+    305
+   ],
+   "size": "small",
+   "proof": "tests/test_install_review.py: an app installed under a folder whose path holds a % (or a quote, a line break) gets a menu entry whose Exec= starts it through a link in AppKata's own folder, at a path with no %, which GLib (where a system python3 has python3-gi) loads and reads back as that link, and which leads to what the app runs; the link goes with the entry when the menu option is turned off and at uninstall.",
+   "note": "Found by U03's first batch (2026-11-24) after #305's fix, set aside for the owner's choice, and decided by the owner (2026-11-24, option C): the menu entry starts the app through a link AppKata keeps in its own folder, at a path with no %, so the entry's Exec= never holds one; nothing is refused, and R4.3.1 says the entry starts the app through that link. Fixed in U03's pull request (#689), in its first review round."
+  },
+  {
    "finding": 686,
    "readiness": "ready",
    "files": [
@@ -11047,10 +11066,5 @@
   "tests/test_version_reviews.py",
   "tests/test_windows.py"
  ],
- "set_aside": [
-  {
-   "finding": 685,
-   "why": "A new finding of U03's first batch (2026-11-24) whose remedy is the owner's to choose: refuse an install path that holds a %, or say that such an app has no menu entry on GLib desktops. It carries `refine` and joins a unit once decided."
-  }
- ]
+ "set_aside": []
 }
