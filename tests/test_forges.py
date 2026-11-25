@@ -1197,6 +1197,9 @@ LAN = "git.lan.example"
     (LAN, f"https://{LAN}:3000/api/v1/repos/o/r", LAN, False),
     (LAN, f"https://{LAN}:9999/other-service", LAN, False),
     (LAN, f"https://{LAN}:80/x", None, False),                                  # https on http's port isn't the default
+    # a port 0, written, is port 0 and no default (review pass 5, P5-B4): `parts.port or 443` made it 443
+    (LAN, f"https://{LAN}:0/api/v1/version", None, False),
+    (LAN, f"https://{LAN}:0/api/v1/repos/o/r", LAN, False),
     (LAN + ":443", f"https://{LAN}/api/v1/version", None, True),                # however the default port was typed
     # a named host is asked on its default port too
     ("github.com", "https://api.github.com/repos/o/r", "github.com", True),
@@ -1268,6 +1271,7 @@ def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(ty
     (LAN, f"http://{LAN}:443/o/r/raw/branch/main/shot.png", True),                 # the Source's own port, in plain http
     (LAN, f"http://{LAN}/o/r/raw/branch/main/shot.png", False),                    # http's own port, 80: not the Source's 443
     (LAN, f"https://{LAN}:80/o/r/raw/branch/main/shot.png", False),
+    (LAN, f"https://{LAN}:0/o/r/raw/branch/main/shot.png", False),                 # port 0, written: not 443 (review pass 5, P5-B4)
     (LAN, f"http://{LAN}:631/admin/shot.png", False),
     (LAN, f"https://{LAN}:9999/admin/shot.png", False),
 ])

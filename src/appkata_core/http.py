@@ -123,9 +123,11 @@ SOURCE_PORT = 443       # a Source's port when its host names none: every Source
 
 
 def _origin(parts) -> tuple:
-    """(scheme, host, port) of an address: what a redirect must keep for a token to go on with it."""
+    """(scheme, host, port) of an address: what a redirect must keep for a token to go on with it.
+    The port is the one it names, 0 too, or its scheme's where it names none (the review's pass 5,
+    P5-B4: `parts.port or ...` read a written `:0` as 443, the Source's own port)."""
     try:
-        port = parts.port or PORTS.get(parts.scheme)
+        port = PORTS.get(parts.scheme) if parts.port is None else parts.port
     except ValueError:
         port = None
     return parts.scheme, (parts.hostname or "").lower(), port
