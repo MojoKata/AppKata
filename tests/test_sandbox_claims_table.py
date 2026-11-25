@@ -18,6 +18,9 @@ DOC = os.path.join(os.path.dirname(__file__), "..", "docs", "architecture", "A1-
 # what is still inferred, and why it stays so for now
 STILL_INFERRED = {
     "Chromium reads FileChooser's `version` first": "Electron ships Chromium's dialog code; Obsidian itself runs behind the launcher (consumers) but its dialog needs a click",
+    # CR1.5-9 (#384): the never-shared list gained these programs' folders on what their documentation says
+    "i3, Hyprland, labwc, Openbox, river, niri and Wayfire start programs from their configuration":
+        "none of them, nor VS Code, Cargo or Go, is installed in a tier: each one's source read, or a run of it, is still to do",
 }
 
 
