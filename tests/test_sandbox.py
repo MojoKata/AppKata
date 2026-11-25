@@ -378,7 +378,8 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
     where no proxy was started), the app's bwrap's (None where `app` is False and it didn't run),
     the run, and the runtime folder. The xdg-dbus-proxy its PATH finds is a stand-in that is
-    really at `proxy_at`, as `readlink -f` tells the launcher (no machine's /usr is a test's). The
+    really at `proxy_at` (None: no stand-in), as `readlink -f` tells the launcher (no machine's /usr
+    is a test's). The
     rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
@@ -388,11 +389,12 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     (fake / "record.py").write_text(_RECORDER)
     (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
     (fake / "bwrap").chmod(0o755)
-    (fake / "xdg-dbus-proxy").write_text("#!/bin/sh\nexit 1\n")
-    (fake / "readlink").write_text(f'#!/bin/sh\n[ "$*" = {shlex.quote("-f " + str(fake / "xdg-dbus-proxy"))} ] && exec echo {shlex.quote(proxy_at)}\n'
-                                   f'exec {shlex.quote(shutil.which("readlink"))} "$@"\n')
-    for tool in ("xdg-dbus-proxy", "readlink"):
-        (fake / tool).chmod(0o755)
+    if proxy_at:
+        (fake / "xdg-dbus-proxy").write_text("#!/bin/sh\nexit 1\n")
+        (fake / "readlink").write_text(f'#!/bin/sh\n[ "$*" = {shlex.quote("-f " + str(fake / "xdg-dbus-proxy"))} ] && exec echo {shlex.quote(proxy_at)}\n'
+                                       f'exec {shlex.quote(shutil.which("readlink"))} "$@"\n')
+        for tool in ("xdg-dbus-proxy", "readlink"):
+            (fake / tool).chmod(0o755)
     for tool, script in (tools or {}).items():
         (fake / tool).write_text(script)
         (fake / tool).chmod(0o755)
@@ -498,14 +500,17 @@ def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alon
 # your own, the way to the fixed 0.1.8 where a distribution ships 0.1.7 (R17.17) -- failed every
 # Standard app with "did not start", or, beside the distribution's, the older one ran without a word.
 # How it slipped past: every test's proxy was /usr/bin's, or no program at all. The launcher now runs
-# the one its PATH finds, from that folder, and refuses one its sandbox (/usr alone) can't run.
-@pytest.mark.parametrize("found,runs", [("/usr/local/bin/xdg-dbus-proxy", True), ("/usr/bin/xdg-dbus-proxy", True),
+# the one its PATH finds, from that folder, and refuses one its sandbox (/usr alone) can't run; where
+# its PATH has none, /usr/bin:/bin as before (the inventory's and the persona tests' launchers in
+# tier 1, where no machine's proxy is, among them).
+@pytest.mark.parametrize("found,runs", [("/usr/local/bin/xdg-dbus-proxy", True), ("/usr/bin/xdg-dbus-proxy", True), (None, True),
                                         ("/opt/xdp/bin/xdg-dbus-proxy", False), ("/usr/libexec/xdp/dbus-proxy-0.1.8", False)])
 def test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can(tmp_path, monkeypatch, found, runs):
-    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, proxy_at=found, app=runs)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, proxy_at=found, app=runs, hide=() if found else ("xdg-dbus-proxy",))
     if runs:
         words = proxy[:proxy.index("--")]
-        assert r.returncode == 0 and r.stderr == "" and words[words.index("PATH") + 1] == os.path.dirname(found), (words, r.stderr)
+        assert r.returncode == 0 and r.stderr == "", (words, r.stderr)
+        assert words[words.index("PATH") + 1] == (os.path.dirname(found) if found else "/usr/bin:/bin"), words
         assert proxy[proxy.index("--") + 1] == "xdg-dbus-proxy", proxy
     else:
         assert proxy is None and r.returncode == 1, (r.returncode, r.stderr)

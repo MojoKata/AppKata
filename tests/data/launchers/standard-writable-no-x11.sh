@@ -85,7 +85,7 @@ rm -f "$sock"
 # The proxy is the one this PATH finds, as AppKata's own check finds it, run from its folder
 # (the PATH it is given). Its sandbox holds /usr alone, so one elsewhere is refused, with a
 # line that says so (PR #694's review, P2-B4: a PATH of /usr/bin:/bin failed one in
-# /usr/local/bin, or ran the distribution's beside it).
+# /usr/local/bin, or ran the distribution's beside it). Where this PATH has none, /usr/bin:/bin.
 # What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).
 # It carries *no* /.flatpak-info: the portals judge the caller by the proxy's root, and
 # xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),
@@ -99,14 +99,14 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
   pbin=$(command -v xdg-dbus-proxy 2>/dev/null || true)
   [ -z "$pbin" ] || pbin=$(readlink -f "$pbin" 2>/dev/null || true)
   case "$pbin" in
-    /usr/*/xdg-dbus-proxy) ;;
-    '') printf 'AppKata: the session-bus filter (xdg-dbus-proxy) is not on this PATH, so %s cannot run sandboxed here.\n' App >&2; exit 1 ;;
+    /usr/*/xdg-dbus-proxy) ppath=${pbin%/*} ;;
+    '') ppath=/usr/bin:/bin ;;
     *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\n' "$pbin" App >&2; exit 1 ;;
   esac
   bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
     --bind "$rt/appkata" "$rt/appkata" "$@" \
-    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "${pbin%/*}" \
+    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "$ppath" \
     --die-with-parent --seccomp 3 -- \
     xdg-dbus-proxy "$upstream" "$sock" --filter '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.OpenURI.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Print.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Email.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.ProxyResolver.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*' '--call=org.freedesktop.portal.Desktop=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/portal/desktop' --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.Settings.SettingChanged@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.NetworkMonitor.changed@/org/freedesktop/portal/desktop --broadcast=org.freedesktop.portal.Desktop=org.freedesktop.portal.MemoryMonitor.LowMemoryWarning@/org/freedesktop/portal/desktop --talk=org.freedesktop.portal.IBus --talk=org.freedesktop.portal.Fcitx --own=io.appkata.app '--call=org.freedesktop.portal.Desktop=org.freedesktop.portal.Notification.*@/org/freedesktop/portal/desktop' '--call=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' '--call=org.freedesktop.Notifications=org.freedesktop.DBus.Introspectable.*@/org/freedesktop/Notifications' '--broadcast=org.freedesktop.Notifications=org.freedesktop.Notifications.*@/org/freedesktop/Notifications' 3< /home/kata/.local/share/appkata/sandboxes/.identity/seccomp-tty.bpf &
   proxy=$!

@@ -2275,7 +2275,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# The proxy is the one this PATH finds, as AppKata\'s own check finds it, run from its folder\n'
             '# (the PATH it is given). Its sandbox holds /usr alone, so one elsewhere is refused, with a\n'
             '# line that says so (PR #694\'s review, P2-B4: a PATH of /usr/bin:/bin failed one in\n'
-            '# /usr/local/bin, or ran the distribution\'s beside it).\n'
+            '# /usr/local/bin, or ran the distribution\'s beside it). Where this PATH has none, /usr/bin:/bin.\n'
             '# What a fault in the proxy would still give the app is the bus itself, unfiltered (R17.17).\n'
             '# It carries *no* /.flatpak-info: the portals judge the caller by the proxy\'s root, and\n'
             '# xdg-desktop-portal 1.18+ refuses a marked caller that is not a running Flatpak (R17.6.1),\n'
@@ -2289,15 +2289,15 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '  pbin=$(command -v xdg-dbus-proxy 2>/dev/null || true)\n'
             '  [ -z "$pbin" ] || pbin=$(readlink -f "$pbin" 2>/dev/null || true)\n'
             '  case "$pbin" in\n'
-            '    /usr/*/xdg-dbus-proxy) ;;\n'
-            f"    '') printf 'AppKata: the session-bus filter (xdg-dbus-proxy) is not on this PATH, so %s cannot run sandboxed here.\\n' {q(name)} >&2; exit 1 ;;\n"
+            '    /usr/*/xdg-dbus-proxy) ppath=${pbin%/*} ;;\n'
+            "    '') ppath=/usr/bin:/bin ;;\n"
             f"    *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\\n' \"$pbin\" {q(name)} >&2; exit 1 ;;\n"
             '  esac\n'
             + (_PROVIDE_CHECK.format(qname=q(name)) if provide else '') +
             '  bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \\\n'
             '    --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \\\n'
             '    --bind "$rt/appkata" "$rt/appkata" "$@" \\\n'
-            '    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "${pbin%/*}" \\\n'
+            '    --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try --clearenv --setenv PATH "$ppath" \\\n'
             f'    --die-with-parent {psession} -- \\\n'
             '    xdg-dbus-proxy "$upstream" "$sock" ' + pargs + (' ${provide:+"$provide"}' if provide else '') + f'{pfilter} &\n'
             '  proxy=$!\n'
