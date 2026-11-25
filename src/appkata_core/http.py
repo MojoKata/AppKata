@@ -196,7 +196,11 @@ def _http_address(url: str):
       and a proxy that ends it only at the first `/` reads 10.0.0.5 out of
       `images.example.com?@10.0.0.5` (P4-1);
     - escaped brackets, which the check reads as a name, `[127.0.0.1]`, and http.client as the
-      brackets of an address, 127.0.0.1, which a proxy is sent (P5-2).
+      brackets of an address, 127.0.0.1, which a proxy is sent (P5-2);
+    - a tab or a line break in its `//` or its host part, which urlsplit drops before it reads the
+      address, and urllib's request doesn't: `http:/\\n/10.0.0.5@h/x//y` has the host part
+      `10.0.0.5@h` to urlsplit, whose parts the check and every caller use, and `y` as written. The
+      host part as written is held to be urlsplit's, up to a `?` or `#`, and is read once (P5-B1).
     No address Http asks for needs any of these: an image's address has a path, and the host of one
     with a user part is found by no lookup. A user part isn't said, since it may be a password: no
     refusal names what comes before the last `@`, of the host part or, where urlsplit can't read the
@@ -209,6 +213,8 @@ def _http_address(url: str):
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
         raise Unreachable(f"{url.rpartition('@')[2][:200]!r} isn't an http or https address")
     written = url.partition("//")[2].partition("/")[0]        # the host part: up to the first `/`, as a proxy may read it
+    if re.split(r"[?#]", written, maxsplit=1)[0] != parts.netloc:      # and urlsplit's, up to a `?` or `#` (P5-B1)
+        raise Unreachable(f"an address whose host part is more than a host and its port ({parts.hostname[:200]}) isn't asked for")
     said = unquote(written)
     if "@" in said:
         raise Unreachable(f"an address with a user part before its host ({said.rpartition('@')[2][:200]}) isn't asked for")

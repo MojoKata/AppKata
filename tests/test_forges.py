@@ -966,6 +966,35 @@ def test_behind_a_proxy_the_sources_own_host_part_is_held_to_the_rule_too(pair, 
     assert "is a host and its port and nothing else" in " ".join(reqdocs.item("R3.1.1").split())
 
 
+# The review's pass 5, P5-B1: the rule above read the host part from the address as written, and
+# everything after it read urlsplit's parts, which drops every tab and line break first. With one in
+# the address's `//` and another `//` in its path, the host part read was the text after the second,
+# and the user part, `\` and `?` refusals didn't see the host part urlsplit read, `10.0.0.5@...`.
+# Nothing was sent, since urllib's own reading finds no host there, but only by that. How it slipped
+# past: every address in the tests read the same with its tabs and line breaks dropped. The class
+# is "two readings of one host part", so these break the `//` with a tab or a line break.
+SPLIT_HOST_PARTS = [
+    ":/\n/10.0.0.5@images.example.com/x//y",
+    ":/\t/10.0.0.5%2f@images.example.com/x//y",
+    ":/\r\n/images.example.com?@10.0.0.5/x//y",
+    ":/\n/127.0.0.1\\x.images.example.com/x//y",
+]
+
+
+@pytest.mark.parametrize("lookup", ["finds it public", "the proxy's alone"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("rest", SPLIT_HOST_PARTS)
+def test_behind_a_proxy_an_address_whose_tabs_and_line_breaks_move_its_host_part_is_refused(pair, monkeypatch, tmp_path, rest, scheme, lookup):
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=scheme == "https")
+    http = names(Http(timeout=5)) if lookup == "finds it public" else knows_only(Http(timeout=5), {})
+    with pytest.raises(Unreachable, match="isn't asked for"):
+        sync._save_image(http, scheme + rest, str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []
+    assert "a tab or a line break in its `//` or its host part" in " ".join(reqdocs.item("R3.1.1").split())
+
+
 def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_host_is_refused(pair, monkeypatch):
     # a redirect's `?` or `#` right after its host is no way in: urllib gives an address with no
     # path the path `/` before it follows it

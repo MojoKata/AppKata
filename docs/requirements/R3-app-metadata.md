@@ -19,7 +19,8 @@ they are written and not escaped; then a `:` and the port where it names one. So
 before its host (`user@` or `10.0.0.5%2f@`), a `\` in its host, escaped brackets
 (`%5b127.0.0.1%5d`), or a `?` or `#` right after its host with no path
 (`images.example.com?@10.0.0.5`) is asked for: a proxy is sent all of a host part, and may read
-another host out of it. None is asked for whose host stands for a
+another host out of it. Nor is one with a tab or a line break in its `//` or its host part, which one
+reading of an address drops and another keeps. None is asked for whose host stands for a
 loopback, private or link-local address, or another address that isn't public, unless it is the
 Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
 port is the one its host names, or https's 443 where it names none; an address is on the port it is
