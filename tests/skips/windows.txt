@@ -9,6 +9,7 @@ tests/test_channel_ui.py::test_same_digest_and_source_settings  # could not impo
 tests/test_channels.py::test_system_bus  # no system bus
 tests/test_dialog_contract.py::*  # could not import 'PySide6': No module named 'PySide6'
 tests/test_doc_links.py::test_every_link_between_the_documents_leads_somewhere  # a copy without the screenshots' images (the Windows tier's), which the documents link to
+tests/test_forges.py::test_through_real_sockets_a_host_in_any_script_is_sent_over_tls_in_its_idna_form  # needs openssl
 tests/test_install_review.py::test_a_self_updating_app_that_runs_sandboxed_moves_to_versions_when_appkata_updates_it  # the sandbox is Linux-only (R17.1)
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs0-cli]  # the Linux install layout
 tests/test_install_review.py::test_a_tarballs_kind_comes_from_its_program_and_a_tool_gets_no_menu_entry[libs1-gui]  # the Linux install layout

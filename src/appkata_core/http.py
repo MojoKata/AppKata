@@ -164,12 +164,12 @@ _AN_IPV6_ADDRESS = re.compile(r"\[[0-9a-f:.]+\]")
 
 def _a_name_as_sent(name: str) -> bool:
     """Whether a host, its escapes decoded, is a name in the form it is sent, its IDNA form: ASCII
-    letters, digits, `-`, `_` and dots. A tunnel's CONNECT sends a name in that form, and its lookup
-    does too (_allowed's, of the name in lower case), so a name in any script is one, its marks too
-    (the review's pass 5, P5-1), and one whose IDNA form holds what no name does isn't: `a⑴b` is
-    sent as `a(1)b`, and `%5b127.0.0.1%5d` as `[127.0.0.1]`, which a proxy reads as an address
-    (P5-2). Nor is a name whose IDNA form changes with its case: a letter Unicode 3.2 hadn't, such
-    as `Ⱥ`, is sent as written and looked up in lower case, two names with two addresses."""
+    letters, digits, `-`, `_` and dots. A name is sent in that form, in lower case (_sent), so a name
+    in any script is one, its marks too (the review's pass 5, P5-1), and one whose IDNA form holds
+    what no name does isn't: `a⑴b` is sent as `a(1)b`, and `%5b127.0.0.1%5d` as `[127.0.0.1]`, which
+    a proxy reads as an address (P5-2). Nor is a name whose IDNA form changes with its case: with a
+    letter Unicode 3.2 hadn't, such as `Ⱥ`, the name written and the one sent are two names, with two
+    addresses."""
     try:
         sent = name.encode("idna").decode("ascii").lower()
         looked_up = name.lower().encode("idna").decode("ascii").lower()
@@ -224,6 +224,28 @@ def _http_address(url: str):
     if host is None or not (_AN_IPV6_ADDRESS.fullmatch(host[1].lower()) or _a_name_as_sent(unquote(host[1]))):
         raise Unreachable(f"an address whose host part is more than a host and its port ({parts.hostname[:200]}) isn't asked for")
     return parts
+
+
+def _sent(host: str) -> str:
+    """A host as it is sent, from the host _allowed judges (its escapes decoded, in lower case): a name
+    in its IDNA form, which is ASCII, and an address as it is. The lookups have it, and so do the
+    Host header, a tunnel's CONNECT, the name TLS checks and the address a proxy is sent over http
+    (the review's pass 6, P6-B1). urllib sent the host as written, and http.client writes a Host
+    header in Latin-1: a name in another script couldn't be sent at all, a Latin-1 one couldn't be
+    sent to a proxy over http, and `übung.example` was sent to its server so, where its lookup and a
+    tunnel's CONNECT had `xn--bung-zra.example`."""
+    return host.encode("idna").decode("ascii")
+
+
+def _as_sent(url: str, parts) -> str:
+    """An address as Http sends it, from what _http_address read of it (`parts`): its host part the
+    host _allowed judged as it is sent (_sent), then its port as written, and the rest of it as
+    written. Its host part is a host and its port and nothing else (_http_address)."""
+    before, slashes, rest = url.partition("//")
+    written = rest.partition("/")[0]
+    name = _sent(unquote(parts.hostname).lower())
+    port = written[len(_HOST_PART.fullmatch(written)[1]):]          # `:` and the port's digits, as written, or nothing
+    return before + slashes + (f"[{name}]" if ":" in name else name) + port + rest[len(written):]
 
 
 def _addresses(host: str) -> list[str]:
@@ -419,7 +441,13 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         self.allowed, self.unlimited = allowed, unlimited
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        was = urlsplit(req.full_url)
+        was, sent = urlsplit(req.written), urlsplit(req.full_url)
+        # a redirect to the host part the request was sent with (a path alone, which urllib makes an
+        # address with that host part of, or that host part written out) is to the request's own
+        # host, which Http's rules read as it was written (the review's pass 6, P6-B1)
+        sent_with = f"{sent.scheme}://{sent.netloc}"
+        if newurl.startswith(sent_with) and newurl[len(sent_with):][:1] in ("", "/", "?", "#"):
+            newurl = f"{was.scheme}://{was.netloc}{newurl[len(sent_with):]}"
         whose = getattr(req, "whose", _host(was))
         token = {k: v for k, v in req.unredirected_hdrs.items() if k.lower() in TOKEN_HEADERS}
         try:
@@ -433,6 +461,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
             raise
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None:
+            new.written, new.full_url = newurl, _as_sent(newurl, to)     # as Http's own request is (Http._request)
             new.whose = whose
             carried = bool(token) and _origin(to) == _origin(was)
             if carried:
@@ -511,21 +540,22 @@ class Http:
         P1-1). What this computer can tell is local is refused all the same: an address, localhost,
         a name it looks up as a local address.
 
-        The host judged is the one the request is sent to: as urllib sends it (Request.host), its
-        escapes decoded, which is what a connection looks up and what a proxy is asked for, in the
-        Host header and a tunnel's CONNECT. Only a plain name (_a_name) is left to a proxy (the
-        review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`, `127.0.0.1.` or
-        `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as a name, and
-        the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone. An address
-        whose host part is more than a host and its port (a user part, a `\\`, a `?` or `#` before
-        any path), which urllib sends to a proxy along with the host, is refused before any of this,
-        by _http_address (the review's passes 3 and 4, P3-1 and P4-1)."""
+        The host judged is the one the request is sent to: its escapes decoded, in lower case, and in
+        the form it is sent (_sent: a name in its IDNA form), in which this lookup and the
+        connection's are given it, and a proxy is sent it in the Host header, a tunnel's CONNECT and
+        the address over http (_request; the review's pass 6, P6-B1). Only a plain name (_a_name) is
+        left to a proxy (the review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`,
+        `127.0.0.1.` or `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as
+        a name, and the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone.
+        An address whose host part is more than a host and its port (a user part, a `\\`, a `?` or
+        `#` before any path), which urllib sends to a proxy along with the host, is refused before
+        any of this, by _http_address (the review's passes 3 and 4, P3-1 and P4-1)."""
         parts = _http_address(url)
-        host = unquote(parts.hostname).lower()     # as it is sent: Request.host, which is the host alone here (_http_address)
+        host = unquote(parts.hostname).lower()     # as it is judged: the host alone here (_http_address), and sent as _sent makes it
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:
-            addresses = self._lookup(host)
+            addresses = self._lookup(_sent(host))
         except (OSError, ValueError) as e:        # no such name: what the connection would have found
             if self._proxied(parts) and _a_name(host) and not _localhost(host):
                 return parts                      # unless it is the proxy's, which looks the name up itself
@@ -566,7 +596,7 @@ class Http:
         request's when none connects."""
         name, port = address
         addresses = self._lookup(name)              # an OSError: urllib's "couldn't reach", as before
-        parts = urlsplit(req.full_url)
+        parts = urlsplit(req.written)               # the address as written, which the rules read (_request)
         if not (req.has_proxy() or req._tunnel_host or _is_for(parts, getattr(req, "whose", None) or _host(parts))):
             _refuse_local(parts.hostname or name, addresses)
         failed = OSError(f"{name} has no address")
@@ -661,7 +691,10 @@ class Http:
         self._unlimited(parts)
         token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
-        req = urllib.request.Request(url, data=body, headers=h, method=method)
+        # sent with its host as it is sent (_as_sent), and kept as written, which every rule after
+        # this reads, a redirect's and a connection's, as this one did (the review's pass 6, P6-B1)
+        req = urllib.request.Request(_as_sent(url, parts), data=body, headers=h, method=method)
+        req.written = url
         req.whose = whose                          # for a redirect: _Redirects
         # the address and the host asked last, and whether the token went there: _Redirects moves
         # them on, since what comes after a redirect is another host's answer, or its failure to

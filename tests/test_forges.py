@@ -7,7 +7,10 @@ import ipaddress
 import json
 import os
 import re
+import select
+import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import threading
@@ -1007,26 +1010,27 @@ def test_behind_a_proxy_a_redirect_to_an_address_whose_host_part_is_more_than_a_
     assert [p for p, _ in b.seen] == ["/o/r/avatar"] and a.seen == []
 
 
-@pytest.mark.parametrize("url", [
-    "http://images.example.com/@x/shot.png",                   # an `@` after the first `/` is the path's
-    "http://images.example.com/shot.png?u=a@b#@c",
-    "https://img_1.cdn-example.com.:8443/shot.png",            # a `_`, a name's trailing dot, a port
-    "https://images.example.com:/shot.png",                    # a `:` that names no port
-    "https://[2606:4700::1111]/shot.png",                      # an IPv6 address
-    "https://bücher.example/shot.png",                         # a name outside ASCII
-    "https://b%C3%BCcher.example/shot.png",                    # the same, escaped
+@pytest.mark.parametrize("url, sent", [                          # an address, and as it is sent (review pass 6, P6-B1)
+    ("http://images.example.com/@x/shot.png",) * 2,                     # an `@` after the first `/` is the path's
+    ("http://images.example.com/shot.png?u=a@b#@c",) * 2,
+    ("https://img_1.cdn-example.com.:8443/shot.png",) * 2,              # a `_`, a name's trailing dot, a port
+    ("https://images.example.com:/shot.png",) * 2,                      # a `:` that names no port
+    ("https://[2606:4700::1111]/shot.png",) * 2,                        # an IPv6 address
+    ("https://bücher.example/shot.png", "https://xn--bcher-kva.example/shot.png"),     # a name outside ASCII
+    ("https://b%C3%BCcher.example/shot.png", "https://xn--bcher-kva.example/shot.png"),  # the same, escaped
     # names whose letters hold marks (review pass 5, P5-1)
-    "https://हिन्दी.example/shot.png",                          # Devanagari: its vowel signs and its virama are marks
-    "https://example.भारत/shot.png",                            # India's own top-level name
-    "https://தமிழ்.example/shot.png",                            # Tamil
-    "https://เว็บ.example/shot.png",                             # Thai, with a tone mark
-    "https://İstanbul.example/shot.png",                       # a capital İ, which lower() makes an i and a mark
-    "https://%E0%A4%AD%E0%A4%BE%E0%A4%B0%E0%A4%A4.example/shot.png",  # भारत, escaped
+    ("https://हिन्दी.example/shot.png", "https://xn--j2bd4cyah0f.example/shot.png"),    # Devanagari: its vowel signs and its virama are marks
+    ("https://example.भारत/shot.png", "https://example.xn--h2brj9c/shot.png"),          # India's own top-level name
+    ("https://தமிழ்.example/shot.png", "https://xn--rlcus7b3d.example/shot.png"),       # Tamil
+    ("https://เว็บ.example/shot.png", "https://xn--r3cz4e3a.example/shot.png"),          # Thai, with a tone mark
+    ("https://İstanbul.example/shot.png", "https://xn--istanbul-o0e.example/shot.png"),  # a capital İ, which lower() makes an i and a mark
+    ("https://%E0%A4%AD%E0%A4%BE%E0%A4%B0%E0%A4%A4.example/shot.png", "https://xn--h2brj9c.example/shot.png"),  # भारत, escaped
+    ("https://Images.Example.COM:8443/Shot.png?A=B", "https://images.example.com:8443/Shot.png?A=B"),         # the host in lower case, and only it
 ])
-def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url):
+def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url, sent):
     seen = []
     _ask(names(Http(opener=recording({}, seen))), url, token_host="git.example.org")
-    assert [u for u, _ in seen] == [url]
+    assert [u for u, _ in seen] == [sent]
 
 
 # The review's pass 5, P5-1 and P5-2: the rule above judged a name by Python's \w, after .lower(),
@@ -1042,7 +1046,7 @@ def test_an_address_whose_host_part_is_a_host_alone_is_asked_for(url):
 def test_a_source_on_a_host_whose_name_has_marks_is_asked_for_with_its_token():
     seen = []
     _ask(names(Http({"गिट.example": "SECRET"}, opener=recording({}, seen))), "https://गिट.example/api/v1/repos/o/r", token_host="गिट.example")
-    assert tokened(seen) == ["https://गिट.example/api/v1/repos/o/r"]
+    assert tokened(seen) == ["https://xn--31bq9g.example/api/v1/repos/o/r"]         # as it is sent (review pass 6, P6-B1)
     assert "whose IDNA form, the one its lookup and a proxy are sent" in " ".join(reqdocs.item("R3.1.1").split())
 
 
@@ -1057,6 +1061,225 @@ def test_a_name_whose_idna_form_is_more_than_a_name_is_refused(host):
     with pytest.raises(Unreachable, match="more than a host and its port"):
         names(Http(opener=recording({}, seen))).bytes(f"https://{host}/shot.png", token_host="git.example.org")
     assert seen == []
+
+
+# The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host
+# as written: in the Host header, which http.client writes in Latin-1, so a name outside it couldn't
+# be sent at all ("can't be sent (UnicodeEncodeError)"), and over plain http through a proxy, in an
+# address that must be ASCII, not even a Latin-1 one; and a Latin-1 one was sent to the server as
+# `Host: übung.example`, where its lookup and a tunnel's CONNECT had its IDNA form. A Source on such
+# a host couldn't be synced. How it slipped past: the tests above ask a stand-in opener, which is
+# handed the request and builds no Host header, and nothing went through Http's own opener with
+# such a name. The class is "the host judged isn't the host sent", at the last step, so these go
+# through Http's own opener to a real server, over TLS and plain http, directly and through a proxy
+# that forwards what it is asked, and hold each place the host is sent: its lookups, the Host
+# header, a tunnel's CONNECT and the address a proxy is sent.
+INTERNATIONAL = [                # a host, and the form it is sent in
+    pytest.param("images.example", "images.example", id="ascii"),
+    pytest.param("übung.example", "xn--bung-zra.example", id="latin-1"),
+    pytest.param("गिट.example", "xn--31bq9g.example", id="devanagari"),
+    pytest.param("例え.example", "xn--r8jz45g.example", id="cjk"),
+    pytest.param("เว็บ.example", "xn--r3cz4e3a.example", id="thai-with-a-tone-mark"),
+    pytest.param("İstanbul.example", "xn--istanbul-o0e.example", id="a-capital-i-with-a-dot"),
+]
+OPENSSL_CNF = """[req]
+distinguished_name = dn
+[dn]
+[ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+subjectAltName = {names}
+"""
+
+
+@pytest.fixture(scope="module")
+def certificate(tmp_path_factory):
+    """A server's certificate for INTERNATIONAL's names in the form they are sent, from a CA made here
+    for these tests alone, as (the CA's file, the certificate's, its key's): made by openssl, which
+    the Windows tier hasn't."""
+    if not shutil.which("openssl"):
+        pytest.skip("needs openssl")
+    at = tmp_path_factory.mktemp("tls")
+    (at / "openssl.cnf").write_text(OPENSSL_CNF.format(names=",".join(f"DNS:{p.values[1]}" for p in INTERNATIONAL)))
+
+    def openssl(*args):
+        subprocess.run(["openssl", *args], cwd=at, check=True, capture_output=True)
+    key = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-config", "openssl.cnf"]
+    openssl("req", "-x509", *key, "-extensions", "ca", "-subj", "/CN=AppKata tests' CA", "-days", "30",
+            "-keyout", "ca.key", "-out", "ca.pem")
+    openssl("req", "-new", *key, "-subj", "/CN=images.example", "-keyout", "server.key", "-out", "server.csr")
+    openssl("x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "2", "-days", "30",
+            "-extfile", "openssl.cnf", "-extensions", "server", "-out", "server.pem")
+    return str(at / "ca.pem"), str(at / "server.pem"), str(at / "server.key")
+
+
+class _Forwarding(socketserver.BaseRequestHandler):
+    """A proxy before one server, `server.to` (its port), whatever host it is asked for: a tunnel's
+    CONNECT is answered and piped to that server both ways, and a request in an address's whole form
+    is sent on to it as it came. The first line of each is noted in `server.seen`."""
+
+    def handle(self):
+        head = b""
+        while b"\r\n\r\n" not in head:
+            got = self.request.recv(65536)
+            if not got:
+                return
+            head += got
+        first = head.partition(b"\r\n")[0].decode("latin-1")
+        self.server.seen.append(first)
+        with socket.create_connection(("127.0.0.1", self.server.to), timeout=5) as up:
+            if first.startswith("CONNECT "):
+                self.request.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                head = head.partition(b"\r\n\r\n")[2]
+            up.sendall(head)
+            other = {self.request: up, up: self.request}
+            while True:
+                ready, _, _ = select.select(list(other), [], [], 5)
+                for end in ready:
+                    got = end.recv(65536)
+                    if not got:
+                        return
+                    other[end].sendall(got)
+                if not ready:
+                    return
+
+
+class _ForwardingServer(socketserver.ThreadingTCPServer):
+    daemon_threads = allow_reuse_address = True
+
+
+@pytest.fixture
+def serving():
+    """serving(handler, server_class) starts a server on this computer for the test and gives it, with
+    `seen`, `redirects`, `files` and `at` as `pair`'s have; serving(..., tls=(certificate, key)) wraps
+    its socket in TLS. Each is stopped after the test."""
+    started = []
+
+    def start(handler=_Recorder, server_class=ThreadingHTTPServer, tls=None):
+        server = server_class(("127.0.0.1", 0), handler)
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(*tls)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        server.seen, server.redirects, server.files = [], {}, None
+        server.at = f"127.0.0.1:{server.server_address[1]}"
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        started.append(server)
+        return server
+    yield start
+    for server in started:
+        server.shutdown()
+        server.server_close()
+
+
+def at_this_computer(monkeypatch):
+    """Stands in for the name server at the socket's own lookup, which Http's check and its connection
+    both ask: every name under .example, in whatever form it is asked for, is this computer. Gives
+    the list of the names asked for."""
+    real, asked = socket.getaddrinfo, []
+
+    def getaddrinfo(host, *a, **k):
+        if not (isinstance(host, str) and host.rstrip(".").endswith(".example")):
+            return real(host, *a, **k)
+        asked.append(host)
+        return real("127.0.0.1", *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return asked
+
+
+def _asked_in_the_form_it_is_sent(monkeypatch, serving, scheme, route, name, sent, tls=None):
+    """A Source on `name`'s API asked for with its token, then an image there asked for by another
+    Source's request, through Http's own opener, to a real server on this computer, directly or
+    through a proxy: each place the host is sent has `sent`."""
+    origin = serving(tls=tls)
+    origin.files = {"/api/v1/repos/o/r": {"ok": True}, "/shot.png": PNG}
+    port = origin.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    proxy = None
+    if route == "through-a-proxy":
+        proxy = serving(_Forwarding, _ForwardingServer)
+        proxy.to = port
+        behind_a_proxy(monkeypatch, proxy, https=True)
+    source = f"{name}:{port}"
+    http = Http({source: "SECRET"}, timeout=5)
+    assert http.json(f"{scheme}://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    # the image is another host's than the Source's, and this computer stands for a host elsewhere
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))
+    assert http.bytes(f"{scheme}://{name}:{port}/shot.png", token_host="git.example.org") == PNG
+    paths = ["/api/v1/repos/o/r", "/shot.png"]
+    if route == "direct":
+        assert asked == [sent, sent, sent]             # the Source's connection's lookup; the image's check's and connection's
+    else:
+        assert asked == [sent]                         # the image's check's: the proxy looks a name up itself
+        assert proxy.seen == ([f"CONNECT {sent}:{port} HTTP/1.1"] * 2 if scheme == "https" else
+                              [f"GET http://{sent}:{port}{path} HTTP/1.1" for path in paths])
+        if scheme == "http":
+            paths = [f"http://{sent}:{port}{path}" for path in paths]
+    assert [(path, h["host"], h.get("authorization")) for path, h in origin.seen] == [
+        (paths[0], f"{sent}:{port}", "token SECRET" if scheme == "https" else None), (paths[1], f"{sent}:{port}", None)]
+    assert "is sent in its IDNA form" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+@pytest.fixture
+def trusting(monkeypatch, certificate):
+    """The TLS context of Http's connections trusts the CA `certificate` was made by, as well as the
+    system's; gives the certificate and its key, for a server."""
+    ca, cert, key = certificate
+    real = ssl.create_default_context
+
+    def made(*a, **k):
+        context = real(*a, **k)
+        context.load_verify_locations(ca)
+        return context
+    monkeypatch.setattr(ssl, "create_default_context", made)
+    return cert, key
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, sent", INTERNATIONAL)
+def test_through_real_sockets_a_host_in_any_script_is_sent_over_tls_in_its_idna_form(monkeypatch, serving, trusting, route, name, sent):
+    _asked_in_the_form_it_is_sent(monkeypatch, serving, "https", route, name, sent, tls=trusting)
+
+
+@pytest.mark.parametrize("route", ["direct", "through-a-proxy"])
+@pytest.mark.parametrize("name, sent", INTERNATIONAL)
+def test_through_real_sockets_a_host_in_any_script_is_sent_over_plain_http_in_its_idna_form(monkeypatch, serving, route, name, sent):
+    _asked_in_the_form_it_is_sent(monkeypatch, serving, "http", route, name, sent)
+
+
+def test_through_real_sockets_a_redirect_on_a_sources_own_host_in_any_script_is_that_host(pair, monkeypatch):
+    # a path alone is made an address with the host part the request was sent with, and a forge may
+    # write that host part out: either is the Source's own host, which may be on this computer, and
+    # keeps its token, and the request it leads to is sent as the first one was
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.redirects["/api/v1/repos/o/r"] = "/api/v1/repos/o/renamed"
+    a.redirects["/api/v1/repos/o/renamed"] = f"https://xn--31bq9g.example:{port}/api/v1/repos/o/r2"
+    source = f"गिट.example:{port}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/api/v1/repos/o/r", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [
+        (path, f"xn--31bq9g.example:{port}", "token SECRET") for path in ("/api/v1/repos/o/r", "/api/v1/repos/o/renamed", "/api/v1/repos/o/r2")]
+    assert asked == ["xn--31bq9g.example"] * 3         # each connection's lookup; the Source's own host needs no check's
+
+
+def test_through_real_sockets_a_redirect_to_a_host_in_any_script_is_sent_in_its_idna_form(pair, monkeypatch):
+    a, b = pair
+    asked = at_this_computer(monkeypatch)
+    monkeypatch.setattr(http_, "_local", lambda address, real=http_._local: address != "127.0.0.1" and real(address))   # B stands for a host elsewhere
+    a.redirects["/o/r/avatar"] = f"https://%E4%BE%8B%E3%81%88.example:{b.server_address[1]}/avatar.png"     # 例え.example, escaped
+    source = f"git.example:{a.server_address[1]}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/o/r/avatar", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in b.seen] == [
+        ("/avatar.png", f"xn--r8jz45g.example:{b.server_address[1]}", None)]
+    assert asked == ["git.example", "xn--r8jz45g.example", "xn--r8jz45g.example"]    # A's connection's; B's check's and connection's
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
@@ -3483,20 +3706,24 @@ def test_a_github_page_of_a_file_becomes_the_address_of_the_file(url, becomes):
     assert metadata.resolve(url, "https://code.example.net/o/r/raw/branch/main", "docs") == becomes
 
 
-@pytest.mark.parametrize("url, sent", [
-    ("https://cdn.example/a b.png", "https://cdn.example/a%20b.png"),
-    ("https://cdn.example/docs/截图.png?v=ä 1#top", "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top"),
-    ("https://cdn.example/a%20b.png?x=1&y=a+b", "https://cdn.example/a%20b.png?x=1&y=a+b"),          # written quoted: left as it is
-    ("https://user:pw@cdn.example:8443/a b.png", "https://user:pw@cdn.example:8443/a%20b.png"),
-    ("HTTP://CDN.example/Shot.PNG", "HTTP://CDN.example/Shot.PNG"),                                   # nothing to quote: not a letter of it changes
+@pytest.mark.parametrize("url, sent, asked", [
+    ("https://cdn.example/a b.png", "https://cdn.example/a%20b.png", "https://cdn.example/a%20b.png"),
+    ("https://cdn.example/docs/截图.png?v=ä 1#top", "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top",
+     "https://cdn.example/docs/%E6%88%AA%E5%9B%BE.png?v=%C3%A4%201#top"),
+    ("https://cdn.example/a%20b.png?x=1&y=a+b", "https://cdn.example/a%20b.png?x=1&y=a+b",          # written quoted: left as it is
+     "https://cdn.example/a%20b.png?x=1&y=a+b"),
+    ("https://user:pw@cdn.example:8443/a b.png", "https://user:pw@cdn.example:8443/a%20b.png", None),
+    ("HTTP://CDN.example/Shot.PNG", "HTTP://CDN.example/Shot.PNG",                                   # nothing to quote: not a letter of it changes
+     "HTTP://cdn.example/Shot.PNG"),                                                                  # Http sends its host in lower case
 ])
-def test_a_whole_address_is_written_as_an_address_can_be_sent_too(url, sent):
+def test_a_whole_address_is_written_as_an_address_can_be_sent_too(url, sent, asked):
     assert metadata.resolve(url, RAW) == sent
     seen = []
     _ask(names(Http(opener=recording({}, seen))), metadata.resolve(url, RAW))
-    # and Http asks for it, where it refused the address as written; one with a user part it
-    # refuses whatever its spelling (the review's pass 3, P3-1)
-    assert [u for u, _ in seen] == ([] if "@" in sent else [sent])
+    # and Http asks for it, where it refused the address as written, with its host as it is sent
+    # (the review's pass 6, P6-B1); one with a user part it refuses whatever its spelling (the
+    # review's pass 3, P3-1)
+    assert [u for u, _ in seen] == ([] if asked is None else [asked])
 
 
 def test_a_sync_asks_for_a_readmes_images_on_other_hosts_as_they_are_written(tmp_path, monkeypatch):
