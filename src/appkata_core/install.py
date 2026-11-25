@@ -1414,6 +1414,9 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             raise InstallError(f"installing {kind} files isn't supported on {OS} yet")
         if moving_from and not moving_from.get("installer"):
             _remove_portable_windows(moving_from, app["name"])
+        # the downloaded file's own SHA-256, under its version, beside those of the versions that are kept
+        sums = prev.get("sha256") or {}
+        rec["sha256"] = {**{k["version"]: sums[k["version"]] for k in rec.get("kept", []) if k.get("version") in sums}, rel_version: got}
         log.info("installed %s %s as %s", app["name"], rel_version, kind)
         db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
                 VALUES(?,?,?,?,?,?,?,?)""",
@@ -1443,6 +1446,16 @@ def kept_versions(db: DB, url: str) -> list[str]:
     row = db.one("SELECT record FROM installs WHERE url=?", (url,))
     rec = json.loads(row["record"] or "{}") if row else {}
     return [k["version"] for k in rec.get("kept", []) if os.path.lexists(k["path"])]
+
+
+def installed_sha256(rec: dict, version: str) -> str:
+    """The SHA-256 of the file this version of an installed app was installed from, as AppKata
+    computed it over the download (R10.3.4, R8.4.5.1; CR1, #467): what a reviewer's digest is
+    compared with and what a review's Details say, never what the forge reports now for a file of
+    that name, which the project can have replaced since. The record keeps one for each version it
+    has, so a kept version made current again (:func:`switch_to`) has that of its own file. ""
+    for a copy AppKata didn't download: one it adopted, or one from a package channel."""
+    return (rec.get("sha256") or {}).get(version, "")
 
 
 def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str = "") -> dict:

@@ -8,6 +8,7 @@ Popup {
     id: root
     property var items: []
     property real menuWidth: 300
+    property real maxHeight: 0          // above 0: the rows scroll once they are taller than this; 0: the menu is as tall as its rows
     signal triggered(string key)
     width: menuWidth
     padding: 6
@@ -23,14 +24,26 @@ Popup {
             radius: 15; color: "#000000"; opacity: Theme.dark ? 0.35 : 0.08
         }
     }
-    contentItem: Column {
-        spacing: 2
-        Repeater {
-            model: root.items
-            delegate: Loader {
-                width: root.menuWidth - 12
-                sourceComponent: modelData.type === "separator" ? sep : row
-                property var entry: modelData
+    onAboutToShow: flick.contentY = 0
+    contentItem: Flickable {
+        id: flick
+        objectName: "rows"
+        implicitHeight: root.maxHeight > 0 ? Math.min(rows.height, root.maxHeight) : rows.height
+        contentHeight: rows.height
+        interactive: contentHeight > height
+        clip: contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: flick.interactive ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff; x: flick.width - 4 }    // it shows there is more
+        Column {
+            id: rows
+            spacing: 2
+            Repeater {
+                model: root.items
+                delegate: Loader {
+                    width: root.menuWidth - 12
+                    sourceComponent: modelData.type === "separator" ? sep : row
+                    property var entry: modelData
+                }
             }
         }
     }

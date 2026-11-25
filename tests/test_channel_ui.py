@@ -105,9 +105,14 @@ def test_audit_system_filter(db):
 def test_same_digest_and_source_settings():
     pytest.importorskip("PySide6")                       # the backend module is Qt's (the Windows tests run without it)
     from appkata.backend import _clean_source_settings, _same_digest
+    # R10.3.4 (CR1, #466, the owner's decision): only a whole digest is the same file. This test held
+    # the shortened "3c1f…9e07" as a match, as R10's own example wrote it: 32 of a digest's 256 bits
     full = "3c1f" + "0" * 56 + "9e07"
-    assert _same_digest("3c1f…9e07", full) and _same_digest(full, full) and _same_digest("sha256:" + full, full)
-    assert not _same_digest("3c1f…9e08", full) and not _same_digest("3c…07", full) and not _same_digest("", full)
+    assert _same_digest(full, full) and _same_digest("sha256:" + full, full) and _same_digest(" " + full.upper() + "\n", full)
+    for short in ("3c1f…9e07", "3c1f...9e07", "3c1…e07", "3c1f000", full[:7], full[:32], full[:63], "…009e07", "..." + full[4:],
+                  full[:32] + "…" + full[32:], "3c1f" + "0" * 56 + "9e08", full + "0", "", "sha256:", "…"):
+        assert not _same_digest(short, full), short
+    assert not _same_digest(full[:12], full[:12]) and not _same_digest("", "")       # nor two shortened ones that agree (a `flatpak list` commit)
     assert _clean_source_settings({"flatpak": " flathub  org.x.Y ", "package": ""}) == {"flatpak": "flathub org.x.Y"}
 
 

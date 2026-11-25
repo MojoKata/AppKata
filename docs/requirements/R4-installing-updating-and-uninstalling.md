@@ -3,7 +3,7 @@
 R4.1. AppKata manages only the apps it installed. Each install is recorded with:
 
 - Its Source and version.
-- The asset it came from.
+- The asset it came from, and the SHA-256 of that file as it was downloaded.
 - Its install type (R4.3).
 - Everything needed to uninstall it.
 
@@ -162,6 +162,12 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
 The App Detail panel shows the result as a chip: **Verified** (a signature checked),
 **Checksum** (a checksum only), or **Unverified**. Unverified downloads can still be
 installed. A failed check blocks the install and explains why.
+
+The chip of an installed app is the result of its own install, kept in its install record: a
+later release changes nothing in it. A file that isn't installed yet, the one Install or Update
+would take, has not been checked, so its chip is a forecast and is worded as one: **Checksum
+published** when that file's own release has a digest for it or a checksum file, **No checksum
+published** when it has neither. For an update it shows beside the installed version's chip.
 
 R4.5. **Foreign installs.** An app is **foreign-installed** when AppKata finds it on the system
 but didn't install it. AppKata looks for it in:
