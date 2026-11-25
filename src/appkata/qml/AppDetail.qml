@@ -233,8 +233,15 @@ Rectangle {
                 Pill { visible: root.d.verify === "signed"; text: "Verified" + (root.d.signer ? " · " + root.d.signer : "")       // Authenticode (R15.11)
                        tip: root.ch ? "Signed by " + (root.ch.kind === "flatpak" ? "Flathub" : root.ch.distro || "the distribution") : ""    // R16.3.6
                        icon: "shieldCheck"; color: Theme.okSoft; fg: Theme.ok; u: 0.92 }
-                Pill { visible: root.d.verify === "checksum"; text: "Checksum"; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
-                Pill { visible: root.d.verify === "unverified" && !!root.d.asset; text: "Unverified"; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
+                Pill { visible: root.d.verify === "checksum"; text: "Checksum"; tip: root.d.verifyTip || ""; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
+                Pill { visible: root.d.verify === "unverified"; text: "Unverified"; tip: root.d.verifyTip || ""; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
+                Pill {      // the file Install or Update would take: not checked yet, so a forecast (R4.4)
+                    visible: !!root.d.forecast; text: root.d.forecast === "published" ? "Checksum published" : "No checksum published"
+                    tip: (root.d.forecastVersion || "Its release") + (root.d.forecast === "published" ? " publishes a checksum" : " publishes no checksum")
+                         + " for the file " + (root.installed ? "Update" : "Install") + " would take: "
+                         + (root.d.forecast === "published" ? "the download is checked against it." : "there is nothing to check the download against.")
+                    icon: root.d.forecast === "published" ? "check" : "warn"; color: root.d.forecast === "published" ? Theme.accentSoft : Theme.warnSoft
+                    fg: root.d.forecast === "published" ? Theme.accent : Theme.warn; u: 0.92 }
                 Pill { visible: !!root.d.foreign; text: "Installed outside AppKata"; icon: "info"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
                 Pill {      // the channel and who publishes it (R16.6.1)
                     visible: !!root.ch; text: root.ch ? root.ch.label : ""; icon: root.ch && root.ch.verified ? "shieldCheck" : ""

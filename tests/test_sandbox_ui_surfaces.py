@@ -147,6 +147,43 @@ def test_app_detail_says_sandboxed_or_not_and_what_the_sandbox_gives(ui, be, app
     assert not any("xdg-dbus-proxy" in t for t in seen), seen         # review 2, F12: it named both, whatever was missing
 
 
+# R4.4 (CR1, #465): the chip of an installed app is its own install's result, and the file Install or
+# Update would take gets a forecast, worded as one. The chips were driven by no test.
+CHECK_CHIPS = ("Verified", "Checksum", "Unverified", "Checksum published", "No checksum published")
+NEWER = {"tag": "v2.0", "name": "2.0", "version": "2.0", "date": "2026-02-01T00:00:00Z", "prerelease": False, "notes": "",
+         "html_url": URL + "/releases/v2.0"}
+
+
+def _file(name, digest=""):
+    return {"name": name, "url": "u/" + name, "size": 1, "digest": digest, "content_type": ""}
+
+
+@pytest.mark.parametrize("record, newer, chips", [
+    ({"verified": "unverified"}, _file("demo-2.0-linux-x86_64.tar.gz", "sha256:" + "ab" * 32),
+     {"Unverified": "", "Checksum published": "2.0 publishes a checksum for the file Update would take: the download is checked against it."}),
+    ({"verified": "checksum", "checksum_source": "SHA256SUMS"}, _file("demo-2.0-linux-x86_64.tar.gz"),
+     {"Checksum": "Checked against SHA256SUMS",
+      "No checksum published": "2.0 publishes no checksum for the file Update would take: there is nothing to check the download against."}),
+    ({"verified": "signed", "signer": "Demo Ltd"}, None, {"Verified · Demo Ltd": ""}),
+    ({"verified": "unverified"}, _file("demo-2.0.dmg"), {"Unverified": ""}),            # 2.0 has no file for this computer
+    (None, None, {"No checksum published": "1.0 publishes no checksum for the file Install would take: "
+                                           "there is nothing to check the download against."}),
+], ids=["unverified-and-an-update-with-a-digest", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest", "not-installed"])
+def test_app_detail_shows_what_the_installed_file_was_checked_against_and_a_forecast_for_the_next_one(ui, be, app, record, newer, chips):
+    rels = json.loads(be.db.one("SELECT releases FROM apps WHERE url=?", (URL,))["releases"])
+    if newer:
+        be.db.x("UPDATE apps SET releases=? WHERE url=?", (json.dumps([{**NEWER, "assets": [newer]}] + rels), URL))
+    if record is None:
+        be.db.x("DELETE FROM installs WHERE url=?", (URL,))
+    else:
+        old = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+        be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps({**old, **record}), URL))
+    detail = _show(ui, be)
+    shown = {o.property("text"): o.property("tip") for o in _items(detail) if o.metaObject().className().startswith("Pill")
+             and o.property("visible") is True and str(o.property("text")).split(" · ")[0] in CHECK_CHIPS}
+    assert shown == chips
+
+
 def _tools(host, missing):
     """The host lacks these packages, as support_status() would report it."""
     hints = sb.tools_hints(missing)

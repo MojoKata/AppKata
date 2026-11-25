@@ -501,14 +501,37 @@ class Backend(QObject):
                          "othersLabel": ("Other reviews" if any(o["newer"] for o in others) else "Earlier reviews") + f" ({len(others)})",
                          "score": catalog.trust_score(r)})
         asset = a.get("asset") or {}
-        verify = "checksum" if (asset.get("digest") or self._has_sums(latest, asset)) else "unverified"
-        signer = ""
         irow = self.db.one("SELECT record FROM installs WHERE url=?", (url,)) if a["installed"] else None
         irec = json.loads(irow["record"] or "{}") if irow else {}
-        if irec.get("verified") == "signed":
-            verify, signer = "signed", irec.get("signer", "")
+        # An installed app's chip is what its own install checked, as its record keeps it, whatever
+        # a later release publishes (R4.4; CR1, #465). A copy AppKata adopted was never downloaded,
+        # so nothing of it was checked.
+        verify = signer = verify_tip = ""
+        if irow:
+            verify = irec["verified"] if irec.get("verified") in ("signed", "checksum") else "unverified"
+            how = irec.get("checksum_source", "")
+            if verify == "signed":
+                signer = irec.get("signer", "")
+            elif verify == "checksum" and how:
+                verify_tip = "Checked against " + ("the forge's digest" if how == "forge digest" else how)
+            elif irec.get("verified") == "adopted":
+                verify_tip = "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"
         if a.get("ch"):            # checked by flatpak, apt or dnf against the repository's keys (R16.3.6)
-            verify, signer = "signed", ""
+            verify, signer, verify_tip = "signed", "", ""
+        # The file Install or Update would take hasn't been checked: a forecast, worded as one, of
+        # what its own release publishes for it. That release isn't always the newest one (a
+        # pre-release, a minimum age), so it is found by the file. Nothing is forecast where
+        # neither is offered: a copy installed outside AppKata, a Track only app, a channel's
+        # update, an AppKata that only tells of its releases.
+        forecast = forecast_of = ""
+        if a["installed"]:
+            offered = a["updateTo"] and not a.get("ch") and not (a.get("self") and (not a.get("selfManaged") or a.get("trackOnly")))
+        else:
+            offered = not a["foreign"] and not a.get("trackOnly")
+        if asset and offered:
+            rel = _release_of(releases, asset)
+            forecast = "published" if (asset.get("digest") or self._has_sums(rel, asset)) else "none"
+            forecast_of = rel.get("version", "")
         size = asset.get("size") or 0
         # versions (R5.7.5): stable releases, plus the installed one if it's a prerelease
         include_pre = bool(self.db.get("prereleases", False))
@@ -548,7 +571,8 @@ class Backend(QObject):
                 "sameFileAs": same_as, "notes": _plain_readme(latest.get("notes") or ""),
                 "versions": versions, "versionsShown": max(inst_i, new_i) + 1 + 5,
                 "reviews": revs, "releases": [{"version": r["version"], "date": r["date"], "prerelease": r["prerelease"]} for r in releases[:15]],
-                "verify": verify, "signer": signer, "scope": irec.get("scope", ""),
+                "verify": verify, "signer": signer, "verifyTip": verify_tip, "forecast": forecast, "forecastVersion": forecast_of,
+                "scope": irec.get("scope", ""),
                 "reportedVersion": irec.get("reported", "") if irec.get("reported") and irec.get("reported") != a["installed"] else "",
                 "assetLabel": (asset.get("kind") or "").replace("appimage", "AppImage").replace("tarball", "tar.gz"),
                 "size": f"{size / 1e6:.0f} MB" if size else "", "archived": bool(meta.get("archived")),
@@ -2828,6 +2852,12 @@ class Backend(QObject):
         else:
             self._busy.pop(url, None)
         self.busyChanged.emit()
+
+
+def _release_of(releases: list[dict], asset: dict) -> dict:
+    """The release that `asset`, a file as the catalog offers it, is a file of; {} when none is."""
+    return next((r for r in releases if any(x.get("name") == asset.get("name") and x.get("url") == asset.get("url")
+                                            for x in r.get("assets") or [])), {})
 
 
 def _same_digest(theirs: str, mine: str) -> bool:

@@ -646,3 +646,94 @@ def test_a_rate_limit_hints_at_a_token_and_a_forge_being_maintained_says_only_un
         extra = json.loads(be.db.one("SELECT error_extra FROM apps WHERE url=?", (url,))["error_extra"])
         until = "Rate limited until " + datetime.datetime.fromtimestamp(extra["reset"]).strftime("%H:%M")
         assert shown[url] == until + (" · add a token in Settings" if hint else ""), shown
+
+
+# ---------------------------------------------------------------- what App Detail says of a file's check (R4.4; CR1, #465)
+# How it slipped past: no test read detail()'s "verify" at all, for an installed app or any other.
+SHA = "ab" * 32
+
+
+def file_of(version):
+    return f"demo-{version}-x86_64.AppImage"
+
+
+def published(version, digest="", sums=False, prerelease=False, file=True):
+    """A release of Demo: its AppImage (or no file for this computer), with a forge digest for it or a
+    SHA256SUMS beside it."""
+    r = release(version, file_of(version) if file else f"demo-{version}.dmg", *(["SHA256SUMS"] if sums else []))
+    r["prerelease"] = prerelease
+    r["assets"][0]["digest"] = "sha256:" + digest if digest else ""
+    return r
+
+
+def installed_as(be, version, record):
+    """Demo, installed by AppKata with this install record."""
+    be.db.x("INSERT INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
+            (URL, "Demo", version, "2026-01-01T00:00:00Z", file_of(version), "appimage", json.dumps(record), now()))
+    be.reload()
+
+
+@pytest.mark.parametrize("record, next_digest, chip, tip", [
+    ({"verified": "unverified", "checksum_source": ""}, SHA, "unverified", ""),                  # the finding's case 1
+    ({"verified": "checksum", "checksum_source": "forge digest"}, "", "checksum", "Checked against the forge's digest"),    # case 2
+    ({"verified": "checksum", "checksum_source": "SHA256SUMS"}, "", "checksum", "Checked against SHA256SUMS"),
+    ({"verified": "signed", "signer": "Demo Ltd", "checksum_source": ""}, "", "signed", ""),
+    ({"verified": "adopted"}, SHA, "unverified", "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"),
+    ({}, SHA, "unverified", ""),                                                                  # a record that names no check
+], ids=["unverified-then-a-digest", "forge-digest-then-none", "sums-file-then-none", "signed", "adopted", "no-result"])
+def test_an_installed_apps_chip_is_what_its_own_install_checked_whatever_the_next_release_publishes(be, record, next_digest, chip, tip):
+    """The chip was read from the file of the release Update would take: Checksum for a file that was
+    never checked once a later release had a digest, Unverified for a checked one once it had none."""
+    source(be, published("2.0", digest=next_digest), published("1.0"))
+    installed_as(be, "1.0", record)
+    d = be.detail(URL)
+    assert (d["state"], d["updateTo"], d["asset"]["name"]) == ("update", "2.0", file_of("2.0"))
+    assert (d["verify"], d["verifyTip"], d["signer"]) == (chip, tip, record.get("signer", ""))
+    assert (d["forecast"], d["forecastVersion"]) == ("published" if next_digest else "none", "2.0")     # the update's file, beside it
+
+
+@pytest.mark.parametrize("releases, state", [
+    ([published("1.0", digest=SHA)], "installed"),                                   # nothing newer: no file to forecast
+    ([published("2.0", digest=SHA, file=False), published("1.0", digest=SHA)], "update"),     # 2.0 has no file for this computer
+], ids=["up-to-date", "no-file-in-the-newest"])
+def test_an_installed_app_has_its_own_chip_and_no_forecast_when_there_is_no_file_to_take(be, releases, state):
+    source(be, *releases)
+    installed_as(be, "1.0", {"verified": "unverified", "checksum_source": ""})
+    d = be.detail(URL)
+    assert (d["state"], d["verify"], d["forecast"], d["forecastVersion"]) == (state, "unverified", "", "")
+
+
+@pytest.mark.parametrize("releases, forecast, version", [
+    ([published("1.0", digest=SHA)], "published", "1.0"),
+    ([published("1.0", sums=True)], "published", "1.0"),
+    ([published("1.0")], "none", "1.0"),
+    # the finding's case 4: the newest release is a pre-release, so the file Install takes is 1.0's,
+    # and what is published for it is in 1.0, not in the newest release
+    ([published("2.0-rc1", prerelease=True), published("1.0", sums=True)], "published", "1.0"),
+    ([published("2.0-rc1", sums=True, prerelease=True), published("1.0")], "none", "1.0"),
+    ([published("1.0", digest=SHA, file=False)], "", ""),                             # no file for this computer: nothing to forecast
+], ids=["digest", "sums-file", "nothing", "sums-in-its-own-release", "sums-only-in-a-newer-release", "no-file"])
+def test_a_file_that_isnt_installed_yet_gets_a_forecast_read_from_its_own_release(be, releases, forecast, version):
+    source(be, *releases)
+    d = be.detail(URL)
+    assert d["installed"] == "" and d["verify"] == "" and d["verifyTip"] == ""        # nothing was checked: no result to show
+    assert (d["forecast"], d["forecastVersion"]) == (forecast, version)
+
+
+def found_outside_appkata(be):
+    be.db.x("INSERT INTO foreign_installs(url, location, version, checked_at) VALUES(?,?,?,?)", (URL, "/opt/demo", "1.0", now()))
+
+
+def tracked_only(be):
+    be.db.x("UPDATE sources SET settings=? WHERE url=?", (json.dumps({"track_only": True}), URL))
+
+
+@pytest.mark.parametrize("how, state", [(found_outside_appkata, "foreign"), (tracked_only, "")], ids=["foreign", "track-only"])
+def test_nothing_is_forecast_for_an_app_install_isnt_offered_for(be, how, state):
+    source(be, published("1.0", digest=SHA))
+    assert be.detail(URL)["forecast"] == "published"
+    how(be)
+    be.reload()
+    d = be.detail(URL)
+    assert (d["state"], bool(d["foreign"]), d["trackOnly"]) == (state, how is found_outside_appkata, how is tracked_only)
+    assert d["asset"]["name"] == file_of("1.0") and (d["verify"], d["forecast"], d["forecastVersion"]) == ("", "", "")
