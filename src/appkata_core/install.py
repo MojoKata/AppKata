@@ -567,24 +567,28 @@ RESERVED_COMMANDS = frozenset(sandbox.HOST_COMMANDS) | frozenset((
     "sudo", "su", "doas", "passwd", "ssh", "scp", "sftp", "ssh-add", "ssh-agent", "gpg2"))
 
 
-def command_link_refusal(name: str, link: str, own: tuple[str, ...]) -> str:
+def command_link_refusal(name: str, link: str) -> str:
     """Why AppKata makes no command link called `name` at `link` (R4.3.1.3), or "" when it may: the
     name is kept for the system's own commands (:data:`RESERVED_COMMANDS`), or it already is a
-    command on this computer -- something on the PATH, or in the system's folders, answers to it. The
-    app is then installed with its app-menu entry and no command, and the install says why (the
-    owner's decision on CR1.5-31: the link put an app named python3, readlink or sudo first on the
-    PATH, ahead of the real one). A link of AppKata's own at `link` (one leading into `own`, the
-    install folders) doesn't count: that is this app's command from an earlier install. The folders
-    after it are still looked in, so a command of that name further on the PATH is found while the
-    app's own link is in place, first on it (AppKata's start asks this of a link it made,
-    :func:`refresh_command_link`)."""
+    command on this computer -- something elsewhere on the PATH, or in the system's folders,
+    answers to it. The app is then installed with its app-menu entry and no command, and the
+    install says why (the owner's decision on CR1.5-31: the link put an app named python3, readlink
+    or sudo first on the PATH, ahead of the real one). What is at `link` itself doesn't count,
+    whatever it is: a link of AppKata's own there is this app's command from an earlier install,
+    and anything else there is the user's, which :func:`_link_refusal` answers for (an install or
+    update stops at it, :func:`_check_before_placing`). The folders after it are still looked in,
+    so a command of that name further on the PATH is found while the app's own link is in place,
+    first on it (AppKata's start asks this of a link it made, :func:`refresh_command_link`).
+    #689's review, P1-B2: the user's own program at `link`, its folder on the PATH, answered as a
+    command, so an install went on without a link where the same file off the PATH stopped it; the
+    owner decided that it stops the install either way, as it did before the name check."""
     if name in RESERVED_COMMANDS:
         return f"{name} is a name kept for the system's own command"
     folders = [d for d in os.environ.get("PATH", "").split(os.pathsep) + (sandbox.HOST_PATH + ":/usr/sbin:/sbin").split(":") if d]
     for folder in folders:
         found = shutil.which(name, path=folder)
         if found and not (os.path.realpath(os.path.dirname(found)) == os.path.realpath(os.path.dirname(link))
-                          and os.path.basename(found) == os.path.basename(link) and _points_into(link, own)):
+                          and os.path.basename(found) == os.path.basename(link)):
             return f"{name} is already a command on this computer ({found})"
     return ""
 
@@ -832,13 +836,14 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         # Nor is a place the user has taken (a file, or a link that isn't AppKata's) an error here:
         # the record says why there is no link, and the place is left alone. An install, an update
         # and a switch to a kept version stop at such a place before they change anything
-        # (_check_before_placing). By this step the launcher is rewritten, and the launcher is the
+        # (_check_before_placing), whatever the PATH (#689's review, P1-B2), so it is the reason
+        # here too. By this step the launcher is rewritten, and the launcher is the
         # enforcement (R17.4): a sandbox change and the startup pass, which come straight here,
         # stopped with the new launcher and menu entry on disk and their record not stored, so
         # AppKata started the app by the old record (CR1.3-46), and taking a failed install back
         # stopped half-way at the same place.
         link = os.path.join(portable.command_folder, app_id)
-        if why := command_link_refusal(app_id, link, own) or _link_refusal(link, own):
+        if why := _link_refusal(link, own) or command_link_refusal(app_id, link):
             rec["commandRefused"] = why
             log.info("no command link %s: %s", link, why)
         else:
@@ -1080,9 +1085,11 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
     if portable.app_menu and not prev.get("selfInstalled") and not tool_maybe:
         _menu_exec(_menu_link_path(app_id))
     if portable.command_dir:
-        link = os.path.join(portable.command_folder, app_id)
-        own = (portable.root, os.path.dirname(target))
-        if not command_link_refusal(app_id, link, own) and (why := _link_refusal(link, own)):
+        # Something of the user's at the command link's place stops it, whether or not a link would
+        # be made for the name (R4.3.1.3; #689's review, P1-B2: their own program there, its folder
+        # on the PATH, was taken for a command that is already on this computer, and the install
+        # went on without the link).
+        if why := _link_refusal(os.path.join(portable.command_folder, app_id), (portable.root, os.path.dirname(target))):
             raise InstallError(why)
 
 
@@ -1620,7 +1627,7 @@ def refresh_command_link(db: DB, app: dict, portable: "Portable") -> bool:
         app_id, own = app_id_of(rec, app), (p.root, os.path.dirname(rec["target"]))
         link = os.path.join(p.command_folder, app_id)
         links = list(rec.get("links", []))
-        if why := command_link_refusal(app_id, link, own) or _link_refusal(link, own):
+        if why := _link_refusal(link, own) or command_link_refusal(app_id, link):
             if link in links:
                 _remove_links([link], own)
                 links.remove(link)

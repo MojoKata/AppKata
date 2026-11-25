@@ -423,7 +423,7 @@ def test_the_install_dialog_offers_no_command_checkbox_to_tick_for_a_name_no_lin
     monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
     plan = _real_plan(be, monkeypatch, name)
     slug = install.slug(name)
-    want = install.command_link_refusal(slug, str(tmp_path / "bin" / slug), (str(tmp_path / "bin" / "apps"),))
+    want = install.command_link_refusal(slug, str(tmp_path / "bin" / slug))
     assert plan["portable"].get("commandRefusal") == want and plan["portable"]["command"] == slug and plan["portable"]["commandLink"] is True
     assert bool(want) is (name != "Demo")
     if name in ("python3", "Git"):
@@ -457,12 +457,21 @@ def test_an_installed_apps_own_command_link_does_not_disable_its_checkbox(ui, be
     dlg = _dialog(ui, "install")
     _call(dlg, "openWith", plan, True)
     assert dlg.findChild(QObject, "commandLinkBox").property("enabled") is True
-    # and someone else's `demo` there is a refusal, as it is for the install
+    # and someone else's `demo` there is no refusal either: the install stops at it with its error,
+    # on the PATH as off it (R4.3.1.3; #689's review, P1-B2: it was taken for a command already on
+    # this computer, the checkbox was unticked, and the install went on without a link)
     os.remove(tmp_path / "bin" / "demo")
     (tmp_path / "bin" / "demo").write_text("#!/bin/sh\n")
     (tmp_path / "bin" / "demo").chmod(0o755)
     plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
-    assert plan["portable"]["commandRefusal"] == f"demo is already a command on this computer ({tmp_path / 'bin' / 'demo'})"
+    assert plan["portable"]["commandRefusal"] == ""
+    # while a `demo` elsewhere on the PATH is one
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    os.rename(tmp_path / "bin" / "demo", elsewhere / "demo")
+    monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{elsewhere}")
+    plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
+    assert plan["portable"]["commandRefusal"] == f"demo is already a command on this computer ({elsewhere / 'demo'})"
 
 
 # ---------------------------------------------------------------- an installed app's own folder (CR1.3-12)

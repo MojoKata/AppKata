@@ -1743,17 +1743,15 @@ class Backend(QObject):
         the system's own. It is the installer's own answer (:func:`install.command_link_refusal`),
         asked before the install for the install dialog, which showed a checkbox to tick for a
         link that would not be made, the reason coming only in the notice afterwards (CR1.9-31).
-        The app's own command link, from an earlier install, is no refusal. Linux only: Windows'
-        command links are `.cmd` files (R15.6)."""
+        What is at the link's own place is no refusal: the app's own command link, from an earlier
+        install, or something of the user's, at which the install stops with its error instead
+        (#689's review, P1-B2). Linux only: Windows' command links are `.cmd` files (R15.6)."""
         from appkata_core.platform import OS, command_dir_default
         if OS != "linux":
             return ""
-        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
-        rec = json.loads(row["record"] or "{}") if row else {}
         name = self._app_id(url)
         folder = install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder
-        return install.command_link_refusal(name, os.path.join(folder, name),
-                                            (self._app_options(url).root, os.path.dirname(rec.get("target") or "")))
+        return install.command_link_refusal(name, os.path.join(folder, name))
 
     @staticmethod
     def _command_note(why: str, before: str = "") -> str:

@@ -96,7 +96,7 @@ which needs no extra rights, R15.5.)
 R4.3.1.3. **Command links.** When on (the default), AppKata puts a link named after the app
 (`localsend`) in the command links folder (default `~/bin`), so the app can be started
 from a terminal. On Linux no link is made for a name that is already a command on this computer
-(something on the `PATH`, or in the system's own folders, answers to it), or that is one of a short
+(something elsewhere on the `PATH`, or in the system's own folders, answers to it), or that is one of a short
 list kept for the system's own commands whether or not they are installed (`python3`, `sudo`, `ssh`,
 `git`, the commands AppKata and its sandbox launchers run by name, R17.4): the name is the app's
 publisher's to pick, and `~/bin` comes first on the `PATH`. Such an app is installed with its
@@ -104,7 +104,9 @@ app-menu entry and no command, and the install says why; its option stays on, so
 at a later update or start of AppKata once the name is free, and a link whose name has since become
 a command is removed then. AppKata never replaces or removes a file there that isn't a link it made
 (a link that leads into the install folder), whether or not it made a link at that place before: an
-install or update stops with an error instead, and uninstalling leaves it. A change to an installed
+install or update stops with an error instead ("… exists and isn't a link AppKata made; not
+replacing it"), whatever the `PATH` and whether or not that file answers as a command, and
+uninstalling leaves it. A change to an installed
 app's sandbox, and the launcher AppKata rewrites at its start (R17.4), don't stop there: they are
 made in full, without the command link, which is made at a later start or update once its place is
 free. On Windows a command link is a `<app>.cmd` file (R15.6).

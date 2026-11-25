@@ -777,7 +777,7 @@ def test_no_command_link_is_ever_named_after_a_command_a_launcher_or_appkata_run
     assert set(sandbox.HOST_COMMANDS) <= install.RESERVED_COMMANDS
     assert {"python3", "bwrap", "xdg-dbus-proxy", "readlink", "mktemp", "sudo", "ssh", "git", "gpg", "pkexec", "sh"} <= install.RESERVED_COMMANDS
     for name in sorted(install.RESERVED_COMMANDS):
-        why = install.command_link_refusal(name, "/nonexistent/bin/" + name, ("/nonexistent/apps",))
+        why = install.command_link_refusal(name, "/nonexistent/bin/" + name)
         assert why == f"{name} is a name kept for the system's own command", name
 
 
@@ -1191,30 +1191,51 @@ def test_appkatas_start_makes_a_command_link_once_its_name_is_free_and_removes_o
 
 
 @linux_only
-@pytest.mark.parametrize("on_path", [False, True])
-def test_a_link_that_is_not_appkatas_is_never_replaced_by_a_command_link(env, server, tmp_path, monkeypatch, on_path):
+@pytest.mark.parametrize("path", ["off the PATH", "on the PATH", "on the PATH, and a command of that name further on"])
+@pytest.mark.parametrize("theirs", ["a link to their own program", "their own program"])
+@pytest.mark.parametrize("name", ["Demo Tool", "git"])
+def test_a_file_of_the_users_at_the_command_links_place_stops_the_install_whatever_the_path(env, server, tmp_path, monkeypatch, name, theirs, path):
     # CR1.5-31, R4.3.1.3: "AppKata never replaces a file there that isn't a link it made", and
     # `_link` took any symbolic link for one it made: the user's own ~/bin/demo-tool -> /opt/... was
-    # replaced. Only a link that leads into the install folder is AppKata's. On the PATH, the
-    # user's link is a command already, so the app is installed without one; off it, the install
-    # stops as it does for a file.
-    cmd, theirs = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
+    # replaced. Only a link that leads into the install folder is AppKata's.
+    # #689's review, P1-B2: with the folder on the PATH, the user's own program there answered as a
+    # command already on this computer, so the install went on without a link and said so, where
+    # off the PATH the same file stopped it (and a reserved name never looked at the place). The
+    # owner decided (option B) that it stops the install with the error whatever the PATH, as
+    # before the name check; "already a command" is for a name something elsewhere answers to, and
+    # once the place is free again that, or a reserved name, is the reason there is no link.
+    slug = install.slug(name)
+    cmd, program = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
     cmd.mkdir()
-    theirs.parent.mkdir()
-    theirs.write_text("#!/bin/sh\necho theirs\n")
-    theirs.chmod(0o755)
-    (cmd / "demo-tool").symlink_to(theirs)
-    if on_path:
+    program.parent.mkdir()
+    program.write_text("#!/bin/sh\necho theirs\n")
+    program.chmod(0o755)
+    if path != "off the PATH":
         monkeypatch.setenv("PATH", f"{cmd}:{os.environ['PATH']}")
+    if path.endswith("further on"):
+        monkeypatch.setenv("PATH", f"{os.environ['PATH']}:{program.parent}")
+        program = program.rename(program.parent / slug)
+    if theirs == "a link to their own program":
+        (cmd / slug).symlink_to(program)
+    else:
+        shutil.copy(program, cmd / slug)
+    mine = os.readlink(cmd / slug) if theirs.startswith("a link") else (cmd / slug).read_text()
     a = _appimage(server)
     p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
-    if on_path:
-        rec = install.install(env, APP, a, "appimage", [a], portable=p)
-        assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({cmd / 'demo-tool'})"
+    before = _left(tmp_path, env)
+    with pytest.raises(install.InstallError, match=re.escape(f"{cmd / slug} exists and isn't a link AppKata made; not replacing it")):
+        install.install(env, {**APP, "name": name}, a, "appimage", [a], portable=p)
+    assert _changed(before, _left(tmp_path, env)) == {}                  # nothing of the install, nothing of theirs touched
+    assert (os.readlink(cmd / slug) if theirs.startswith("a link") else (cmd / slug).read_text()) == mine
+    (cmd / slug).unlink()                                               # the place is free
+    rec = install.install(env, {**APP, "name": name}, a, "appimage", [a], portable=p)
+    if slug in install.RESERVED_COMMANDS:
+        assert rec["commandRefused"] == f"{slug} is a name kept for the system's own command"
+    elif path.endswith("further on"):                                   # the name is a command elsewhere
+        assert rec["commandRefused"] == f"{slug} is already a command on this computer ({program})"
     else:
-        with pytest.raises(install.InstallError, match="isn't a link AppKata made"):
-            install.install(env, APP, a, "appimage", [a], portable=p)
-    assert os.readlink(cmd / "demo-tool") == str(theirs)
+        assert "commandRefused" not in rec and os.readlink(cmd / slug) == rec["exec"]
+    assert os.path.lexists(cmd / slug) is ("commandRefused" not in rec)
 
 
 def test_the_install_notice_says_why_no_command_was_added_and_says_it_once():
@@ -1440,11 +1461,12 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
     # and uninstalling removed it. A link is AppKata's when it leads into the install folder,
     # wherever its path is written down. So: the user puts something of their own where the
     # command link was (a link to their program, a link to nothing, a file), and nothing AppKata
-    # then does to the app touches it. On the PATH, a link to a program is a command already, so
-    # the app goes on without one (R4.3.1.3); otherwise the update stops with the error, and
-    # changes nothing, and a launcher's rewrite (a sandbox change, or the start's for a launcher
-    # that isn't today's) is made without the command, as AppKata's start is (#689's review, P1-1:
-    # "the next start" here was rewrite_launcher by hand; it is the backend's start pass now).
+    # then does to the app touches it. The update stops with the error, on the PATH or off it
+    # (R4.3.1.3; #689's review, P1-B2: on it, a link to a program was taken for a command already
+    # on this computer, and the update went on without one), and changes nothing, and a
+    # launcher's rewrite (a sandbox change, or the start's for a launcher that isn't today's) is
+    # made without the command, as AppKata's start is (#689's review, P1-1: "the next start" here
+    # was rewrite_launcher by hand; it is the backend's start pass now).
     cmd, their_program = tmp_path / "cmd", tmp_path / "opt" / "their-tool"
     their_program.parent.mkdir()
     their_program.write_text("#!/bin/sh\necho theirs\n")
@@ -1474,10 +1496,6 @@ def test_what_the_user_put_where_a_command_link_was_is_never_removed_or_replaced
     if then == "uninstall":
         act()
         assert env.one("SELECT * FROM installs") is None and not os.path.lexists(tmp_path / "apps" / "demo-tool")
-    elif on_path and theirs == "a link to their own program":
-        rec = act()
-        assert rec["commandRefused"] == f"demo-tool is already a command on this computer ({link})"
-        assert str(link) not in rec["links"]
     elif then in ("a launcher rewrite", "the next start"):      # no install: made in full, without the command (CR1.3-46)
         rec = act()
         assert rec["commandRefused"] == f"{link} exists and isn't a link AppKata made; not replacing it"
@@ -1980,9 +1998,7 @@ def test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_link
     assert os.access(rec["exec"], os.X_OK)                                                  # what AppKata's Open starts
     assert _menu_starts(_exec_words(_entry(entry)["Desktop Entry"]["Exec"])[1]) == rec["exec"]    # and what the menu starts
     assert (os.readlink(link) if link.is_symlink() else link.read_text()) == kept_as and str(link) not in rec["links"]
-    assert rec["options"]["commandLink"] is True and rec["commandRefused"] == (
-        f"demo-tool is already a command on this computer ({link})" if on_path and theirs == "a link to their own program"
-        else f"{link} exists and isn't a link AppKata made; not replacing it")
+    assert rec["options"]["commandLink"] is True and rec["commandRefused"] == f"{link} exists and isn't a link AppKata made; not replacing it"
     link.unlink()                                                                           # the place is free again
     rec = install.rewrite_launcher(env, {**APP, "sandbox": after}, p)
     assert "commandRefused" not in rec and os.readlink(link) == rec["exec"] and str(link) in rec["links"]
