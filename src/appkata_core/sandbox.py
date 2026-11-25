@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import time
 import unicodedata
+from typing import NamedTuple
 
 from .platform import OS, data_dir
 
@@ -539,19 +540,39 @@ def grants_from_config(config: dict) -> dict:
 
 # -------------------------------------------------------------------------- protected folders (R17.3.1)
 
-def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
+class Own(NamedTuple):
+    """AppKata's own folders beside the install folder of the app a grant is judged for, as Settings
+    and the install records name them (this module reads neither): its callers pass one wherever
+    they pass `apps_root` (R17.3.1)."""
+    commands: tuple[str, ...] = ()     # the command links folder of Settings, and each folder a command link is in
+
+
+def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a grant may never share, nor anything inside or above
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
     runtime folder (the real, unfiltered session bus lives there, in a login session; where else
     it can be is :func:`bus_files`'s). The list is of the places known to AppKata, kept by hand: it
     is not complete, and a program it doesn't know can read its code from somewhere else in the
-    home (R17.3.1 and R17.17 say so)."""
-    from .platform import apps_dir
+    home (R17.3.1 and R17.17 say so).
+
+    AppKata's own areas are the app's install folder (`apps_root`), the default one whatever Settings
+    names, and the command links folders (`own`, and the default one): the links are on PATH, as
+    ~/.local/bin is, and each starts an app's launcher or program. CR1.5-37: the list had the app's
+    install folder alone, so ~/bin was refused only as the folder above the default ~/bin/apps; with
+    the install folder set elsewhere ~/bin and ~/bin/apps, where the earlier installs' launchers
+    still are, could be granted, and a command links folder of the user's own (~/tools) always
+    could."""
+    from .platform import apps_dir, command_dir_default
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
-    roots = [(apps_root or apps_dir(), "AppKata's installed apps"),
-             (data_dir(), "AppKata's own data and the apps' private homes"),
+    roots = [(r, "AppKata's installed apps") for r in dict.fromkeys([apps_root or apps_dir(), apps_dir()])]
+    # A command links folder that is the home folder, or above it, adds nothing: that folder is never
+    # shared as it is, and as a root it would make every folder of the home one of the links'.
+    above_home = lambda d: (os.path.realpath(home) + os.sep).startswith(os.path.realpath(d).rstrip(os.sep) + os.sep)      # noqa: E731
+    commands = sorted({os.path.expanduser(c) for c in (*(own or Own()).commands, command_dir_default()) if c})
+    roots += [(c, "the command links folder, which is on your PATH") for c in commands if not above_home(c)]
+    roots += [(data_dir(), "AppKata's own data and the apps' private homes"),
              (h(".config", "autostart"), "autostart entries"),
              (h(".config", "autostart-scripts"), "autostart scripts"),
              (h(".config", "systemd"), "systemd user units"),
@@ -757,7 +778,7 @@ DOTDOT = "not a full path (it has a .. in it: name the folder it leads to)"
 BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
 
-def protected_folder(path: str, apps_root: str | None = None) -> str:
+def protected_folder(path: str, apps_root: str | None = None, own: Own | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
     since sharing a parent shares everything beneath it — the system's own places the same way
@@ -784,7 +805,7 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     if p == "/" or home.startswith(p + os.sep):
         return "everything, your home folder included"
     sockets, readable = bus_files()
-    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in sockets]:
+    for root, what in _protected_roots(apps_root, own) + [(s, "the session bus's socket") for s in sockets]:
         r = os.path.realpath(root)
         if p == r or p.startswith(r + os.sep):
             return what
@@ -889,7 +910,7 @@ def _links_on_the_way(full: str) -> list[str]:
     return links
 
 
-def refused_folders(gs: dict, apps_root: str | None = None) -> dict[str, str]:
+def refused_folders(gs: dict, apps_root: str | None = None, own: Own | None = None) -> dict[str, str]:
     """Each folder of the grant set `gs` that is not shared, and why (R17.3.1): a never-shared one
     (:func:`protected_folder`), and one that a link in another folder of the set is on the way to.
     A link in a folder the app is given is the app's to make: with ~/Projects read-write and
@@ -900,7 +921,7 @@ def refused_folders(gs: dict, apps_root: str | None = None) -> dict[str, str]:
     link is judged by where it lies, not by where it leads or who made it: the user's own link in
     a granted folder is refused the same way, and the folder it names can be granted itself."""
     gs = normalize(gs)
-    out = {p: why for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root))}
+    out = {p: why for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root, own))}
     shared = {p: os.path.realpath(os.path.expanduser(p)) for p in gs["folders"] if p != "$cwd" and p not in out}
     for p in sorted(shared):
         links = _links_on_the_way(os.path.expanduser(p))
@@ -911,11 +932,11 @@ def refused_folders(gs: dict, apps_root: str | None = None) -> dict[str, str]:
     return out
 
 
-def strip_protected(gs: dict, apps_root: str | None = None) -> tuple[dict, list[tuple[str, str]]]:
+def strip_protected(gs: dict, apps_root: str | None = None, own: Own | None = None) -> tuple[dict, list[tuple[str, str]]]:
     """A grant set without the folders that are not shared (:func:`refused_folders`), and [(path,
     why)] for each one dropped."""
     gs = normalize(gs)
-    refused = sorted(refused_folders(gs, apps_root).items())
+    refused = sorted(refused_folders(gs, apps_root, own).items())
     for p, _ in refused:
         gs["folders"].pop(p)
     return gs, refused
@@ -1058,12 +1079,13 @@ _CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep the s
 _DEVICE_CHIP = {"camera": ("Camera", "panel")}
 
 
-def summary_chips(gs: dict, apps_root: str | None = None, template: str | None = None) -> list[list]:
+def summary_chips(gs: dict, apps_root: str | None = None, template: str | None = None, own: Own | None = None) -> list[list]:
     """Plain-language chips [label, icon, tone] describing a grant set, for the install card, App
     Detail and the Sandbox dialog (A20/A21/C11). tone is "ok", "warn" or "track". `apps_root`: the
     app's install root, so a refused folder is the same one the launcher refuses (round two, R9: the
     chips checked the default root while the launcher checked the app's, and disagreed under a custom
-    install folder). `template`: the template the set is named after; one made for a folder the user
+    install folder), and `own` AppKata's other folders, as the launcher is told them (CR1.5-37).
+    `template`: the template the set is named after; one made for a folder the user
     picks says "No folder yet" until it has one (review 2, F10)."""
     gs = normalize(gs)
     if gs["level"] == "off":
@@ -1071,7 +1093,7 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
     out = [["Strict · private home", "lock", "ok"] if gs["level"] == "strict" else ["Standard", "shieldCheck", "ok"]]
     if template in FOLDER_TEMPLATES and gs["level"] != "strict" and not any(p != "$cwd" for p in gs["folders"]):
         out.append(["No folder yet", "folder", "warn"])
-    refused = refused_folders(gs, apps_root)
+    refused = refused_folders(gs, apps_root, own)
     for path, mode in sorted(gs["folders"].items()):
         nice = "The folder it's run in" if path == "$cwd" else path
         if why := refused.get(path):                     # never shared, whoever asked (R17.3.1)
@@ -1101,9 +1123,9 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
     return out
 
 
-def summary(gs: dict, apps_root: str | None = None, template: str | None = None) -> list[str]:
+def summary(gs: dict, apps_root: str | None = None, template: str | None = None, own: Own | None = None) -> list[str]:
     """The chip labels alone (for comparisons and compact displays)."""
-    return [c[0] for c in summary_chips(gs, apps_root, template)]
+    return [c[0] for c in summary_chips(gs, apps_root, template, *(() if own is None else (own,)))]
 
 
 def level_of(gs: dict) -> str:
@@ -2869,13 +2891,15 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None, apps_root: str | None = None,
                    seccomp: str | None = None, log_path: str | None = None, forward: str | None = None,
                    shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True,
-                   path: str | None = None) -> str:
+                   path: str | None = None, own: Own | None = None) -> str:
     """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (R17.4). The launcher
     does no run-time policy resolution; its text is exactly what runs (shown in App Detail, audited).
 
     `appdir`: the app's current version folder (the extracted dir for an AppImage). `exec_rel`: the
     program, relative to `appdir`. `appimage_path`: the kept `.AppImage` (sets APPIMAGE), or None.
-    `apps_root`: the install root, which a CLI tool's working-directory grant must never expose.
+    `apps_root`: the install root, which a CLI tool's working-directory grant must never expose, and
+    `own`: AppKata's other folders, which it must not either (:class:`Own`); no grant shares one, and
+    no file argument hands one over.
     `seccomp`: the terminal-injection filter (:func:`write_seccomp_filter`); without one the program
     runs in a new session instead, safe but cut off from its terminal, and so does the bus proxy,
     which takes the same filter. `log_path`: the app's log
@@ -2891,7 +2915,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     (:func:`host_path`); the PATH it is started with never decides what runs out there.
     """
     from . import applog
-    gs, refused = strip_protected(gs, apps_root)
+    gs, refused = strip_protected(gs, apps_root, own)
     q = shlex.quote
     home = sandbox_home(app_id)
     strict = gs["level"] == "strict"
@@ -2906,7 +2930,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         # The same folders a grant may never share (R17.3.1), plus the private homes and the runtime
         # folder as the launcher sees it: "$rt" holds the real session bus, and a bind of it would land
         # after the proxy socket's and put the unfiltered bus back.
-        roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]
+        roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root, own)]
         protected = " ".join(q(os.path.realpath(r)) for r in roots) + ' "$rt"'
         # ...and the system's own places, with what is under the media mounts left to the tool
         system = " ".join(q(r) for r, _ in _system_roots())
@@ -2928,7 +2952,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
         # what no argument hands over (R17.3.1): as written, for the helper to resolve at each launch
-        never = " ".join(q(r) for r in dict.fromkeys([sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]))
+        never = " ".join(q(r) for r in dict.fromkeys([sandboxes_root()] + [r for r, _ in _protected_roots(apps_root, own)]))
         fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible),
                                                           never=never, name=q(name))
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
@@ -3270,20 +3294,21 @@ def launcher_path(app_id: str, apps_root: str) -> str:
 
 
 def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                  appimage_path: str | None = None) -> str:
+                  appimage_path: str | None = None, own: Own | None = None) -> str:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
     run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
     bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant, where its
-    folder leads, and where AppKata's own session bus has its socket if in it (R17.3.1) -- and the startup pass can tell a
+    folder leads, and where AppKata's own session bus has its socket if in it (R17.3.1), and AppKata's
+    own folders, which are in every launcher's never-shared list (`apps_root`, `own`) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""
     return build_launcher(app_id, name, appdir, exec_rel, gs, appimage_path, apps_root,
                           seccomp_path() if seccomp_filter() is not None else None,
                           forward=forward_path(), shims=shims_dir(), inner_sandbox=nested_userns_works(),
-                          bus_filter=have_bus_filter(), path=host_path(apps_root))
+                          bus_filter=have_bus_filter(), path=host_path(apps_root), own=own)
 
 
 def _marker_network(gs: dict) -> bool:
@@ -3314,7 +3339,7 @@ def helpers_current(app_id: str, gs: dict) -> bool:
 
 
 def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                   appimage_path: str | None = None) -> str:
+                   appimage_path: str | None = None, own: Own | None = None) -> str:
     """Write `<apps_root>/<app>/run`, the identity marker and the shared helpers it calls, and return
     the launcher path (R17.4)."""
     write_flatpak_info(app_id, network=_marker_network(gs))
@@ -3331,7 +3356,7 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # as the paths' own bytes, UTF-8 or not (#689's review, P4-1: written as text, an install folder
     # whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error), by the
     # helper that writes every file here, which removes the file beside when the write fails.
-    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path)), 0o755)
+    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path, own)), 0o755)
 
 
 def _write_whole(path: str, data: bytes, mode: int) -> str:

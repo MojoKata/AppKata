@@ -59,14 +59,15 @@ class Env:
                     "LANG": "C.UTF-8"}
         self.machines = 0
 
-    def app(self, app_id: str, gs: dict) -> str:
-        """Install the fake app and write its launcher; returns the launcher path."""
+    def app(self, app_id: str, gs: dict, own: sb.Own | None = None) -> str:
+        """Install the fake app and write its launcher; returns the launcher path. `own`: AppKata's
+        other folders, as Settings and the other installs would name them (sandbox.Own)."""
         appdir = self.home / "apps" / app_id / "1.0"
         (appdir / "bin").mkdir(parents=True, exist_ok=True)
         exe = appdir / "bin" / "app"
         exe.write_text(APP)
         exe.chmod(0o755)
-        return sb.write_launcher(app_id, app_id.title(), str(self.home / "apps"), str(appdir), "bin/app", gs)
+        return sb.write_launcher(app_id, app_id.title(), str(self.home / "apps"), str(appdir), "bin/app", gs, own=own)
 
     def on_a_machine_with(self, launcher: str, path: str) -> str:
         """`launcher` as AppKata writes it on a machine whose command folders are `path`: a copy with

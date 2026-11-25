@@ -479,6 +479,7 @@ class Portable:
     scope: str = "me"             # Windows: "me" or "everyone" (R15.4)
     folder_everyone: str = ""     # Windows: where apps for everyone go (default C:\Programs)
     motw: bool = False            # Windows: Mark of the Web on downloads (R15.11.1)
+    others: sandbox.Own = sandbox.Own()      # AppKata's folders beyond this app's own, for `own` below (the backend's to say)
 
     @property
     def root(self) -> str:
@@ -490,6 +491,15 @@ class Portable:
     def command_folder(self) -> str:
         """The command links folder as a path (R4.3.1.3), or "" when the app gets no command link."""
         return _folder(self.command_dir) if self.command_dir else ""
+
+    @property
+    def own(self) -> sandbox.Own:
+        """AppKata's own folders that no sandboxed app is given, beside `root` (R17.3.1): what the
+        chips and the launcher are told with it. They are `others`, which whoever knows Settings
+        and the other installs fills in, and the folder this app's own command link goes in: the
+        command links folder was in no never-shared list, so one set elsewhere than ~/bin could be
+        granted, or a tool run in it given it (CR1.5-37)."""
+        return self.others._replace(commands=tuple(dict.fromkeys(c for c in (*self.others.commands, self.command_folder) if c)))
 
 
 def _where_it_is(rec: dict, portable: "Portable") -> "Portable":
@@ -955,7 +965,7 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
             sandbox.remove_identity(app_id)        # the marker goes with the launcher (R10, round four R4-7)
         return ""
     appdir, exec_rel, appimage_path = _launcher_program(rec, target)
-    launcher = sandbox.write_launcher(app_id, app["name"], portable.root, appdir, exec_rel, gs, appimage_path)
+    launcher = sandbox.write_launcher(app_id, app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own)
     if app.get("url"):
         sandbox.record_home_owner(app_id, app["url"])      # the home outlives an uninstall that keeps it (F19)
     rec["sandbox"] = sandbox.to_json(gs)
@@ -987,7 +997,7 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
         return False
     portable = _where_it_is(rec, portable)
     appdir, exec_rel, appimage_path = _launcher_program(rec, rec["target"])
-    want = os.fsencode(sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path))
+    want = os.fsencode(sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own))
     try:
         with open(lp, "rb") as f:
             if f.read() != want:

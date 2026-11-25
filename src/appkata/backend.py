@@ -834,7 +834,7 @@ class Backend(QObject):
             img_mb = (next((c["size"] for c in out["candidates"] if c.get("kind") == "appimage"), 0) or 0) / 1e6
             out["sandbox"] = {"applicable": True, "source": r.get("source", "default"),
                               "template": r.get("template", "strict"), "level": sandbox.level_of(gs),
-                              "chips": sandbox.summary_chips(gs, self._app_options(url).root, r.get("template")) + sandbox.refused_chips(r.get("refused")),
+                              "chips": sandbox.summary_chips(gs, eff.root, r.get("template"), eff.own) + sandbox.refused_chips(r.get("refused")),
                               "grants": gs, "suggestsOff": self._suggests_off(url),
                               "templates": self.sandboxTemplates,
                               "isCli": self._is_cli(url), "appImage": chosen_card["kind"] == "appimage",
@@ -849,7 +849,7 @@ class Backend(QObject):
                 rk = self._resolved_sandbox(url, kind=chosen_card["kind"], is_cli=k == "cli") or {}
                 gk = rk.get("grants") or gs
                 by_kind[k] = {"template": rk.get("template", "strict"), "level": sandbox.level_of(gk), "source": rk.get("source", "default"),
-                              "chips": sandbox.summary_chips(gk, self._app_options(url).root) + sandbox.refused_chips(rk.get("refused"))}
+                              "chips": sandbox.summary_chips(gk, eff.root, own=eff.own) + sandbox.refused_chips(rk.get("refused"))}
             out["sandbox"]["byKind"] = by_kind
             out["kind"] = {"detected": self._detected_kind(url), "choice": self._install_settings(url).get("cliKind") or ""}
         else:
@@ -1729,6 +1729,20 @@ class Backend(QObject):
                                 keep=int(p.get("keepVersions", 2) or 0), scope=p.get("installFor") or "me",
                                 folder_everyone=p.get("installDirEveryone") or "")
 
+    def _own_folders(self) -> sandbox.Own:
+        """AppKata's own folders that no sandboxed app is given, beyond the install folder of the app
+        asked about (R17.3.1, sandbox.Own): the command links folder Settings names, whether or
+        not the app has a link there (the other apps' links are), and each folder an installed app's
+        command link is in today, which is an earlier setting's until the app is next updated
+        (CR1.5-37: no list had the command links folder, so one set elsewhere than ~/bin could be
+        granted to an app, which then replaces a command the user runs)."""
+        from appkata_core.platform import command_dir_default
+        commands = {install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder}
+        for row in self.db.all("SELECT record FROM installs"):
+            rec = json.loads(row["record"] or "{}")
+            commands |= {os.path.dirname(link) for link in rec.get("links", []) if os.path.dirname(link) != rec.get("target")}
+        return sandbox.Own(commands=tuple(sorted(commands)))
+
     def _recommended(self, url: str) -> dict:
         """Install options recommended in the Trusts' AppKata.md files (R10.3.1): for each
         option, yours first, then the highest-Score Trust's, then by name."""
@@ -1747,6 +1761,7 @@ class Backend(QObject):
         """The portable options for one app: its own (saved at install), else a Trust's recommendation,
         else Settings (R4.3.1.6)."""
         p = self.portable()
+        p.others = self._own_folders()
         a = self._app(url) or {}
         own = dict(choice or {}) or a.get("installChoice") or {}
         rec = self._recommended(url).get("settings", {})
@@ -2178,8 +2193,8 @@ class Backend(QObject):
         app, so a refused folder is judged against its install root, as the launcher does; `template`
         the template it is named after (a folder template says "No folder yet", F10)."""
         grants = _plain(grants)
-        root = self._app_options(url).root if url else None
-        return sandbox.summary_chips(dict(grants) if grants else {}, root, template or None)
+        opts = self._app_options(url) if url else None
+        return sandbox.summary_chips(dict(grants) if grants else {}, opts and opts.root, template or None, opts and opts.own)
 
     @Property(str, notify=passwordServiceNoteChanged)
     def passwordServiceNote(self) -> str:
@@ -2229,7 +2244,8 @@ class Backend(QObject):
             return {"applicable": False}
         gs = r["grants"]
         is_cli = self._is_cli(url)
-        root = self._app_options(url).root           # the chips judge refused folders as the launcher does
+        opts = self._app_options(url)                # the chips judge refused folders as the launcher does
+        root, own = opts.root, opts.own
         suggested, srefused = self._suggestion(url)
         a = self._app(url) or {}
         # whether the app really runs sandboxed: its launcher exists. An app installed while the system
@@ -2237,7 +2253,7 @@ class Backend(QObject):
         active = self._runs_sandboxed(url)
         return {"applicable": True, "source": r["source"], "template": r["template"], "active": active,
                 "level": sandbox.level_of(gs), "levelLabel": sandbox.LEVEL_LABELS[sandbox.level_of(gs)],
-                "chips": sandbox.summary_chips(gs, root, r["template"]) + sandbox.refused_chips(r.get("refused")), "grants": gs, "isCli": is_cli,
+                "chips": sandbox.summary_chips(gs, root, r["template"], own) + sandbox.refused_chips(r.get("refused")), "grants": gs, "isCli": is_cli,
                 # named after its template, with changes: "Offline editor · customized" (review 2, F10)
                 "customized": sandbox.customized(r["template"], gs), "userFolders": sandbox.user_folders(),
                 "folders": [{"path": p, "mode": m} for p, m in sorted(sandbox.normalize(gs)["folders"].items())],
@@ -2250,7 +2266,7 @@ class Backend(QObject):
                 "sessionWarning": self._sb_session_warning(),
                 # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
                 "busWarning": sandbox.bus_warning() if sandbox.normalize(gs)["network"] else {},
-                "reviewSuggests": sandbox.summary_chips(suggested, root, self._suggested_template(url)) + sandbox.refused_chips(srefused)
+                "reviewSuggests": sandbox.summary_chips(suggested, root, self._suggested_template(url), own) + sandbox.refused_chips(srefused)
                                   if suggested is not None else [],
                 # a review's Off is a suggestion the user adopts with "Use theirs", never applied by itself (R17.3.2)
                 "suggestsOff": suggested is not None and sandbox.level_of(suggested) == "off",
@@ -2352,7 +2368,8 @@ class Backend(QObject):
             self._toast.emit("error", f"That sandbox choice can't be applied: {why}.")
             return
         if cfg and cfg.get("custom") is not None:      # a picked folder AppKata never shares (R17.3.1)
-            kept, refused = sandbox.strip_protected(cfg["custom"], self._app_options(url).root)
+            opts = self._app_options(url)
+            kept, refused = sandbox.strip_protected(cfg["custom"], opts.root, opts.own)
             if refused:
                 cfg["custom"] = sandbox.to_json(kept)
                 self._toast.emit("error", "Not shared: " + "; ".join(f"{p} ({why})" for p, why in refused)
@@ -2408,7 +2425,7 @@ class Backend(QObject):
         a = self._app(url)
         suggested, _ = self._suggestion(url)
         self._audit("you", "app", "kept the sandbox of", a["name"] if a else url, url,
-                    {"suggested": ", ".join(sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else [])})
+                    {"suggested": ", ".join(sandbox.summary(suggested, (opts := self._app_options(url)).root, own=opts.own) if suggested is not None else [])})
         self.reload()
 
     def _regenerate_launcher(self, url: str) -> Exception | None:

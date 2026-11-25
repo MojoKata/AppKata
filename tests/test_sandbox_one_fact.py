@@ -238,6 +238,11 @@ def _folders(env: Env) -> dict[str, str]:
         "a window manager's configuration": f"{h}/.config/sway", "an editor's extensions": f"{h}/.vscode/extensions",
         "above an editor's extensions": f"{h}/.vscode", "Cargo's programs": f"{h}/.cargo/bin", "above Go's programs": f"{h}/go",
         "a Go project": f"{h}/go/src/proj",
+        # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
+        # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
+        # folder beside that, and ~/tools, which is the links' folder only where Settings say so
+        "~/bin": f"{h}/bin", "the default install folder": f"{h}/bin/apps", "an app installed there": f"{h}/bin/apps/old/1.0",
+        "beside the default install folder": f"{h}/bin/mine", "~/tools": f"{h}/tools", "inside ~/tools": f"{h}/tools/sub",
     }
     for p in corpus.values():
         if p != "/":
@@ -263,22 +268,35 @@ def _folders(env: Env) -> dict[str, str]:
 
 
 def _sharing_disagreements(tmp_path, monkeypatch) -> list[str]:
+    """Where the tool's launcher and the grant check disagree on a folder, with the command links
+    folder where it is by default (~/bin) and with the one Settings would name (~/tools): the
+    launcher is told that folder as the check is (sb.Own; CR1.5-37)."""
     env = Env(tmp_path, monkeypatch)
-    lp = env.app("tool", sb.resolve_template("cli-tool"))
     path, log = _recording_bwrap(env)
-    wrong = []
-    for name, folder in _folders(env).items():
-        if os.path.exists(log):
-            os.unlink(log)
-        env.run(lp, "true", cwd=folder, env={"PATH": path})
-        with open(log) as f:
-            argv = next(a for a in reversed([json.loads(line) for line in f]) if "/.flatpak-info" in a)
-        here = os.path.realpath(folder)
-        shell = any(argv[i:i + 3] == [b, here, here] for i in range(len(argv) - 2) for b in ("--bind", "--ro-bind"))
-        python = sb.protected_folder(folder, str(env.home / "apps")) == ""
-        if shell != python:
-            wrong.append(f"{name}: the launcher {'shares' if shell else 'refuses'} it, the grant check "
-                         f"{'allows' if python else 'refuses'} it ({sb.protected_folder(folder, str(env.home / 'apps')) or 'no reason'})")
+    apps, wrong = str(env.home / "apps"), []
+    for tools in (False, True):
+        own = sb.Own(commands=(str(env.home / "tools"),)) if tools else None
+        lp = env.app("tool", sb.resolve_template("cli-tool"), own)
+        for name, folder in _folders(env).items():
+            if os.path.exists(log):
+                os.unlink(log)
+            env.run(lp, "true", cwd=folder, env={"PATH": path})
+            with open(log) as f:
+                argv = next(a for a in reversed([json.loads(line) for line in f]) if "/.flatpak-info" in a)
+            here = os.path.realpath(folder)
+            shell = any(argv[i:i + 3] == [b, here, here] for i in range(len(argv) - 2) for b in ("--bind", "--ro-bind"))
+            python = sb.protected_folder(folder, apps, own) == ""
+            if tools:
+                name += ", with the command links in ~/tools"
+            if shell != python:
+                wrong.append(f"{name}: the launcher {'shares' if shell else 'refuses'} it, the grant check "
+                             f"{'allows' if python else 'refuses'} it ({sb.protected_folder(folder, apps, own) or 'no reason'})")
+            # ...and both right: ~/tools is shared unless the links are there, and ~/bin and the default
+            # install folder are AppKata's while the install folder is elsewhere, as it is here
+            if name.split(",")[0] in ("~/tools", "inside ~/tools") and python is tools:
+                wrong.append(f"{name}: the grant check {'allows' if python else 'refuses'} it")
+            if name.split(",")[0] in ("~/bin", "the default install folder", "an app installed there", "beside the default install folder") and python:
+                wrong.append(f"{name}: the grant check allows it")
     return wrong
 
 

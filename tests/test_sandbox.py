@@ -2335,13 +2335,108 @@ def test_launcher_and_summary_refuse_protected_folders(fake_home):
     # Round two, R9: under a custom install folder (Settings → Portable apps) the chips judged folders
     # against the default root while the launcher used the app's, so a grant under the custom root
     # showed as granted but was refused, and the unused default root showed as refused.
+    # (CR1.5-37: the default root is refused under a custom one too, since the earlier installs stay
+    # there; the test held it as granted then.)
     custom = str(fake_home / "Apps")
-    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/Apps/x": "rw", "+~/bin/apps": "rw"}})
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/Apps/x": "rw", "+~/bin/apps": "rw", "+~/Projects": "rw"}})
     text = sb.build_launcher("app", "App", f"{custom}/app/1", "bin/app", gs, apps_root=custom)
-    assert "# Refused folder grant ~/Apps/x: AppKata's installed apps" in text and f"--bind-try {home}/bin/apps" in text
+    assert "# Refused folder grant ~/Apps/x: AppKata's installed apps" in text and f"--bind-try {home}/Projects" in text
+    assert "# Refused folder grant ~/bin/apps: AppKata's installed apps" in text and f"--bind-try {home}/bin/apps" not in text
     chips = sb.summary(gs, custom)
-    assert "~/Apps/x · refused: AppKata's installed apps" in chips and "~/bin/apps" in chips
-    assert "~/bin/apps · refused: AppKata's installed apps" in sb.summary(gs)       # the default root, as before
+    assert "~/Apps/x · refused: AppKata's installed apps" in chips and "~/bin/apps · refused: AppKata's installed apps" in chips
+    chips = sb.summary(gs)                                                          # the default root: ~/Apps is nothing of AppKata's
+    assert "~/bin/apps · refused: AppKata's installed apps" in chips and "~/Apps/x" in chips
+
+
+# CR1.5-37 (#632): the never-shared list held one folder of AppKata's programs, the install folder of
+# the app asked about, so ~/bin, where the command links are (on PATH, R4.3.1.3), was refused only as
+# the folder above the default ~/bin/apps. With the install folder set elsewhere ~/bin and ~/bin/apps
+# (the earlier installs' launchers, which the links start) could be granted, and a command links
+# folder set elsewhere never was refused: a review's `Sandbox folders: ~/tools` gave an app the
+# commands the user runs. How it slipped past: every test's settings were the defaults, or one custom
+# install folder asked about itself. Each setting → the folders refused under it, and why.
+LINKS = "the command links folder, which is on your PATH"
+APPS = "AppKata's installed apps"
+OWN_FOLDERS = [
+    # (the install folder, the command links folders Settings and the records name), {folder: why, or "" when it is shared}
+    ((None, ()), {"~/bin": "a folder above " + APPS, "~/bin/apps": APPS, "~/bin/apps/x/1.0": APPS, "~/bin/mine": LINKS, "~/tools": "", "~/Apps": ""}),
+    (("~/Apps", ()), {"~/bin": "a folder above " + APPS, "~/bin/": "a folder above " + APPS, "~/bin/apps": APPS, "~/bin/apps/x/run": APPS,
+                      "~/bin/mine": LINKS, "~/Apps": APPS, "~/Apps/x": APPS, "~/tools": ""}),
+    (("~/Apps", ("~/tools",)), {"~/tools": LINKS, "~/tools/": LINKS, "~/tools/sub": LINKS, "~/tools/app": LINKS, "~/bin": "a folder above " + APPS,
+                                 "~/bin/mine": LINKS, "~/bin/apps": APPS, "~/Apps/x": APPS, "~/tools-old": ""}),
+    ((None, ("~/tools", "~/.local/opt/cmd")), {"~/tools": LINKS, "~/.local/opt/cmd": LINKS, "~/.local/opt": "a folder above " + LINKS,
+                                                "~/.local/opt/other": "", "~/bin/mine": LINKS}),
+    # a links folder that is the home, or above it, makes no folder of the home the links' own
+    ((None, ("~",)), {"~/tools": "", "~/Notes/sub": "", "~": "your whole home folder", "~/bin/mine": LINKS}),
+    ((None, ("/",)), {"~/tools": "", "/mnt/data": "", "~/bin/mine": LINKS}),
+]
+
+
+@pytest.mark.parametrize("setting,folders", OWN_FOLDERS, ids=[repr(s) for s, _ in OWN_FOLDERS])
+def test_the_command_links_folder_and_the_default_install_folder_are_never_shared_wherever_apps_are_installed(setting, folders, a_users_home):
+    root, commands = setting
+    apps = os.path.expanduser(root) if root else None
+    own = sb.Own(commands=tuple(os.path.expanduser(c) for c in commands))
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+" + p: mode for p in [*folders, "~/Notes"]}})
+        text = sb.build_launcher("app", "App", (apps or "/home/kata/bin/apps") + "/app/1", "bin/app", gs, apps_root=apps, own=own,
+                                 forward="/helper.py")
+        chips = sb.summary(gs, apps, own=own)
+        kept, refused = sb.strip_protected(gs, apps, own)
+        for path, why in folders.items():
+            named, full = sb.folder_path(path), os.path.expanduser(path).rstrip("/") or "/"
+            assert sb.protected_folder(path, apps, own) == why, (path, sb.protected_folder(path, apps, own))
+            assert (f"{named} · refused: {why}" in chips) is bool(why) and ((named, why) in refused) is bool(why), (path, chips)
+            assert (f"# Refused folder grant {named}: {why} (R17.3.1)." in text) is bool(why)
+            assert (f"bind-try {full} {full} " in text) is (not why), path        # mounted exactly when it is shared
+        assert "~/Notes" in kept["folders"] and "bind-try /home/kata/Notes /home/kata/Notes " in text
+    # ...and the launcher's own two lists hold the folders: the one a command-line tool's working
+    # directory is refused by, and the one no file argument is handed over from (R17.3.3, R17.6.2)
+    cwd_list = shlex.split(next(line for line in text.splitlines() if line.startswith('for d in "$hm" ')).split('"$hm" ', 1)[1].split(' "$rt"')[0])
+    helper = shlex.split(next(line for line in text.splitlines() if "/helper.py" in line and "fwd=$(" in line).split("fwd=$(", 1)[1].rsplit(')', 1)[0], posix=True)
+    never = helper[helper.index("--") + 2:helper.index("--", helper.index("--") + 1)]
+    want = {"/home/kata/bin", "/home/kata/bin/apps", *([apps] if apps else []), *(c for c in own.commands if c not in ("/", "/home/kata"))}
+    assert want <= set(cwd_list) and want <= set(never), (want, cwd_list, never)
+    assert not {"/", "/home/kata"} & (set(cwd_list) | set(never))
+
+
+def test_a_review_cannot_grant_the_command_links_folder_and_a_launcher_an_install_writes_keeps_it_out(fake_home, tmp_path, monkeypatch):
+    # the finding's own road, through the code that tells the sandbox where the links are: an install
+    # with the install folder and the command links folder set elsewhere (install.Portable, as the
+    # backend builds it from Settings), and a review that asks for ~/tools and ~/bin
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    home, root = str(fake_home), fake_home / "Apps"
+    target = root / "demo"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "demo"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": "~/tools, ~/bin:ro, ~/bin/apps, ~/Projects"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    assert source == "reviews" and set(gs["folders"]) == {"~/tools", "~/bin", "~/bin/apps", "~/Projects"}
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/demo"}, "links": [], "files": [], "target": str(target)}
+    app = {"name": "Demo", "sandbox": sb.to_json(gs)}
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="~/tools", stable_name=False)
+    assert port.own == sb.Own(commands=(f"{home}/tools",))
+    install._activate(rec, app, port, str(target))
+    text = open(target / "run").read()
+    assert os.path.realpath(f"{home}/tools/demo") == str(target / "run")                 # the command link, in ~/tools
+    assert f"# Refused folder grant ~/tools: {LINKS} (R17.3.1)." in text and f"# Refused folder grant ~/bin/apps: {APPS} (R17.3.1)." in text
+    assert f"# Refused folder grant ~/bin: a folder above {APPS} (R17.3.1)." in text
+    assert f"bind-try {home}/Projects {home}/Projects " in text and f"bind-try {home}/tools" not in text and f"bind-try {home}/bin" not in text
+    assert f"~/tools · refused: {LINKS}" in sb.summary(gs, port.root, own=port.own)       # the chips, told the same
+    # the startup pass compares with the same folders (R17.4): current as written, and written again
+    # once Settings or another install names a folder this launcher's lists don't hold
+    monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
+    assert install.launcher_is_current(rec, app, port)
+    elsewhere = install.Portable(folder=str(root), app_menu=False, command_dir="~/tools", stable_name=False, others=sb.Own(commands=(f"{home}/cmds",)))
+    assert elsewhere.own == sb.Own(commands=(f"{home}/cmds", f"{home}/tools")) and not install.launcher_is_current(rec, app, elsewhere)
+    # an app with no command link of its own is still told where the others' are
+    none = install.Portable(folder=str(root), command_dir="", others=sb.Own(commands=(f"{home}/tools",)))
+    assert none.own == sb.Own(commands=(f"{home}/tools",))
 
 
 # CR1.5-9 (#384): the never-shared list is kept by hand, and places of the kinds it names were not in
