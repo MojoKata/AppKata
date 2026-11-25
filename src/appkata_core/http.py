@@ -90,7 +90,9 @@ def token_key(host: str) -> str:
     """The host a token is kept under, from what was typed for it (R11.1.6) or what a caller names:
     one address, written as a Source's host is (urls.parse), `git.example.org` or, on a port,
     `git.example.org:3000`. A name alone is the default port, so https's own port is left out, and so
-    is the rest of a whole address where one was pasted."""
+    is the rest of a whole address where one was pasted. The name is as every rule compares hosts
+    (_one_host), in the form it is sent: one typed `übung.example` is kept as `xn--bung-zra.example`,
+    the Source's own host however its Source and its token were typed."""
     text = host.strip().lower()
     try:
         parts = urlsplit(text if "://" in text else "https://" + text)
@@ -122,20 +124,40 @@ PORTS = {"http": 80, "https": 443}
 SOURCE_PORT = 443       # a Source's port when its host names none: every Source is asked over https (urls.parse)
 
 
+def _one_host(name: str) -> str:
+    """A host's name or address as every rule compares two hosts (_origin, and so _host, _is_for,
+    token_key and a limit's key): in the form it is sent (_sent), from the host with its escapes
+    decoded and in lower case, and a name without its one final dot, which names the same host. So
+    the Source's own host in whichever form it is written, `übung.lan` as `xn--bung-zra.lan` or the
+    other way, `git.example` as `%67it.example` or `git.example.`, is the Source's own: its token's,
+    and the one host that may be local (the review's pass 7, P7-2 and P7-B2). Read as written, it was
+    another host, though the request was sent as the Source's own are: an avatar a forge on the
+    user's network named in its IDNA form was refused as local, and the forge's redirect to itself in
+    another form was refused, or followed without the token. A name with no IDNA form, which no
+    address Http asks for has (_http_address), is kept with its escapes decoded and in lower case: a
+    token typed for it is sent nowhere."""
+    host = unquote(name).lower()
+    with contextlib.suppress(UnicodeError):
+        host = _sent(host)
+    return host[:-1] if host.endswith(".") else host
+
+
 def _origin(parts) -> tuple:
     """(scheme, host, port) of an address: what a redirect must keep for a token to go on with it.
-    The port is the one it names, 0 too, or its scheme's where it names none (the review's pass 5,
-    P5-B4: `parts.port or ...` read a written `:0` as 443, the Source's own port)."""
+    The host is as every rule compares hosts (_one_host). The port is the one it names, 0 too, or
+    its scheme's where it names none (the review's pass 5, P5-B4: `parts.port or ...` read a written
+    `:0` as 443, the Source's own port)."""
     try:
         port = PORTS.get(parts.scheme) if parts.port is None else parts.port
     except ValueError:
         port = None
-    return parts.scheme, (parts.hostname or "").lower(), port
+    return parts.scheme, _one_host(parts.hostname or ""), port
 
 
 def _host(parts) -> str:
     """An address's host, as a token is kept for it and as a Source's host is written (urls.parse):
-    its name, and the port it is asked on unless that is 443, a Source's when its host names none.
+    its name, as every rule compares hosts (_one_host), and the port it is asked on unless that is
+    443, a Source's when its host names none.
     The one notion of a host that every lookup uses (CR1 #297): the forges named a Source's host
     with its port and Http looked a token up without it, so a token on a port was sent by some calls
     and not by others, and a token kept for a name went to every port of it.
@@ -443,8 +465,9 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     """A redirect under R9.2.2. urllib copies a request's headers to wherever a redirect points, so
     Http sends the token as an unredirected header, which urllib never copies, and this hands it on
     by its own rule: only to the same scheme, host and port (a renamed repository's API address
-    redirects on its own host). To any other host the request goes on without it, and a redirect to
-    plain http of a request that carried a token is refused, the same host's too.
+    redirects on its own host), the host in whichever form it is written (_origin). To any other
+    host the request goes on without it, and a redirect to plain http of a request that carried a
+    token is refused, the same host's too.
 
     Where a redirect points is held to the rule for a first address (`allowed`, Http._allowed): http
     or https, and no local address but the host's the request was made for (`req.whose`).
@@ -457,13 +480,10 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         self.allowed, self.unlimited = allowed, unlimited
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        was, sent = urlsplit(req.written), urlsplit(req.full_url)
-        # a redirect to the host part the request was sent with (a path alone, which urllib makes an
-        # address with that host part of, or that host part written out) is to the request's own
-        # host, which Http's rules read as it was written (the review's pass 6, P6-B1)
-        sent_with = f"{sent.scheme}://{sent.netloc}"
-        if newurl.startswith(sent_with) and newurl[len(sent_with):][:1] in ("", "/", "?", "#"):
-            newurl = f"{was.scheme}://{was.netloc}{newurl[len(sent_with):]}"
+        # a path alone is made an address with the host part the request was sent with, and a forge
+        # may write its host out in any form: each is the request's own host to the rules, which
+        # compare hosts in the form they are sent (_one_host; the review's pass 7, P7-B2)
+        was = urlsplit(req.written)
         whose = getattr(req, "whose", _host(was))
         token = {k: v for k, v in req.unredirected_hdrs.items() if k.lower() in TOKEN_HEADERS}
         try:
@@ -547,7 +567,8 @@ class Http:
         names its images' addresses, and a forge its avatars' and its redirects', and none of them
         gets a request sent into this computer or its network. The one host that may be local is
         `whose`, the host the request is made for (a forge on the user's own network), with its
-        named hosts; without one, that is the address's own host. A host is one address (_host):
+        named hosts, in whichever form an address writes it (_one_host); without one, that is the
+        address's own host. A host is one address (_host):
         another port of a Source's host is whatever else listens there, and isn't the Source's. A
         first address and every redirect of it are held to this.
 
@@ -612,7 +633,7 @@ class Http:
         request's when none connects."""
         name, port = address
         addresses = self._lookup(name)              # an OSError: urllib's "couldn't reach", as before
-        parts = urlsplit(req.written)               # the address as written, which the rules read (_request)
+        parts = urlsplit(req.written)               # as written, as the refusal names it; the rule reads it as sent (_one_host)
         if not (req.has_proxy() or req._tunnel_host or _is_for(parts, getattr(req, "whose", None) or _host(parts))):
             _refuse_local(parts.hostname or name, addresses)
         failed = OSError(f"{name} has no address")
@@ -707,8 +728,9 @@ class Http:
         self._unlimited(parts)
         token = self._token(parts, whose, forge)
         h = {"User-Agent": UA, "Accept": accept, **(headers or {})}
-        # sent with its host as it is sent (_as_sent), and kept as written, which every rule after
-        # this reads, a redirect's and a connection's, as this one did (the review's pass 6, P6-B1)
+        # sent with its host as it is sent (_as_sent; the review's pass 6, P6-B1), and kept as written,
+        # which a redirect's and a connection's refusals name; every rule compares hosts in the form
+        # they are sent (_one_host), whichever form they are written in (the review's pass 7, P7-2)
         req = urllib.request.Request(_as_sent(url, parts), data=body, headers=h, method=method)
         req.written = url
         req.whose = whose                          # for a redirect: _Redirects

@@ -1338,6 +1338,87 @@ def test_through_real_sockets_a_redirect_to_a_host_in_any_script_is_sent_in_its_
     assert asked == ["git.example", "xn--r8jz45g.example", "xn--r8jz45g.example"]    # A's connection's; B's check's and connection's
 
 
+# The review's pass 7, P7-2 and P7-B2: a host was sent as it is judged, and the rules that compare two
+# hosts (whose token a request carries, whether an address is the Source's own host, which may be
+# local, whether a redirect keeps the token, whose limit an answer is) read the host as it was
+# written. The Source's own host in another form, its IDNA form or its script, escaped, or with a
+# name's final dot, was sent as the Source's own requests are and taken for another host: a forge on
+# the user's network that names its avatars in its IDNA form had them refused as local, and its
+# redirect to itself in another form was refused, or followed without the token on a public forge.
+# How it slipped past: round 6's tests asked for the Source's host in the form it was typed in, and
+# their one redirect to another form was to the form the request was sent in, which round 6 mapped
+# back to the one written. The class is "one host, two spellings", so the Source here is on this
+# computer, typed in one form, and asked for, redirected to and limited in another.
+OTHER_FORMS = [                  # a Source's host as typed, as an address names it, and as that is sent
+    pytest.param("übung.example", "xn--bung-zra.example", "xn--bung-zra.example", id="its-idna-form"),
+    pytest.param("xn--bung-zra.example", "übung.example", "xn--bung-zra.example", id="its-script"),
+    pytest.param("übung.example", "%C3%BCbung.example", "xn--bung-zra.example", id="escaped"),
+    pytest.param("xn--bung-zra.example", "%C3%9CBUNG.example", "xn--bung-zra.example", id="escaped-in-upper-case"),
+    pytest.param("गिट.example", "xn--31bq9g.example", "xn--31bq9g.example", id="devanagari"),
+    pytest.param("git.example", "%67it.example", "git.example", id="an-ascii-name-escaped"),
+    pytest.param("git.example", "%47it.example", "git.example", id="an-escaped-capital"),
+    pytest.param("git.example", "git.example.", "git.example.", id="with-a-final-dot"),
+    pytest.param("git.example.", "git.example", "git.example", id="without-its-final-dot"),
+]
+
+
+@pytest.mark.parametrize("typed, named, sent", OTHER_FORMS)
+def test_through_real_sockets_the_sources_own_host_in_another_form_is_the_sources_own(pair, monkeypatch, typed, named, sent):
+    # an avatar the forge names in another form than the Source's, on this computer: the Source's
+    # own host, which may be local, asked for with its token
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.files = {"/avatars/1": PNG}
+    source = f"{typed}:{port}"
+    assert Http({source: "SECRET"}, timeout=5).bytes(f"https://{named}:{port}/avatars/1", token_host=source) == PNG
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [("/avatars/1", f"{sent}:{port}", "token SECRET")]
+    assert asked == [sent]                             # the connection's lookup: the Source's own host needs no check's
+    assert "is the Source's own host in whichever form it is written" in " ".join(reqdocs.item("R3.1.1").split())
+
+
+SELF_REDIRECTS = [               # a Source's host as typed, and sent; where its forge redirects, and that host as sent
+    pytest.param("bücher.example", "xn--bcher-kva.example", "https://bücher.example:{port}/b".encode().decode("latin-1"),
+                 "xn--bcher-kva.example", id="its-script-in-utf-8"),
+    pytest.param("bücher.example", "xn--bcher-kva.example", "https://BÜCHER.example:{port}/b".encode().decode("latin-1"),
+                 "xn--bcher-kva.example", id="in-upper-case-in-utf-8"),
+    pytest.param("xn--bcher-kva.example", "xn--bcher-kva.example", "https://b%C3%BCcher.example:{port}/b",
+                 "xn--bcher-kva.example", id="its-script-escaped"),
+    pytest.param("git.example", "git.example", "https://git%2eexample:{port}/b", "git.example", id="an-escape"),
+    pytest.param("git.example", "git.example", "https://git.example.:{port}/b", "git.example.", id="a-final-dot"),
+]
+
+
+@pytest.mark.parametrize("typed, first, location, then", SELF_REDIRECTS)
+def test_through_real_sockets_a_redirect_to_the_sources_own_host_in_another_form_keeps_its_token(pair, monkeypatch, typed, first, location, then):
+    # a forge on this computer that writes its own host out in another form in a redirect: the
+    # Source's own host, which may be local, and the token goes on with the request (R9.2.2)
+    a, b = pair
+    port = a.server_address[1]
+    asked = at_this_computer(monkeypatch)
+    a.redirects["/a"] = location.format(port=port)        # a raw UTF-8 Location is the bytes the forge sent
+    source = f"{typed}:{port}"
+    assert Http({source: "SECRET"}, timeout=5).json(f"https://{source}/a", token_host=source) == {"ok": True}
+    assert [(path, h["host"], h.get("authorization")) for path, h in a.seen] == [
+        ("/a", f"{first}:{port}", "token SECRET"), ("/b", f"{then}:{port}", "token SECRET")]
+    assert asked == [first, then]                      # each connection's lookup: no check's
+
+
+def test_through_real_sockets_a_limit_answered_in_one_form_of_a_host_holds_in_the_other(pair, clock, monkeypatch):
+    a, b = pair
+    port = a.server_address[1]
+    at_this_computer(monkeypatch)
+    a.files = {"/api/x": saying(429), "/api/y": {"ok": True}}
+    http = Http(timeout=5)
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} rate limit reached$"):
+        http.json(f"https://übung.example:{port}/api/x")
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} rate limit reached$"):
+        http.json(f"https://xn--bung-zra.example:{port}/api/y")
+    with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} "):
+        http.json(f"https://%C3%BCbung.example:{port}/api/y")
+    assert [p for p, _ in a.seen] == ["/api/x"] and http.limited == {f"xn--bung-zra.example:{port}": clock.now + 60}
+
+
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
 # CR1's #275: Http chose the token's header from the host's name, so a GitLab without "gitlab" in its
 # name (three of the hosts forges.KNOWN lists) was sent "Authorization: token", which GitLab has no use
@@ -1530,6 +1611,10 @@ def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_p
     ("http://git.example.org/", "git.example.org:80"),                # plain http's own port: another address (P1-2)
     ("[::1]:3000", "[::1]:3000"), ("192.168.1.5:3000", "192.168.1.5:3000"),
     ("git.example.org:port", "git.example.org:port"),                 # no address: kept as typed
+    # one host in whichever form it is typed: as it is sent (review pass 7, P7-2)
+    ("übung.example.org", "xn--bung-zra.example.org"), ("Übung.Example.Org:3000", "xn--bung-zra.example.org:3000"),
+    ("https://%C3%BCbung.example.org/o/r", "xn--bung-zra.example.org"),
+    ("%67it.example.org", "git.example.org"), ("git.example.org.", "git.example.org"), ("git.example.org.:3000", "git.example.org:3000"),
 ])
 def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(typed, key):
     assert http_.token_key(typed) == key == http_.token_key(key)
@@ -1539,6 +1624,17 @@ def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(ty
     if ":port" not in key:
         _ask(http, f"https://{key}/x")
         assert tokened(seen) == [f"https://{key}/x"]
+
+
+@pytest.mark.parametrize("typed", ["a..b.example.org", "a" * 64 + ".example.org", "%ffb.example.org", "é" * 64 + ".example.org"])
+def test_a_token_typed_for_a_name_with_no_idna_form_is_kept_and_sent_nowhere(typed):
+    # a token is kept under its name as it is sent (review pass 7, P7-2), and a name with none is
+    # kept as typed, decoded: the tokens are read when Http is made, at the application's start
+    seen = []
+    http = names(Http({typed: "SECRET"}, opener=recording({}, seen)))
+    assert list(http.tokens) == [http_.token_key(typed)]
+    _ask(http, f"https://{typed}/x", token_host=typed)
+    assert seen == []
 
 
 @pytest.mark.parametrize("source_host, url, fetched", [
