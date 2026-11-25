@@ -31,6 +31,7 @@ tests/test_install_review.py::test_a_move_back_to_the_fixed_name_that_fails_leav
 tests/test_install_review.py::test_a_program_started_from_its_menu_entry_is_started_by_its_own_path  # the Linux install layout
 tests/test_install_review.py::test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry  # the Linux install layout
 tests/test_install_review.py::test_a_refused_install_leaves_everything_as_it_was  # the Linux install layout
+tests/test_install_review.py::test_a_release_whose_version_is_a_name_appkata_keeps_in_the_apps_folder_is_installed_beside_it  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_on_a_disk_that_stays_full_leaves_the_app_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_removes_what_one_stopped_part_way_left_beside_the_apps_files  # the Linux install layout

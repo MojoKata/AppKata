@@ -609,6 +609,23 @@ def _safe(v: str) -> str:
     return s
 
 
+# What AppKata keeps in an app's folder beside its versions' folders: the link to the current
+# version (R4.3.1.2; a junction on Windows, R15.5) and a sandboxed app's launcher (R17.4).
+_KEPT_NAMES = ("current", "run")
+
+
+def _version_folder(version: str) -> str:
+    """The name of the folder one version of an archive is unpacked into (R4.3.1): the version as a
+    name (:func:`_safe`), with `_` before one that is a name AppKata keeps in the app's folder
+    itself (:data:`_KEPT_NAMES`), in any case, as Windows compares names (R15.16). A release whose
+    version was the word "current" asked for its folder at the link's own place, and one named
+    "run" at the launcher's: the first couldn't be installed, the second couldn't be installed
+    sandboxed, or sandboxed after (CR1.3-47). An AppImage's version is in its file's name, which
+    is neither."""
+    name = _safe(version)
+    return "_" + name if name.lower() in _KEPT_NAMES else name
+
+
 def _file_name(name: str) -> str:
     """The name a release's file is downloaded and kept under: its own, as one file name. The name
     is the release author's text (a GitLab release link's is free text, a Gitea or Forgejo
@@ -741,7 +758,7 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
             _remove_path(staging)
             raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
-    vdir = _in_folder(target, "app" if fixed else _safe(version))
+    vdir = _in_folder(target, "app" if fixed else _version_folder(version))
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
     try:

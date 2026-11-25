@@ -2723,3 +2723,60 @@ def test_the_file_named_after_an_app_has_its_names_ascii_letters_and_digits_or_i
     for name, stem in (("LocalSend", "LocalSend"), ("Demo Tool", "DemoTool"), ("日本 App 2", "App2"), ("7-Zip", "7Zip"),
                        ("日本語アプリ", "app-2"), ("", "app-2"), ("..", "app-2"), ("/", "app-2")):
         assert install._file_stem({"name": name}, folder) == stem
+
+
+# ---------------------------------------------------------------- a version named as what AppKata keeps in the app's folder (CR1.3-47)
+
+@linux_only
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+@pytest.mark.parametrize("version", ["current", "run", "Current", "RUN"])
+def test_a_release_whose_version_is_a_name_appkata_keeps_in_the_apps_folder_is_installed_beside_it(env, server, tmp_path, version, sandboxed):
+    # CR1.3-47: an archive's version gets a folder named after it (R4.3.1), beside the `current`
+    # link (R4.3.1.2) and a sandboxed app's launcher, `run` (R17.4). A release whose version was
+    # the word "current" asked for its folder at the link's own place, and one named "run" at the
+    # launcher's: neither could be installed, and "run" installed unsandboxed couldn't be
+    # sandboxed after. It gets `_` before it, as a version of dots does (CR1.3-9), and is a
+    # version like any other from there: kept, gone back to, removed.
+    from appkata_core import sandbox
+    app = {**APP, **({"sandbox": sandbox.resolve_template("standard")} if sandboxed else {})}
+    home, cmd, folder = tmp_path / "apps" / "demo-tool", tmp_path / "cmd", "_" + version
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd), keep=2)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**app, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**app, "installVersion": version}, a, "tarball", [a], portable=p)
+
+    def whole(rec):
+        assert (rec["current"]["version"], rec["current"]["path"]) == (version, str(home / folder))
+        assert os.readlink(home / "current") == folder and _runs(home / "current" / "tool-next" / "tool") == "tool-next/tool"
+        assert (rec.get("launcher") == str(home / "run")) is sandboxed and os.path.isfile(home / "run") is sandboxed
+        if sandboxed:
+            assert rec["exec"] == rec["launcher"] and install.launcher_is_current(rec, app, p)
+        else:
+            assert _runs(rec["exec"]) == "tool-next/tool" == _runs(cmd / "demo-tool")
+        assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    whole(rec)
+    assert [k["version"] for k in rec["kept"]] == ["1.0"]
+    a = _version(server, "tarball", "2.0")                      # kept through the next update, and gone back to
+    rec = install.install(env, {**app, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+    assert [(k["version"], k["path"]) for k in rec["kept"]] == [(version, str(home / folder)), ("1.0", str(home / "1.0"))]
+    assert os.readlink(home / "current") == "2.0" and os.path.isdir(home / folder)
+    whole(install.switch_to(env, dict(app), version, p))
+    if not sandboxed:                                           # and an app installed unsandboxed can be sandboxed after
+        gs = sandbox.resolve_template("standard")
+        rec = install.rewrite_launcher(env, {**APP, "sandbox": gs}, p)
+        assert rec["launcher"] == str(home / "run") and os.path.isfile(home / "run") and os.path.isdir(home / folder)
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == [] and not os.path.lexists(home)
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_folder_a_version_is_unpacked_into(monkeypatch, system):
+    # the version as a name (CR1.3-9), and never one AppKata keeps there itself, in any case
+    # (Windows compares names without it, R15.16)
+    monkeypatch.setattr(install, "OS", system)
+    for version, folder in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), (".5", "_.5"), ("", "unknown"),
+                            ("current", "_current"), ("run", "_run"), ("Current", "_Current"), ("RUN", "_RUN"),
+                            ("currents", "currents"), ("current.1", "current.1"), ("rerun", "rerun"), ("app", "app")):
+        assert install._version_folder(version) == folder
+    kept = [n.lower() for n in install._KEPT_NAMES]
+    assert all(install._version_folder(v).lower() not in kept for v in install._KEPT_NAMES + ("CURRENT", "Run", "current ", " run"))
