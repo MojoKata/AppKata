@@ -903,18 +903,52 @@ def test_behind_a_proxy_a_redirect_to_an_address_with_a_user_part_is_refused(pai
 # name only what follows the last `@`. How it slipped past: P4-B2's test held the refusals of
 # addresses urlsplit reads. The class is "a refusal says a user part", so these have a user part
 # and meet the first refusal: a port that isn't one, a password with a `/`, no host, ftp.
+#
+# The review's pass 6, P6-B2: that refusal, and the two of a host part that is more than a host, still
+# said a user part spelled with %40, which the rule for a user part reads as an `@` (it decodes the
+# host part first): `https://user:SECRET%40h.example:8x/x` was said whole, and so was
+# `https:/\t/%2fSECRET%40h.example/x`'s host part. The class is "a refusal says a user part", however
+# it is spelled, so every refusal names an address by its host and port alone: what follows its last
+# `@`, written or escaped, its escapes decoded, and nothing of its path.
 @pytest.mark.parametrize("url, said", [
-    ("https://user:pw@images.example.com:99999/x", "images.example.com:99999/x"),
-    ("https://user:pw@images.example.com:8x/x", "images.example.com:8x/x"),
-    ("http://user:p/w@images.example.com/x", "images.example.com/x"),         # urlsplit's port: "p"
-    ("http://user:pw@/x", "/x"),
-    ("ftp://user:pw@images.example.com/x", "images.example.com/x"),
+    ("https://user:pw@images.example.com:99999/x", "images.example.com:99999"),
+    ("https://user:pw@images.example.com:8x/x", "images.example.com:8x"),
+    ("http://user:p/w@images.example.com/x", "images.example.com"),           # urlsplit's port: "p"
+    ("http://user:pw@/x", ""),
+    ("ftp://user:pw@images.example.com/x", "images.example.com"),
+    ("https://user:SECRET%40images.example.com:8x/x", "images.example.com:8x"),    # a user part spelled with %40 (P6-B2)
+    ("ftp://user:SECRET%40images.example.com/x", "images.example.com"),
+    ("https:/\n/user:SECRET%40images.example.com/x", "images.example.com"),        # a line break in its `//` too
+    ("https://images.example.com:8x/x?u=a", "images.example.com:8x"),              # no user part: its host part, and no more
 ])
 def test_the_refusal_of_an_address_that_isnt_an_http_one_says_no_user_part(url, said):
     seen = []
     with pytest.raises(Unreachable) as refused:
         names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
     assert str(refused.value) == f"{said!r} isn't an http or https address" and seen == []
+
+
+MORE = "an address whose host part is more than a host and its port ({}) isn't asked for"
+USER = "an address with a user part before its host ({}) isn't asked for"
+
+
+@pytest.mark.parametrize("url, said", [
+    # a host part that isn't urlsplit's: a tab or a line break in its `//` (P5-B1)
+    ("https:/\t/%2fSECRET%40images.example.com/x", MORE.format("images.example.com")),
+    ("https:/\t/user:SECRET@images.example.com/x", MORE.format("images.example.com")),
+    ("http:/\n/10.0.0.5@images.example.com/x//y", MORE.format("images.example.com")),
+    ("https:/\t/images.example.com:8443/x", MORE.format("images.example.com:8443")),
+    # a user part before the host, written or escaped
+    ("https://%2fSECRET%40images.example.com/x", USER.format("images.example.com")),
+    ("https://user:SECRET@images.example.com?x/y", USER.format("images.example.com")),
+    # a host part with what no host has: an `@` after it is the path's
+    ("https://a⑴b.example:8443/@x/shot.png", MORE.format("a⑴b.example:8443")),
+])
+def test_a_refusal_of_a_host_part_names_its_host_alone(url, said):
+    seen = []
+    with pytest.raises(Unreachable) as refused:
+        names(Http(opener=recording({}, seen))).bytes(url, token_host="git.example.org")
+    assert str(refused.value) == said and seen == []
 
 
 # The review's pass 4, P4-1: the check above refused an `@` in what urlsplit reads as the host part,
