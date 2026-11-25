@@ -577,6 +577,53 @@ def test_an_app_starts_from_its_menu_entry_whatever_appkatas_own_folder_holds_or
     assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(script) and not os.path.exists(entry)
 
 
+@linux_only
+@pytest.mark.parametrize("fails", ["the script", "the entry"])
+def test_a_menu_file_whose_write_fails_is_left_as_it_was(env, server, tmp_path, monkeypatch, fails):
+    # #689's review, P3-B4: the app's menu script was removed and then written in place, and its
+    # entry truncated and then written in place, so a write that failed (a full disk, a quota) left
+    # a missing or empty file, which the menu starts with "Exec format error", and an app started
+    # between the two found nothing. An activation runs at every update, sandbox change and start
+    # that rewrites a launcher, and taking a failed update back runs it again. Each is written
+    # beside its place and renamed over it, as a launcher is: whole, or not at all.
+    a = _start_script_archive(*server)
+    port = install.Portable(folder=str(tmp_path / "apps"))
+    rec = install.install(env, APP, a, "tarball", [a], portable=port)
+    entry, script = next(f for f in rec["files"] if f.endswith(".desktop")), str(tmp_path / "data" / "menu" / rec["id"])
+    was = {p: open(p, "rb").read() for p in (entry, script)}
+    full = {"the script": script, "the entry": entry}[fails]
+    real_open, real_fdopen = open, os.fdopen
+
+    class Full:
+        """A file on a full disk, for writing: it opens, and nothing can be written to it."""
+        def __init__(self, f):
+            self.f = f
+
+        def write(self, data):
+            raise OSError(28, "No space left on device")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+
+    def on_full_disk(f, name, mode):
+        return Full(f) if any(c in mode for c in "wax+") and re.sub(r"\.\d+\.tmp$", "", str(name)) == full else f
+    monkeypatch.setattr(install, "open", lambda file, mode="r", *a, **k: on_full_disk(real_open(file, mode, *a, **k), file, mode),
+                        raising=False)
+    monkeypatch.setattr(install.os, "fdopen", lambda fd, mode="r", *a, **k: on_full_disk(
+        real_fdopen(fd, mode, *a, **k), os.readlink(f"/proc/self/fd/{fd}"), mode))
+    with pytest.raises(OSError, match="No space left on device"):
+        install._activate(dict(rec), APP, port, rec["target"])              # an update's, a sandbox change's
+    monkeypatch.undo()
+    assert {p: open(p, "rb").read() for p in (entry, script)} == was         # both as they were, whole
+    assert sorted(os.listdir(os.path.dirname(script))) == [rec["id"]]        # and nothing half-written beside them
+    assert sorted(os.listdir(os.path.dirname(entry))) == [os.path.basename(entry)]
+    started = subprocess.run(["/bin/sh", script, "x"], capture_output=True, text=True)
+    assert (started.returncode, started.stdout) == (0, "found my files\n[x]"), started
+
+
 def _menu_starts(path):
     """What the file an app's menu entry starts runs: AppKata's script, `exec <the path> "$@"`."""
     text = open(path).read()

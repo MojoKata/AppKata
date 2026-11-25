@@ -280,15 +280,34 @@ def _write_menu_link(target: str, app_id: str) -> str:
     unsandboxed had the link as its `$0`, so a program that finds its files beside `"$0"` (a start
     script's `. "$(dirname "$0")/lib.sh"`) looked for them in AppKata's menu folder, and didn't
     start from the menu while Open started it. The path is quoted for `sh` whatever it holds (a
-    `%`, a quote, a line break). The script is made anew each time, so what is at its place goes
-    first and is never written through, and an app started by the one before keeps reading that."""
+    `%`, a quote, a line break). The script is written whole beside its place and renamed over it
+    (:func:`_write_whole`), so what is at its place is replaced and never written through, an app
+    started by the one before keeps reading that, and a write that fails leaves it."""
     path = _menu_link_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    if os.path.lexists(path):
-        os.remove(path)
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755), "w", encoding="utf-8") as f:
-        f.write(f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n')
-    os.chmod(path, 0o755)
+    return _write_whole(path, f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n'.encode("utf-8"), 0o755)
+
+
+def _write_whole(path: str, data: bytes, mode: int) -> str:
+    """Write `data` to `path` whole or not at all: to a file beside it, then renamed over it, as a
+    launcher is (sandbox.write_launcher), so a reader (the menu, an `sh` running the file) finds the
+    old file or the new one and never a part of either, and a write that fails (a full disk, a
+    quota) leaves the old one as it was. What is at `path`, a link included, is replaced and never
+    written through. Returns `path`. #689's review, P3-B4: an app's menu script was removed and its
+    entry truncated before they were written, so a failed write left an empty file, which the menu
+    starts with "Exec format error", at an update, a sandbox change or AppKata's start."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    if os.path.lexists(tmp):
+        os.remove(tmp)
+    try:
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode), "wb") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        raise
     return path
 
 
@@ -313,12 +332,10 @@ def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: s
     path = _menu_entry_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     icon = "" if _CONTROL.search(icon) else icon
-    with open(path, "w") as f:
-        f.write("[Desktop Entry]\nType=Application\n"
-                f"Name={desktop_value(name) or app_id}\nComment={desktop_value(one_line(summary)[:120])}\nExec={exec_value}\n"
-                + (f"Icon={desktop_value(icon)}\n" if icon else "") + "Categories=Utility;\nX-AppKata=true\n")
-    os.chmod(path, 0o755)
-    return path
+    text = ("[Desktop Entry]\nType=Application\n"
+            f"Name={desktop_value(name) or app_id}\nComment={desktop_value(one_line(summary)[:120])}\nExec={exec_value}\n"
+            + (f"Icon={desktop_value(icon)}\n" if icon else "") + "Categories=Utility;\nX-AppKata=true\n")
+    return _write_whole(path, text.encode("utf-8"), 0o755)        # whole or not at all, as its script (P3-B4)
 
 
 def _find_exe(root: str, names: list[str]) -> str:
