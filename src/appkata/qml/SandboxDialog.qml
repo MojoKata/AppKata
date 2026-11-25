@@ -130,12 +130,16 @@ Dialog {
                    text: "suggested by " + (root.info.reviewBy || ""); color: Theme.accent; font.pixelSize: 12 }
             Text { visible: root.widened; width: parent.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
                    text: "Strict has no folders, network, sound or services, so this is now Standard with what you added." }
-            Rectangle {     // before Save: sandboxing an app that runs unsandboxed gives it an empty home (R17.13, review 2 F13)
-                visible: !!root.info.freshWarning && root.tpl !== "off"
-                width: parent.width; height: fwTxt.height + 20; radius: 10; color: Theme.warnSoft
+            Rectangle {     // before Save: sandboxing an app that runs unsandboxed gives it an empty home (R17.13, review 2 F13),
+                            // and where Save can't sandbox it yet, when the choice takes effect and why (#689's review, P4-B7)
+                visible: (!!root.info.freshWarning || !!root.info.notYet) && root.tpl !== "off"
+                width: parent.width; height: fwCol.height + 20; radius: 10; color: Theme.warnSoft
                 Icon { x: 12; y: 12; name: "warn"; size: 15; color: Theme.warn; lineWidth: 1.6 }
-                Text { id: fwTxt; x: 38; y: 11; width: parent.width - 50; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
-                       text: root.info.freshWarning || "" }
+                Column { id: fwCol; x: 38; y: 11; width: parent.width - 50; spacing: 6
+                    Text { visible: !!root.info.freshWarning; width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
+                           text: root.info.freshWarning || "" }
+                    Text { objectName: "notYet"; visible: !!root.info.notYet; width: parent.width; wrapMode: Text.WordWrap; color: Theme.warn; font.pixelSize: 12
+                           text: root.info.notYet || "" } }
             }
             Rectangle {     // the reviewers suggest something else: adopt it in one click (R17.11)
                 visible: !!root.info.hasSuggestion

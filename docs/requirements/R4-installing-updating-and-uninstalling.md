@@ -44,20 +44,47 @@ R4.3. **Install types.**
 
 R4.3.1. **Portable** (AppImage, tarball, portable `.zip`). Each app gets its own
 folder, `<install folder>/<app>/`, holding its versions side by side: an AppImage as its
-versioned file (`LocalSend-1.18.2-x86_64.AppImage`), an archive unpacked into a folder named
-after its version (`2.1/`). The install folder is a setting (R11.1.4); by default it is:
+versioned file (`LocalSend-1.18.2-x86_64.AppImage`: the release's own file name, with the version
+added when the name holds none or is another version's, so `Tool-x86_64.AppImage` is kept as
+`Tool-x86_64-2.0.AppImage`), an archive unpacked into a folder named after its version (`2.1/`).
+
+An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
+is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
+the app or its repository, or whose name holds one of those or is held by one (`codium` for
+VSCodium); a compiled program before a script; then the one nearest the archive's top. It is never
+a shared library, a `.sh` script, or a helper that comes with a program: Chromium's
+`chrome-sandbox` and crash handler, or `<program>-bin` beside `<program>`.
+
+The install folder is a setting (R11.1.4); by default it is:
 
 - `~/bin/apps` on Linux, with command links (R4.3.1.3) directly in `~/bin`. Ubuntu, Debian and
   Mint put `~/bin` on the PATH at login when it exists.
 - On Windows, by who the app is for (R15.4): `%LOCALAPPDATA%\Programs` for **Just me** (the
   default), `C:\Programs` for **Everyone**. Neither needs administrator rights.
 
-No elevation is needed. Changing the install folder applies to new installs and updates; apps
-already installed stay where they are until they're updated or reinstalled.
+The install folder and the command links folder (R4.3.1.3) are read the same way: a leading `~`
+is the user's home folder, and environment variables are filled in (`$HOME/bin`; on Windows
+`%LOCALAPPDATA%\Programs` too).
+
+No elevation is needed. Changing the install folder applies to new installs: an app already
+installed stays in the folder it is in through its updates, and is uninstalled from there. It goes
+to the new folder only when it is uninstalled and installed again. Install options (R4.9.5) shows
+that folder as the one it installs to; on Windows, a move to the other of Just me and Everyone
+(R15.4.1) is a new install, which goes to that one's install folder in Settings.
 
 R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desktop` entry on
 Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a
-command-line tool (R17.3.3) gets none unless the user or a Trust chose the option for it.
+command-line tool (R17.3.3) gets none unless the user or a Trust chose the option for it. The
+`.desktop` entry starts the app through a small script AppKata keeps for it in its own folder
+(`~/.local/share/appkata/menu/<app>`, which runs what the app runs by its own path), run by
+`/bin/sh`, the entry's program. So the entry never holds a path in the install folder, and no
+install folder is refused for its name: a `%` in it, which an entry must write as `%%`, made GLib's
+menus (Cinnamon, GNOME, MATE, Xfce) take the app for one that isn't installed. Nor does a `%` in
+the path of AppKata's own folder keep an app out of the menu, and an app starts from the menu where
+that folder is on a mount that runs no programs (`noexec`), since the script is only read. Started
+from the menu, the app has its own path as its name, as it
+does started any other way, so a program that finds its files beside itself starts. The script
+goes with the entry.
 
 R4.3.1.2. **Stable name.** When on (the default), the current version also gets a link with a
 stable name next to it: `LocalSend.AppImage` → `LocalSend-1.18.2-x86_64.AppImage`, or
@@ -68,8 +95,21 @@ which needs no extra rights, R15.5.)
 
 R4.3.1.3. **Command links.** When on (the default), AppKata puts a link named after the app
 (`localsend`) in the command links folder (default `~/bin`), so the app can be started
-from a terminal. AppKata never replaces a file there that isn't a link it made; the install
-stops with an error instead. On Windows a command link is a `<app>.cmd` file (R15.6).
+from a terminal. On Linux no link is made for a name that is already a command on this computer
+(something elsewhere on the `PATH`, or in the system's own folders, answers to it), or that is one of a short
+list kept for the system's own commands whether or not they are installed (`python3`, `sudo`, `ssh`,
+`git`, the commands AppKata and its sandbox launchers run by name, R17.4): the name is the app's
+publisher's to pick, and `~/bin` comes first on the `PATH`. Such an app is installed with its
+app-menu entry and no command, and the install says why; its option stays on, so the link is made
+at a later update or start of AppKata once the name is free, and a link whose name has since become
+a command is removed then. AppKata never replaces or removes a file there that isn't a link it made
+(a link that leads into the install folder), whether or not it made a link at that place before: an
+install or update stops with an error instead ("… exists and isn't a link AppKata made; not
+replacing it"), whatever the `PATH` and whether or not that file answers as a command, and
+uninstalling leaves it. A change to an installed
+app's sandbox, and the launcher AppKata rewrites at its start (R17.4), don't stop there: they are
+made in full, without the command link, which is made at a later start or update once its place is
+free. On Windows a command link is a `<app>.cmd` file (R15.6).
 
 R4.3.1.4. Uninstalling removes the app's folder (every version), its launcher and its links.
 
@@ -139,10 +179,16 @@ R4.5.4. Adding a Source for a foreign-installed app is allowed, and the row is f
 (R7.1.1).
 
 R4.6. **Updating** installs the new version using the same install type, and keeps the
-previous version's files until the update succeeds.
+previous version's files until the update succeeds. A portable install that fails leaves nothing
+of itself behind: after a first install there is no app folder, link, launcher or app-menu entry;
+after an update, or a switch to a kept version, the version that was current still is, with its
+links, its launcher and its app-menu entry.
 
 R4.7. **Uninstalling** reverses what AppKata recorded at install (R4.1), after a confirmation.
-User data in the home folder is kept.
+User data in the home folder is kept. What AppKata recorded and didn't remove is named in the
+notice ("<App> uninstalled. Not removed: <path>."): a folder that is no longer inside the install
+folder the app was installed into or that couldn't be deleted, and something of the user's where
+a command link was (R4.3.1.3).
 
 R4.8. **Install progress.**
 
@@ -188,6 +234,9 @@ R4.9.2. **The dialog**, titled "Install <App> <version>":
   stays disabled until one is picked.
 - For a portable choice: where it will go (`<install folder>/<app>`), and this app's **Add to
   the app menu** and **Command `<app>` in `<folder>`** checkboxes, starting from Settings (R11.1.4).
+  On Linux the command checkbox is disabled and unticked when no command link would be made for
+  the app's name (R4.3.1.3), with the reason as its tooltip ("No command will be added: `ls` is
+  already a command on this computer (/usr/bin/ls)."); the option itself stays as it was.
   On Linux, **It is**: "As the download shows" (or "Decide from the download" before it's known), "An
   app with a window" or "A command-line tool" (R17.3.3); choosing one moves the Sandbox card with it.
 - On Windows, **Install for**: **Just me** or **Everyone on this computer** (R15.4), when the file
@@ -245,5 +294,6 @@ a recipe per app.
 R4.10.5. **While it runs sandboxed** (R17), an app that updates itself can't: its files, and an
 AppImage's own file, are read-only. AppKata then updates it as if it didn't update itself — it has
 the Update button, Update all includes it, and its next update moves it from the fixed-name layout
-of R4.10.2 to version folders — and App Detail and the install dialog say why (R17.12). Switched to
-Off, it updates itself again.
+of R4.10.2 to version folders — and App Detail and the install dialog say why (R17.12). When its
+sandbox is turned Off, it updates itself again, in the fixed-name layout: AppKata renames its
+current version to the fixed name of R4.10.2 and removes its kept versions and its `current` link.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -774,9 +775,9 @@ class Backend(QObject):
         out["updates"] = saved.get("updates", "")
         out["distro"] = self.ch.distro if self.ch.enabled else ""
         eff, rec = self._app_options(url), self._recommended(url)
-        out["portable"] = {"folder": p.root, "appMenu": eff.app_menu, "commandLink": bool(eff.command_dir),
+        out["portable"] = {"folder": eff.root, "appMenu": eff.app_menu, "commandLink": bool(eff.command_dir),
                            "stableName": eff.stable_name, "commandDir": self._prefs.get("commandDir") or "~/bin",
-                           "command": self._app_id(url), "keep": p.keep,
+                           "command": self._app_id(url), "commandRefusal": self._command_link_refusal(url), "keep": p.keep,
                            "recommendedBy": rec.get("by", "") if not saved else ""}
         out["autoUpdate"], out["autoUpdateBy"] = bool(a.get("autoUpdate")), a.get("autoUpdateBy", "")
         # the Sandbox card (R17.3, C11): the chosen template, its live summary, and the disk cost of
@@ -793,8 +794,8 @@ class Backend(QObject):
                               "templates": self.sandboxTemplates,
                               "isCli": self._is_cli(url), "appImage": chosen_card["kind"] == "appimage",
                               "recommendedBy": self._sandbox_reviewer(url),
-                              "support": self._sb_support(), "sessionWarning": self._sb_session_warning(),
-                              "freshWarning": self._fresh_warning(url),
+                              "support": self._sb_support(self._app_options(url).root), "sessionWarning": self._sb_session_warning(),
+                              "freshWarning": self._fresh_warning(url), "notYet": self._not_yet_note(url),
                               "extractMb": round(img_mb * 2.5) if chosen_card["kind"] == "appimage" and sandbox.level_of(gs) != "off" else 0}
             # the app's kind (R17.3.3, review 2 F4): what the download showed, the user's own choice, and
             # the card as each kind would have it, so the dialog's kind choice moves the card live
@@ -809,9 +810,11 @@ class Backend(QObject):
         else:
             out["sandbox"] = {"applicable": False}
         if OS == "windows":
-            out["windows"] = {"scope": eff.scope, "motw": eff.motw, "folderEveryone": install.Portable(
-                scope="everyone", folder_everyone=self._prefs.get("installDirEveryone") or "").root,
-                "folderMe": install.Portable(folder=self._prefs.get("installDir") or "").root}
+            # "Installs to" for each scope the dialog offers: an installed app's own folder for its
+            # scope, Settings' for a new install or a move to the other (R4.3.1, R15.4.1; CR1.8-36)
+            out["windows"] = {"scope": eff.scope, "motw": eff.motw,
+                              "folderEveryone": dataclasses.replace(eff, scope="everyone").root,
+                              "folderMe": dataclasses.replace(eff, scope="me").root}
         return out
 
     # the install dialog's own keys in app_settings.install: how to install (R4.9.3) and the package
@@ -841,6 +844,7 @@ class Backend(QObject):
             return
         kind_was = self._is_cli(url)
         before_options = self._resolved_sandbox(url)          # what the Audit compares a sandbox change with (R17.16)
+        settings_before = self._install_settings(url)         # what goes back if it can't be applied (P5-3)
         saved = {k: c[k] for k in self._PORTABLE_KEYS if k in c and not (k == "cliKind" and c[k] not in ("cli", "gui"))}
         if c.get("sandbox") is not None and sandbox.config_error(c["sandbox"]):
             self._toast.emit("error", f"That sandbox choice can't be applied: {sandbox.config_error(c['sandbox'])}.")
@@ -866,18 +870,18 @@ class Backend(QObject):
             before = self._resolved_sandbox(url)
             self._pin_sandbox(url, None)
             self._pin_sandbox(url, self._resolved_sandbox(url))
-            self._regenerate_launcher(url)
-            r = self._resolved_sandbox(url)
-            self._audit("you", "app", "set the sandbox of", a["name"], url,
-                        self._sandbox_detail(url, before, r, kind="command-line tool" if self._is_cli(url) else "app"))
+            if self._apply_sandbox(url, settings_before, self._SANDBOX_KEYS + ("cliKind",)):     # else both went back (P5-3)
+                r = self._resolved_sandbox(url)
+                self._audit("you", "app", "set the sandbox of", a["name"], url,
+                            self._sandbox_detail(url, before, r, kind="command-line tool" if self._is_cli(url) else "app"))
             self.reload()
         elif c.get("sandbox") is not None and a and a.get("installed") and not a.get("foreign"):
             # Install options... on an installed app: the sandbox choice applies now, as the Sandbox
             # dialog's does, and is audited like it (R17.16). Round four, R4-3: it was saved and shown
             # in App Detail as in force while the launcher kept the old grants until the next update.
-            self._regenerate_launcher(url)
-            r = self._resolved_sandbox(url)
-            self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
+            if self._apply_sandbox(url, settings_before):       # else the choice went back with it (P5-3)
+                r = self._resolved_sandbox(url)
+                self._audit("you", "app", "set the sandbox of", a["name"], url, self._sandbox_detail(url, before_options, r))
             self.reload()
 
     # ---------------------------------------------------------------- package channels (R16)
@@ -1072,6 +1076,7 @@ class Backend(QObject):
                     ek = exe_type(ch.asset.name, install.head_bytes(ch.asset.url), [x.name for x in assets])
                 port = self._app_options(url, choice)
                 sbx = self._sandbox_for_install(url, kind=ch.kind)    # the grant set to bake in (R17.4, R17.11)
+                refused = self._command_refused(url)      # before: a refusal is said when it is news (R4.3.1.3)
                 rec = {}
                 if pin and target in install.kept_versions(self.db, url):      # a kept version: no download (R4.3.1.5)
                     install.switch_to(self.db, {**a, "sandbox": sbx}, target, port, rel["date"])
@@ -1108,7 +1113,8 @@ class Backend(QObject):
                 if a.get("self"):
                     self._toast.emit("info", f"AppKata {target} installed. Restart AppKata to use it.")
                 else:
-                    self._toast.emit("info", f"{a['name']} {target} installed" + (" and pinned." if version else "."))
+                    self._toast.emit("info", f"{a['name']} {target} installed" + (" and pinned." if version else ".")
+                                     + self._command_note(self._command_refused(url), refused))
             except PackageNeedsConfirmation as e:          # a .deb/.rpm that changes other packages (R16.3.5)
                 self._planConfirm.emit({"url": url, "name": a["name"], "action": "install-release", "lines": list(e.lines)})
             except PackageRefused as e:
@@ -1203,10 +1209,10 @@ class Backend(QObject):
         def work():
             try:
                 ver = a["installed"] if a else ""
-                install.uninstall(self.db, url, confirmed=confirmed, remove_sandbox=remove_home)
+                left = install.uninstall(self.db, url, confirmed=confirmed, remove_sandbox=remove_home)
                 self._pin_sandbox(url, None)        # a reinstall resolves its sandbox afresh (R17.11)
                 self._audit("you", "app", "uninstalled", a["name"] if a else url, url, {"version": ver})
-                self._toast.emit("info", f"{a['name'] if a else 'App'} uninstalled.")
+                self._toast.emit("info", f"{a['name'] if a else 'App'} uninstalled.{self._left_note(left)}")
             except NeedsConfirmation as e:          # it would remove other packages too (R16.4.3)
                 self._planConfirm.emit({"url": url, "name": a["name"] if a else "", "action": "uninstall", "lines": list(e.lines)})
             except Refused as e:
@@ -1407,13 +1413,16 @@ class Backend(QObject):
         if url == APPKATA_REPO:
             self.toast.emit("error", "AppKata's own Source is built in.")
             return
+        left = []
         if and_uninstall:
             try:
-                install.uninstall(self.db, url)
+                left = install.uninstall(self.db, url)
             except install.InstallError as e:
                 self.toast.emit("error", str(e))
                 return
         a = self._app(url)
+        if left:                                    # what the uninstall didn't remove is said here too (R4.7)
+            self.toast.emit("info", f"{a['name'] if a else 'The app'} uninstalled.{self._left_note(left)}")
         self.db.x("DELETE FROM sources WHERE url=?", (url,))
         self._audit("you", "source", "removed", a["name"] if a else url, url, {"uninstalled": True} if and_uninstall else None)
         if and_uninstall:
@@ -1711,7 +1720,52 @@ class Backend(QObject):
         rec = json.loads(row["record"] or "{}") if row else {}
         p.scope = own.get("scope") or rec.get("scope") or p.scope
         p.motw = bool(own.get("motw", rec.get("motw", False)))
+        # an installed app keeps the folder it is in, whatever Settings names now (R4.3.1): the
+        # dialog's "Installs to", the folders a sandbox never shares and the launcher all mean it.
+        # It is the folder of the scope it is installed for: one for the other scope (Windows,
+        # R15.4.1) is a new install, which goes where Settings says (CR1.8-36).
+        if rec.get("current") and rec.get("root"):
+            if (rec.get("scope") or "me") == "everyone":
+                p.folder_everyone = rec["root"]
+            else:
+                p.folder = rec["root"]
         return p
+
+    def _command_refused(self, url: str) -> str:
+        """Why the installed app at `url` got no command link though its option is on (R4.3.1.3: its
+        name is already a command here, or a reserved one), or "" when it has one or wants none."""
+        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
+        return (json.loads(row["record"] or "{}") if row else {}).get("commandRefused", "")
+
+    def _command_link_refusal(self, url: str) -> str:
+        """Why installing or updating the app at `url` would make no command link, or "" when it
+        would make one (R4.3.1.3): its name is already a command on this computer, or one kept for
+        the system's own. It is the installer's own answer (:func:`install.command_link_refusal`),
+        asked before the install for the install dialog, which showed a checkbox to tick for a
+        link that would not be made, the reason coming only in the notice afterwards (CR1.9-31).
+        What is at the link's own place is no refusal: the app's own command link, from an earlier
+        install, or something of the user's, at which the install stops with its error instead
+        (#689's review, P1-B2). Linux only: Windows' command links are `.cmd` files (R15.6)."""
+        from appkata_core.platform import OS, command_dir_default
+        if OS != "linux":
+            return ""
+        name = self._app_id(url)
+        folder = install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder
+        return install.command_link_refusal(name, os.path.join(folder, name))
+
+    @staticmethod
+    def _command_note(why: str, before: str = "") -> str:
+        """What an install's notice adds when it made no command link (R4.3.1.3): the reason, said
+        when it is news -- a first install, or a reason that changed -- and not at every update."""
+        return f" No command was added: {why}." if why and why != before else ""
+
+    @staticmethod
+    def _left_note(left: list[str]) -> str:
+        """What an uninstall's notice adds when something the app's record names is still there
+        (R4.7): a folder that isn't AppKata's to remove or couldn't be deleted, the user's own file
+        where a command link was (R4.3.1.3). The app's row is gone by then, so this is the one
+        place it is said (CR1.3-12)."""
+        return f" Not removed: {', '.join(left)}." if left else ""
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:
         """Copy the options an app was installed with into its own settings (R4.3.1.6)."""
@@ -1730,10 +1784,12 @@ class Backend(QObject):
             return {}                              # a session nothing leaks from (GNOME on Wayland)
         return sandbox.session_warning()
 
-    def _sb_support(self) -> dict:
+    def _sb_support(self, root: str | None = None) -> dict:
         # `declined`: "Not now" was answered at an install, so installs don't ask (R17.10); `waitingNote`:
-        # what the setup will sandbox, said before its password prompt (R17.13; review 2, F13)
-        st = {**sandbox.support_status(), "declined": bool(self._prefs.get("sandboxSetupDeclined"))}
+        # what the setup will sandbox, said before its password prompt (R17.13; review 2, F13). Asked
+        # of a launcher in `root`, an app's install folder, or the one Settings names (R17.4; #689's
+        # review, P2-B3)
+        st = {**sandbox.support_status_in(root or self.portable().root), "declined": bool(self._prefs.get("sandboxSetupDeclined"))}
         if getattr(self, "_demo_sandbox", "") == "setup":
             st = {**st, "status": "setup-needed", "tools": True}
         if st.get("status") == "setup-needed":
@@ -1927,20 +1983,58 @@ class Backend(QObject):
         return (f"Sandboxing {a.get('name', 'it')} gives it an empty private home of its own, as if newly installed: "
                 "its settings and accounts will look reset, and paths it remembers may point nowhere. Your files aren't touched.")
 
+    def _not_yet_note(self, url: str) -> str:
+        """What the Sandbox dialog and Install options say above Save, beside R17.13's warning, when a
+        sandboxed choice is picked for an installed app that Save can't sandbox now: it has no
+        launcher, and the sandbox can't run for it (a launcher in its install folder would find no
+        bwrap, R17.4; the system's one-time setup is pending, or it needs a repair, R17.10). The
+        choice is saved and takes effect once the sandbox can run for the app; the note says so,
+        with why, in the words App Detail and Settings use. "" where Save sandboxes it, or it has a
+        launcher already (kept whatever this system can do, R17.10). It is the gate
+        :meth:`_sandbox_for_install` keeps, asked of what App Detail shows (`_sb_support` for the
+        app's own folder). #689's review, P4-B7: the dialogs warned that Save would reset the app's
+        settings, and Save then left it unsandboxed, with no word that the choice waits."""
+        a = self._app(url) or {}
+        if not a.get("installed") or a.get("foreign") or url == APPKATA_REPO:
+            return ""
+        row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
+        if not row or json.loads(row["record"] or "{}").get("launcher"):
+            return ""
+        st = self._sb_support(self._app_options(url).root)
+        why = {"unsupported": st.get("toolsHint") or "bubblewrap isn't installed, so apps run without a sandbox.",
+               "setup-needed": "this system needs a one-time setup before the sandbox can run (Set up… in Settings → Sandbox; "
+                               "it asks for your password once).",
+               "conflict": "AppKata's AppArmor profile from before this system's upgrade conflicts with the system's own "
+                           "(Repair… in its App Detail removes AppKata's)."}.get(st.get("status"))
+        if not why:
+            return ""
+        return f"This choice takes effect once the sandbox can run for {a.get('name', 'it')}, which runs unsandboxed until then: {why}"
+
     def _waiting_for_sandbox(self) -> list[tuple[str, str, bool]]:
         """(url, name, starts fresh) of each installed app that would run sandboxed but has no launcher
-        yet: what a setup, or tools installed since, will sandbox (R17.10, R17.13)."""
+        yet, and would get one that starts (:meth:`_launcher_can_start`): what a setup, or tools
+        installed since, will sandbox (R17.10, R17.13)."""
         out = []
-        for row in self.db.all("SELECT url, name FROM installs ORDER BY name"):
+        for row in self.db.all("SELECT url, name, record FROM installs ORDER BY name"):
             a = self._app(row["url"])
             if row["url"] == APPKATA_REPO or not a or a.get("foreign"):
                 continue
             r = self._resolved_sandbox(row["url"])
-            if r and sandbox.level_of(r["grants"]) != "off":
+            if r and sandbox.level_of(r["grants"]) != "off" and self._launcher_can_start(row["url"], json.loads(row["record"] or "{}")):
                 launcher, fresh = self._sandbox_state(row["url"])
                 if not launcher:
                     out.append((row["url"], a["name"], fresh))
         return out
+
+    def _launcher_can_start(self, url: str, rec: dict) -> bool:
+        """Whether the app at `url` (its install record `rec`, {} before a first install) has a
+        launcher, or one written for it now would start: a launcher in its install folder finds the
+        bwrap AppKata's answers are about (R17.4). One that has none and whose launcher wouldn't runs
+        Off whatever this system can do. Asked by AppKata's start before it gives an app a launcher,
+        by an install deciding to sandbox, and by what the setup is said to sandbox, so what is said
+        is what is done (#689's review, P3-B1: Settings said the setup sandboxes an app in ~/bin that
+        the start then left unsandboxed)."""
+        return bool(rec.get("launcher")) or sandbox.bwrap_answers_hold(self._app_options(url).root)
 
     @staticmethod
     def _sandboxed_note(items: list[tuple[str, bool]], waiting: bool) -> str:
@@ -1998,10 +2092,13 @@ class Backend(QObject):
         if not r or sandbox.level_of(r["grants"]) == "off":
             return r["grants"] if r else None
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
-        if row and json.loads(row["record"] or "{}").get("launcher"):
+        rec = json.loads(row["record"] or "{}") if row else {}
+        if rec.get("launcher"):
             return r["grants"]
         if not sandbox.have_tools() or sandbox.support_status()["status"] in ("setup-needed", "conflict"):
             return None            # can't sandbox here yet: run Off (the UI warns, R17.10, R17.10.2)
+        if not self._launcher_can_start(url, rec):
+            return None            # nor in its install folder, where its launcher would find no bwrap (R17.4)
         return r["grants"]
 
     @Property("QVariant", notify=prefsChanged)
@@ -2066,8 +2163,8 @@ class Backend(QObject):
                 "sound": sorted(sandbox.normalize(gs)["sound"]), "devices": sorted(sandbox.normalize(gs)["devices"]),
                 "caps": sorted(sandbox.normalize(gs)["caps"]), "execDeny": sandbox.normalize(gs)["exec_deny"],
                 "capLabels": sandbox.CAP_LABELS, "deviceLabels": sandbox.DEVICE_LABELS, "soundLabels": sandbox.SOUND_LABELS,
-                "templates": self.sandboxTemplates, "support": self._sb_support(),
-                "freshWarning": self._fresh_warning(url), "launcherHash": self._launcher_hash(url),
+                "templates": self.sandboxTemplates, "support": self._sb_support(root),
+                "freshWarning": self._fresh_warning(url), "notYet": self._not_yet_note(url), "launcherHash": self._launcher_hash(url),
                 "sessionWarning": self._sb_session_warning(),
                 # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
                 "busWarning": sandbox.bus_warning() if sandbox.normalize(gs)["network"] else {},
@@ -2116,9 +2213,9 @@ class Backend(QObject):
 
     def _launcher_hash(self, url: str) -> str:
         """The first 16 hex digits of the SHA-256 of the app's launcher text, or "" when it has none:
-        what the Audit records of a launcher (R17.4; review 2, F11)."""
-        text = self.sandboxLaunchCommand(url)
-        return hashlib.sha256(text.encode()).hexdigest()[:16] if text else ""
+        what the Audit records of a launcher (R17.4; review 2, F11), of its bytes as written."""
+        data = self._launcher_bytes(url)
+        return hashlib.sha256(data).hexdigest()[:16] if data else ""
 
     def _sandbox_detail(self, url: str, before: dict | None, after: dict | None, **extra) -> dict:
         """An Audit entry's detail for a sandbox change (R17.16; review 2, F11: it said only the template
@@ -2137,19 +2234,25 @@ class Backend(QObject):
         out.update(extra)
         return out
 
-    @Slot(str, result=str)
-    def sandboxLaunchCommand(self, url: str) -> str:
-        """The generated launcher text, for "Show the launch command" (R17.4)."""
+    def _launcher_bytes(self, url: str) -> bytes:
+        """The app's launcher as it is on disk, b"" when it has none. It holds its paths as their own
+        bytes, UTF-8 or not (#689's review, P4-1)."""
         row = self.db.one("SELECT record FROM installs WHERE url=?", (url,))
         rec = json.loads(row["record"] or "{}") if row else {}
         lp = rec.get("launcher")
         if lp and os.path.exists(lp):
             try:
-                with open(lp) as f:
+                with open(lp, "rb") as f:
                     return f.read()
             except OSError:
                 pass
-        return ""
+        return b""
+
+    @Slot(str, result=str)
+    def sandboxLaunchCommand(self, url: str) -> str:
+        """The generated launcher text, for "Show the launch command" (R17.4): a byte of a path that
+        isn't UTF-8 is shown as the replacement character."""
+        return self._launcher_bytes(url).decode("utf-8", "replace")
 
     @Slot(str, "QVariant")
     def setSandbox(self, url: str, config) -> None:
@@ -2176,6 +2279,7 @@ class Backend(QObject):
             cfg = {"template": cfg["template"], "overrides": sandbox.as_overrides(cfg["template"], cfg["custom"])}
         row = self.db.one("SELECT install FROM app_settings WHERE url=?", (url,))
         saved = json.loads(row["install"] or "{}") if row and row["install"] else {}
+        settings_before = json.loads(json.dumps(saved))         # what goes back if it can't be applied (P5-3)
         before = self._resolved_sandbox(url)
         if cfg is None:             # back to the reviewers' suggestion / the default: adopt it now (R17.11)
             saved.pop("sandbox", None)
@@ -2187,8 +2291,9 @@ class Backend(QObject):
         r = self._resolved_sandbox(url)
         if cfg is None and a and a.get("installed"):
             self._pin_sandbox(url, r)
-        if a and a.get("installed") and not a.get("foreign"):
-            self._regenerate_launcher(url)
+        if a and a.get("installed") and not a.get("foreign") and not self._apply_sandbox(url, settings_before):
+            self.reload()           # the choice went back with the change, and a failed change isn't audited (R13.3)
+            return
         self._audit("you", "app", "set the sandbox of", a["name"] if a else url, url, self._sandbox_detail(url, before, r))
         self.reload()
 
@@ -2220,33 +2325,124 @@ class Backend(QObject):
                     {"suggested": ", ".join(saved["sandboxReviewSeen"] or [])})
         self.reload()
 
-    def _regenerate_launcher(self, url: str) -> None:
-        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4)."""
+    def _regenerate_launcher(self, url: str) -> Exception | None:
+        """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
+        Returns None, or the error that kept it from being written: the app is then as it was,
+        install.rewrite_launcher having put the change back (#689's review, P4-B3), or, where even
+        that couldn't be done, an install.NotPutBack that names what isn't (P5-2). An error AppKata
+        doesn't expect is logged with its traceback and returned the same way, so the Sandbox
+        dialog's Save still puts the choice back (:meth:`_apply_sandbox`) and refreshes the window,
+        and AppKata's start goes on to the next app (C-1: only InstallError and OSError were caught,
+        and any other error left both half-way)."""
         a = self._app(url)
         if not a:
-            return
+            return None
         gs = self._sandbox_for_install(url)
         try:
             install.rewrite_launcher(self.db, {**a, "sandbox": gs}, self._app_options(url))
         except (install.InstallError, OSError) as e:
-            log.warning("couldn't regenerate the launcher for %s: %s", url, e)
+            log.warning("couldn't regenerate the launcher for %s: %s%s", url, e,
+                        f"; not put back: {', '.join(e.left)}" if isinstance(e, install.NotPutBack) else "")
+            return e
+        except Exception as e:      # noqa: BLE001
+            log.exception("couldn't regenerate the launcher for %s", url)
+            return e
+        return None
+
+    # the keys of an app's settings row that say which sandbox it runs with (R17.11): the user's
+    # choice, the grant set it was pinned to, and the review suggestion it was chosen knowing
+    _SANDBOX_KEYS = ("sandbox", "sandboxPinned", "sandboxReviewSeen")
+
+    def _apply_sandbox(self, url: str, settings_before: dict, keys: tuple[str, ...] = _SANDBOX_KEYS) -> bool:
+        """A sandbox choice the user has just saved for an installed app, applied now (R17.4).
+        Returns whether it was. Where it can't be (a full disk), the app runs as it did
+        (install.rewrite_launcher takes the change back, #689's review, P4-B3), a toast says why, and
+        the choice goes back with it: the app's settings get back the `keys` they had before the
+        Save (`settings_before`; a corrected kind's too, whose default the change was), so App
+        Detail and the Sandbox dialog show the sandbox the app runs with, the same Save made again
+        makes the change, and the caller writes no Audit entry, a failed change being none (R13.3).
+        Where the change couldn't all be put back either (install.NotPutBack), the toast names what
+        isn't as it was rather than saying the app runs as it did (P5-2).
+
+        #689's review, P5-3: the choice stayed saved, so App Detail and the dialog showed it as in
+        force (Strict and no network, while the app ran with the network), the Audit's row named the
+        old launcher's hash as written for it, and a failed Off stayed sandboxed under "Off", which
+        AppKata's start never rewrites."""
+        e = self._regenerate_launcher(url)
+        if e is None:
+            return True
+        saved = self._install_settings(url)
+        for k in keys:
+            if k in settings_before:
+                saved[k] = settings_before[k]
+            else:
+                saved.pop(k, None)
+        self._set_install_settings(url, saved)
+        name, why = (self._app(url) or {}).get("name", url), str(e) or type(e).__name__
+        if isinstance(e, install.NotPutBack):
+            one = len(e.left) == 1
+            parts = e.left[0] if one else ", ".join(e.left[:-1]) + " and " + e.left[-1]
+            self._toast.emit("error", f"Couldn't change the sandbox of {name}: {why}. It couldn't all be put back either: "
+                                      f"{parts} {'isn' if one else 'aren'}'t as {'it was' if one else 'they were'}.")
+        else:
+            self._toast.emit("error", f"Couldn't change the sandbox of {name}, so it runs as it did: {why}")
+        return False
 
     def _heal_launchers_at_startup(self) -> None:
-        """The startup pass, on its own thread: warm the bwrap probe (a 15 s timeout at worst) so the
+        """The startup pass, on its own thread: remove what a sandbox change or a write stopped
+        part-way left beside an app's files and the files its launcher shares with the others
+        (install.sweep_left_beside) and beside AppKata's own (selfinstall.sweep_left_beside), each
+        app's in a line of the App log, warm the bwrap probe (a 15 s timeout at worst) so the
         first App Detail or Settings → Sandbox on the UI thread finds the answer cached, then give any
-        app installed while the system couldn't sandbox its launcher. Regression (round two, R5): the
-        heal pass only probed when something needed healing, so on an ordinary start — every launcher
-        in place — the probe still ran on the UI thread, the very thing moving it here was for."""
+        app installed while the system couldn't sandbox its launcher, then make or remove the command
+        links whose names have been freed or taken since (:meth:`_refresh_command_links`). Regression
+        (round two, R5): the heal pass only probed when something needed healing, so on an ordinary
+        start — every launcher in place — the probe still ran on the UI thread, the very thing moving
+        it here was for."""
+        changed = False
+        try:            # what a change or a write stopped part-way left beside an app's files (#689's review, P6-B2)
+            install.sweep_left_beside(self.db)
+        except Exception:           # never let this block startup
+            log.exception("couldn't remove what a stopped change left beside the apps' files")
+        try:            # and beside AppKata's own, where the process that wrote it is gone (P7-B3)
+            selfinstall.sweep_left_beside(self.db, self.portable().root)
+        except Exception:           # nor this
+            log.exception("couldn't remove what a stopped write left beside AppKata's own files")
         try:
             sandbox.userns_works()
             # logs an older AppKata kept by name move to their install's id, before the heal pass
             # rewrites the launchers that name them (R14.2.1; review 2, F14)
             applog.adopt_name_logs([(install.app_id_of(json.loads(r["record"] or "{}"), {"name": r["name"]}), r["name"])
                                     for r in self.db.all("SELECT name, record FROM installs")])
-            if self._heal_launchers():
-                self._refresh.emit()
+            changed = bool(self._heal_launchers())
         except Exception:           # never let this block startup
             log.exception("couldn't regenerate sandbox launchers")
+        try:
+            changed = self._refresh_command_links() or changed
+        except Exception:           # nor this
+            log.exception("couldn't refresh the command links")
+        if changed:
+            self._refresh.emit()
+
+    def _refresh_command_links(self) -> bool:
+        """AppKata's start, for every portable app it installed (R4.3.1.3): a command link that wasn't
+        made, its name being a command here or its place the user's, is made once both are free, and
+        one whose name has since become a command is removed, the record saying why. Every app, run
+        sandboxed or not, and whether or not this system can sandbox: the heal pass above reaches only
+        a sandboxed app whose launcher isn't today's, which was the only road here (#689's review,
+        P1-1). Returns whether any record changed."""
+        changed = False
+        for row in self.db.all("SELECT url FROM installs"):
+            if row["url"] == APPKATA_REPO:         # AppKata itself: its own install makes no command link
+                continue
+            a = self._app(row["url"])
+            if not a or a.get("foreign"):          # not AppKata's to touch
+                continue
+            try:
+                changed = install.refresh_command_link(self.db, a, self._app_options(row["url"])) or changed
+            except (install.InstallError, OSError) as e:
+                log.warning("couldn't refresh the command link of %s: %s", row["url"], e)
+        return changed
 
     def _heal_launchers(self, actor: str = "system") -> list[str]:
         """Give every installed app that should be sandboxed, but was installed while this system
@@ -2257,8 +2453,20 @@ class Backend(QObject):
         at again). Returns the URLs
         regenerated. Nothing happens until sandboxing actually works here. An app installed outside
         AppKata (foreign, R4.5) is left alone, as setSandbox leaves it. The apps sandboxed for the first
-        time are named in a notice and audited, by `actor` (R17.13; review 2, F13: nothing said so)."""
-        todo, undo = [], []
+        time are named in a notice and audited, by `actor` (R17.13; review 2, F13: nothing said so).
+
+        A rewrite that can't be written (a full disk) leaves the app as it was (install.rewrite_launcher
+        puts it back) and is neither audited nor returned: _regenerate_launcher has logged why, a
+        failed operation being no Audit entry (R13.3), and the next start tries again (R17.4).
+        #689's review, P6-1: its result was dropped, so a launcher put back was audited as "rewrote
+        the launcher of" with the hash of the old one, at every start while the failure lasted.
+
+        Where it couldn't all be put back either (install.NotPutBack) and the launcher it wrote is
+        the one left, that launcher is today's text and runs, and the next start finds it current:
+        it is audited and returned as a rewrite is, with its hash, and the App log has what isn't as
+        it was. #689's review, P7-1: every failure was skipped, so that launcher was one no Audit
+        entry named, at that start or any later one."""
+        todo, undo, done = [], [], []
         for row in self.db.all("SELECT url, record FROM installs"):
             rec = json.loads(row["record"] or "{}")
             if not rec.get("current"):
@@ -2273,17 +2481,26 @@ class Backend(QObject):
             r = self._resolved_sandbox(row["url"])
             if not r or sandbox.level_of(r["grants"]) == "off":
                 continue
+            if not self._launcher_can_start(row["url"], rec):
+                continue           # in a folder whose launcher would find no bwrap: it runs Off (R17.4)
             if not install.launcher_is_current(rec, {**a, "sandbox": r["grants"]}, self._app_options(row["url"])):
                 todo.append(row["url"])
         for url in undo:
-            self._regenerate_launcher(url)
-            log.info("AppKata runs unsandboxed again: removed the launcher an older version gave it")
+            if self._regenerate_launcher(url) is None:
+                log.info("AppKata runs unsandboxed again: removed the launcher an older version gave it")
+                done.append(url)
         if not todo or not sandbox.have_tools() or sandbox.support_status()["status"] != "ok":
-            return undo
+            return done
         first = []
         for url in todo:
             had, fresh = self._sandbox_state(url)
-            self._regenerate_launcher(url)
+            before = self._launcher_bytes(url)
+            e = self._regenerate_launcher(url)
+            if e is not None and not (isinstance(e, install.NotPutBack) and self._launcher_bytes(url) != before):
+                continue           # as it was, and logged; no Audit entry (R13.3)
+            done.append(url)
+            if e is not None:      # the launcher it wrote stays, and runs: audited as written (P7-1)
+                log.warning("the launcher written for %s couldn't be put back: it runs as written", url)
             log.info("brought the launcher of %s up to today's text" if had else "sandboxed %s now that this system supports it", url)
             if not had and self._sandbox_state(url)[0]:
                 first.append((url, (self._app(url) or {}).get("name", url), fresh))
@@ -2293,7 +2510,7 @@ class Backend(QObject):
                             {"by": f"AppKata {APPKATA_VERSION}", "launcher": self._launcher_hash(url),
                              "written for": sandbox.describe(r["template"], r["grants"]) if r else ""})
         self._tell_sandboxed(first, actor)
-        return undo + todo
+        return done
 
     @Slot()
     def setupSandboxSupport(self) -> None:
@@ -2328,7 +2545,7 @@ class Backend(QObject):
         r = self._resolved_sandbox(url, kind=(choice or {}).get("kind") or None)
         if not r or sandbox.level_of(r["grants"]) == "off":
             return False
-        return sandbox.have_tools() and self._sb_support()["status"] == "setup-needed"
+        return sandbox.have_tools() and self._sb_support(self._app_options(url).root)["status"] == "setup-needed"
 
     @Slot("QVariant", bool)
     def answerSandboxSetup(self, info, now: bool) -> None:
