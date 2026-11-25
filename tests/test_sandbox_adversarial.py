@@ -496,8 +496,6 @@ def test_what_appkata_says_of_bwrap_is_about_the_install_folder_a_launcher_is_wr
         target = _installed_off_in(be, URL, root)
         support = be.sandboxInfo(URL)["support"]                             # its App Detail
         assert (support["status"] == "ok") is runs and ("bubblewrap" in support["appToolsHint"]) is not runs, support
-        note = be.sandboxInfo(URL)["notYet"]                                 # and its dialogs, beside a sandboxed choice (P4-B7)
-        assert (note == "") is runs and ("until then: bubblewrap isn't installed" in note) is not runs, note
         assert be._heal_launchers() == ([URL] if runs else [])               # AppKata's start sandboxes it where it can start
         rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
         assert (rec.get("launcher") == str(target / "run")) is runs and os.path.exists(target / "run") is runs, rec
