@@ -341,3 +341,295 @@ Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
     Version-select test takes about 5 seconds (the wheel's animation).
 - **The pending setup's record** (AppKata's own setup on Windows) gets no digest here: that is
     #326's (`pendingSha256`), in another unit.
+
+## Batch 3
+
+Fable 5.2 at high effort, 2026-11-25. Nothing uncommitted was found in the worktree; nothing was
+taken over. No failure of CI's was written here for batch 2's commits.
+
+**Files touched:** `docs/requirements/R4-installing-updating-and-uninstalling.md`,
+`docs/requirements/R15-windows.md`, `docs/requirements/R16-package-channels.md`,
+`scripts/channels_e2e.py`, `src/appkata/backend.py`, `src/appkata/qml/AppDetail.qml`,
+`src/appkata/qml/AppRow.qml`, `src/appkata_core/catalog.py`, `src/appkata_core/flatpak.py`,
+`src/appkata_core/foreign.py`, `src/appkata_core/install.py`, `src/appkata_core/pkgbackend.py`,
+`src/appkata_core/windows.py`, `tests/test_backend.py`, `tests/test_channels.py`,
+`tests/test_docs_facts.py`, `tests/test_install_review.py`, `tests/test_sandbox_ui_surfaces.py`,
+`tests/test_windows.py`, `tests/skips/windows.txt`, `docs/relay/progress.md`.
+
+**Counts:** fixed 3 (one of them with its remedy changed in one point, listed), no defect 0, set
+aside 0, still left 0, new 4 (one fixed here, in a commit of its own; three listed only).
+
+### The findings
+
+Each test was shown failing by exporting the commit before the fix (`git archive`) to a scratch
+folder, putting the new test files over it, and running the new tests there in a scratch home. The
+channels container was run from a scratch script that makes `scripts/test-channels.sh`'s own
+`docker run` with this worktree as the sources and `--memory 3g`, one container at a time.
+
+- **#223 (Med), fixed, `157c5ba`.** R4.4 lists the two checks that are made (a published checksum;
+    Authenticode on Windows), says that a publisher's signature beside a release's file is not
+    checked, and defines Verified by the three that check a signature (Windows, flatpak against
+    its remote's key, the package manager against its repository's keys). `docs/gpg.md` said so
+    already and is not changed. Test: a new fact in `tests/test_docs_facts.py`, "R4.4: the checks
+    made before installing", which holds R4.4's numbered list to the checks `install()` makes.
+    Before the fix it fails ("a publisher's signature": the document True, the code False).
+- **#318 (Med), fixed, `8cf997c` (and `336cd40`, one line of R16.6.1).** The record of a channel's
+    copy holds what the tools say, asked each time AppKata installs, adopts or updates it
+    (`install.channel_verdict`): a Flatpak is `signed` when its own remote is one of the
+    installation's with signature checking on (`flatpak.checks_signatures`, from
+    `flatpak remotes --columns=name,options`); a package when a repository offers the installed
+    version (`pkgbackend.signed_by`, from `apt-cache policy`), with the repository's own name
+    (its release's `o=`, else `l=`) as the signer; everything else is `unverified`. `detail()`
+    takes the chip and its tooltip from the record, never from `ch`; the QML's fixed "Signed by
+    Flathub" is gone. The Unverified chip is R4.4's existing one; no fourth chip, and no refusal
+    to adopt (the alternatives, not taken). The dnf half is fixed the same way, by reading
+    (`dnf repoquery --installed`'s `%{from_repo}` and a signature in the package).
+    **Beyond the stated remedy, by its own rule:** a repository apt is told to trust without a
+    key (`[trusted=yes]`, `Trusted: yes`, read through `apt-get indextargets`' `$(SOURCESENTRY)`)
+    doesn't make a package `signed`. It is the finding's own case, and the channels container's own
+    repository: its package would have read Verified.
+    Tests: in `tests/test_channels.py`,
+    `test_a_package_is_signed_only_where_a_repository_whose_key_apt_checks_offers_the_installed_version`
+    (9 forms of `apt-cache policy`, recorded from Ubuntu 24.04: the distribution's, a PPA's, by
+    hand, by hand over the distribution's, a version no longer offered, a trusted-without-a-key
+    repository…), `test_a_sources_entry_that_takes_a_repository_without_a_key`,
+    `test_an_rpm_is_signed_only_from_a_repository_and_with_a_signature`,
+    `test_flatpak_checks_a_remote_against_its_key_unless_told_not_to`,
+    `test_a_flatpak_install_records_whether_its_remotes_key_checked_it`,
+    `test_an_adopted_flatpak_is_signed_only_where_its_own_remotes_key_checked_it`,
+    `test_a_package_is_recorded_as_what_apt_says_checked_it_when_adopted_installed_or_updated`;
+    in `tests/test_backend.py`,
+    `test_a_channels_copy_has_the_chip_its_record_says_and_none_for_being_from_a_channel` (10
+    records) and `test_a_package_no_repository_checked_is_named_by_no_distribution`; in
+    `tests/test_sandbox_ui_surfaces.py`, three more cases of the App Detail chip test and
+    `test_the_apps_row_of_a_package_names_its_repository_only_where_the_record_has_one`.
+    Before the fix: 50 of the 61 cases fail; the 11 that pass are what was right already
+    (Flathub's own, the distribution's own, a row with a name). Many of the 50 fail on a function
+    that isn't there yet; the ones that show the old behaviour directly are the records
+    (`signed` by "Ubuntu" for a package put in by hand, by "Flathub" for a Flatpak of another
+    remote) and the chip (`signed` for every record with a channel).
+    **Container:** `scripts/channels_e2e.py` now asks the real tools, and passed in the ubuntu,
+    ubuntu-pk and mint runs: a package of the local `[trusted=yes]` repository is not Verified,
+    before and after its update; the distribution's `hello` is Verified, signed by "Ubuntu",
+    adopted and installed; `hello` put in by hand over it (`dpkg -i`) is adopted as not Verified;
+    a Flatpak from the `--no-gpg-verify` remote is not Verified, installed and adopted.
+- **#327 (Med), fixed, `c76ed33`, the remedy changed in one point.** What runs with administrator
+    rights takes its own copy of the file, compares the copy's SHA-256 with the one AppKata took of
+    the download, and installs that copy.
+    Linux, `pkgbackend.Cli.install_file`: after the dry run and its review, `pkexec` runs
+    `/bin/sh` with a fixed script whose words are the file, the SHA-256 and the package manager's
+    command. It makes a folder under `/var/cache` (`mktemp -d`, root's alone until the copy is
+    checked), copies, hashes, compares, and hands the copy to `apt-get install` or `dnf install`;
+    a copy that differs exits 65 with "the downloaded file changed after AppKata checked it;
+    nothing was installed". A release's package file never goes to PackageKit (its `InstallFiles`
+    branch is removed); `install()` takes the command line of the file's own kind.
+    Windows, `windows.run_elevated`: what is elevated is Windows PowerShell, by its full path,
+    with a script (`-EncodedCommand`, its values as base64) that makes a folder in Windows' `Temp`
+    folder with a protected ACL of Administrators and SYSTEM, copies, hashes, compares, and starts
+    the copy through the shell (an `.msi` with System32's `msiexec`), handing back its exit code.
+    Used where AppKata itself elevated: an `.msi` or a known `.exe` installer for everyone, and
+    the Visual C++ run-time.
+    **The point changed:** on Windows the copy is made in Windows' own `Temp` folder, not in "the
+    locked-down all-users folder" of the decision. `C:\Programs` (R15.4.3) is protected against
+    other accounts and belongs to the user who made it, who may always change its permissions
+    (R15.4.3 relies on that), so a program of the user's could rename it while the copy is checked.
+    The decision's own rule, "a place only … administrators can write", is what is kept.
+    Tests: in `tests/test_install_review.py`, with stand-in package tools on the PATH and the real
+    script, `test_a_releases_package_is_installed_from_roots_own_copy_of_the_file_that_was_checked`
+    (deb, rpm), `test_a_package_swapped_after_its_check_is_refused_on_the_administrators_side`
+    (other bytes, the same size in place, a link to another file × deb, rpm; the swap is a hook
+    after the dry run), `test_a_releases_package_never_goes_to_packagekit_which_takes_a_path_and_no_checksum`,
+    `test_a_package_whose_plan_needs_the_users_ok_is_copied_nowhere_before_it_is_given`; in
+    `tests/test_channels.py`, `test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_and_installs`
+    (pkexec's words and the script's order) and `test_packagekit_is_never_handed_a_file`; in
+    `tests/test_windows.py`, `test_an_installer_for_everyone_is_started_by_the_script_that_copies_and_checks_it`,
+    `test_an_installer_appkata_doesnt_elevate_is_started_as_before`,
+    `test_an_installer_that_isnt_the_file_that_was_checked_is_not_started`,
+    `test_the_visual_cpp_runtime_is_started_by_the_same_script_held_to_the_file_whose_signature_was_read`,
+    `test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_folder_of_its_own`
+    (the script's rules on any system; on Windows itself it is run).
+    Before the fix: 21 of the 26 cases fail (the swapped file was installed; the package manager
+    was handed the downloads path; PackageKit was asked for `InstallFiles`; the download itself
+    was elevated). Two of the 21 (a declined prompt, a failed installer) fail there on the test's
+    own stand-in, not on a behaviour that changed. The 5 that pass are what didn't change.
+    **Container:** `scripts/channels_e2e.py` installs a real `.deb` from a "release" as root and,
+    **through the real pkexec, as a user** with none of root's rights (polkit is told to let that
+    one user through; the rule is removed after), then swaps the file after the dry run for a
+    package whose script would run as root. Passed in the ubuntu, ubuntu-pk and mint runs. On the
+    code before the fix the same script, in the ubuntu container: "a file swapped after its check
+    is refused: it was installed" and `('6.6-6', True, [])`, the other package installed and its
+    script run as root.
+- `24c5a0d`: the new finding 1 below, fixed in a commit of its own.
+
+### Needs your eye
+
+- `157c5ba` (#223): **R4.4**: its list is two checks; the sentence "A signature a publisher puts
+    beside a release's file (a GPG `.asc` or `.sig`, a minisign `.minisig`, a sigstore bundle) is
+    not checked."; and what **Verified** means, by the three that check a signature.
+- `8cf997c` (#318): **R16.3.6**, rewritten with its condition, and what App Detail shows:
+    - **Unverified** for a channel's copy no key checked, where every channel's copy read
+        Verified. Tooltips: "No key checked this copy: flatpak doesn't check its remote, <remote>,
+        against one" / "Its remote isn't known, so AppKata can't tell that a key checked this
+        copy" / "No repository offers the installed version (<version>), so AppKata can't tell
+        that a repository's key checked it" / "No key checked this package: it is from
+        <repository>, which isn't checked against one".
+    - the Verified chip's tooltip is "Signed by <the record's signer>": the Flatpak's own remote
+        (it said Flathub for every Flatpak), the package's repository by its own name (a PPA reads
+        "Signed by LP-PPA-…"), or "Signed by its repository".
+    - **a package's names come from its repository, not from the system**: on Mint a package
+        from Ubuntu's archive reads "Ubuntu" where it read "Linux Mint" (its label, its Apps row,
+        "Ubuntu 1.2-1 · project 1.2").
+    - a package whose record names no repository has the label **Package** (it was the
+        distribution's name), and its Apps row ends "· .deb".
+    - **a distribution's package with an update pending is adopted as Unverified**: its
+        repository no longer offers the installed version, so nothing says a key checked it. It
+        turns Verified when AppKata updates it.
+- `336cd40` (#318): **R16.6.1** lists the label **Package**.
+- `c76ed33` (#327): **R4.4's new paragraph**, **R15.2's clause**, **R15.7.5** (new),
+    **R15.18.3's clause**, **R16.8.5** (new). What the user meets:
+    - on Windows the **UAC prompt of an installer for everyone names Windows PowerShell**
+        (publisher Microsoft Windows), not the installer; for an `.msi` it named Windows Installer
+        already.
+    - a `.deb` or `.rpm` from a release is installed by `apt-get` or `dnf` through `pkexec` also
+        on a desktop where PackageKit runs: the password is asked by pkexec's own prompt, once for
+        this action, and the install doesn't queue behind a store's.
+    - two new errors: "the downloaded file changed after AppKata checked it; nothing was
+        installed" and "Windows couldn't make the administrators' copy of the installer or start
+        it; nothing was installed".
+    - **R15.7.5's last paragraph is a limit**: an installer AppKata starts without administrator
+        rights and that asks Windows for them itself runs from the downloads folder as before.
+- `24c5a0d` (new): an update from a release's `.deb` or `.rpm` no longer asks to confirm "Upgrades
+    <the app's own package>".
+
+### Needs a run
+
+- **The Windows VM** (the coordinator's). The PowerShell script of `windows.run_elevated` **has
+    run on no Windows**: it rests on reading. In this order:
+    1. `scripts/test-windows-vm.sh --tests`. On real Windows, in the VM's session, which has
+        administrator rights (so no UAC prompt): `tests/test_windows.py::test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_folder_of_its_own`
+        runs the real script with a copy of `cmd.exe` as the installer. It should show: exit code
+        0; the installer ran from `C:\Windows\Temp\AppKata-<32 hex>`; that folder's ACL is
+        Administrators and SYSTEM, full control, nothing else (`icacls`, English names); the
+        folder is gone afterwards; a file one byte longer than its checked SHA-256 gives
+        `CHANGED` (0x4B410001) and isn't started; a missing file gives `NOT_STARTED`
+        (0x4B410002); an installer's own exit code (3010) comes back. **First thing it decides:**
+        whether `ShellExecuteEx` takes the command line (about 6,000 characters of
+        `-EncodedCommand`); a failure there is an `OSError` from `shell_execute`.
+        The other new tests of `tests/test_windows.py` and `tests/test_channels.py` run there too,
+        with stand-ins; the five Linux-only ones of `tests/test_install_review.py` are in
+        `tests/skips/windows.txt`.
+    2. `scripts/test-windows-vm.sh --e2e`. KeePassXC's `.msi` for everyone and Git's Inno Setup
+        for everyone now go through `run_elevated`: check both install (their HKLM entries), that
+        the `.msi`'s log is written, and that nothing is left in `C:\Windows\Temp\AppKata-*`.
+    3. What neither shows, because the VM's session is already elevated (G#59): the UAC prompt
+        itself (that it names Windows PowerShell), a swap made while it waits, SmartScreen's
+        warning with the Mark of the Web on, and whether an antivirus objects to a hidden,
+        encoded PowerShell started by AppKata.
+- **CI's tour job**: App Detail of the demo's Flatpak and package (records `signed` by Flathub
+    and Ubuntu: still Verified, tooltips "Signed by Flathub" and "Signed by Ubuntu").
+- **The desktop VMs** take `tests/test_channels.py` (`scripts/sandbox/vm-desktop.sh`): its new
+    tests run there with every tool stubbed. Not run here.
+- **dnf**: nothing runs it (R1.1). `pkgbackend._rpm_signed_by` and the `.rpm` half of
+    `install_file` rest on reading and on stand-ins.
+- Run here, in a scratch home, all passing: the touched test files whole
+    (`tests/test_channels.py`, `tests/test_backend.py`, `tests/test_sandbox_ui_surfaces.py`,
+    `tests/test_install_review.py`, `tests/test_windows.py`, `tests/test_docs_facts.py`),
+    `tests/test_skip_lists.py`, the document checks, and beside them `tests/test_channel_ui.py`,
+    `tests/test_core.py`, `tests/test_selfinstall.py`, `tests/test_qml_slots.py`,
+    `tests/test_sandbox_backend.py`, `tests/test_dialog_contract.py`,
+    `tests/test_demo_promises.py`. The channels container: ubuntu, ubuntu-pk and mint, after the
+    last code change. Tier 1 whole is CI's.
+
+### Guard
+
+- `tests/test_docs_facts.py`: "a shared file: add it to U04's files" (#223's fact).
+- `src/appkata/qml/AppRow.qml`: "a shared file: add it to U04's files" (#318: one expression, so
+    the row doesn't end "· .deb · " for a package with no repository's name).
+
+### New
+
+1. **Fixed, `24c5a0d`. Updating an app installed from a release's `.deb` or `.rpm` asks to confirm
+    "Upgrades <the app's own package>", every time.** `src/appkata_core/pkgbackend.py`,
+    `Backend.plan` (`targets = [os.path.basename(n) …]`): for a file the review's target is the
+    file's name, which is no package's, so the package the file holds counts as "another package"
+    being upgraded (R16.3.5 asks only for those). Case, run: `review()` on apt's own plan for the
+    update ("Inst akfile [1.0-1] (2.0-1 …)") with the file as the target gives `confirm:
+    ['Upgrades akfile']`. Low. `Cli.install_file` takes the package's name, which `install()`
+    already reads from the file. Tests: `tests/test_channels.py::test_updating_an_app_from_its_releases_package_file_asks_only_about_other_packages`
+    (4 plans) and `tests/test_install_review.py::test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_without_asking`;
+    before the fix all 5 fail, the first plan and the install on the confirmation itself, the
+    other three on the new argument. `scripts/channels_e2e.py` updates 1.0-1 to 2.0-1 from a
+    "release" with the real apt, as root and as a user: it passes, and on the
+    code before (`c76ed33`) fails with `['Upgrades akfile']`.
+2. **Not fixed. A channel copy's Verified outlives the copy.** `src/appkata_core/sync.py`,
+    `track_channel_installs` (the `rec["commit"] = i.commit` and `rec["pkgVersion"] = ver` lines,
+    after `_changed_elsewhere`): when the copy is changed outside AppKata the record keeps the
+    `verified` and `signer` of the copy that was there. Case, by reading: a distribution's
+    package AppKata adopted as Verified, then a vendor's `.deb` of that name put over it with
+    `dpkg -i`: the Audit says "was updated outside AppKata", App Detail still says Verified,
+    "Signed by Ubuntu", until AppKata itself updates it. The same for a Flatpak whose remote's
+    signature checking is turned off. Med by docs/REVIEW.md's rule (a trust verdict the code
+    didn't establish), the class of #318. The fix is one line at each of the two places:
+    `rec.update(install.channel_verdict(rec))`. Not this unit's file.
+3. **Not fixed. An `.msi` installed for everyone writes its log, as administrator, into the
+    downloads folder.** `src/appkata_core/install.py`, `_run_installer`
+    (`msi_log = os.path.join(tmpdir, "msi.log")`, passed as `/l*v`). The folder is the user's, so
+    a program of the user's can decide what is at that path before the elevated `msiexec` opens
+    it for writing. By reading, not run; whether Windows lets it be turned into a write elsewhere
+    was not tried. Low. The same question as #327, #326 and #370; left as it was by #327's fix
+    (the log's path is one of the script's words).
+4. **Not fixed. A refused plan never reaches the dialog that says so.** `src/appkata_core/install.py`,
+    `_apply` (and `install()`'s package branch, which keeps its behaviour): every `PackageError`
+    but `NeedsConfirmation` becomes an `InstallError`, `Refused` among them, so
+    `src/appkata/backend.py`'s two `except Refused` / `except PackageRefused` branches (the plan
+    dialog with `refused: True`) can't be reached, and a plan that would remove what the computer
+    needs (R16.3.5) is an error toast. By reading. Low.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
+`/home/dev/.local/share/applications` before and after was empty.
+
+### Doubts
+
+- **#327 on Windows departs from the decision's words** ("installers run from the locked-down
+    all-users folder") for the reason above. If the owner wants that folder all the same, it is
+    one line of the script; the copy's own folder would still be Administrators' and SYSTEM's.
+- **The elevated PowerShell is a shape antivirus products watch** (hidden window, encoded
+    command, started by another program). It calls .NET alone on purpose (a cmdlet could be the
+    user's own module), which doesn't change how it looks from outside. The other way is a small
+    signed helper program of AppKata's own: a choice for the owner if the VM or a real desktop
+    shows a product objecting.
+- **An installer that elevates itself is not covered** (R15.7.5 says so): "Other NSIS, WiX Burn,
+    InstallShield" and any installer AppKata doesn't recognise. AppKata can't know beforehand
+    that Windows will ask. Covering it means reading the file's manifest, or elevating every
+    installer for everyone: a `refine` if wanted.
+- **#318, the trusted-without-a-key rule is more than the remedy says.** It reads the sources
+    entry apt names; a `.sources` file is judged whole (one `Trusted: yes` counts for each of
+    its stanzas). `APT::Get::AllowUnauthenticated` and `Acquire::AllowInsecureRepositories` in
+    apt's configuration are not read. Where `apt-get indextargets` says nothing, the remedy's own
+    rule (a repository line) decides.
+- **#318, "a version no longer offered" is Unverified**, as the remedy has it: it will be seen
+    on adopting any distribution package that has an update waiting. The tooltip says what
+    AppKata can't tell, not that the package is bad.
+- **#318's dnf half**: a signed package from a repository with `gpgcheck=0` would read Verified
+    (the signature is there; whether dnf checked it is not asked). No Fedora ran any of it.
+- **`ch.distro` now means the repository** (it is the record's `signer`). The rows that use it
+    as the distribution's name ("<distro> doesn't update this automatically", AppRow.qml) read
+    "LP-PPA-… doesn't update this automatically" for a PPA's package, and "The system …" for a
+    package with no repository's name.
+- **An adopted Flatpak's `remote` is the copy's own origin**, no longer the link's remote when
+    flatpak names no origin (it always names one in what was run).
+- **The container shows no Flatpak that is Verified**: its one remote is `--no-gpg-verify`, and
+    a signed one needs a key and a signed repository there. Flathub's own line of `flatpak
+    remotes` (no options) was read in a container and is the unit tests' data.
+- **`scripts/channels_e2e.py` now installs `polkitd`, `pkexec` and `dbus` in its container**,
+    adds a user and a polkit rule that lets that user through, and removes the rule after. It
+    runs only as root in a disposable container, as its first lines say.
+- **`tests/skips/tier1.txt` is another unit's** (U44), so the check on Windows itself is not a
+    test that skips elsewhere: it is the second half of a test whose first half (the script's
+    rules) runs everywhere.
+- **`/var/cache`** is where the copy's folder is made; a `kill -9` of the command would leave
+    `/var/cache/appkata-install.*` behind, root's.
+- **#223's fact** reads `install.py` and `assets.py` for a verifier's name; a signature check
+    added elsewhere would need the fact widened.
