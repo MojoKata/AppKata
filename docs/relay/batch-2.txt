@@ -1,0 +1,8 @@
+# Batch 2 of the relay for CR1's unit U04
+# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U04. What is said of the installed file and its SHA-256: App Detail's chips come from the install record and forecast the next file (#465), the record keeps the downloaded file's own SHA-256 (#467), the Same file pill matches only a full digest (#466), and the review dialog reaches every release and shows the whole digest (#497). The same lines of backend.py's detail().
+# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
+
+#465  medium CR1.8-7 For an installed app, App Detail's Checksum or Unverified chip describes the next release's file, not the installed one's check.
+#467  small  CR1.8-9 The installed file's SHA-256 is taken from the forge now, not from the downloaded file, for both the Same file match and reviews.
+#466  small  CR1.8-8 "Same file as <Trust> reviewed" shows for any file whose SHA-256 starts and ends like a shortened digest.
+#497  small  CR1.9-13 The review dialog's Version menu offers only Any version and the 11 newest releases, and its preview shortens the SHA-256.
