@@ -1251,6 +1251,24 @@ def test_a_token_typed_for_a_host_longer_than_any_is_kept_at_once():
     assert time.monotonic() - started < 1 and list(http.tokens) == list(http.forges) == [host]
 
 
+# The review's pass 9, P9-B2: the 300 characters above were a host part's bound alone, which only the
+# addresses Http asks for are held to, and a Source's host, which a Trust's table can write, reached
+# the codec when its Forge was made (set_forge, token_key) with no bound but each part's 63, so a host
+# of 500,000 short parts held Forge() for two seconds, with no deadline or Cancel. How it slipped past:
+# the test above gives a token's host one long part, which the 63 refuses at once. The class is the
+# same as above, so a long name of short parts reaches each of them: a Forge, a typed token, a request.
+def test_a_source_on_a_host_of_short_parts_longer_than_any_is_made_and_refused_at_once():
+    host = "ü." * 1_000_000 + "example.org"
+    seen = []
+    started = time.monotonic()
+    http = names(Http({host: "SECRET"}, opener=recording({}, seen)))
+    forge = forges.forge_for(http, urls.parse(f"https://{host}/o/r"), "gitea")
+    with pytest.raises(Unreachable, match="^an address whose host part is more than a host and its port isn't asked for$"):
+        forge.info()
+    assert time.monotonic() - started < 1 and seen == []
+    assert list(http.tokens) == list(http.forges) == [host]      # kept as it is written: it is sent nowhere
+
+
 # The review's pass 6, P6-B1: the rule above asks for a name in any script, and urllib sent the host
 # as written: in the Host header, which http.client writes in Latin-1, so a name outside it couldn't
 # be sent at all ("can't be sent (UnicodeEncodeError)"), and over plain http through a proxy, in an

@@ -200,7 +200,13 @@ def _idna(name: str) -> str:
     length, so a README's image on a host of one part of 8,000 characters of CJK held a Sync for ten
     seconds, past its deadline and its Cancel, and one of a million would hold it for hours (the
     review's pass 8, P8-B1). A part the codec would bring to 63 by leaving out what it maps to
-    nothing, a soft hyphen or a zero-width space, is refused with them: no address names one."""
+    nothing, a soft hyphen or a zero-width space, is refused with them: no address names one. Nor
+    has a name longer than any host part (_LONGEST_HOST_PART), which is refused before its parts
+    are counted: each of a long name's short parts takes the codec's time, and a Source's host,
+    which a Trust's table writes and only the parts' 63 held, kept Forge() two seconds for a host
+    of 500,000 parts, where no deadline or Cancel reaches (the review's pass 9, P9-B2)."""
+    if len(name) > _LONGEST_HOST_PART:
+        raise UnicodeError("the name is longer than any host")
     if any(len(part) > 63 for part in _IDNA_DOTS.split(name)):
         raise UnicodeError("a part of the name is more than 63 characters")
     return name.encode("idna").decode("ascii")
