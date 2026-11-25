@@ -405,11 +405,6 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     for tool, script in (tools or {}).items():
         (fake / tool).write_text(script)
         (fake / tool).chmod(0o755)
-    lp = tmp_path / "launcher"
-    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
-                                    seccomp=str(fake / "record.py"), forward=forward))   # any file there is: nothing here reads it as a filter
-    if before:
-        before()
     path = os.environ["PATH"]
     if hide:
         bare = tmp_path / "bare"
@@ -419,6 +414,14 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
                 if f not in hide and not os.path.lexists(bare / f):
                     (bare / f).symlink_to(os.path.join(d, f))
         path = str(bare)
+    # A launcher takes its host commands from the PATH it is written with (sandbox.host_path, R17.4),
+    # never from the one it is started with, so the stand-ins are given there, and in both
+    lp = tmp_path / "launcher"
+    lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
+                                    seccomp=str(fake / "record.py"), forward=forward,    # any file there is: nothing here reads it as a filter
+                                    path=f"{fake}:{path}"))
+    if before:
+        before()
     env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{path}"}
     if address is not None:
         env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
@@ -784,9 +787,10 @@ def test_appkata_asks_the_session_bus_what_the_launcher_asks_and_decides_alike(t
     assert (r.stderr == "") is (launcher == "") and ("--own=org.freedesktop.secrets" in proxy) is (launcher == ""), (case, r.stderr, proxy)
     launcher_asked = asked.read_text() if asked.exists() else ""
     asked.unlink(missing_ok=True)
-    # AppKata in the same session: the same PATH, runtime folder and address as the launcher's run
+    # AppKata in the same session: the same runtime folder and address as the launcher's run, and the
+    # launcher's PATH (sandbox.host_path), which its ask runs with whatever AppKata's own is
     path = str(tmp_path / "bare") if hide else os.environ["PATH"]
-    monkeypatch.setenv("PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")
+    monkeypatch.setattr(sb, "HOST_PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
     if address is None:
         monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
@@ -799,6 +803,53 @@ def test_appkata_asks_the_session_bus_what_the_launcher_asks_and_decides_alike(t
     assert (asked.read_text() if asked.exists() else "") == launcher_asked, case     # the same names, of the same bus
     assert bool(launcher_asked) is (bool(body) and "timeout" not in hide), case      # a stand-in that is there is asked
     assert (sb.PROVIDE_NOTES.get(why, "") != "") is (why != ""), why                  # and the screens have words for each reason
+
+
+# Where #689 (U03, CR1.5-31) met this unit: a launcher takes every host command from its own PATH
+# (sandbox.host_path), whatever PATH it is started with, while AppKata's ask of the bus still took
+# gdbus and timeout from AppKata's own, where a login's ~/bin and ~/.local/bin come first: the
+# Sandbox dialog and App Detail could say one thing and the launch decide another. And the ask's
+# tools weren't in sandbox.HOST_COMMANDS, the list a launcher's commands come from and no command
+# link may be named after, so a machine whose command folders hold those alone answered "could not
+# ask" at every launch. How it slipped past: each side's tests held its own rule, with the other's
+# code not there yet. The class: AppKata's PATH is never the launcher's, and the launcher's commands
+# are the listed ones.
+def test_appkata_asks_with_the_launchers_path_not_its_own(tmp_path, monkeypatch):
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    path = os.environ["PATH"]
+    free, held = (f'#!/bin/sh\n{_bus_answers("gdbus", h, False)}\n' for h in (False, True))
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": free})
+    assert r.returncode == 0 and r.stderr == "" and "--own=org.freedesktop.secrets" in proxy, (r.stderr, proxy)
+    own = tmp_path / "own-bin"                              # AppKata's own PATH: a gdbus that says "held" first
+    own.mkdir()
+    (own / "gdbus").write_text(held)
+    (own / "gdbus").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{own}{os.pathsep}{path}")
+    monkeypatch.setattr(sb, "HOST_PATH", f"{tmp_path / 'fakebin'}{os.pathsep}{path}")   # the launcher's, as it ran
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    assert sb.password_service_withheld() == ""             # what the launch decided
+
+
+def test_a_launcher_with_password_service_runs_no_host_command_but_the_listed_ones(tmp_path, monkeypatch):
+    # As tests/test_sandbox_adversarial.py's test of the same name holds the launchers without a bus:
+    # a machine whose command folders hold sandbox.HOST_COMMANDS and nothing else (the bus tools as
+    # stand-ins answering "no other provider", so no real session bus is asked) still gets the ask
+    # answered, the name owned and the app started. A tool the ask uses and the list lacks fails here
+    # with the "could not ask" line.
+    only = tmp_path / "only"
+    only.mkdir()
+    for n in sb.HOST_COMMANDS:
+        if n in _ANSWERS:
+            (only / n).write_text(f'#!/bin/sh\n{_bus_answers(n, False, False)}\n')
+            (only / n).chmod(0o755)
+        elif real := shutil.which(n, path=sb.HOST_PATH):
+            os.symlink(real, only / n)
+    os.symlink(shutil.which("sh"), only / "sh")                # what runs the launcher, not a command it runs
+    monkeypatch.setenv("PATH", str(only))
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs)
+    assert r.returncode == 0 and r.stderr == "" and "--own=org.freedesktop.secrets" in proxy, (r.stderr, proxy)
 
 
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by

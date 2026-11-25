@@ -2031,7 +2031,8 @@ HOST_PATH = "/usr/local/bin:/usr/bin:/bin"
 # names (install.RESERVED_COMMANDS); tests/test_sandbox_adversarial.py runs launchers with these
 # alone to be found, so a command added to the launcher's text is added here.
 HOST_COMMANDS = ("bwrap", "xdg-dbus-proxy", "python3", "id", "mkdir", "stat", "mv", "date", "cat", "flock", "mktemp", "rm",
-                 "dirname", "sleep", "readlink", "printf", "echo", "kill", "test", "[", "pwd", "true")
+                 "dirname", "sleep", "readlink", "printf", "echo", "kill", "test", "[", "pwd", "true",
+                 "timeout", "gdbus", "busctl")       # Password service's ask of the session bus (_PROVIDE_ASK, R17.5.1)
 
 
 def host_path(apps_root: str | None = None) -> str:
@@ -2440,17 +2441,20 @@ def password_service_withheld() -> str:
     decides it: "held" (another program holds org.freedesktop.secrets, or a running copy of the app
     does), "start" (the session bus can start one for it), "ask" (the bus couldn't be asked, or its
     answer couldn't be read), or "" (the name is free, and the app owns it). The launcher's own words
-    (_PROVIDE_ASK), run by `sh` on AppKata's own session bus, found as the launcher finds it (_RT,
-    _UPSTREAM): one rule in both places, as :data:`BUS_FILTER_AT` is for the proxy (PR #694's
-    review, P3-1; the owner's decision of 2026-11-25: the Sandbox dialog and App Detail say it, not
-    only the app's log). Each ask is bounded by `timeout 5`, as at the launch, so a bus that never
-    answers holds this ten seconds at most: AppKata asks on a worker, never on the window's thread
+    (_PROVIDE_ASK), run by the system's `sh` on AppKata's own session bus, found as the launcher finds
+    it (_RT, _UPSTREAM), with the tools the launcher's PATH finds (:func:`host_path`), not AppKata's
+    own: one rule in both places, as :data:`BUS_FILTER_AT` is for the proxy (PR #694's review, P3-1;
+    the owner's decision of 2026-11-25: the Sandbox dialog and App Detail say it, not only the app's
+    log). Each ask is bounded by `timeout 5`, as at the launch, so a bus that never answers holds
+    this ten seconds at most: AppKata asks on a worker, never on the window's thread
     (Backend.askPasswordService; P8-1). "" off Linux, where nothing is sandboxed."""
     if OS != "linux":
         return ""
+    from .platform import apps_dir
     script = "set -eu\n" + _RT + "\n" + _UPSTREAM + "\n" + _PROVIDE_ASK + 'printf %s "$why"\n'
     try:
-        r = subprocess.run(["sh", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["/bin/sh", "-c", script], env={**os.environ, "PATH": host_path(apps_dir())},
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return "ask"
     return r.stdout if r.returncode == 0 and r.stdout in ("held", "start", "ask", "") else "ask"
