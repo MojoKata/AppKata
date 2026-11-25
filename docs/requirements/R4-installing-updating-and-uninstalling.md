@@ -75,11 +75,13 @@ that folder as the one it installs to; on Windows, a move to the other of Just m
 R4.3.1.1. **App menu.** When on (the default), AppKata adds a launcher: a `.desktop` entry on
 Linux, a Start-menu shortcut on Windows (R15.5). On Linux, an app its download shows to be a
 command-line tool (R17.3.3) gets none unless the user or a Trust chose the option for it. The
-`.desktop` entry starts the app through a link AppKata keeps for it in its own folder
-(`~/.local/share/appkata/menu/<app>`, to what the app runs), so the entry never holds a path in the
-install folder, and no install folder is refused for its name: a `%` in it, which an entry must
-write as `%%`, made GLib's menus (Cinnamon, GNOME, MATE, Xfce) take the app for one that isn't
-installed. The link goes with the entry.
+`.desktop` entry starts the app through a small script AppKata keeps for it in its own folder
+(`~/.local/share/appkata/menu/<app>`, which runs what the app runs by its own path), so the entry
+never holds a path in the install folder, and no install folder is refused for its name: a `%` in
+it, which an entry must write as `%%`, made GLib's menus (Cinnamon, GNOME, MATE, Xfce) take the app
+for one that isn't installed. Started from the menu, the app has its own path as its name, as it
+does started any other way, so a program that finds its files beside itself starts. The script
+goes with the entry.
 
 R4.3.1.2. **Stable name.** When on (the default), the current version also gets a link with a
 stable name next to it: `LocalSend.AppImage` → `LocalSend-1.18.2-x86_64.AppImage`, or

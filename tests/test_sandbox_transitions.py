@@ -17,7 +17,7 @@ import pytest
 
 from appkata_core import install
 from appkata_core import sandbox as sb
-from test_install_review import _appimage, _tarball, server   # noqa: F401
+from test_install_review import _appimage, _menu_starts, _tarball, server   # noqa: F401
 from test_sandbox_backend import URL, _review, _tarball_install, be   # noqa: F401
 
 SKIP = ("appkata.db", "appkata.db-journal", "appkata.db-wal", "appkata.db-shm", ".log", "AppKata.log")
@@ -177,7 +177,7 @@ def test_turning_the_sandbox_off_puts_an_app_that_updates_itself_back_under_its_
     assert rec["current"] == {"version": "2.0", "path": str(home / fixed), "exec": fixed if kind == "appimage" else "app/demo-2.0/demo"}
     assert rec["exec"] == str(home / rec["current"]["exec"]) and "2.0" in says(rec["exec"]) and "2.0" in says(cmd)
     menu = install._menu_link_path("demo")                     # what the menu entry starts (R4.3.1.1)
-    assert os.readlink(cmd) == rec["exec"] == os.readlink(menu) and f'Exec="{menu}" %U' in entry.read_text()
+    assert os.readlink(cmd) == rec["exec"] == _menu_starts(menu) and f'Exec="{menu}" %U' in entry.read_text()
     assert be._updates_itself(a, be._sandbox_for_install(URL)) is True and not sb.runs_sandboxed(rec)
     off = snapshot(be, tmp_path)
     be.setSandbox(URL, {"template": "off"})                     # the same choice again changes nothing but the audit

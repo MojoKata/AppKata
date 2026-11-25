@@ -12,6 +12,7 @@ tests/test_install_review.py::test_a_failed_first_install_takes_nothing_that_was
 tests/test_install_review.py::test_a_folder_typed_in_settings_is_read_one_way_for_the_apps_and_for_their_command_links  # the Linux install layout
 tests/test_install_review.py::test_a_link_that_is_not_appkatas_is_never_replaced_by_a_command_link  # the Linux install layout
 tests/test_install_review.py::test_a_move_back_to_the_fixed_name_that_fails_leaves_the_app_in_its_version_folders  # the Linux install layout
+tests/test_install_review.py::test_a_program_started_from_its_menu_entry_is_started_by_its_own_path  # the Linux install layout
 tests/test_install_review.py::test_a_projects_name_and_summary_cannot_add_a_line_to_the_menu_entry  # the Linux install layout
 tests/test_install_review.py::test_a_refused_install_leaves_everything_as_it_was  # the Linux install layout
 tests/test_install_review.py::test_a_sandbox_change_is_made_whole_when_the_user_has_taken_the_command_links_place  # the Linux install layout
@@ -33,7 +34,7 @@ tests/test_install_review.py::test_portable_options  # the Linux install layout
 tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux install layout
 tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
 tests/test_install_review.py::test_the_install_notice_says_why_no_command_was_added_and_says_it_once  # could not import 'PySide6': No module named 'PySide6'
-tests/test_install_review.py::test_the_menu_entry_starts_the_app_through_its_link_whatever_the_install_folder_holds  # the Linux install layout
+tests/test_install_review.py::test_the_menu_entry_starts_the_app_through_its_script_whatever_the_install_folder_holds  # the Linux install layout
 tests/test_install_review.py::test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says  # the Linux install layout
 tests/test_install_review.py::test_the_versions_an_app_has_are_there_until_the_new_one_is_installed  # the Linux install layout
 tests/test_install_review.py::test_uninstalling_says_what_it_did_not_remove  # the Linux install layout

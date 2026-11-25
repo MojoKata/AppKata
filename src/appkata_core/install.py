@@ -246,19 +246,47 @@ def _menu_entry_path(app_id: str) -> str:
 
 
 def _menu_links_dir() -> str:
-    """Where the links an app-menu entry starts are kept: AppKata's own folder (R4.3.1.1)."""
+    """Where the small scripts app-menu entries start are kept: AppKata's own folder (R4.3.1.1)."""
     return os.path.join(data_dir(), "menu")
 
 
 def _menu_link_path(app_id: str) -> str:
-    """The link an app's menu entry starts, to what the app runs (its stable name, program or sandbox
-    launcher), named after the app's id (R4.3.1.1). The entry's `Exec=` holds this path, never one in
-    the install folder: a `%` there, written `%%` as the Desktop Entry Specification asks, made GLib
-    take the app for one that isn't installed -- it looks for the program before it reads `%%` as
-    `%` -- and the app had no entry in the menus of Cinnamon, GNOME, MATE or Xfce (#685, the owner's
-    decision: the entry starts the app through a link in AppKata's own folder, and nothing is
-    refused). An id has no `%` (:func:`slug`)."""
+    """The small script an app's menu entry starts (:func:`_write_menu_link`), named after the app's
+    id (R4.3.1.1). The entry's `Exec=` holds this path, never one in the install folder: a `%`
+    there, written `%%` as the Desktop Entry Specification asks, made GLib take the app for one that
+    isn't installed -- it looks for the program before it reads `%%` as `%` -- and the app had no
+    entry in the menus of Cinnamon, GNOME, MATE or Xfce (#685, the owner's decision: the entry
+    starts the app through a link in AppKata's own folder, and nothing is refused). An id has no
+    `%` (:func:`slug`)."""
     return os.path.join(_menu_links_dir(), app_id)
+
+
+def _write_menu_link(target: str, app_id: str) -> str:
+    """Write the script an app's menu entry starts (:func:`_menu_link_path`): two lines that run
+    `target`, what the app runs (its stable name, program or sandbox launcher), by its own path,
+    with the words the entry passes. Returns its path.
+
+    A script and not a symbolic link (#689's review, P2-1): started through a link, an app that runs
+    unsandboxed had the link as its `$0`, so a program that finds its files beside `"$0"` (a start
+    script's `. "$(dirname "$0")/lib.sh"`) looked for them in AppKata's menu folder, and didn't
+    start from the menu while Open started it. The path is quoted for `sh` whatever it holds (a
+    `%`, a quote, a line break). The script is made anew each time, so what is at its place goes
+    first and is never written through, and an app started by the one before keeps reading that."""
+    path = _menu_link_path(app_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.lexists(path):
+        os.remove(path)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755), "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n')
+    os.chmod(path, 0o755)
+    return path
+
+
+def _is_menu_file(path: str) -> bool:
+    """Whether `path`, named in an install's record, is one of its app-menu files: an entry (AppKata's
+    own, by name and folder) or the script it starts (:func:`_write_menu_link`)."""
+    folder = os.path.dirname(path)
+    return (folder == desktop_dir() and os.path.basename(path).startswith("appkata-")) or folder == _menu_links_dir()
 
 
 def _desktop_entry(app_id: str, name: str, exec_path: str, icon: str, summary: str, launcher: bool = False) -> str:
@@ -702,12 +730,11 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     own = (portable.root, os.path.dirname(target))
     _remove_links(rec.get("links", []), own)      # the previous version's links
     rec["links"] = []
-    # The app-menu entries the record names (AppKata's own, by name and folder) leave the record
-    # here. One written below comes back into it; one that isn't -- the option was turned off, or
-    # the new version is a command-line tool -- is removed there, not just forgotten: it stayed in
-    # the desktop's menu, in no record, past uninstall (CR1.3-14).
-    entries = [f for f in rec.get("files", []) if os.path.basename(f).startswith("appkata-")
-               and os.path.dirname(f) == os.path.dirname(_menu_entry_path(app_id))]
+    # The app-menu entries the record names (AppKata's own, by name and folder), and the scripts they
+    # start, leave the record here. One written below comes back into it; one that isn't -- the
+    # option was turned off, or the new version is a command-line tool -- is removed there, not just
+    # forgotten: it stayed in the desktop's menu, in no record, past uninstall (CR1.3-14).
+    entries = [f for f in rec.get("files", []) if _is_menu_file(f)]
     rec["files"] = [f for f in rec.get("files", []) if f not in entries]
     run = os.path.join(target, cur["exec"])
     if portable.stable_name and OS != "windows":       # symlinks need extra rights on Windows
@@ -728,8 +755,8 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
         rec["files"].insert(0, target)
     if rec.get("selfInstalled"):          # AppKata's own appkata.desktop points at the stable link (R2.11.3.1)
         pass
-    elif portable.app_menu:               # the entry starts the app through a link in AppKata's own folder (#685)
-        rec["links"].append(_link(launch_target, _menu_link_path(app_id)))
+    elif portable.app_menu:               # the entry starts the app through a script in AppKata's own folder (#685)
+        rec["files"].append(_write_menu_link(launch_target, app_id))
         rec["files"].append(_desktop_entry(app_id, app["name"], _menu_link_path(app_id), app.get("icon") or "",
                                            app.get("summary", ""), launcher=launch_target != run))
     for old in entries:
@@ -968,7 +995,7 @@ def _remove_tree(path: str) -> None:
 def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: str, target: str, kind: str = "") -> None:
     """Refuse now, before anything is placed or changed, the install :func:`_activate` would refuse
     after: a command link's place that holds something AppKata didn't make (R4.3.1.3, R15.6), and an
-    app-menu entry that can't start the link it starts the app through. The files, the stable link
+    app-menu entry that can't start the script it starts the app through. The files, the stable link
     and the menu entry were in place by the time the last step refused, with no record of them
     (CR1.3-15). What only shows later (a Start-menu shortcut Windows won't make) is taken back by
     :func:`_undo_portable`.
@@ -976,7 +1003,7 @@ def _check_before_placing(prev: dict, app: dict, portable: "Portable", app_id: s
     Nothing is refused here that `_activate` would do: an app's kind is known once it is placed, and
     a command-line tool gets no menu entry when that option was Settings' default (`_apply_kind`),
     so the entry is checked only when it is sure to be written. The entry holds the path of the
-    app's link in AppKata's own folder (:func:`_menu_link_path`), never the install folder's, so
+    app's script in AppKata's own folder (:func:`_menu_link_path`), never the install folder's, so
     no install folder is refused for it (#685)."""
     if OS == "windows":
         from . import windows
@@ -1001,7 +1028,7 @@ def _options_of(rec: dict, portable: "Portable") -> "Portable":
     `portable`'s): its install folder, its three options (R4.3.1.6) and the folder its command link
     is in."""
     opts, target = rec.get("options") or {}, rec.get("target", "")
-    folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) not in (target, _menu_links_dir())] + \
+    folders = [os.path.dirname(l) for l in rec.get("links", []) if os.path.dirname(l) != target] + \
               [os.path.dirname(x) for x in rec.get("shims", [])]
     return replace(_where_it_is(rec, portable), scope=rec.get("scope") or portable.scope,
                    app_menu=bool(opts.get("appMenu")), stable_name=bool(opts.get("stableName")),
@@ -1038,8 +1065,9 @@ def _undo_portable(db: DB, app: dict, rec: dict, prev: dict, portable: "Portable
                     windows.remove_link(l)
             else:
                 _remove_links(rec.get("links", []), (portable.root, os.path.dirname(target)))
-                if not prev.get("selfInstalled") and _menu_entry_path(app_id) not in prev.get("files", []):
-                    _remove_path(_menu_entry_path(app_id))
+                for menu in (_menu_entry_path(app_id), _menu_link_path(app_id)):
+                    if not prev.get("selfInstalled") and menu not in prev.get("files", []):
+                        _remove_path(menu)
                 if rec.get("launcher") and rec["launcher"] != prev.get("launcher"):
                     _remove_path(rec["launcher"])
             if was.get("aside") and os.path.lexists(was["aside"]):
@@ -1423,7 +1451,7 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
     for f in rec.get("files", []):
         if os.path.isdir(f) and os.path.realpath(f).startswith(root + os.sep):
             shutil.rmtree(f, ignore_errors=True)
-        elif os.path.isfile(f) and os.path.basename(f).startswith("appkata-"):
+        elif os.path.isfile(f) and (os.path.basename(f).startswith("appkata-") or _is_menu_file(f)):
             os.remove(f)
     left = [p for p in dict.fromkeys(rec.get("files", []) + rec.get("links", [])) if os.path.lexists(p)]
     if left:
