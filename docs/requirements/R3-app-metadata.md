@@ -32,9 +32,9 @@ and sent as it is read, wherever it is sent (its lookup, the Host header, a prox
 address a proxy is sent over http): with its escapes decoded, in lower case, and a name in its IDNA
 form. So `%31%30.0.0.5` is `10.0.0.5`, and `गिट.example` is sent in its IDNA form,
 `xn--31bq9g.example`. The Source's own host is read so too: an address, or a redirect, is the
-Source's own host in whichever form it is written, in its IDNA form or its script, escaped, in
-either case, or with a name's final dot or without it, so `xn--bung-zra.lan` and `übung.lan` are
-one host, and so are `git.example` and `%67it.example`. Behind a proxy, the proxy looks a host's
+Source's own host in whichever form it is written, in its IDNA form or its script, escaped, or in
+either case, so `xn--bung-zra.lan` and `übung.lan` are one host, and so are `git.example` and
+`%67it.example`. Behind a proxy, the proxy looks a host's
 name up: a name this computer can't look up is asked for through the proxy, and one this computer
 finds to be such an address, or `localhost`, is still refused. Of the hosts this computer can't look
 up, only a plain name is left to the proxy: ASCII letters, digits, `-`, `_` and dots, whose last

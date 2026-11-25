@@ -1473,8 +1473,8 @@ def test_through_real_sockets_a_redirect_to_a_host_in_any_script_is_sent_in_its_
 # The review's pass 7, P7-2 and P7-B2: a host was sent as it is judged, and the rules that compare two
 # hosts (whose token a request carries, whether an address is the Source's own host, which may be
 # local, whether a redirect keeps the token, whose limit an answer is) read the host as it was
-# written. The Source's own host in another form, its IDNA form or its script, escaped, or with a
-# name's final dot, was sent as the Source's own requests are and taken for another host: a forge on
+# written. The Source's own host in another form, its IDNA form or its script, or escaped, was sent
+# as the Source's own requests are and taken for another host: a forge on
 # the user's network that names its avatars in its IDNA form had them refused as local, and its
 # redirect to itself in another form was refused, or followed without the token on a public forge.
 # How it slipped past: round 6's tests asked for the Source's host in the form it was typed in, and
@@ -1489,8 +1489,6 @@ OTHER_FORMS = [                  # a Source's host as typed, as an address names
     pytest.param("गिट.example", "xn--31bq9g.example", "xn--31bq9g.example", id="devanagari"),
     pytest.param("git.example", "%67it.example", "git.example", id="an-ascii-name-escaped"),
     pytest.param("git.example", "%47it.example", "git.example", id="an-escaped-capital"),
-    pytest.param("git.example", "git.example.", "git.example.", id="with-a-final-dot"),
-    pytest.param("git.example.", "git.example", "git.example", id="without-its-final-dot"),
 ]
 
 
@@ -1517,7 +1515,6 @@ SELF_REDIRECTS = [               # a Source's host as typed, and sent; where its
     pytest.param("xn--bcher-kva.example", "xn--bcher-kva.example", "https://b%C3%BCcher.example:{port}/b",
                  "xn--bcher-kva.example", id="its-script-escaped"),
     pytest.param("git.example", "git.example", "https://git%2eexample:{port}/b", "git.example", id="an-escape"),
-    pytest.param("git.example", "git.example", "https://git.example.:{port}/b", "git.example.", id="a-final-dot"),
 ]
 
 
@@ -1549,6 +1546,41 @@ def test_through_real_sockets_a_limit_answered_in_one_form_of_a_host_holds_in_th
     with pytest.raises(RateLimited, match=f"^xn--bung-zra.example:{port} "):
         http.json(f"https://%C3%BCbung.example:{port}/api/y")
     assert [p for p, _ in a.seen] == ["/api/x"] and http.limited == {f"xn--bung-zra.example:{port}": clock.now + 60}
+
+
+# The review's pass 8, P8-B2: the rules above made a name with its final dot the Source's own host, and
+# R9.2.2 said so, but the name is sent with its dot: to the lookup, in the Host header and as the
+# name TLS checks the certificate against, and a certificate for `images.example` isn't one for
+# `images.example.`. So no request to it, the token's included, ever got past the handshake. How it
+# slipped past: the tests of a final dot went through the pair, whose https leaves out the
+# encryption. A final dot now makes a name another host, as it is sent, and these hold that over
+# real TLS: the Source's own host is local, so another host there is refused before anything is sent.
+@pytest.mark.parametrize("typed, named", [
+    pytest.param("images.example", "images.example.", id="with-a-final-dot"),
+    pytest.param("images.example.", "images.example", id="without-its-final-dot"),
+])
+def test_over_real_tls_the_sources_name_with_or_without_its_final_dot_is_another_host(monkeypatch, serving, trusting, typed, named):
+    origin = serving(tls=trusting)
+    origin.files = {"/avatars/1": PNG}
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    source = f"{typed}:{port}"
+    with pytest.raises(Unreachable, match=rf"^{re.escape(named)} is on this computer or its local network \(127\.0\.0\.1\): not fetched"):
+        Http({source: "SECRET"}, timeout=5).bytes(f"https://{named}:{port}/avatars/1", token_host=source)
+    assert origin.seen == []
+
+
+def test_over_real_tls_a_redirect_to_the_sources_name_with_a_final_dot_isnt_followed(monkeypatch, serving, trusting):
+    origin = serving(tls=trusting)
+    port = origin.server_address[1]
+    at_this_computer(monkeypatch)
+    origin.redirects["/a"] = f"https://images.example.:{port}/b"
+    source = f"images.example:{port}"
+    with pytest.raises(Unreachable, match=r"^images\.example\. is on this computer or its local network \(127\.0\.0\.1\): not fetched"):
+        Http({source: "SECRET"}, timeout=5).json(f"https://{source}/a", token_host=source)
+    assert [(path, h.get("authorization")) for path, h in origin.seen] == [("/a", "token SECRET")]
+    assert "in whichever form it is written, read as it is sent (R3.1.1): in its IDNA form or its script, or escaped." in \
+        " ".join(reqdocs.item("R9.2.2").split())
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)
@@ -1746,7 +1778,8 @@ def test_every_call_for_a_source_finds_the_token_kept_for_the_sources_host(tmp_p
     # one host in whichever form it is typed: as it is sent (review pass 7, P7-2)
     ("übung.example.org", "xn--bung-zra.example.org"), ("Übung.Example.Org:3000", "xn--bung-zra.example.org:3000"),
     ("https://%C3%BCbung.example.org/o/r", "xn--bung-zra.example.org"),
-    ("%67it.example.org", "git.example.org"), ("git.example.org.", "git.example.org"), ("git.example.org.:3000", "git.example.org:3000"),
+    ("%67it.example.org", "git.example.org"),
+    ("git.example.org.", "git.example.org."), ("git.example.org.:3000", "git.example.org.:3000"),   # another host, as it is sent (review pass 8, P8-B2)
 ])
 def test_what_is_typed_for_a_tokens_host_is_kept_as_a_sources_host_is_written(typed, key):
     assert http_.token_key(typed) == key == http_.token_key(key)

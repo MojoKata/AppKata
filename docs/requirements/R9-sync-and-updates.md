@@ -25,7 +25,7 @@ or an app whose sync it stops keeps what the last Sync stored, and no link check
 R9.2.2. API tokens are kept per host (R11.1.6). A host is one address: its name, and its port
 when the forge is on one; a name alone means the default port, https's 443, which a Source is asked
 on. A name is the same host in whichever form it is written, read as it is sent (R3.1.1): in its
-IDNA form or its script, escaped, or with its final dot. An address is on the port it is asked on,
+IDNA form or its script, or escaped. An address is on the port it is asked on,
 whatever its scheme: `http://git.example.org/` is on port 80, another host than
 `https://git.example.org/`. A host's token is sent only to that
 host and to the forge's own API and raw-file hosts, which are named here: for `github.com`,

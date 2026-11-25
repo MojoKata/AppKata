@@ -127,19 +127,22 @@ SOURCE_PORT = 443       # a Source's port when its host names none: every Source
 def _one_host(name: str) -> str:
     """A host's name or address as every rule compares two hosts (_origin, and so _host, _is_for,
     token_key and a limit's key): in the form it is sent (_sent), from the host with its escapes
-    decoded and in lower case, and a name without its one final dot, which names the same host. So
-    the Source's own host in whichever form it is written, `übung.lan` as `xn--bung-zra.lan` or the
-    other way, `git.example` as `%67it.example` or `git.example.`, is the Source's own: its token's,
-    and the one host that may be local (the review's pass 7, P7-2 and P7-B2). Read as written, it was
-    another host, though the request was sent as the Source's own are: an avatar a forge on the
-    user's network named in its IDNA form was refused as local, and the forge's redirect to itself in
-    another form was refused, or followed without the token. A name with no IDNA form, which no
-    address Http asks for has (_http_address), is kept with its escapes decoded and in lower case: a
-    token typed for it is sent nowhere."""
+    decoded and in lower case. So the Source's own host in whichever form it is written, `übung.lan`
+    as `xn--bung-zra.lan` or the other way, `git.example` as `%67it.example`, is the Source's own:
+    its token's, and the one host that may be local (the review's pass 7, P7-2 and P7-B2). Read as
+    written, it was another host, though the request was sent as the Source's own are: an avatar a
+    forge on the user's network named in its IDNA form was refused as local, and the forge's
+    redirect to itself in another form was refused, or followed without the token. A name with its
+    final dot is another host, as it is sent: with its dot, to the lookup, in the Host header and as
+    the name TLS checks the certificate against, which no certificate for the name without it is
+    for. Taken for the Source's own, it was sent the token, and no request to it got past the
+    handshake (the review's pass 8, P8-B2). A name with no IDNA form, which no address Http asks for
+    has (_http_address), is kept with its escapes decoded and in lower case: a token typed for it is
+    sent nowhere."""
     host = unquote(name).lower()
     with contextlib.suppress(UnicodeError):
         host = _sent(host)
-    return host[:-1] if host.endswith(".") else host
+    return host
 
 
 def _origin(parts) -> tuple:
