@@ -368,8 +368,22 @@ class _Recorder(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_CONNECT(self):
+        """A proxy's tunnel, for an https request through it: noted as ("CONNECT host:port", its
+        headers), and the requests that come through it are then this server's own, plain as the
+        pair's https is (`pair`)."""
+        self.server.seen.append((f"CONNECT {self.path}", {k.lower(): v for k, v in self.headers.items()}))
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        self.close_connection = False
+
     def log_message(self, *a):
         pass
+
+
+class _PlainHttps(HTTPConnection):
+    """An https connection of `pair`'s: http's, on https's port."""
+    default_port = 443
 
 
 @pytest.fixture
@@ -378,8 +392,8 @@ def pair(monkeypatch):
     names. A token is only ever sent over https, and a certificate for this machine would have to be
     made first, so Http's https handler is given a plain connection, Http's own as for http: the
     request, its headers and the redirect are handled as https all the way, and only the encryption
-    is left out."""
-    monkeypatch.setattr(http_._Connections, "https_open", http_._Connections.http_open)
+    is left out. The connection's own port is https's, as a proxy's tunnel names it (CONNECT)."""
+    monkeypatch.setattr(http_._Connections, "https_open", lambda self, req: self.do_open(self._with(_PlainHttps, req), req))
     servers = []
     for host in ("127.0.0.1", "localhost"):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
@@ -701,13 +715,16 @@ def test_a_host_none_of_whose_addresses_connects_is_unreachable(pair, monkeypatc
 PROXIES = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
 
 
-def behind_a_proxy(monkeypatch, proxy, **more):
+def behind_a_proxy(monkeypatch, proxy, https=False, **more):
     """The system's proxy for http is server `proxy`, which answers whatever it is asked for: as
-    the environment says it, which every platform reads first. `more` sets others, such as no_proxy.
-    Http reads the proxies when it is made."""
+    the environment says it, which every platform reads first. With `https` it is https's too, which
+    a request goes through in a tunnel (CONNECT). `more` sets others, such as no_proxy. Http reads
+    the proxies when it is made."""
     for name in PROXIES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("http_proxy", f"http://{proxy.at}")
+    if https:
+        monkeypatch.setenv("https_proxy", f"http://{proxy.at}")
     for name, value in more.items():
         monkeypatch.setenv(name, value)
 
@@ -728,15 +745,21 @@ def test_a_proxy_on_this_computer_is_still_used_for_a_host_elsewhere(pair, monke
 # a proxy stood in for a lookup that knows every name. The class is "this computer's lookup taken
 # for the proxy's", so the name server here knows no name outside this computer.
 def knows_only(http, table):
-    """Stands in for a name server that knows the names in `table` and no other (an address is
-    itself): this computer's, on a network where only the proxy looks up the names outside."""
+    """Stands in for a name server that knows the names in `table` and no other: this computer's,
+    on a network where only the proxy looks up the names outside. An address is itself, as
+    getaddrinfo reads one: an IPv6 address with a zone only where the zone names an interface here."""
+    zones = {name for _, name in socket.if_nameindex()}
+
     def lookup(host):
         if host in table:
             return table[host]
         try:
-            return [str(ipaddress.ip_address(host))]
+            ip = ipaddress.ip_address(host)
         except ValueError:
-            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known") from None
+            ip = None
+        if ip is None or getattr(ip, "scope_id", None) not in (None, *zones):
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return [str(ip)]
     http._lookup = lookup
     return http
 
@@ -767,6 +790,48 @@ def test_behind_a_proxy_what_this_computer_can_tell_is_local_is_still_refused(pa
     with pytest.raises(Unreachable):
         sync._save_image(knows_only(Http(timeout=5), table), url, str(tmp_path / "shot"), token_host="git.example.org")
     assert a.seen == [] and list(tmp_path.iterdir()) == []
+
+
+# The review's pass 2, P2-1: the check read a host as the address spells it, and urllib sends it
+# decoded: in the Host header, in a proxy's CONNECT and to a direct connection's lookup. Behind a
+# proxy, a local address spelled so that this computer's lookup can't read it (escapes, a trailing
+# dot, an IPv6 zone, a port inside the host, a number for its last part) was taken for a name only
+# the proxy knows, and the proxy was sent the address. How it slipped past: every host in the tests
+# was spelled plainly, and the stand-in proxy took no CONNECT, so no https request through it was
+# ever seen. The class is "the host checked isn't the host sent", so these spell local addresses in
+# each way urllib decodes or a lookup reads differently, over http and over https, and the proxy
+# notes each CONNECT: none may reach it.
+@pytest.mark.parametrize("url", [
+    "http://%31%30.0.0.5/shot.png",             # escapes: 10.0.0.5
+    "http://%6c%6fcalhost/shot.png",            # localhost
+    "http://127.0.0.1./shot.png",               # a trailing dot, which the lookup doesn't read as an address
+    "http://10.0.0.5%2e/shot.png",              # the same, escaped
+    "http://0x7f.1/shot.png",                   # 127.0.0.1 to many a lookup, a proxy's too, and not to this one
+    "http://[fe80::1%25eth9]/shot.png",         # link-local, with a zone the lookup doesn't read
+    "https://%31%30.0.0.5/shot.png",            # CONNECT 10.0.0.5:443
+    "https://127.0.0.1%3a9200/shot.png",        # CONNECT 127.0.0.1:9200: a port inside the host
+    "https://169.254.169.254%2e/shot.png",      # CONNECT 169.254.169.254.:443
+])
+def test_behind_a_proxy_a_local_address_however_it_is_spelled_is_refused(pair, monkeypatch, tmp_path, url):
+    a, b = pair
+    behind_a_proxy(monkeypatch, a, https=url.startswith("https:"))
+    with pytest.raises(Unreachable):
+        sync._save_image(knows_only(Http(timeout=5), {}), url, str(tmp_path / "shot"), token_host="git.example.org")
+    assert [p for p, _ in a.seen] == [] and list(tmp_path.iterdir()) == []      # no request, and no CONNECT
+
+
+def test_behind_a_proxy_a_name_only_it_knows_is_asked_for_over_https_through_its_tunnel(pair, monkeypatch, tmp_path):
+    # what P2-1's rule leaves to the proxy: a plain name, one with `_` and a name's trailing dot too
+    a, b = pair
+    a.files = {"/shot.png": PNG}
+    behind_a_proxy(monkeypatch, a, https=True)
+    http = knows_only(Http(timeout=5), {})
+    for host in ("images.example.com", "img_1.cdn-example.com."):
+        saved = sync._save_image(http, f"https://{host}/shot.png", str(tmp_path / "shot"), token_host="git.example.org")
+        assert saved.endswith("shot.png")
+    assert [p for p, _ in a.seen] == ["CONNECT images.example.com:443", "/shot.png",
+                                      "CONNECT img_1.cdn-example.com.:443", "/shot.png"]
+    assert "only a plain name is left to the proxy" in " ".join(reqdocs.item("R3.1.1").split())
 
 
 # ---------------------------------------------------------------- the form a token is sent in (R9.2.2, R2.6.5)

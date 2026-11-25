@@ -7,6 +7,7 @@ import http.client
 import io
 import ipaddress
 import json
+import re
 import socket
 import ssl
 import threading
@@ -184,6 +185,18 @@ def _localhost(name: str) -> bool:
     a proxy's, which may well be this one."""
     name = name.rstrip(".")
     return name == "localhost" or name.endswith(".localhost")
+
+
+def _a_name(host: str) -> bool:
+    """Whether a host is plainly a name, and no address however it is spelled: ASCII letters,
+    digits, `-` and `_`, in parts between dots, the last of which isn't a number (all digits, or
+    0x and hex digits), which makes the host an IPv4 address to a URL's reader (WHATWG) and to many
+    a lookup, `127.1` and `0x7f.1` alike. A trailing dot is a name's own. An address this computer's
+    lookup can't read, with a trailing dot, an IPv6 zone or a port inside the host, is one a proxy
+    may well read, and connect to (the review's pass 2, P2-1)."""
+    name = host.rstrip(".")
+    return (re.fullmatch(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*", name) is not None
+            and re.fullmatch(r"[0-9]+|0x[0-9a-f]*", name.rsplit(".", 1)[-1]) is None)
 
 
 def _refuse_local(host: str, addresses) -> None:
@@ -437,15 +450,22 @@ class Http:
         Behind a proxy (_proxied) the name is the proxy's to look up, and the proxy may know names
         this computer doesn't: one this computer can't look up is left to it (the review's pass 1,
         P1-1). What this computer can tell is local is refused all the same: an address, localhost,
-        a name it looks up as a local address."""
+        a name it looks up as a local address.
+
+        The host judged is the one the request is sent to: as urllib sends it (Request.host), its
+        escapes decoded, which is what a connection looks up and what a proxy is asked for, in the
+        Host header and a tunnel's CONNECT. Only a plain name (_a_name) is left to a proxy (the
+        review's pass 2, P2-1). Judged as the address spells it, `%31%30.0.0.5`, `127.0.0.1.` or
+        `[fe80::1%25eth0]` failed this computer's lookup and was left to the proxy as a name, and
+        the proxy was sent `10.0.0.5`, or an address it reads with its dot or its zone."""
         parts = _http_address(url)
-        host = parts.hostname.lower()
+        host = unquote(parts.hostname).lower()     # as it is sent: Request.host
         if whose is None or _is_for(parts, token_key(whose)):
             return parts
         try:
             addresses = self._lookup(host)
         except (OSError, ValueError) as e:        # no such name: what the connection would have found
-            if self._proxied(parts) and not _localhost(host):
+            if self._proxied(parts) and _a_name(host) and not _localhost(host):
                 return parts                      # unless it is the proxy's, which looks the name up itself
             raise Unreachable(f"couldn't reach {host}: {e}") from None
         _refuse_local(host, addresses)

@@ -14,10 +14,14 @@ loopback, private or link-local address, or another address that isn't public, u
 Source's own host (a forge on the user's own network), on the Source's own port. The Source's own
 port is the one its host names, or https's 443 where it names none; an address is on the port it is
 asked on, whatever its scheme, so one in plain `http://` with the Source's name and no port is on
-port 80, and isn't the Source's. A redirect is held to the same rule. Behind a proxy, the proxy looks a host's name up: a name this computer can't look
-up is asked for through the proxy, and one this computer finds to be such an address, or
-`localhost`, is still refused. An image that is refused is passed over for the next one in R3.2's
-or R3.3's list.
+port 80, and isn't the Source's. A redirect is held to the same rule. A host is read as it is sent,
+with its escapes decoded: `%31%30.0.0.5` is `10.0.0.5`. Behind a proxy, the proxy looks a host's
+name up: a name this computer can't look up is asked for through the proxy, and one this computer
+finds to be such an address, or `localhost`, is still refused. Of the hosts this computer can't look
+up, only a plain name is left to the proxy: ASCII letters, digits, `-`, `_` and dots, whose last
+part isn't a number. Any other is refused, such as an address with a trailing dot, an IPv6 zone or a
+port inside the host. An image that is refused is passed over for the next one in R3.2's or R3.3's
+list.
 
 R3.2. **Icon.** AppKata uses the first one it finds:
 
