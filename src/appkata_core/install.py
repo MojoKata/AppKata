@@ -205,6 +205,7 @@ def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_NOT_UTF8 = re.compile("[\udc80-\udcff]")     # a byte that isn't UTF-8, as Python gives it (a surrogate escape)
 
 
 def one_line(text: str) -> str:
@@ -232,9 +233,12 @@ def desktop_exec(exec_path: str, *words: str, through_sh: bool = False) -> str:
     and a backtick escaped, a `%` doubled, and then every backslash doubled again, as in any string
     value. With `through_sh`, the entry's program is `/bin/sh` (:data:`MENU_SHELL`) and `exec_path`,
     a script, its first argument. A path with a quote or a control character (a line break) is
-    refused with ValueError: no entry starts such a path, and nothing is written for it."""
+    refused with ValueError: no entry starts such a path, and nothing is written for it. So is one
+    with a byte that isn't UTF-8, which an entry, UTF-8 text, can't hold (#689's review, P3-B3)."""
     if '"' in exec_path or _CONTROL.search(exec_path):
         raise ValueError(f"{one_line(exec_path)!r} has a quote or a line break in it, which a menu entry can't start")
+    if _NOT_UTF8.search(exec_path):
+        raise ValueError(f"{exec_path!r} has a byte that isn't UTF-8 in it, which a menu entry can't hold")
     quoted = re.sub(r"([\\$`])", r"\\\1", exec_path).replace("%", "%%")
     return " ".join([*([MENU_SHELL] if through_sh else []), f'"{quoted}"', *words, "%U"]).replace("\\", "\\\\")
 
@@ -280,12 +284,14 @@ def _write_menu_link(target: str, app_id: str) -> str:
     unsandboxed had the link as its `$0`, so a program that finds its files beside `"$0"` (a start
     script's `. "$(dirname "$0")/lib.sh"`) looked for them in AppKata's menu folder, and didn't
     start from the menu while Open started it. The path is quoted for `sh` whatever it holds (a
-    `%`, a quote, a line break). The script is written whole beside its place and renamed over it
-    (:func:`_write_whole`), so what is at its place is replaced and never written through, an app
-    started by the one before keeps reading that, and a write that fails leaves it."""
+    `%`, a quote, a line break), and written as its own bytes, UTF-8 or not (P3-B3: written as
+    text, an install folder whose name isn't UTF-8 stopped the install). The script is written
+    whole beside its place and renamed over it (:func:`_write_whole`), so what is at its place is
+    replaced and never written through, an app started by the one before keeps reading that, and
+    a write that fails leaves it."""
     path = _menu_link_path(app_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    return _write_whole(path, f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n'.encode("utf-8"), 0o755)
+    return _write_whole(path, os.fsencode(f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n'), 0o755)
 
 
 def _write_whole(path: str, data: bytes, mode: int) -> str:
@@ -1597,7 +1603,6 @@ def launch(db: DB, url: str, on_failed=None, grace: float = applog.GRACE):
 
 _SPACE = " \t\n\r\f"           # what GLib's key file reader takes for white space (g_ascii_isspace: no \v)
 _ESCAPES = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
-_NOT_UTF8 = re.compile("[\udc80-\udcff]")     # a byte that isn't UTF-8, read with surrogateescape
 
 
 def _key_file(path: str) -> dict | None:
