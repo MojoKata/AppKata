@@ -1634,6 +1634,13 @@ def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_is_kept_as_writt
     assert tokened(seen) == [] and [url for url, _ in seen] == [f"https://{twin}/x"]
 
 
+def test_r3_1_1_says_how_the_systems_list_of_hosts_reached_directly_is_read():
+    # the review's pass 10, P10-B1, as the owner decided it: NO_PROXY's and SYSTEM_LISTS' rows hold it
+    text = " ".join(reqdocs.item("R3.1.1").split())
+    assert ("`no_proxy`, or the bypass list of Windows' or macOS' own settings, each read as Python's urllib reads it") in text
+    assert "an entry in another Unicode form of the name, decomposed (NFD) or full-width, names no host" in text
+
+
 def test_r3_1_1_says_a_name_idna_2003_and_2008_read_apart_isnt_asked_for():
     text = " ".join(reqdocs.item("R3.1.1").split())
     assert "Nor is a name that holds, in lower case, `ß`, `ς`, a zero-width non-joiner (U+200C) or a zero-width joiner (U+200D)" in text
@@ -1666,6 +1673,11 @@ NO_PROXY = [                     # a no_proxy entry, and whether it names übung
     # an entry with no IDNA form beside one that names the host, which still does (review pass 9, P9-B4)
     pytest.param("a..b, übung.example", True, id="beside-a-name-with-an-empty-part"),
     pytest.param("a" * 64 + ".example, übung.example", True, id="beside-a-name-with-a-part-of-64"),
+    # an entry is read as urllib reads it: in another Unicode form of the name, decomposed (NFD) or
+    # full-width, it names no host, as no tool that reads no_proxy as urllib does would read it so
+    # either (review pass 10, P10-B1, as the owner decided it)
+    pytest.param("u\u0308bung.example", False, id="decomposed"),
+    pytest.param("\uff55\u0308bung.example", False, id="full-width"),
 ]
 
 
@@ -1737,6 +1749,9 @@ SYSTEM_LISTS = [                 # a system, an entry of its bypass list, and wh
     pytest.param("macos", "xn--bung-zra.example:{port}", True, id="macos-its-idna-form"),
     pytest.param("macos", "übung.*", True, id="macos-a-pattern-in-its-script"),
     pytest.param("macos", "bücher.example:{port}", False, id="macos-another-name"),
+    # an entry in another Unicode form of the name names no host (review pass 10, P10-B1)
+    pytest.param("windows", "u\u0308bung.example", False, id="windows-decomposed"),
+    pytest.param("macos", "u\u0308bung.example:{port}", False, id="macos-decomposed"),
 ]
 
 

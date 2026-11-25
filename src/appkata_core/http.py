@@ -583,7 +583,9 @@ def _bypassed(host: str) -> bool:
     were read again, trimmed and in their IDNA form, and joined back into a list, and `" *"`,
     `".*"` or `"*,a..b"`, which urllib reads as an entry that names no host, became `*`, which
     names every host, so every request was sent directly where urllib sent it through the proxy
-    (P9-B1)."""
+    (P9-B1). So an entry in another Unicode form of a name than those two, decomposed (NFD) or
+    full-width, names no host, as urllib reads it, though IDNA makes the same name of it (the
+    review's pass 10, P10-B1, as the owner decided it; R3.1.1 says so)."""
     script = _in_its_script(host)
     return bool(urllib.request.proxy_bypass(host) or (script != host and urllib.request.proxy_bypass(script)))
 

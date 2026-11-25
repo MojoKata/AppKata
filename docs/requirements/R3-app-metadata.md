@@ -46,8 +46,13 @@ finds to be such an address, or `localhost`, is still refused. Of the hosts this
 up, only a plain name is left to the proxy: ASCII letters, digits, `-`, `_` and dots, whose last
 part isn't a number, in the form it is sent, so a name in any script is one (`übung.example.org`,
 sent as `xn--bung-zra.example.org`). Any other is refused, such as an address with a trailing dot,
-an IPv6 zone or a port inside the host. An image that is refused is passed over for the next one in
-R3.2's or R3.3's list.
+an IPv6 zone or a port inside the host. Which hosts are reached directly, and not through the
+proxy, is the system's to say: `no_proxy`, or the bypass list of Windows' or macOS' own settings,
+each read as Python's urllib reads it, its entries compared with the host in its IDNA form and in
+its script, composed (NFC), so `übung.example` and `xn--bung-zra.example` each name the host
+`übung.example`; an entry in another Unicode form of the name, decomposed (NFD) or full-width,
+names no host. An image that is refused is passed over for the next one in R3.2's or
+R3.3's list.
 
 R3.2. **Icon.** AppKata uses the first one it finds:
 
