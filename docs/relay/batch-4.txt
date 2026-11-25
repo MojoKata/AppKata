@@ -1,8 +1,9 @@
-# Batch 4 of the relay for CR1's unit U04
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U04. download() and the checksum fetch: which files are a release's checksum (#304), what an install says when its checksum file can't be read (#328, after #304: the same function), which URLs a download may use (#308) and a chunked response that breaks part-way (#314). The same functions of install.py: download(), head_bytes(), expected_sha256().
+# Batch 4 of the relay for CR1's unit U05
+# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U05. The places of the home the never-shared and secret lists miss: what makes code run later (#384), the command links folder set elsewhere (#632) and an earlier install folder (#701), which change _protected_roots, the profiles that are secrets (#383, _secret_roots), and the places an XDG variable moves (#392), which changes both functions after the others. #632 passes the folder through backend.py and install.py, files U04 changes too.
 # One line a finding, in the order to take them: its issue, its size in the schedule, its title.
 
-#304  small  CR1.3-6 A .sha512 beside a release file is taken as its checksum though only SHA-256 is read, so the file installs Unverified.
-#328  small  CR1.3-29 When a release's checksum file can't be fetched or doesn't list the file, the install goes on as Unverified and says nothing.
-#308  small  CR1.3-10 Downloads accept any URL scheme a release gives, file: included, and follow redirects from https: to http:.
-#314  small  CR1.3-16 A download whose chunked response breaks part-way is neither retried nor resumed, and fails with a raw `IncompleteRead` instead of an install error.
+#384  medium CR1.5-9 The never-shared list misses places that make code run later as the user, such as Cinnamon extensions and bash-completion files.
+#632  medium CR1.5-37 Sandbox grants keep out the command links folder only while the install folder is the default, never when it is set elsewhere.
+#701  small  CR1.5-45 The folders a sandbox never shares hold only one install folder, so with apps in two install folders a sandboxed app in one can be granted the other read-write.
+#383  small  CR1.5-8 Chromium profiles, Firefox forks, Evolution's mail and GNOME Online Accounts' tokens aren't secrets, so a review can grant them.
+#392  small  CR1.5-17 The never-shared and secret folders are checked only at their default places, so one moved by an XDG variable can be granted.

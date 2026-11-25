@@ -1,0 +1,6 @@
+# Batch 5 of the relay for CR1's unit U05
+# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U05. Uninstall: the document portal's grants revoked when an app is uninstalled or leaves Standard (#400; it counts double: shown first on today's code with the real portal, and a no defect if the grant doesn't outlive the uninstall), and a private home that can't be removed whole is said and keeps its owner record (#395). The same uninstall step (remove_sandbox_home) in sandbox.py, install.py and backend.py.
+# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
+
+#400  medium CR1.5-25 Document-portal grants outlive an app's uninstall, so another Source's app later installed under that name can use those files.
+#395  medium CR1.5-20 Uninstall silently leaves the private-home folders it can't delete and removes the owner record anyway, orphaning the data.
