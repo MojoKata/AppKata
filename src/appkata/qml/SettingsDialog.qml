@@ -265,7 +265,7 @@ Dialog {
                 Field { id: tokenValue; x: 178; y: 4; width: col.width - 178 - 44; mono: true; placeholder: "Paste a token"; field.echoMode: TextInput.Password }
                 TipButton { anchors.right: parent.right; y: 7; icon: "plus"; accent: true; tip: "Add token"
                             enabledButton: tokenHost.text.trim() !== "" && tokenValue.text.trim() !== ""
-                            onClicked: { backend.setToken(tokenHost.text.trim(), tokenValue.text.trim()); tokenValue.text = "" } } }
+                            onClicked: { if (backend.setToken(tokenHost.text.trim(), tokenValue.text.trim())) tokenValue.text = "" } } }
 
             Section { text: "NOSTR RELAYS" }
             Text { width: col.width; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; bottomPadding: 4

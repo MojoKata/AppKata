@@ -514,6 +514,48 @@ def test_a_token_typed_for_a_name_idna_2003_and_2008_read_apart_isnt_kept_and_a_
     assert [kind for kind, _ in toasts] == ["error"] and toasts[0][1].startswith(f"No token kept for {said} is two different hosts")
 
 
+@pytest.mark.parametrize("typed, kept", [
+    ("straße.example", {}),                                         # refused, as above
+    ("git.example.org", {"git.example.org": "made-once-1234"}),
+])
+def test_settings_plus_empties_the_token_field_only_once_the_token_is_kept(be, typed, kept):
+    """The review's pass 12, P12-2: Settings' "+" emptied the token field after every setToken, and
+    since pass 7 setToken can refuse a host and keep nothing, so a pasted token, which a forge shows
+    once, was lost along with the refusal. The real dialog, offscreen, against the real Backend."""
+    from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QUrl
+    from PySide6.QtQml import QQmlApplicationEngine
+    toasts = []
+    be.toast.connect(lambda kind, text: toasts.append(kind))
+    engine = QQmlApplicationEngine()
+    for name, value in (("backend", be), ("appVersion", "test"), ("themeOverride", ""), ("tourMode", False), ("platformOs", "linux")):
+        engine.rootContext().setContextProperty(name, value)
+    engine.loadData(b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "../src/appkata/qml"\n'
+                    b'ApplicationWindow { width: 1920; height: 1040; visible: true; SettingsDialog { objectName: "settings" } }',
+                    QUrl.fromLocalFile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings-tokens.qml")))
+    assert engine.rootObjects(), "Settings did not load"
+    root = engine.rootObjects()[0]
+    try:
+        dlg = root.findChild(QObject, "settings")
+        QMetaObject.invokeMethod(dlg, "show")                       # as Main.qml opens Settings
+        within = dlg.findChildren(QObject)
+        host = next(o for o in within if o.property("placeholder") == "host or host:port")
+        token = next(o for o in within if o.property("placeholder") == "Paste a token")
+        plus = next(o for o in within if o.property("tip") == "Add token")
+        host.setProperty("text", typed)
+        token.setProperty("text", "made-once-1234")
+        assert plus.property("enabledButton")
+        plus.clicked.emit()
+        assert be.db.get("tokens", {}) == kept
+        if kept:
+            assert (token.property("text"), toasts) == ("", [])
+        else:                                                       # both fields as typed, to add again
+            assert (host.property("text"), token.property("text"), toasts) == (typed, "made-once-1234", ["error"])
+    finally:
+        root.deleteLater()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)      # before the backend goes
+
+
 # ---------------------------------------------------------------- the Add source preview (R7.2; CR1, #269)
 
 class Answer(io.BytesIO):

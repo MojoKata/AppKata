@@ -596,17 +596,19 @@ class Backend(QObject):
             self._ensure_own_trust()
             self.reload()
 
-    @Slot(str, str)
-    def setToken(self, host: str, token: str) -> None:
+    @Slot(str, str, result=bool)
+    def setToken(self, host: str, token: str) -> bool:
         """A token is kept for one address (R11.1.6): the host as a Source's is written, with its
         port when the forge is on one, which is the key Http looks it up under (token_key). None is
         kept for a name IDNA 2003 and IDNA 2008 read apart, which is two hosts (two_hosts): it was
-        kept under its IDNA 2003 form, another host (the review's pass 7, P7-1)."""
+        kept under its IDNA 2003 form, another host (the review's pass 7, P7-1). Says whether it
+        kept or removed the token, so Settings' "+" empties its field only then and a refused token
+        isn't lost (the review's pass 12, P12-2)."""
         host = token_key(host)
         reason = token and two_hosts(host)
         if reason:
             self.toast.emit("error", f"No token kept for {host}: {reason}; typed in its IDNA 2008 form (xn--…), it is")
-            return
+            return False
         t = self.db.get("tokens", {})
         if token:
             t[host] = token
@@ -617,6 +619,7 @@ class Backend(QObject):
         # said as Settings' row shows it, in its script (token_host_shown; the review's pass 8, P8-1)
         self._audit("you", "setting", "set an API token for" if token else "removed the API token for", token_host_shown(host))
         self.prefsChanged.emit()
+        return True
 
     # ---------------------------------------------------------------- sync
     @Property(bool, notify=syncChanged)
