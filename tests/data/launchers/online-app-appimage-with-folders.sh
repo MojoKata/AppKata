@@ -141,8 +141,8 @@ if [ "${busok:-1}" = 1 ]; then
   while [ -n "$rest" ]; do
     s=${rest%%"$nl"*}; rest=${rest#*"$nl"}
     if [ -S "$s" ] && [ ! -L "$s" ]; then
-      r=/home/kata/Media; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac
-      r=/home/kata/Projects; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac
+      r=$(readlink -f /home/kata/Media 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Media; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac
+      r=$(readlink -f /home/kata/Projects 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Projects; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac
     fi
   done
 else

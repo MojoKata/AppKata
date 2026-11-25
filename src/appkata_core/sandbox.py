@@ -2395,10 +2395,16 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # A folder grant is judged when the launcher is written, by AppKata's own session bus (a grant
     # that holds its socket is refused above), and this session's bus can be elsewhere: one started
     # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket
-    # is inside a granted folder all the same, the file is covered, after that folder's bind, so the
-    # app never sees the unfiltered bus (R17.3.1). Each folder as the app sees it, and as it really is;
-    # each socket file the address names, but a link, which the folder shows pointing at a file it
-    # doesn't (its target is in $bussocks too, and covered where a granted folder holds it). Where the
+    # is inside a granted folder all the same, or is what a grant names, the file is covered, after
+    # that grant's bind, so the app never sees the unfiltered bus (R17.3.1). Each grant as the app sees
+    # it, and as it really is at the launch: `readlink -f`, which follows a link as bwrap's bind then
+    # follows it (where it can't, as it was when the launcher was written); each socket file the
+    # address names, but a link, which the folder shows pointing at a file it doesn't (its target is in
+    # $bussocks too, and covered where a grant shows it). PR #694's review, P5-B1: the match was on
+    # what lies under a grant alone ("$r"/*), so a grant of the socket file itself, or of a link to it
+    # (a "folder" grant binds a file as readily as a folder), showed the app the live socket; and the
+    # grant's path was resolved when the launcher was written, so a link pointed at the socket's
+    # folder later showed it too. Where the
     # address names a file the launcher can't read ($busok 0), that file could be in any of them, at
     # any depth, so each granted folder is shown empty and read-only (a tmpfs over its bind), and a
     # granted socket file is covered, as the working directory is refused then, with a line (PR
@@ -2414,7 +2420,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                  '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'      r={q(os.path.realpath(dest))}; case "$s" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+            cover.append(f'      r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
+                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
         cover += ["    fi", "  done", "else",
                   "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
         for p in granted:

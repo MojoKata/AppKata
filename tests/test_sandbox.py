@@ -375,7 +375,7 @@ if "xdg-dbus-proxy" in argv:
 
 
 def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
-              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=()):
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
@@ -384,7 +384,8 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     really at `proxy_at` (None: no stand-in), as `readlink -f` tells the launcher (no machine's /usr
     is a test's). The
     rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them.
-    `forward`: the file-argument helper the launcher calls, and `args` its arguments."""
+    `forward`: the file-argument helper the launcher calls, and `args` its arguments. `before`, where
+    given, is called once the launcher is written and before it runs."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -405,6 +406,8 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     lp = tmp_path / "launcher"
     lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
                                     seccomp=str(fake / "record.py"), forward=forward))   # any file there is: nothing here reads it as a filter
+    if before:
+        before()
     path = os.environ["PATH"]
     if hide:
         bare = tmp_path / "bare"
@@ -980,21 +983,59 @@ def test_every_reading_of_the_bus_address_takes_its_keys_in_any_order(monkeypatc
     assert len(seen) == 1, seen
 
 
+# PR #694's review, P5-B1: the cover matched a socket file only *under* a granted path, so a grant of
+# the socket file itself, or of a link to it (a "folder" grant binds a file as readily as a folder,
+# R17.3.1), left the live socket in sight, where an address the launcher can't read has a granted
+# socket file covered. How it slipped past: the cover's tests varied how the address names the
+# socket (P2-1, P3-B4) and granted its folder alone; how the grant shows it never varied. Each way
+# here: the grant → where the app sees the socket through it (None: it doesn't). A link is followed
+# when the app starts, as bwrap follows it, so one pointed there after the launcher was written
+# counts too.
+GRANT_FORMS = {
+    "its folder": "{tmp}/dbus-MZ8lHbtZ8K",
+    "a folder above it": "{tmp}/dbus-MZ8lHbtZ8K",
+    "the file itself": "{grant}",
+    "a link to the file": "{grant}",
+    "a link to its folder": "{grant}/dbus-MZ8lHbtZ8K",
+    "a link pointed there later": "{grant}/dbus-MZ8lHbtZ8K",
+    "a folder beside it": None,
+}
+
+
+def _granted(grant, path, links):
+    """The path `grant` grants for the socket at `path`, made (a link in `links`), and what to do
+    once the launcher is written."""
+    up = path.parent.parent
+    (up / "beside").mkdir(exist_ok=True)
+    made = {"its folder": path.parent, "a folder above it": up, "the file itself": path, "a folder beside it": up / "beside"}
+    if grant in made:
+        return str(made[grant]), None
+    link = links / grant.replace(" ", "-")
+    link.symlink_to({"a link to the file": path, "a link to its folder": path.parent, "a link pointed there later": up / "beside"}[grant])
+    return str(link), (lambda: (link.unlink(), link.symlink_to(path.parent))) if grant == "a link pointed there later" else None
+
+
 @pytest.mark.parametrize("form", BUS_FORMS)
-def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch, form):
+@pytest.mark.parametrize("grant", GRANT_FORMS)
+def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp_path, tmp_path_factory, monkeypatch, grant, form):
     # A grant is judged when the launcher is written, by AppKata's own session's bus; a session
     # started another way can put its bus inside that folder later. The run covers the file, however
-    # the session's address names it (P2-1, above).
+    # the session's address names it (P2-1, above), and however the grant shows it (P5-B1).
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
-    sock, path = _a_bus_socket(tmp_path / "tmp")
-    folder = str(path.parent)
+    sock, path = _a_bus_socket(tmp_path / "up" / "tmp")
+    (tmp_path / "links").mkdir()
+    folder, then = _granted(grant, path, tmp_path / "links")
+    shown = GRANT_FORMS[grant] and GRANT_FORMS[grant].format(tmp=path.parent, grant=folder)
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}})
-    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), gs=gs)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, _bus_form(form, path), gs=gs, before=then)
     sock.close()
     assert r.returncode == 0 and "AppKata: the session bus here" not in r.stderr or proxy is None, (r.stdout, r.stderr)
-    binds = _binds(app)
-    assert binds[folder] == ("--bind-try", folder) and binds[str(path)] == ("--ro-bind", "/dev/null"), binds
-    assert app.index(str(path)) > app.index(folder)                     # after the folder's own bind
+    at = lambda *words: next((i for i in range(len(app)) if app[i:i + 3] == list(words)), None)   # noqa: E731
+    covered = [app[i + 2] for i in range(len(app) - 2) if app[i:i + 2] == ["--ro-bind", "/dev/null"]]
+    assert at("--bind-try", folder, folder) is not None, app                    # the grant stands
+    assert covered == ([shown] if shown else []), (covered, shown)
+    if shown:
+        assert at("--ro-bind", "/dev/null", shown) > at("--bind-try", folder, folder)     # after the folder's own bind
     # where this session's bus is elsewhere, nothing is covered
     _, app, r, _ = _launched(tmp_path_factory.mktemp("again"), monkeypatch, None, gs=gs)
     assert "/dev/null" not in app and r.returncode == 0, (app, r.stderr)

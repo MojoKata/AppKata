@@ -1200,23 +1200,31 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
     # connected to it past the filter. Now the tool runs in its private home and says why, and the
     # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
     # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
+    # And a grant of the socket file itself, or of a link to it, which the cover matched no part of
+    # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it.
     folder = env.home.parent / "shared"
     folder.mkdir()
     bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
     sock = str(folder / "dbus-MZ8lHbtZ8K")
-    probe = (f'[ -S {sock} ] && echo SEEN; gdbus call --address unix:path={sock} --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus '
-             '--method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED; echo DONE')
+    link = env.home.parent / "bus-link"
+    link.symlink_to(sock)
+    probe = lambda at, said="": (f'[ -S {at} ] && echo SEEN{said}; gdbus call --address unix:path={at} --dest org.freedesktop.DBus '   # noqa: E731
+                                 f'--object-path /org/freedesktop/DBus --method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED{said}; ')
     try:
-        r = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe, cwd=str(folder), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r = env.run(env.app("tool", sb.resolve_template("cli-tool")), probe(sock) + "echo DONE", cwd=str(folder), env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env.rt}/bus")
         viewer = env.app("viewer", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "ro"}}))
         assert "Refused folder grant" not in open(viewer).read()
-        r2 = env.run(viewer, probe + f"; ls {folder} >/dev/null && echo LISTED", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        r2 = env.run(viewer, probe(sock) + f"echo DONE; ls {folder} >/dev/null && echo LISTED", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
+        files = env.app("files", sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{sock}": "rw", f"+{link}": "ro"}}))
+        assert "Refused folder grant" not in open(files).read()
+        r3 = env.run(files, probe(sock) + probe(link, "-LINK") + "echo DONE", env={"DBUS_SESSION_BUS_ADDRESS": bus.addr})
     finally:
         bus.close()
     assert r.returncode == 0 and r.stdout.split() == ["DONE"], (r.stdout, r.stderr)
     assert f"can't see {folder}" in r.stderr and "one that holds the session bus" in r.stderr, r.stderr
     assert r2.returncode == 0 and r2.stdout.split() == ["DONE", "LISTED"], (r2.stdout, r2.stderr)      # the folder is the app's, but not the bus
+    assert r3.returncode == 0 and r3.stdout.split() == ["DONE"], (r3.stdout, r3.stderr)
 
 
 @needs_proxy
