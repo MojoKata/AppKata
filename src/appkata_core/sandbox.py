@@ -2089,20 +2089,31 @@ def _launcher_env(net: bool = False) -> list[str]:
 # keyring (or another password manager) holding the name the app reached that program's whole
 # connection, every unlocked password included (CR1.5-46, #707; the owner's decision of 2026-11-24).
 # Asked of the session's own bus as the host's tools ask it, in the proxy's start; where nothing here
-# can ask, the name counts as held. A program that takes the name after the launch is not seen.
+# can ask, the name counts as held. A name the bus can start a program for counts as held too: the
+# app, which may call the name it may own, would start it itself (a call to it, or
+# StartServiceByName), and gnome-keyring installs such a file wherever it is installed, running or
+# not (PR #694's review, P2-3). A program that takes the name after the launch otherwise is not seen.
 _PROVIDE_CHECK = """  provide=--own=org.freedesktop.secrets
   if command -v gdbus >/dev/null 2>&1; then
     held=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
       --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null || true)
+    startable=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
+      --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null || true)
   elif command -v busctl >/dev/null 2>&1; then
     held=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
       NameHasOwner s org.freedesktop.secrets 2>/dev/null || true)
+    startable=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
+      ListActivatableNames 2>/dev/null || true)
   else
-    held=true
+    held=true startable=
   fi
   case "$held" in
     *true*) provide=
       printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\\n' {qname} >&2 ;;
+    *) case "$startable" in
+         *"'org.freedesktop.secrets'"*|*'"org.freedesktop.secrets"'*) provide=
+           printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\\n' {qname} >&2 ;;
+       esac ;;
   esac
 """
 

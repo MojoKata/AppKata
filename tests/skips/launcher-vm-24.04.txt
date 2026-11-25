@@ -5,6 +5,7 @@ tests/test_sandbox_one_fact.py::test_the_harness_catches_review_twos_x11_advice 
 tests/test_sandbox_one_fact.py::test_the_launcher_and_app_detail_agree_on_which_apps_bring_chromiums_sandbox  # could not import 'PySide6': No module named 'PySide6'
 tests/test_sandbox_run.py::test_an_appimage_that_does_not_fit_on_the_disk_is_refused_with_a_message_and_leaves_nothing  # needs the 1 MB tmpfs the harness mounts (scripts/test-sandbox.sh launcher)
 tests/test_sandbox_run.py::test_password_service_beside_a_running_keyring_starts_without_the_name_and_never_reaches_it  # needs gnome-keyring (the VM's packages have none)
+tests/test_sandbox_run.py::test_password_service_where_the_bus_can_start_a_keyring_starts_without_the_name_and_cannot_start_it  # needs gnome-keyring (the VM's packages have none)
 tests/test_sandbox_run.py::test_saved_passwords_reach_the_secret_service_and_nothing_else_the_keyring_serves  # needs gnome-keyring (the VM's packages have none)
 tests/test_sandbox_run.py::test_the_camera_grant_binds_the_video_devices  # no /dev/video0 here (scripts/test-sandbox.sh launcher makes one)
 tests/test_sandbox_run.py::test_the_road_the_shim_covers_still_starts_the_first_browser_inside  # needs the stand-in x-www-browser, which register-test-handler.sh installs only where there's none

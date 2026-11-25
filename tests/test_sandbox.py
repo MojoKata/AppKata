@@ -372,13 +372,14 @@ if "xdg-dbus-proxy" in argv:
 
 
 def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
-              proxy_at="/usr/bin/xdg-dbus-proxy", app=True):
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=()):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
     where no proxy was started), the app's bwrap's (None where `app` is False and it didn't run),
     the run, and the runtime folder. The xdg-dbus-proxy its PATH finds is a stand-in that is
-    really at `proxy_at`, as `readlink -f` tells the launcher (no machine's /usr is a test's)."""
+    really at `proxy_at`, as `readlink -f` tells the launcher (no machine's /usr is a test's). The
+    rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -398,7 +399,16 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     lp = tmp_path / "launcher"
     lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
                                     seccomp=str(fake / "record.py")))            # any file there is: nothing here reads it as a filter
-    env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{os.environ['PATH']}"}
+    path = os.environ["PATH"]
+    if hide:
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        for d in path.split(os.pathsep):
+            for f in sorted(os.listdir(d)) if os.path.isdir(d) else ():
+                if f not in hide and not os.path.lexists(bare / f):
+                    (bare / f).symlink_to(os.path.join(d, f))
+        path = str(bare)
+    env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{path}"}
     if address is not None:
         env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
     r = subprocess.run(["sh", str(lp)], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
@@ -566,24 +576,46 @@ def test_each_launcher_tells_its_xdg_open_why_the_app_has_no_bus(tmp_path, monke
 # whoever held it, and to the filter an own is a talk, so beside gnome-keyring the app reached the
 # keyring's whole connection, every unlocked password included. The launcher now asks the session's
 # bus at the launch, and where another program holds the name starts the app without the own and
-# says why; the sole provider keeps it. Here the asking is a stand-in gdbus, answering as asked.
-@pytest.mark.parametrize("held", [True, False], ids=["another-provider", "the-only-provider"])
-def test_password_service_owns_the_name_only_where_no_other_program_holds_it(tmp_path, monkeypatch, held):
+# says why; the sole provider keeps it. PR #694's review, P2-3: a name the bus can start a program
+# for (gnome-keyring installed, not running) was "free", and the app, which may call the name it may
+# own, could start the keyring itself and reach it: such a name counts as held. How it slipped past:
+# the question asked was the one the decision named, "does another program hold it", and every
+# test's bus started no keyring on demand. Here the asking is a stand-in gdbus or busctl, answering
+# as each answers (gdbus, else busctl).
+_ANSWERS = {"gdbus": (lambda held: f"({str(held).lower()},)",
+                      lambda more: "(['org.freedesktop.DBus', 'org.gnome.keyring'" + "".join(f", '{n}'" for n in more) + "],)"),
+            "busctl": (lambda held: f"b {str(held).lower()}",
+                       lambda more: f'as {2 + len(more)} "org.freedesktop.DBus" "org.gnome.keyring"' + "".join(f' "{n}"' for n in more))}
+
+
+@pytest.mark.parametrize("tool", ["gdbus", "busctl"])
+@pytest.mark.parametrize("held,startable", [(True, False), (False, True), (False, False)],
+                         ids=["another-provider", "one-the-bus-can-start", "the-only-provider"])
+def test_password_service_owns_the_name_only_where_no_other_program_holds_it(tmp_path, monkeypatch, tool, held, startable):
     asked = tmp_path / "asked"
-    gdbus = f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\necho "({str(held).lower()},)"\n'
+    owner, names = _ANSWERS[tool]
+    answer = (f'#!/bin/sh\necho "$*" >> {shlex.quote(str(asked))}\ncase "$*" in *NameHasOwner*) echo {shlex.quote(owner(held))} ;; '
+              f'*) echo {shlex.quote(names(["org.freedesktop.secrets"] if startable else []))} ;; esac\n')
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
-    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": gdbus})
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={tool: answer}, hide=("gdbus",) if tool == "busctl" else ())
     assert r.returncode == 0 and proxy is not None, (r.stdout, r.stderr)
-    assert ("--own=org.freedesktop.secrets" in proxy) is not held, proxy
+    assert ("--own=org.freedesktop.secrets" in proxy) is not (held or startable), proxy
     if held:
         assert r.stderr == ("AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so Demo "
                             "runs without Password service: offering that name through the bus filter would reach that program and the "
                             "passwords it holds.\n"), r.stderr
+    elif startable:
+        assert r.stderr == ("AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so "
+                            "Demo runs without Password service: offering that name through the bus filter would let the app start that "
+                            "program and reach the passwords it holds.\n"), r.stderr
     else:
         assert r.stderr == "", r.stderr
-    assert asked.read_text().split() == ["call", "--address", f"unix:path={rt}/bus", "--timeout", "5", "--dest", "org.freedesktop.DBus",
-                                         "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner",
-                                         "org.freedesktop.secrets"]
+    bus = f"unix:path={rt}/bus"
+    want = {"gdbus": [f"call --address {bus} --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method "
+                      f"org.freedesktop.DBus.{m}" for m in ("NameHasOwner org.freedesktop.secrets", "ListActivatableNames")],
+            "busctl": [f"--address={bus} --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus {m}"
+                       for m in ("NameHasOwner s org.freedesktop.secrets", "ListActivatableNames")]}[tool]
+    assert asked.read_text().splitlines() == want
     # and an app without the capability asks nothing
     assert "NameHasOwner" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("standard"))
 

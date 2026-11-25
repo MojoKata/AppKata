@@ -107,15 +107,23 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
   if command -v gdbus >/dev/null 2>&1; then
     held=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
       --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null || true)
+    startable=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+      --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null || true)
   elif command -v busctl >/dev/null 2>&1; then
     held=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
       NameHasOwner s org.freedesktop.secrets 2>/dev/null || true)
+    startable=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
+      ListActivatableNames 2>/dev/null || true)
   else
-    held=true
+    held=true startable=
   fi
   case "$held" in
     *true*) provide=
       printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\n' App >&2 ;;
+    *) case "$startable" in
+         *"'org.freedesktop.secrets'"*|*'"org.freedesktop.secrets"'*) provide=
+           printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\n' App >&2 ;;
+       esac ;;
   esac
   bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \

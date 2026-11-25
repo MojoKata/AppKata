@@ -581,16 +581,16 @@ _BUS_CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configu
 """
 
 
-def _bus_conf(env) -> str:
+def _bus_conf(env, starts=()) -> str:
     """The test bus's configuration: it starts on demand only the portal services this machine has
     (`--session` would start any it has installed, and on a desktop gnome-keyring then took a name
-    the app under test should own: review 3, R3-34), and listens where a session's own bus does
-    unless it is told an address."""
+    the app under test should own: review 3, R3-34), and the service files `starts` names, and
+    listens where a session's own bus does unless it is told an address."""
     services = env.rt / "bus-services"
     services.mkdir(exist_ok=True)
     for d in ("/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services"):
         for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-            if f.startswith(_PORTAL_SERVICES) and not (services / f).exists():
+            if (f.startswith(_PORTAL_SERVICES) or f in starts) and not (services / f).exists():
                 (services / f).symlink_to(os.path.join(d, f))
     conf = env.rt / "bus.conf"
     conf.write_text(_BUS_CONF.format(services=services))
@@ -602,10 +602,10 @@ class _Bus:
     folder, where a login session's is, at the socket file `at`, or on an abstract socket, where
     dbus 1.12 put a dbus-run-session bus (R17.9)."""
 
-    def __init__(self, env, abstract=False, at=None):
+    def __init__(self, env, abstract=False, at=None, starts=()):
         at = str(at or env.rt / "bus")
         self.addr = f"unix:abstract=/tmp/appkata-test-bus-{os.getpid()}-{id(self)}" if abstract else f"unix:path={at}"
-        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
+        self.p = subprocess.Popen(["dbus-daemon", f"--config-file={_bus_conf(env, starts)}", f"--address={self.addr}", "--nofork", "--nopidfile"],
                                   env=env.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
             if os.path.exists(at) if not abstract else subprocess.run(
@@ -2692,6 +2692,46 @@ def test_password_service_beside_a_running_keyring_starts_without_the_name_and_n
     out = r.stdout.splitlines()
     assert len(out) == 3 and all("org.freedesktop.DBus.Error.ServiceUnknown" in l for l in out[:2]), out      # nothing of the keyring
     assert out[2].startswith("Error") and "uint32" not in out[2], out                                           # nor the name
+
+
+_KEYRING_STARTS = "/usr/share/dbus-1/services/org.freedesktop.secrets.service"
+
+
+@needs_proxy
+@pytest.mark.skipif(not os.path.exists(_KEYRING_STARTS), reason="needs gnome-keyring")
+def test_password_service_where_the_bus_can_start_a_keyring_starts_without_the_name_and_cannot_start_it(env):
+    # PR #694's review, P2-3: gnome-keyring installs an activation file for org.freedesktop.secrets,
+    # so where it is installed and not running (a password manager's own set-up) the launch found
+    # the name free and gave the own; to the filter an own is a talk, so the app's own call to the
+    # name had the bus start the keyring, and the app reached its whole connection. Now a name the
+    # bus can start a program for counts as held. The bus here starts the keyring as a desktop's
+    # would (its own service file); nothing runs it first.
+    bus = _Bus(env, starts=(os.path.basename(_KEYRING_STARTS),))
+    on_bus = {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr}
+    driver = ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method"]
+    probe = ('gdbus call --session --dest org.freedesktop.secrets --object-path /org/gnome/keyring/daemon '
+             '--method org.gnome.keyring.Daemon.GetEnvironment 2>&1 | head -1; '
+             'gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus '
+             '--method org.freedesktop.DBus.StartServiceByName org.freedesktop.secrets 0 2>&1 | head -1; ' + _OWN.format("org.freedesktop.secrets") + "; true")
+    try:
+        names = subprocess.run(driver + ["org.freedesktop.DBus.ListActivatableNames"], env=on_bus, capture_output=True, text=True).stdout
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+        r = env.run(env.app("keeper", gs), probe, env={"DBUS_SESSION_BUS_ADDRESS": bus.addr}, timeout=60)
+        started = subprocess.run(driver + ["org.freedesktop.DBus.NameHasOwner", "org.freedesktop.secrets"], env=on_bus,
+                                 capture_output=True, text=True).stdout.strip()
+    finally:
+        pid = subprocess.run(driver + ["org.freedesktop.DBus.GetConnectionUnixProcessID", "org.freedesktop.secrets"], env=on_bus,
+                             capture_output=True, text=True).stdout
+        m = re.search(r"uint32 (\d+)", pid)
+        if m:                                               # a keyring the app started: ended with the test
+            os.kill(int(m.group(1)), 15)
+        bus.close()
+    assert "'org.freedesktop.secrets'" in names, names                                          # the bus can start it
+    assert r.returncode == 0 and "this session bus can start another program that provides saved passwords" in r.stderr, (r.stdout, r.stderr)
+    out = r.stdout.splitlines()
+    assert len(out) == 3 and "org.freedesktop.DBus.Error.ServiceUnknown" in out[0] and out[1].startswith("Error"), out   # nothing of it,
+    assert out[2].startswith("Error") and "uint32" not in out[2], out                                                  # nor the name,
+    assert started == "(false,)", started                                                                              # nor started it
 
 
 def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):
