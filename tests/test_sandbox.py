@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -620,9 +621,38 @@ def test_password_service_owns_the_name_only_where_no_other_program_holds_it(tmp
                       f"org.freedesktop.DBus.{m}" for m in ("NameHasOwner org.freedesktop.secrets", "ListActivatableNames")],
             "busctl": [f"--address={bus} --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus {m}"
                        for m in ("NameHasOwner s org.freedesktop.secrets", "ListActivatableNames")]}[tool]
-    assert asked.read_text().splitlines() == want
+    assert asked.read_text().splitlines() == (want[:1] if held else want)       # a name held needs no list
     # and an app without the capability asks nothing
     assert "NameHasOwner" not in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", sb.resolve_template("standard"))
+
+
+# PR #694's review, P2-2 and P2-B3: the ask failed open -- `|| true` inside it, so a failed or timed-out
+# ask read as "no other provider" and kept the own -- and the tools' own --timeout bounds the call,
+# not the connecting, so a bus that took the connection and never spoke held the launch for good.
+# How it slipped past: the stand-in answered every time, and nothing asked a bus that didn't. Now the
+# name is free only on two answers read as the tool writes them, `timeout 5` bounds each ask, and
+# anything else counts as held, with a line of its own.
+_UNASKED = [
+    ("the ask fails", "exit 1", ()),
+    ("an answer it can't read", "echo '(nonsense,)'", ()),
+    ("the list fails", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) exit 1 ;; esac', ()),
+    ("a list it can't read", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) echo "(@as [],)" ;; esac', ()),
+    ("a bus that never answers", "exec sleep 60", ()),
+    ("no tool to ask with", None, ("gdbus", "busctl")),
+    ("no timeout to bound it", 'case "$*" in *NameHasOwner*) echo "(false,)" ;; *) echo "([\'org.freedesktop.DBus\'],)" ;; esac', ("timeout",)),
+]
+
+
+@pytest.mark.parametrize("case,gdbus,hide", _UNASKED, ids=[c[0] for c in _UNASKED])
+def test_password_service_counts_the_name_held_where_the_bus_cannot_be_asked(tmp_path, monkeypatch, case, gdbus, hide):
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"caps": ["secrets-provide"]})
+    began = time.monotonic()
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, gs=gs, tools={"gdbus": f"#!/bin/sh\n{gdbus}\n"} if gdbus else {}, hide=hide)
+    assert time.monotonic() - began < 20, case                                      # bounded: `timeout 5`, not the bus
+    assert r.returncode == 0 and proxy is not None and "--own=org.freedesktop.secrets" not in proxy, (case, proxy, r.stderr)
+    assert r.stderr == ("AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), "
+                        "so Demo runs without Password service: offering that name through the bus filter could reach such a program and "
+                        "the passwords it holds.\n"), (case, r.stderr)
 
 
 # The review of PR #694, P1-2: the never-shared rules kept the real session bus from the app by

@@ -2117,32 +2117,47 @@ def _launcher_env(net: bool = False) -> list[str]:
 # launch. To the filter a name an app may own is one it may call, whoever holds it, so with the
 # keyring (or another password manager) holding the name the app reached that program's whole
 # connection, every unlocked password included (CR1.5-46, #707; the owner's decision of 2026-11-24).
-# Asked of the session's own bus as the host's tools ask it, in the proxy's start; where nothing here
-# can ask, the name counts as held. A name the bus can start a program for counts as held too: the
-# app, which may call the name it may own, would start it itself (a call to it, or
-# StartServiceByName), and gnome-keyring installs such a file wherever it is installed, running or
-# not (PR #694's review, P2-3). A program that takes the name after the launch otherwise is not seen.
+# Asked of the session's own bus as the host's tools ask it (gdbus, else busctl), in the proxy's
+# start. A name the bus can start a program for counts as held too: the app, which may call the name
+# it may own, would start it itself (a call to it, or StartServiceByName), and gnome-keyring installs
+# such a file wherever it is installed, running or not (PR #694's review, P2-3). The name counts as
+# free only on two answers read as the tool writes them: no owner, and a list of the names the bus
+# can start (it always holds the bus's own) without it. Anything else counts as held: a failed ask
+# kept the own (P2-2), and so do an answer it can't read and no tool to ask with. `timeout 5` bounds
+# each ask whole, the connecting too, which the tools' own --timeout doesn't: a bus that took the
+# connection and never spoke held the launch for good (P2-B3); a timeout counts as held. A program
+# that takes the name after the launch otherwise is not seen.
 _PROVIDE_CHECK = """  provide=--own=org.freedesktop.secrets
-  if command -v gdbus >/dev/null 2>&1; then
-    held=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
-      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null || true)
-    startable=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
-      --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null || true)
-  elif command -v busctl >/dev/null 2>&1; then
-    held=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
-      NameHasOwner s org.freedesktop.secrets 2>/dev/null || true)
-    startable=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
-      ListActivatableNames 2>/dev/null || true)
-  else
-    held=true startable=
+  owned= startable= qt= why=ask
+  if command -v timeout >/dev/null 2>&1 && command -v gdbus >/dev/null 2>&1; then
+    qt="'"
+    owned=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \\
+      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "(true,)") owned=true ;; "(false,)") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus \\
+      --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null) || startable=
+  elif command -v timeout >/dev/null 2>&1 && command -v busctl >/dev/null 2>&1; then
+    qt='"'
+    owned=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \\
+      NameHasOwner s org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "b true") owned=true ;; "b false") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus \\
+      org.freedesktop.DBus ListActivatableNames 2>/dev/null) || startable=
   fi
-  case "$held" in
-    *true*) provide=
+  case "$owned" in
+    true) why=held ;;
+    false) case "$startable" in
+             *"$qt"org.freedesktop.secrets"$qt"*) why=start ;;
+             *"$qt"org.freedesktop.DBus"$qt"*) why= ;;
+           esac ;;
+  esac
+  case "$why" in
+    held) provide=
       printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\\n' {qname} >&2 ;;
-    *) case "$startable" in
-         *"'org.freedesktop.secrets'"*|*'"org.freedesktop.secrets"'*) provide=
-           printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\\n' {qname} >&2 ;;
-       esac ;;
+    start) provide=
+      printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\\n' {qname} >&2 ;;
+    ask) provide=
+      printf 'AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter could reach such a program and the passwords it holds.\\n' {qname} >&2 ;;
   esac
 """
 

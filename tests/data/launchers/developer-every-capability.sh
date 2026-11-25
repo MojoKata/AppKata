@@ -127,26 +127,36 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
     *) printf 'AppKata: the session-bus filter this PATH finds, %s, is not an xdg-dbus-proxy under /usr, the one tree its own sandbox holds, so %s cannot run sandboxed here.\n' "$pbin" App >&2; exit 1 ;;
   esac
   provide=--own=org.freedesktop.secrets
-  if command -v gdbus >/dev/null 2>&1; then
-    held=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
-      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null || true)
-    startable=$(gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
-      --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null || true)
-  elif command -v busctl >/dev/null 2>&1; then
-    held=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
-      NameHasOwner s org.freedesktop.secrets 2>/dev/null || true)
-    startable=$(busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
-      ListActivatableNames 2>/dev/null || true)
-  else
-    held=true startable=
+  owned= startable= qt= why=ask
+  if command -v timeout >/dev/null 2>&1 && command -v gdbus >/dev/null 2>&1; then
+    qt="'"
+    owned=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+      --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "(true,)") owned=true ;; "(false,)") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 gdbus call --address "$upstream" --timeout 5 --dest org.freedesktop.DBus \
+      --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null) || startable=
+  elif command -v timeout >/dev/null 2>&1 && command -v busctl >/dev/null 2>&1; then
+    qt='"'
+    owned=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
+      NameHasOwner s org.freedesktop.secrets 2>/dev/null) || owned=
+    case "$owned" in "b true") owned=true ;; "b false") owned=false ;; esac
+    [ "$owned" != false ] || startable=$(timeout 5 busctl --address="$upstream" --timeout=5 call org.freedesktop.DBus /org/freedesktop/DBus \
+      org.freedesktop.DBus ListActivatableNames 2>/dev/null) || startable=
   fi
-  case "$held" in
-    *true*) provide=
+  case "$owned" in
+    true) why=held ;;
+    false) case "$startable" in
+             *"$qt"org.freedesktop.secrets"$qt"*) why=start ;;
+             *"$qt"org.freedesktop.DBus"$qt"*) why= ;;
+           esac ;;
+  esac
+  case "$why" in
+    held) provide=
       printf 'AppKata: another program already provides saved passwords on this session bus (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would reach that program and the passwords it holds.\n' App >&2 ;;
-    *) case "$startable" in
-         *"'org.freedesktop.secrets'"*|*'"org.freedesktop.secrets"'*) provide=
-           printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\n' App >&2 ;;
-       esac ;;
+    start) provide=
+      printf 'AppKata: this session bus can start another program that provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter would let the app start that program and reach the passwords it holds.\n' App >&2 ;;
+    ask) provide=
+      printf 'AppKata: could not ask this session bus whether another program provides saved passwords (org.freedesktop.secrets), so %s runs without Password service: offering that name through the bus filter could reach such a program and the passwords it holds.\n' App >&2 ;;
   esac
   bwrap --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --symlink usr/bin /bin --ro-bind /etc /etc --proc /proc --dev /dev \
