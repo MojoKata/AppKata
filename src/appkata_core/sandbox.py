@@ -1267,9 +1267,9 @@ def write_flatpak_info(app_id: str, network: bool = False) -> str:
     as available, so `network` says whether the app has it. The portals never see it: they look at
     the bus proxy's root, which has no marker, so the app is a host caller to them (R17.6.1).
 
-    Written to a temporary file and renamed over the target, so a symlink at the target is replaced
-    rather than followed. A marker left in the private home by an older AppKata is removed (unlinked,
-    never followed)."""
+    Written whole beside the target and renamed over it (:func:`_write_whole`), so a symlink at the
+    target is replaced rather than followed. A marker left in the private home by an older AppKata
+    is removed (unlinked, never followed)."""
     os.makedirs(sandbox_home(app_id), exist_ok=True)
     legacy = os.path.join(sandbox_home(app_id), ".flatpak-info")
     if os.path.lexists(legacy):
@@ -1277,14 +1277,7 @@ def write_flatpak_info(app_id: str, network: bool = False) -> str:
     path = identity_path(app_id)
     for folder in (os.path.dirname(os.path.dirname(path)), os.path.dirname(path)):       # .identity, then its apps/
         os.makedirs(folder, mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    if os.path.lexists(tmp):
-        os.unlink(tmp)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "w") as f:
-        f.write(flatpak_info_text(app_id, network))
-    os.replace(tmp, path)
-    return path
+    return _write_whole(path, flatpak_info_text(app_id, network).encode(), 0o644)
 
 
 def flatpak_info_text(app_id: str, network: bool = False) -> str:
@@ -1319,10 +1312,7 @@ def record_home_owner(app_id: str, url: str) -> None:
     except OSError:
         pass
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(url + "\n")
-    os.replace(tmp, path)
+    _write_whole(path, (url + "\n").encode(), 0o644)
 
 
 def home_belongs_to_another(app_id: str, url: str) -> bool:
@@ -1505,11 +1495,7 @@ def write_seccomp_filter() -> str | None:
         return None
     path = seccomp_path()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
-    return path
+    return _write_whole(path, data, 0o644)
 
 
 # -------------------------------------------------------------------------- file arguments (R17.6.2)
@@ -1642,11 +1628,7 @@ def forward_path() -> str:
 def write_forward_helper() -> str:
     path = forward_path()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(FORWARD_HELPER)
-    os.replace(tmp, path)
-    return path
+    return _write_whole(path, FORWARD_HELPER.encode(), 0o644)
 
 
 # -------------------------------------------------------------------------- opening things on the host (R17.6.3)
@@ -1739,12 +1721,7 @@ def shims_dir() -> str:
 def write_shims() -> str:
     d = shims_dir()
     os.makedirs(d, mode=0o755, exist_ok=True)
-    path = os.path.join(d, "xdg-open")
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(XDG_OPEN_SHIM)
-    os.chmod(tmp, 0o755)
-    os.replace(tmp, path)
+    _write_whole(os.path.join(d, "xdg-open"), XDG_OPEN_SHIM.encode(), 0o755)
     return d
 
 
@@ -2403,12 +2380,23 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # an update or the startup pass rewrites it while apps run. Truncating the inode made such a shell
     # find EOF (no teardown, exit 0, the socket left behind) or read the new text at its old offset
     # (round five, R5-3). The old inode stays whole for the shells that hold it. Its text is written
-    # as the paths' own bytes, UTF-8 or not, by the helper that writes the menu files, which also
-    # removes the file beside when the write fails (#689's review, P4-1: written as text, an install
-    # folder whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error,
-    # and left run.<pid>.tmp beside the launcher).
-    from .install import _write_whole
+    # as the paths' own bytes, UTF-8 or not (#689's review, P4-1: written as text, an install folder
+    # whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error), by the
+    # helper that writes every file here, which removes the file beside when the write fails.
     return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path)), 0o755)
+
+
+def _write_whole(path: str, data: bytes, mode: int) -> str:
+    """Write `data` to `path` whole or not at all, as the app-menu files are (install._write_whole,
+    imported here when called: install imports this module): beside it, renamed over it, and the
+    file beside removed when the write or the rename fails (a full disk). Every file AppKata keeps
+    for the sandboxes goes through it: the launcher, its identity marker, the seccomp filter, the
+    file-argument helper, the xdg-open shim and a private home's owner record. #689's review,
+    P5-B3: the five beside the launcher were written to `<name>.<pid>.tmp` and renamed with nothing
+    removing the .tmp on a failure, so each failed write left one in `.identity/`, its `apps/` or
+    `bin/`, or `.owners/`, one more for each AppKata process that tried, and nothing removed them."""
+    from .install import _write_whole as write
+    return write(path, data, mode)
 
 
 # -------------------------------------------------------------------------- AppImage extraction (R17.7)

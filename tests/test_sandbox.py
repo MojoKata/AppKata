@@ -612,6 +612,94 @@ def test_uninstall_keeping_the_home_still_removes_the_identity_marker(tmp_path, 
     assert os.path.isdir(home) and not os.path.lexists(sb.identity_path("demo"))     # ... the marker is not
 
 
+class _Full:
+    """A file being written on a full disk: it is there, and its write fails."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def write(self, *_):
+        raise OSError(28, "No space left on device")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._f.close()
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+
+@pytest.mark.parametrize("fails", ["a write", "a rename"])
+def test_a_file_the_launcher_relies_on_whose_write_fails_leaves_nothing_beside_it(tmp_path, monkeypatch, fails):
+    # #689's review, P5-B3: the launcher was written whole or not at all (P4-1), but the five files
+    # written with it -- the identity marker, the seccomp filter, the file-argument helper, the
+    # xdg-open shim and the private home's owner record -- went to <name>.<pid>.tmp and were renamed
+    # with nothing removing the .tmp when the write or the rename failed (a full disk): each failure
+    # left one in .identity/, its apps/ or bin/, or .owners/, one more per AppKata process that
+    # tried, and nothing removed them. Each write and each rename fails in turn here: nothing is left
+    # beside any of them, and each file is whole, as it was or as it is written.
+    import builtins
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    apps = str(tmp_path / "apps")
+
+    def write(template, url):
+        sb.write_launcher("demo", "Demo", apps, f"{apps}/demo/1", "bin/demo", sb.resolve_template(template))
+        sb.record_home_owner("demo", url)
+    files = lambda: {p: open(p, "rb").read() for p in (sb.launcher_path("demo", apps), sb.identity_path("demo"), sb.forward_path(),
+                                                       os.path.join(sb.shims_dir(), "xdg-open"), sb.home_owner_path("demo"))
+                     + ((sb.seccomp_path(),) if sb.seccomp_filter() is not None else ())}
+    write("online-app", "https://example.org/demo")
+    new = files()
+    shutil.rmtree(tmp_path / "sandboxes")
+    shutil.rmtree(tmp_path / "apps")
+    write("strict", "https://example.org/old")                  # what is there before: another marker, launcher and owner
+    old = files()
+    real_open, real_fdopen, real_replace = builtins.open, os.fdopen, os.replace
+    for n in range(1, 20):
+        count = []
+
+        def hit(path):
+            if str(path).startswith(str(tmp_path)):
+                count.append(path)
+                return len(count) == n
+            return False
+        if fails == "a write":
+            monkeypatch.setattr(builtins, "open", lambda p, m="r", *a, **k: (
+                _Full(real_open(p, m, *a, **k)) if "w" in m and hit(p) else real_open(p, m, *a, **k)))
+            monkeypatch.setattr(os, "fdopen", lambda fd, m="r", *a, **k: (
+                _Full(real_fdopen(fd, m, *a, **k)) if "w" in m and hit(os.readlink(f"/proc/self/fd/{fd}"))
+                else real_fdopen(fd, m, *a, **k)))
+        else:
+            def replace(a, b, *x, **k):
+                if hit(b):
+                    raise OSError(28, "No space left on device")
+                return real_replace(a, b, *x, **k)
+            monkeypatch.setattr(os, "replace", replace)
+        try:
+            write("online-app", "https://example.org/demo")
+            raised = None
+        except OSError as e:
+            raised = e
+        finally:
+            monkeypatch.setattr(builtins, "open", real_open)
+            monkeypatch.setattr(os, "fdopen", real_fdopen)
+            monkeypatch.setattr(os, "replace", real_replace)
+        left = [os.path.join(d, f) for d, _, fs in os.walk(tmp_path) for f in fs if ".tmp" in f]
+        assert left == [], (n, count[n - 1:n])                      # nothing beside the file that failed
+        now = files()
+        assert all(now[p] in (old[p], new[p]) for p in new), n     # each file whole, the old or the new
+        if raised is None:
+            assert now == new and len(count) < n                   # past the last write: all written
+            break
+        assert raised.errno == 28
+        write("strict", "https://example.org/old")              # back to before, for the next one to fail
+    else:
+        raise AssertionError("every write failed")
+    assert n == len(new) + 1                                       # each of the files' writes failed once
+
+
 # Every name AppKata's own files have beside the per-app ones, and names an app could be given to meet them
 COLLIDING_NAMES = ["bin", "Bin", "BIN!", "apps", "seccomp-tty.bpf", "forward-files.py", "xdg-open", ".identity", ".owners",
                    "identity", "owners", "run", "tmp", "1"]
