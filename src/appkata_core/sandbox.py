@@ -79,7 +79,7 @@ def normalize(gs: dict) -> dict:
     The X11 device grant stays: it is about the display, which every level has."""
     out = blank_grants(gs.get("level", "standard"))
     strict = out["level"] == "strict"
-    out["folders"] = {} if strict else dict(gs.get("folders") or {})
+    out["folders"] = {} if strict else _folders(gs.get("folders"))
     out["network"] = False if strict else bool(gs.get("network", False))
     out["ports"] = None if strict else gs.get("ports")
     out["sound"] = set() if strict else set(gs.get("sound") or [])
@@ -90,6 +90,39 @@ def normalize(gs: dict) -> dict:
     out["mpris_name"] = mpris_name(gs.get("mpris_name")) if "mpris" in out["caps"] else None
     out["exec_deny"] = bool(gs.get("exec_deny", True))
     out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (R17.7.1)
+    return out
+
+
+def folder_path(path: str) -> str:
+    """A folder grant's path as it is kept, shown and mounted (R17.3.1): written from `~` where it
+    is in the home and from `/` elsewhere, with no doubled slash, no `.` step and no slash at its
+    end, each of which names the same folder to the kernel whatever on the way is a link. A grant
+    set's folders are named so wherever one is read (:func:`normalize`), so the chip, the Audit's
+    phrase, the review badge and the launcher's mount say one string for one folder, and a folder
+    written two ways is one grant. CR1.5-16: a folder was kept and shown as it was written and
+    judged and mounted by where it leads, so a review's `~/Documents/../.config/google-chrome/Default`
+    read as a folder of Documents. A `..` can't be taken out by its text (after a link it leads
+    elsewhere than the text says), so a path with one is refused, whoever asks
+    (:func:`protected_folder`), and like any path refused for how it is written, and `$cwd`, it
+    stays as it is written."""
+    full = os.path.expanduser(path)
+    if path == "$cwd" or os.sep != "/" or not os.path.isabs(full) or ".." in full.split(os.sep):
+        return path                     # (a system with another separator has no sandbox, R17.1)
+    full = os.sep + os.path.normpath(full).lstrip(os.sep)
+    home = os.path.expanduser("~")
+    home = os.sep + os.path.normpath(home).lstrip(os.sep) if os.path.isabs(home) else ""
+    if home not in ("", os.sep) and (full == home or full.startswith(home + os.sep)):
+        return "~" + full[len(home):]
+    return full
+
+
+def _folders(folders: dict | None) -> dict:
+    """A grant set's folders, each under its one name (:func:`folder_path`); of a folder written
+    two ways with two modes, the read-only one."""
+    out: dict = {}
+    for path, mode in (folders or {}).items():
+        p = folder_path(path)
+        out[p] = "ro" if "ro" in (mode, out.get(p)) else mode
     return out
 
 
@@ -379,15 +412,13 @@ def apply_overrides(gs: dict, ov: dict) -> dict:
     gs = normalize(gs)
     for k, v in (ov or {}).items():
         if k == "folders":
+            added: dict = {}        # each under its one name (folder_path): of one written twice here, the read-only one
             for path, mode in (v or {}).items():
-                if path.startswith("+"):
-                    gs["folders"][path[1:]] = mode or "rw"
-                elif path.startswith("-"):
-                    gs["folders"].pop(path[1:], None)
-                elif mode is None:
-                    gs["folders"].pop(path, None)
+                name = folder_path(path[1:] if path.startswith(("+", "-")) else path)
+                if path.startswith("-") or (mode is None and not path.startswith("+")):
+                    gs["folders"].pop(name, None)
                 else:
-                    gs["folders"][path] = mode
+                    added[name] = gs["folders"][name] = "ro" if added.get(name) == "ro" else mode or "rw"
         elif k in ("sound", "devices", "caps"):
             if isinstance(v, dict):          # "+x"/"-x" entries change the template's set (R10.3.1, F9)
                 cur = set(gs[k])
@@ -671,6 +702,8 @@ def system_folder(path: str) -> str:
     return ""
 
 
+# Why a folder written with a `..` step is refused (R17.3.1): no full path, to a reader
+DOTDOT = "not a full path (it has a .. in it: name the folder it leads to)"
 # Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
 BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
@@ -708,6 +741,12 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
             return f"a folder above {what}"
     if why := system_folder(path):
         return why
+    # A `..` is refused whoever asks, however harmless where it leads (what is never shared is said
+    # above, by where it leads): the folder is shown as it is written, and `~/Documents/../.cache`
+    # reads as a folder of Documents; and it can't be shown by its text without the `..` either,
+    # which is another folder than bwrap mounts where a step before the `..` is a link (CR1.5-16).
+    if ".." in os.path.expanduser(path).split(os.sep):
+        return DOTDOT
     return "" if readable else BUS_UNREADABLE
 
 

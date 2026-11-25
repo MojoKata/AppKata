@@ -2054,8 +2054,8 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
         assert (proj / "out.txt").read_text() == "out\n"                                            # the folder above is still the app's
         # ...and AppKata writing the launcher again (its next start does) doesn't take the link for the folder
         lp = env.app(f"nest{n}", gs)
-        assert f"# Refused folder grant {proj / 'sub' / 'deep'}: " in open(lp).read()
-        assert [c for c in sb.summary(gs, str(env.home / "apps")) if c.startswith(f"{proj / 'sub' / 'deep'} · refused: ")]
+        assert f"# Refused folder grant ~/{outer}/sub/deep: " in open(lp).read()
+        assert [c for c in sb.summary(gs, str(env.home / "apps")) if c.startswith(f"~/{outer}/sub/deep · refused: ")]
         untouched(env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer)), outer, "written again")
 
     # a nested folder that wasn't there when the launcher was written, made as a link since

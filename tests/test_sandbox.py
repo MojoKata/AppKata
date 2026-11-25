@@ -877,7 +877,7 @@ def test_a_grant_that_would_show_the_session_bus_socket_is_refused_wherever_it_l
     assert sb.protected_folder(str(folder / "dbus-MZ8lHbtZ8K")) == "the session bus's socket"
     assert sb.protected_folder(str(folder / "project")) == ""                      # the file is protected, not its neighbours
     assert sb.strip_protected(sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{folder}": "rw"}}))[1] == \
-        [(str(folder), "a folder above the session bus's socket")]
+        [(sb.folder_path(str(folder)), "a folder above the session bus's socket")]      # named as every grant is (CR1.5-16)
     # each socket file a list names, unescaped, as libdbus reads it; an abstract socket has none
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:abstract=/tmp/dbus-one;unix:path={tmp_path}/a%20b/bus")
     assert sb.bus_files()[0] == [f"{tmp_path}/a b/bus"]
@@ -911,8 +911,8 @@ def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_w
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
         assert sock in sb.bus_files()[0] and sb.bus_files()[1], address
         assert sb.protected_folder(str(folder)) == "a folder above the session bus's socket" and sb.protected_folder(beside) == "", address
-        assert sb.strip_protected(gs)[1] == [(str(folder), "a folder above the session bus's socket")], address
-        assert f"# Refused folder grant {folder}: a folder above" in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
+        assert sb.strip_protected(gs)[1] == [(sb.folder_path(str(folder)), "a folder above the session bus's socket")], address
+        assert f"# Refused folder grant {sb.folder_path(str(folder))}: a folder above" in sb.build_launcher("demo", "Demo", "/apps/demo/1", "bin/demo", gs)
     # a path that isn't absolute, a broken escape, a newline: the file could be anywhere
     for address in ("unix:path=relative/bus", "unix:path=/tmp/dbus-%zz", "unix:path=/tmp/dbus-%2", "unix:path=/tmp/a%0Ab",
                     "unix:path=%00/tmp/x", "unix:path=", f"unix:abstract=/tmp/x;unix:path={sock},path=bus"):
@@ -920,7 +920,7 @@ def test_a_grant_is_judged_by_the_bus_address_unescaped_and_refused_everywhere_w
         assert sb.protected_folder(beside) == ("a folder the session bus's socket could be in (its address names a file AppKata "
                                                "can't read)") and sb.protected_folder("$cwd") == "", address   # $cwd: the launcher's own rule
         assert not sb.bus_files()[1] and sb.protected_folder("~") == "your whole home folder", address       # a reason of its own stays its own
-        assert sorted(p for p, _ in sb.strip_protected(gs)[1]) == sorted([str(folder), beside]), address
+        assert sorted(p for p, _ in sb.strip_protected(gs)[1]) == sorted(map(sb.folder_path, [str(folder), beside])), address
     for address in ("unix:path", "unix:guid=0123", "tcp:host=localhost,port=4000", "unix:abstract=/tmp/x"):   # no file named: nothing to read
         monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
         assert sb.bus_files() == ([], True) and sb.protected_folder(beside) == "", address
@@ -1047,6 +1047,7 @@ def test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot
     # named in a granted folder handed over rather than given as a path the app can't see.
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")      # AppKata's own: the grants stand
     home = tmp_path / "home"                     # every folder here is the user's own: /tmp is no grant's (CR1.5-5)
+    monkeypatch.setenv("HOME", str(home))        # ...and a grant is named from the home (CR1.5-16)
     folder, notes = home / "project", home / "notes.txt"
     sock, deep = _a_bus_socket(folder / "deep")
     other, single = _a_bus_socket(home / "sockets")
@@ -1070,7 +1071,7 @@ def test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot
     assert emptied[str(folder)][0] > app.index(str(folder)), app                       # after the folder's own bind
     assert _binds(app)[str(single)] == ("--ro-bind", "/dev/null") and _binds(app)[str(notes)] == ("--ro-bind-try", str(notes)), app
     assert visible == [], told                                            # a file named there is handed over instead
-    assert (f"Demo runs sandboxed and can't see the folders it was given ({', '.join(sorted(granted))}): this session bus's address "
+    assert (f"Demo runs sandboxed and can't see the folders it was given ({', '.join(sorted(map(sb.folder_path, granted)))}): this session bus's address "
             f"({address}) names a socket file AppKata can't read, which could be in one of them.\n") in r.stderr, r.stderr
 
 
@@ -1352,6 +1353,7 @@ def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp
     # the session's address names it (P2-1, above), and however the grant shows it (P5-B1).
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
     home = tmp_path / "home"                     # every folder here is the user's own: /tmp is no grant's (CR1.5-5)
+    monkeypatch.setenv("HOME", str(home))        # ...and a grant is named from the home (CR1.5-16)
     sock, path = _a_bus_socket(home / "up" / "tmp")
     (home / "links").mkdir()
     folder, then = _granted(grant, path, home / "links")
@@ -1388,6 +1390,7 @@ def test_a_folder_granted_where_the_session_bus_was_not_yet_hides_its_socket(tmp
 def test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said(tmp_path, monkeypatch):
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
     home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
     for d in ("Projects/sub/deep", "disk/Documents", "disk/Other", ".ssh", "Music"):
         (home / d).mkdir(parents=True)
     (home / "Docs").symlink_to(home / "disk" / "Documents")           # the user's own link, there before the grant
@@ -2376,7 +2379,8 @@ def test_a_system_place_is_never_granted_nor_what_is_inside_or_above_it(a_users_
     # ...and the same answer for the user's picker as for a review: one check, whoever asks
     gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: "ro"}})
     kept, refused = sb.strip_protected(gs)
-    assert (path in kept["folders"]) is (path in SYSTEM_SHARED) and [p for p, _ in refused] == ([] if path in SYSTEM_SHARED else [path])
+    named = sb.folder_path(path)                 # as every grant is named: `//proc` and `/proc/` are /proc (CR1.5-16)
+    assert (named in kept["folders"]) is (path in SYSTEM_SHARED) and [p for p, _ in refused] == ([] if path in SYSTEM_SHARED else [named])
 
 
 def test_a_review_cannot_grant_a_system_place_and_the_user_cannot_pick_one(a_users_home):
@@ -2399,6 +2403,83 @@ def test_a_review_cannot_grant_a_system_place_and_the_user_cannot_pick_one(a_use
     # the user's own pick, as the Sandbox dialog saves it (Backend.setSandbox): dropped, with the same reason
     kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {p: "rw" for p in asked + ["~/Notes"]}})
     assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == sorted(asked)
+
+
+# CR1.5-16 (#391): a folder was kept and shown as it was written, and judged and mounted by where it
+# leads, so a line could write a grant that reads as one place and is another:
+# `~/Documents/../.config/google-chrome/Default` showed, in the chip, the Audit and the badge, as a
+# folder of Documents. How it slipped past: every test wrote a folder the one plain way, and the
+# never-shared checks, which the hostile ways of writing were aimed at, resolve the path. Now a
+# grant set's folders are named one way wherever a set is read (sb.folder_path, in sb.normalize),
+# and a `..` is refused whoever asks. Each way of writing a folder → the name it is kept, shown
+# and mounted under; one refused for how it is written stays as written, and is no grant.
+WRITTEN = {
+    "~/Notes": "~/Notes", "~/Notes/": "~/Notes", "~//Notes": "~/Notes", "~/./Notes/.": "~/Notes", "~/Notes//sub/./x/": "~/Notes/sub/x",
+    "/home/kata/Notes": "~/Notes", "/home/kata//Notes/": "~/Notes", "//home/kata/Notes": "~/Notes", "/home//kata/./Notes": "~/Notes",
+    "/media/usb": "/media/usb", "/media/usb/": "/media/usb", "//media//usb/./music": "/media/usb/music", "/home/kata2/Notes": "/home/kata2/Notes",
+    "~/My Notes/": "~/My Notes", "~/...": "~/...", "~/a..b/..c": "~/a..b/..c", "~/.hidden/": "~/.hidden",
+}
+DOTTED = ["~/Documents/../.config/google-chrome/Default", "~/Documents/../.cache", "~/Notes/sub/..", "/media/usb/../other",
+          "/home/kata/Documents/../Notes", "~/Notes/../Notes", "~/../kata/Notes", "~/Notes/..x/../y"]
+
+
+@pytest.mark.parametrize("written", list(WRITTEN) + DOTTED)
+def test_a_folder_is_kept_shown_and_mounted_under_one_name_and_never_with_a_dotdot(a_users_home, written):
+    named = WRITTEN.get(written, written)
+    assert sb.folder_path(written) == named and sb.folder_path(named) == named
+    for mode, said in (("rw", ""), ("ro", " · read-only")):
+        # a review's line or the dialog's pick, and a set saved before, as it is read
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + written: mode}})
+        saved = sb.normalize({**sb.to_json(sb.resolve_template("standard")), "folders": {written: mode}})
+        assert gs["folders"] == saved["folders"] == {named: mode} and sb.to_json(saved)["folders"] == {named: mode}
+        chips = sb.summary(gs)
+        text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", gs, apps_root="/home/kata/bin/apps")
+        added, _ = sb.changes(sb.resolve_template("standard"), gs)             # the Audit's phrase and the review badge's
+        assert added == [named + (" (read-write)" if mode == "rw" else " (read-only)")]
+        mounted = os.path.expanduser(named)
+        binds = [line for line in text.splitlines() if "bind-try " in line and "/home/kata/Notes" in line or "/media/usb" in line and "bind-try " in line]
+        if written in DOTTED:
+            assert sb.protected_folder(written) == sb.DOTDOT == "not a full path (it has a .. in it: name the folder it leads to)"
+            noted = f"# Refused folder grant {written}: {sb.DOTDOT} (R17.3.1).\n"
+            assert f"{written} · refused: {sb.DOTDOT}" in chips and text.count(noted) == 1
+            assert not binds and "g1=" not in text and os.path.expanduser(written) not in text.replace(noted, "")
+            assert sb.strip_protected(gs)[1] == [(written, sb.DOTDOT)]         # the user's own pick too (Backend.setSandbox)
+        else:
+            assert named + said in chips and not [c for c in chips if "refused" in c], chips
+            flag = "--bind-try" if mode == "rw" else "--ro-bind-try"
+            assert f'[ {shlex.quote(mounted)} = "$g1" ] && set -- {flag} {shlex.quote(mounted)} {shlex.quote(mounted)} "$@"\n' in text
+            assert f"g1={shlex.quote(mounted)}; leads" in text
+            assert os.path.expanduser(written) == mounted or shlex.quote(os.path.expanduser(written)) + " " not in text       # by no other name
+
+
+def test_a_review_cannot_write_a_folder_so_that_it_reads_as_another_and_two_ways_of_writing_one_are_one_grant(a_users_home):
+    # the finding's own case, as it was run: a review's line through config_from_review and choose
+    line = "~/Documents/../.config/google-chrome/Default, ~/Documents/../.cache:ro, ~/Media//:ro, /home/kata/Notes/"
+    source, gs, _ = sb.choose(None, None, [sb.config_from_review({"sandbox": "standard", "sandboxFolders": line})], {"template": "strict"})
+    chips = sb.summary(gs)
+    assert source == "reviews" and gs["folders"] == {"~/Documents/../.config/google-chrome/Default": "rw", "~/Documents/../.cache": "ro", "~/Media": "ro", "~/Notes": "rw"}
+    assert [c for c in chips if "Documents" in c] == [f"~/Documents/../.cache · refused: {sb.DOTDOT}", f"~/Documents/../.config/google-chrome/Default · refused: {sb.DOTDOT}"]
+    assert "~/Media · read-only" in chips and "~/Notes" in chips
+    kept, refused = sb.strip_protected(gs)
+    assert set(kept["folders"]) == {"~/Media", "~/Notes"} and [p for p, _ in refused] == ["~/Documents/../.cache", "~/Documents/../.config/google-chrome/Default"]
+    assert sb.changes(sb.resolve_template("standard"), kept)[0] == ["~/Media (read-only)", "~/Notes (read-write)"]
+    # what is never shared is still said first, by where the path leads: the reason a reader needs
+    assert sb.protected_folder("~/Documents/../.ssh") == "SSH keys" and sb.protected_folder("/mnt/../proc") == "the system's own /proc"
+    assert sb.protected_folder("~/Documents/..") == "your whole home folder"
+    # one folder written two ways is one grant: the stricter mode of the two, removed by either name, and kept where two reviews both ask
+    two = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/Notes/": "rw", "+/home/kata/Notes": "ro", "+/media//usb": "rw"}})
+    assert two["folders"] == {"~/Notes": "ro", "/media/usb": "rw"}
+    assert sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+/home/kata/Notes": "ro", "+~/Notes/": "rw"}})["folders"] == {"~/Notes": "ro"}
+    assert sb.apply_overrides(two, {"folders": {"~/Notes/": "rw"}})["folders"]["~/Notes"] == "rw"           # a later change of the mode is one
+    assert sb.normalize({**sb.to_json(two), "folders": {"~/Notes/": "rw", "/home/kata//Notes": "ro", "~/Notes": "rw"}})["folders"] == {"~/Notes": "ro"}
+    assert sb.apply_overrides(two, {"folders": {"-/home/kata/Notes/": None, "/media/usb/.": None}})["folders"] == {}
+    _, both = sb.resolve(reviews=[{"template": "standard", "overrides": {"folders": {"+~/Notes/": "rw"}}},
+                                  {"template": "standard", "overrides": {"folders": {"+/home/kata/Notes": "ro", "+~/Other": "rw"}}}])
+    assert both["folders"] == {"~/Notes": "ro"}
+    assert sb.as_review("standard", two)[0]["sandboxFolders"] == "+/media/usb, +~/Notes:ro"
+    # the folder the launcher is run in, and a path refused for how it is written, are named as they are
+    assert [sb.folder_path(p) for p in ("$cwd", "home", "./x", "Documents/", "~no-such-user-x/y/")] == ["$cwd", "home", "./x", "Documents/", "~no-such-user-x/y/"]
+    assert sb.folder_path("~") == sb.folder_path("/home/kata/") == sb.folder_path("~/.") == "~" and sb.folder_path("/") == sb.folder_path("//") == "/"
 
 
 def test_a_folder_of_the_home_is_the_homes_wherever_the_home_is(tmp_path, monkeypatch):

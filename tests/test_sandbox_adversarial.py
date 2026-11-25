@@ -79,7 +79,7 @@ def test_a_hostile_folder_path_is_bound_whole_or_refused_and_the_launcher_stays_
     text = sb.build_launcher("app", "App", str(tmp_path / "home/bin/apps/app/1"), "bin/app", gs,
                              apps_root=str(tmp_path / "home/bin/apps"))
     subprocess.run(["sh", "-n"], input=text, text=True, check=True)
-    expanded = os.path.expanduser(path)
+    expanded = os.path.expanduser(sb.folder_path(path))      # as a grant is named: no doubled slash, no `.` step, no slash last (CR1.5-16)
     refused = sb.protected_folder(path, str(tmp_path / "home/bin/apps"))
     home = str(tmp_path / "home")
     pairs = [(s, d) for s, d in _bind_pairs(text) if s.startswith(home)]      # the folder grants: under the fake home
@@ -149,9 +149,10 @@ def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, t
         assert not [g for g in grants if set(g) & mine], grants     # and this one never, by any of its names
         assert "# Refused folder grant" in text
         chips = sb.summary(gs, apps)
-        assert any(c.startswith(path + " · refused") for c in chips), chips
+        named = sb.folder_path(path)                                # `//proc` and `/proc/` are named /proc (CR1.5-16)
+        assert any(c.startswith(named + " · refused") for c in chips), chips
         kept, refused = sb.strip_protected(gs, apps)
-        assert path not in kept["folders"] and [p for p, _ in refused] == [path]
+        assert not {path, named} & set(kept["folders"]) and [p for p, _ in refused] == [named]
 
 
 def test_parse_folders_keeps_every_hostile_path_whole():
