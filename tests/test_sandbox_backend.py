@@ -934,6 +934,90 @@ def test_a_launcher_appkatas_start_cant_rewrite_is_left_as_it_was_and_not_audite
     assert be._heal_launchers() == [] and len(audit()) == 1
 
 
+def test_a_launcher_appkatas_start_wrote_and_couldnt_put_back_is_audited_as_it_runs(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-1: AppKata's start rewrites a hand-edited launcher; the launcher is written,
+    # the menu entry's write fails (a full disk), and putting the launcher back fails too. The start
+    # skipped every failed rewrite (P6-1), this one included: today's launcher was left in place,
+    # the one that runs, with no Audit entry, and the next start found it current, so no start ever
+    # audited it, though R17.4 has the Audit record a hash each time AppKata writes a launcher.
+    import hashlib
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    launcher = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])["launcher"]
+    with open(launcher, "wb") as f:
+        f.write(b"#!/bin/sh\n# hand-edited\n")                            # not today's text: the start rewrites it
+    audit = lambda: [json.loads(r["detail"]) for r in be.db.all(                               # noqa: E731
+        "SELECT detail FROM audit WHERE action='rewrote the launcher of' ORDER BY id")]
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+    real = os.replace
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    def no_put_back(src, dst, *a, **k):
+        if dst == launcher and str(src).endswith(".was"):
+            raise OSError(28, "No space left on device")
+        return real(src, dst, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr(install, "_desktop_entry", full)
+        m.setattr(install.os, "replace", no_put_back)
+        assert be._heal_launchers() == [URL]                                # its launcher was rewritten
+    with open(launcher, "rb") as f:
+        written = f.read()
+    assert written != b"#!/bin/sh\n# hand-edited\n" and not [n for n in os.listdir(os.path.dirname(launcher)) if n.endswith(".was")]
+    assert [d["launcher"] for d in audit()] == [hashlib.sha256(written).hexdigest()[:16]]   # the launcher that runs
+    assert "not put back: its launcher" in caplog.text and "couldn't be put back: it runs as written" in caplog.text
+    assert be._heal_launchers() == [] and len(audit()) == 1                 # the next start finds it current
+
+
+def test_appkatas_own_launcher_the_start_cant_remove_is_left_and_not_said_removed(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-1 (the second read's P7-T2): AppKata's start removes the launcher an older
+    # AppKata gave AppKata itself (R17.1). Where that can't be written (here its record can't be
+    # stored), it is put back, and the start neither says AppKata runs unsandboxed again nor returns
+    # it as done; the next start removes it. No test failed with the start saying so whatever
+    # happened.
+    import logging
+    from appkata_core import APPKATA_REPO, install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    image = tmp_path / "Downloads" / "AppKata-x86_64.AppImage"
+    image.parent.mkdir()
+    image.write_text("#!/bin/sh\n")
+    image.chmod(0o755)
+    monkeypatch.setenv("APPIMAGE", str(image))
+    be._ensure_self()
+    be._app = lambda url: {"url": url, "name": "AppKata", "installed": "9.9"} if url == APPKATA_REPO else None
+    rec = lambda: json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (APPKATA_REPO,))["record"])  # noqa: E731
+    install.rewrite_launcher(be.db, {"url": APPKATA_REPO, "name": "AppKata", "sandbox": sb.resolve_template("strict")},
+                             be._app_options(APPKATA_REPO))                 # what an older AppKata left behind
+    left = rec()["launcher"]
+    with open(left, "rb") as f:
+        text = f.read()
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+    real, failed = be.db.x, []
+
+    def store(sql, *a, **k):
+        if sql.startswith("UPDATE installs") and not failed:
+            failed.append(sql)
+            raise OSError(28, "No space left on device")
+        return real(sql, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr(be.db, "x", store)
+        assert be._heal_launchers() == []                                   # not done
+    assert failed and rec()["launcher"] == left and rec()["exec"] == left
+    with open(left, "rb") as f:
+        assert f.read() == text                                             # put back, as it was
+    assert "couldn't regenerate the launcher for" in caplog.text and "runs unsandboxed again" not in caplog.text
+    assert be._heal_launchers() == [APPKATA_REPO]                           # the next start removes it
+    assert not rec().get("launcher") and not os.path.exists(left) and "runs unsandboxed again" in caplog.text
+
+
 def test_appkatas_start_removes_what_a_stopped_change_left_beside_an_apps_files(be, tmp_path, monkeypatch):
     # #689's review, P6-B2: a sandbox change keeps the files it replaces as hard links beside them
     # (<path>.<pid>.was) and drops them once it is written or put back. A process stopped between

@@ -2428,7 +2428,13 @@ class Backend(QObject):
         puts it back) and is neither audited nor returned: _regenerate_launcher has logged why, a
         failed operation being no Audit entry (R13.3), and the next start tries again (R17.4).
         #689's review, P6-1: its result was dropped, so a launcher put back was audited as "rewrote
-        the launcher of" with the hash of the old one, at every start while the failure lasted."""
+        the launcher of" with the hash of the old one, at every start while the failure lasted.
+
+        Where it couldn't all be put back either (install.NotPutBack) and the launcher it wrote is
+        the one left, that launcher is today's text and runs, and the next start finds it current:
+        it is audited and returned as a rewrite is, with its hash, and the App log has what isn't as
+        it was. #689's review, P7-1: every failure was skipped, so that launcher was one no Audit
+        entry named, at that start or any later one."""
         todo, undo, done = [], [], []
         for row in self.db.all("SELECT url, record FROM installs"):
             rec = json.loads(row["record"] or "{}")
@@ -2457,9 +2463,13 @@ class Backend(QObject):
         first = []
         for url in todo:
             had, fresh = self._sandbox_state(url)
-            if self._regenerate_launcher(url) is not None:
+            before = self._launcher_bytes(url)
+            e = self._regenerate_launcher(url)
+            if e is not None and not (isinstance(e, install.NotPutBack) and self._launcher_bytes(url) != before):
                 continue           # as it was, and logged; no Audit entry (R13.3)
             done.append(url)
+            if e is not None:      # the launcher it wrote stays, and runs: audited as written (P7-1)
+                log.warning("the launcher written for %s couldn't be put back: it runs as written", url)
             log.info("brought the launcher of %s up to today's text" if had else "sandboxed %s now that this system supports it", url)
             if not had and self._sandbox_state(url)[0]:
                 first.append((url, (self._app(url) or {}).get("name", url), fresh))
