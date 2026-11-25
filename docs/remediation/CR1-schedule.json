@@ -143,7 +143,10 @@
     328,
     497,
     628,
-    699
+    699,
+    729,
+    730,
+    731
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -169,7 +172,8 @@
     "tests/test_forges.py",
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "tests/skips/windows.txt"
    ],
    "depends_on": [
     "U01"
@@ -11416,6 +11420,57 @@
    "size": "small",
    "proof": "The mockups rendered again (the project's screenshot script, as docs/build.md says), and the screenshots page's checks.",
    "note": "Found by U03's fourth batch (2026-11-24) after #704's fix, and filed by the coordinator. The rendered SVGs and PNGs of the Settings mockups change with render.js; the unit lists them as the render makes them."
+  },
+  {
+   "finding": 729,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    628
+   ],
+   "related": [
+    365
+   ],
+   "size": "small",
+   "proof": "tests/test_windows.py's case for an app named Con, AUX or \"Com 1\"; the Windows VM's suite.",
+   "note": "Found and fixed by U04's first batch (2026-11-25, b583897) beside #628, and filed by the coordinator."
+  },
+  {
+   "finding": 730,
+   "readiness": "ready",
+   "files": [
+    "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "src/appkata_core/install.py",
+    "tests/skips/windows.txt",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    699
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "tests/test_install_review.py's cases for an installed version named 2.0.new or 2.0.old, failing before the fix.",
+   "note": "Found and fixed by U04's first batch (2026-11-25, 59fa749) beside #699, and filed by the coordinator."
+  },
+  {
+   "finding": 731,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    307
+   ],
+   "related": [
+    699
+   ],
+   "size": "small",
+   "proof": "A test installing 1.0 beta and then 1.0_beta keeps both versions.",
+   "note": "Found by U04's first batch (2026-11-25) and filed by the coordinator; taken in U04's fourth batch."
   }
  ],
  "shared_files": [
@@ -11518,7 +11573,8 @@
   "tests/test_selfinstall.py",
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
-  "tests/test_windows.py"
+  "tests/test_windows.py",
+  "tests/skips/windows.txt"
  ],
  "set_aside": []
 }
