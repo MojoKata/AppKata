@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import time
+import unicodedata
 
 from .platform import OS, data_dir
 
@@ -93,6 +94,22 @@ def normalize(gs: dict) -> dict:
     return out
 
 
+# A control character in a folder's path (R17.3.1; CR1.5-26): a NUL, a line break, an escape. No
+# folder a person names has one, and a NUL is no path at all: os.path.realpath() raised ValueError
+# on it in every check, so one line of a review, `Sandbox folders: +~/a<NUL>b`, broke the install
+# card and the install of every app the review covers. Such a path is refused, whoever asks, and
+# is kept and shown with UNSHOWN where each such character was, so nothing that reads a grant set
+# (a chip, the Audit, the launcher's note, the database) meets one; a path with UNSHOWN in it is
+# that refused path, read again.
+UNSHOWN = "\ufffd"
+CONTROL = "not a full path (it has a control character in it, shown as \ufffd)"
+
+
+def _shown(path: str) -> str:
+    """`path` with UNSHOWN where each control character was (Unicode's category Cc)."""
+    return "".join(UNSHOWN if unicodedata.category(c) == "Cc" else c for c in path)
+
+
 def folder_path(path: str) -> str:
     """A folder grant's path as it is kept, shown and mounted (R17.3.1): written from `~` where it
     is in the home and from `/` elsewhere, with no doubled slash, no `.` step and no slash at its
@@ -104,9 +121,10 @@ def folder_path(path: str) -> str:
     read as a folder of Documents. A `..` can't be taken out by its text (after a link it leads
     elsewhere than the text says), so a path with one is refused, whoever asks
     (:func:`protected_folder`), and like any path refused for how it is written, and `$cwd`, it
-    stays as it is written."""
+    stays as it is written, but a control character in it, which is shown as UNSHOWN (CR1.5-26)."""
+    path = _shown(path)
     full = os.path.expanduser(path)
-    if path == "$cwd" or os.sep != "/" or not os.path.isabs(full) or ".." in full.split(os.sep):
+    if path == "$cwd" or UNSHOWN in path or os.sep != "/" or not os.path.isabs(full) or ".." in full.split(os.sep):
         return path                     # (a system with another separator has no sandbox, R17.1)
     full = os.sep + os.path.normpath(full).lstrip(os.sep)
     home = os.path.expanduser("~")
@@ -384,11 +402,13 @@ def parse_folders(spec: str) -> dict:
 
     Comma-separated entries, each a path with an optional `+`/`-` prefix (add to / remove from the
     template's set) and an optional `:ro`/`:rw` suffix (read-only / read-write; read-write by
-    default). `- Sandbox folders: +~/Zettlr, ~/Media:ro, -~/Downloads`.
+    default). `- Sandbox folders: +~/Zettlr, ~/Media:ro, -~/Downloads`. A control character in a
+    path is no part of what is kept: the entry stands with UNSHOWN in its place, a path every
+    check refuses (:func:`protected_folder`; CR1.5-26).
     """
     out: dict = {}
     for raw in (spec or "").split(","):
-        entry = raw.strip()
+        entry = _shown(raw.strip())
         if not entry:
             continue
         mode = "rw"
@@ -687,7 +707,7 @@ def system_folder(path: str) -> str:
     and a folder of the home, which is judged as the home's wherever the home is (a home under
     /tmp, as every test's is, is still a home; one that is `/` is none)."""
     full = os.path.expanduser(path)
-    if not os.path.isabs(full):
+    if not os.path.isabs(full) or _shown(path) != path:
         return ""
     homes = [h for h in _as_written_and_real(os.path.expanduser("~")) if h != os.sep]
     within = lambda p, roots: any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in roots)      # noqa: E731
@@ -720,6 +740,8 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     (R17.3.3)."""
     if path == "$cwd":
         return ""
+    if UNSHOWN in _shown(path):          # a control character, as it is or as it is kept: no path to resolve
+        return CONTROL
     # bwrap resolves a bind source from the host's root, realpath() below from AppKata's own working
     # directory: a folder named from neither (`home`, `run/user/1000`, `./x`, an unknown `~user`) would
     # be judged here as one place and bound there as another. Review 2, F1: `Sandbox folders: home`
@@ -777,8 +799,8 @@ def _secret_roots() -> list[tuple[str, str]]:
 
 def secret_folder(path: str) -> str:
     """What a folder holds when it is (inside, or above) one of :func:`_secret_roots`, else ""."""
-    if path == "$cwd" or not os.path.isabs(os.path.expanduser(path)):
-        return ""
+    if path == "$cwd" or not os.path.isabs(os.path.expanduser(path)) or UNSHOWN in _shown(path):
+        return ""                        # no full path (a control character in it too): protected_folder() says so
     p = os.path.realpath(os.path.expanduser(path))
     for root, what in _secret_roots():
         r = os.path.realpath(root)

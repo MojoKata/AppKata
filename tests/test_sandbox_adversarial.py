@@ -24,6 +24,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import unicodedata
 
 import sys
 
@@ -46,8 +47,20 @@ HOSTILE = [
     "~/glob*", "~/q?", "~/[set]", "~/--not-an-option", "~/-x", "~/new\nline", "~/tab\tbed", "~/perc%20ent",
     "~/unicode-ünïcødé", "~/paren(s)", "~/pipe|here", "~/redirect>out", "~/hash#tag", "~/tilde~2",
     "~/trailing/", "~/double//slash", "~/dot/./dot", "~/" + "x" * 200,
+    # a control character (CR1.5-26): a NUL, which os.path.realpath() raises on, and the others; the
+    # corpus had a newline and a tab alone, which were bound, and its one NUL was cut off (WORDS, below)
+    "~/a\x00b", "\x00", "~/\x00", "/media/usb\x00/../../proc", "~/bell\x07", "~/esc\x1b[2J", "~/back\x08space", "~/del\x7f", "~/next\x85line", "~/cr\rlf",
 ]
-WORDS = HOSTILE + ["--ro-bind", "--", "-", "", " ", "file:///no/such/file", "file://evil/x", "https://x/y z",
+
+
+def _marked(path: str) -> str:
+    """`path` as it is kept and shown: the mark where each control character was (CR1.5-26)."""
+    return "".join("\ufffd" if unicodedata.category(c) == "Cc" else c for c in path)
+
+
+CONTROLS = [p for p in HOSTILE if p != _marked(p)]
+# ...as arguments, which can hold no NUL: the kernel ends each at one
+WORDS = [w for w in HOSTILE if "\x00" not in w] + ["--ro-bind", "--", "-", "", " ", "file:///no/such/file", "file://evil/x", "https://x/y z",
                    "$(touch /tmp/pwned)", "`id`", "'", '"', "\\", "a\x00b"[:1] + "nul"]
 
 
@@ -83,6 +96,17 @@ def test_a_hostile_folder_path_is_bound_whole_or_refused_and_the_launcher_stays_
     refused = sb.protected_folder(path, str(tmp_path / "home/bin/apps"))
     home = str(tmp_path / "home")
     pairs = [(s, d) for s, d in _bind_pairs(text) if s.startswith(home)]      # the folder grants: under the fake home
+    if path in CONTROLS:
+        # refused whoever asks, kept and shown with a mark where the character was, and no check raises
+        named, why = _marked(path), "not a full path (it has a control character in it, shown as \ufffd)"
+        assert refused == sb.protected_folder(named) == why and sb.secret_folder(path) == sb.secret_folder(named) == sb.system_folder(path) == ""
+        assert sb.folder_path(path) == named and list(gs["folders"]) == [named] and CONTROLS and "\ufffd" in named
+        assert sb.strip_protected(gs)[1] == [(named, why)] and sb.strip_secrets(gs)[1] == []
+        assert f"{named} · refused: {why}" in sb.summary(gs) and f"# Refused folder grant {' '.join(named.split())}: {why} (R17.3.1).\n" in text
+        assert sb.changes(sb.resolve_template("standard"), gs)[0] == [named + " (read-write)"] and named in json.dumps(sb.to_json(gs), ensure_ascii=False)
+        assert sb.parse_folders(f"+{path}:ro, ~/Notes") == {f"+{named}": "ro", "~/Notes": "rw"}     # ...from the line's own reading on
+    if "\n" not in path:
+        assert not [c for c in text if unicodedata.category(c) == "Cc" and c != "\n"], path      # nothing of it in the launcher's text
     if refused:
         assert pairs == [] and "# Refused folder grant" in text
     else:
@@ -157,10 +181,11 @@ def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, t
 
 def test_parse_folders_keeps_every_hostile_path_whole():
     for path in HOSTILE:
-        if "," in path or "\n" in path:
-            continue                                     # the line's own separators; a newline ends the line
+        if "," in path:
+            continue                                     # the line's own separator
         out = sb.parse_folders(f"+{path}:ro, -{path}, {path}")
-        assert out == {f"+{path}": "ro", f"-{path}": None, path: "rw"}, (path, out)
+        kept = _marked(path)                             # whole, but a control character: a mark stands where one was (CR1.5-26)
+        assert out == {f"+{kept}": "ro", f"-{kept}": None, kept: "rw"} and (kept == path) is (path not in CONTROLS), (path, out)
     assert sb.parse_folders("~/a:RO,~/b:Rw, ,,") == {"~/a": "ro", "~/b": "rw"}
 
 

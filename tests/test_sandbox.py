@@ -2482,6 +2482,45 @@ def test_a_review_cannot_write_a_folder_so_that_it_reads_as_another_and_two_ways
     assert sb.folder_path("~") == sb.folder_path("/home/kata/") == sb.folder_path("~/.") == "~" and sb.folder_path("/") == sb.folder_path("//") == "/"
 
 
+def test_a_review_whose_folder_has_a_control_character_breaks_nothing_and_is_refused(a_users_home):
+    # CR1.5-26 (#401): os.path.realpath() raises ValueError on a NUL, and no folder check caught it, so
+    # one line of a review the user trusts, `Sandbox folders: +~/a<NUL>b`, made the install card's chips
+    # and strip_secrets (asked for every fresh install's reviews) raise, and no launcher could be
+    # written: every app the review covers, until the review changed. "Any other path is refused the
+    # same way" (R17.3.1); this one broke the check instead. The finding's own road, a review's
+    # section to the launcher: the folder is refused like any other that is no full path, with a mark
+    # where the character was, and the folders beside it on the line stand. How it slipped past: the
+    # hostile corpus (tests/test_sandbox_adversarial.py) cut its one NUL off before it was used.
+    section = ("## Demo::Settings\n\n- Trust: 4\n- Sandbox (linux): standard\n"
+               "- Sandbox folders (linux): +~/a\x00b, ~/Notes, ~/Media/\x1b[2J:ro, /media/usb\x00/../../proc, ~/.aws\x07\n")
+    parsed, warns = trustfile.parse_section("Demo", section)
+    cfg = sb.config_from_review(trustfile.resolve_settings(parsed["opts"], "linux"))
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    why = "not a full path (it has a control character in it, shown as \ufffd)"
+    bad = ["/media/usb\ufffd/../../proc", "~/.aws\ufffd", "~/Media/\ufffd[2J", "~/a\ufffdb"]
+    assert source == "reviews" and gs["folders"] == {**dict.fromkeys(bad, "rw"), "~/Media/\ufffd[2J": "ro", "~/Notes": "rw"}
+    kept, refused = sb.strip_secrets(gs)                      # a review's set, as every fresh install asks (Backend._resolved_sandbox)
+    assert refused == [] and kept["folders"] == gs["folders"]
+    chips = sb.summary(gs)
+    assert [c for c in chips if "refused" in c] == [f"{p} · refused: {why}" for p in bad] and "~/Notes" in chips
+    assert sb.strip_protected(gs) == ({**kept, "folders": {"~/Notes": "rw"}}, [(p, why) for p in bad])
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", gs, apps_root="/home/kata/bin/apps")
+    assert all(f"# Refused folder grant {p}: {why} (R17.3.1).\n" in text for p in bad) and "\x00" not in text and "\x1b" not in text and "\x07" not in text
+    assert text.count("bind-try /home/kata/") == 1 and "--bind-try /home/kata/Notes /home/kata/Notes" in text and "/media/usb" not in text.replace("# Refused folder grant /media/usb", "")
+    assert sb.as_review("standard", gs) == ({"sandbox": "standard", "sandboxFolders": "+~/Notes"}, [(p, why) for p in bad])
+    assert json.loads(json.dumps(sb.to_json(gs)))["folders"] == gs["folders"]              # as the install record keeps it
+    # each check, asked of the path as it came and as it is kept: an answer, never an exception
+    for p in ("~/a\x00b", "\x00", "/\x00", "~/new\nline", "~/tab\tbed", "/media/usb\x7f", "~/c1\x9b", "~/a\ufffdb"):
+        assert sb.protected_folder(p) == sb.protected_folder(sb.folder_path(p)) == why == sb.CONTROL, p
+        assert sb.secret_folder(p) == sb.system_folder(p) == "" and sb.folder_path(p) == sb._shown(p) and "\ufffd" in sb.folder_path(p), p
+    # ...and the user's own pick of a folder whose name has one (the Sandbox dialog, Backend.setSandbox): not shared, and said
+    picked, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {"/home/kata/odd\nname": "rw", "~/Notes": "ro"}})
+    assert picked["folders"] == {"~/Notes": "ro"} and refused == [("/home/kata/odd\ufffdname", why)]
+    # what is no control character is a folder's own: a space, an accent, a byte no encoding reads
+    for p in ("~/My Notes", "~/unicode-ünïcødé", "~/emoji 👩‍💻", os.fsdecode(b"/media/usb/a\xffb")):
+        assert sb.protected_folder(p) == "" and sb.folder_path(p) == p, p
+
+
 def test_a_folder_of_the_home_is_the_homes_wherever_the_home_is(tmp_path, monkeypatch):
     # A home inside a system place (every test's is under /tmp; a throwaway HOME=$(mktemp -d)) is
     # still a home: its folders are judged as the home's, and nothing else of the place is shared,
