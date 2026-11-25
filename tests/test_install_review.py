@@ -2776,7 +2776,46 @@ def test_the_folder_a_version_is_unpacked_into(monkeypatch, system):
     monkeypatch.setattr(install, "OS", system)
     for version, folder in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), (".5", "_.5"), ("", "unknown"),
                             ("current", "_current"), ("run", "_run"), ("Current", "_Current"), ("RUN", "_RUN"),
-                            ("currents", "currents"), ("current.1", "current.1"), ("rerun", "rerun"), ("app", "app")):
+                            ("currents", "currents"), ("current.1", "current.1"), ("rerun", "rerun"), ("app", "app"),
+                            ("2.0.new", "2.0.new_"), ("2.0.old", "2.0.old_"), ("2.0.OLD", "2.0.OLD_"), ("run.new", "run.new_"),
+                            ("new", "new"), ("2.0.newer", "2.0.newer"), ("2.0-old", "2.0-old"), ("current.old", "current.old_")):
         assert install._version_folder(version) == folder
+        made = [folder + end for end in install._KEPT_ENDS]                 # what placing it makes beside it
+        assert not [v for v in ("2.0", "2.0.new", "2.0.old", "run", "current", version) if install._version_folder(v) in made]
     kept = [n.lower() for n in install._KEPT_NAMES]
     assert all(install._version_folder(v).lower() not in kept for v in install._KEPT_NAMES + ("CURRENT", "Run", "current ", " run"))
+
+
+# ---------------------------------------------------------------- a version named as a folder AppKata makes while placing one
+
+@linux_only
+@pytest.mark.parametrize("fails", [False, True], ids=["the install succeeds", "the install fails"])
+@pytest.mark.parametrize("state", ["in use", "kept"])
+@pytest.mark.parametrize("end", [".new", ".old", ".NEW"])
+def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_aside_folder(env, server, tmp_path, end, state, fails):
+    # Found beside CR1.3-47, in the same family: a version's folder at a name AppKata uses itself.
+    # Placing 2.0 unpacks it in `2.0.new`, after removing what is there, and sets what is at `2.0`
+    # aside in `2.0.old`, after removing what is there: a version named 2.0.new or 2.0.old was
+    # deleted by an install of 2.0, the one in use too, and whether or not the install succeeded
+    # (R4.6 keeps the installed version until the new one is in place).
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    home, odd = tmp_path / "apps" / "demo-tool", "2.0" + end
+    for v in (odd, "3.0")[:2 if state == "kept" else 1]:
+        a = _tarball(server, f"tool-{v}.tar.gz", {f"tool-{v}/tool": 0o755})
+        was = install.install(env, {**APP, "installVersion": v}, a, "tarball", [a], portable=p)
+    its = next(k["path"] for k in [was["current"]] + was["kept"] if k["version"] == odd)
+    before = _left(tmp_path, env)
+    if fails:
+        (server[0] / "tool-2.0.tar.gz").write_bytes(b"not an archive")
+        a = Asset("tool-2.0.tar.gz", server[1] + "/tool-2.0.tar.gz")
+        with pytest.raises(tarfile.ReadError):
+            install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _changed(before, _left(tmp_path, env)) == {}
+        assert _runs(was["exec"]) == f"tool-{was['current']['version']}/tool"
+    else:
+        a = _tarball(server, "tool-2.0.tar.gz", {"tool-2.0/tool": 0o755})
+        rec = install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _runs(rec["exec"]) == "tool-2.0/tool" and odd in [k["version"] for k in rec["kept"]]
+        back = install.switch_to(env, dict(APP), odd, p)
+        assert back["current"]["path"] == its and _runs(back["exec"]) == f"tool-{odd}/tool"
+    assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))

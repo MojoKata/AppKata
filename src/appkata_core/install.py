@@ -612,6 +612,9 @@ def _safe(v: str) -> str:
 # What AppKata keeps in an app's folder beside its versions' folders: the link to the current
 # version (R4.3.1.2; a junction on Windows, R15.5) and a sandboxed app's launcher (R17.4).
 _KEPT_NAMES = ("current", "run")
+# How the folders AppKata makes beside a version's own end, while it places one (:func:`_place`):
+# the version being unpacked, and the one whose place it takes, set aside (:func:`_aside`).
+_KEPT_ENDS = (".new", ".old")
 
 
 def _version_folder(version: str) -> str:
@@ -620,10 +623,17 @@ def _version_folder(version: str) -> str:
     itself (:data:`_KEPT_NAMES`), in any case, as Windows compares names (R15.16). A release whose
     version was the word "current" asked for its folder at the link's own place, and one named
     "run" at the launcher's: the first couldn't be installed, the second couldn't be installed
-    sandboxed, or sandboxed after (CR1.3-47). An AppImage's version is in its file's name, which
-    is neither."""
+    sandboxed, or sandboxed after (CR1.3-47). And with `_` after one that ends as the folders made
+    while a version is placed do (:data:`_KEPT_ENDS`): installing 2.0 began by removing what was at
+    `2.0.new`, and what was at `2.0.old` next, so a version named 2.0.new or 2.0.old was deleted
+    there, kept or in use, whether or not the install then succeeded. An AppImage's version is in
+    its file's name, which is none of these."""
     name = _safe(version)
-    return "_" + name if name.lower() in _KEPT_NAMES else name
+    if name.lower() in _KEPT_NAMES:
+        name = "_" + name
+    if name.lower().endswith(_KEPT_ENDS):
+        name += "_"
+    return name
 
 
 def _file_name(name: str) -> str:

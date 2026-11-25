@@ -51,7 +51,9 @@ A version is written in these names with `_` for each run of characters other th
 digits, `.`, `_`, `+` and `-`, and with `_` before one that starts with a dot (`_..`), so no
 version's folder is the app's folder itself, the install folder above it, or hidden. A version that
 is a name AppKata keeps in the app's folder itself, in any case (`current`, the link of R4.3.1.2;
-`run`, a sandboxed app's launcher, 17.4), gets `_` before it too (`_current/`).
+`run`, a sandboxed app's launcher, 17.4), gets `_` before it too (`_current/`), and one that ends
+as the folders AppKata makes while it places a version do (`.new`, `.old`) gets `_` after it
+(`2.0.old_/`).
 
 An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
 is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
