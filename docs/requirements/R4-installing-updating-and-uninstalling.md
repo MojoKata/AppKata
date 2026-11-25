@@ -156,12 +156,17 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
 
 1. Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest, when one
    exists.
-2. Checks a minisign or GPG signature, or a sigstore bundle, when one exists.
-3. Reads Windows' code-signing status, Authenticode (R15.11).
+2. On Windows, reads the file's code-signing status, Authenticode (R15.11).
 
-The App Detail panel shows the result as a chip: **Verified** (a signature checked),
-**Checksum** (a checksum only), or **Unverified**. Unverified downloads can still be
-installed. A failed check blocks the install and explains why.
+A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
+`.minisig`, a sigstore bundle) is not checked.
+
+The App Detail panel shows the result as a chip: **Verified**, **Checksum** (a checksum only),
+or **Unverified**. **Verified** means a signature was checked, by one of three: Windows, for a
+file with a valid Authenticode signature (R15.11); flatpak, against the key of the remote a
+Flatpak came from; or the package manager, against the keys of the repository a package came
+from (R16.3.6). Unverified downloads can still be installed. A failed check blocks the install
+and explains why.
 
 The chip of an installed app is the result of its own install, kept in its install record: a
 later release changes nothing in it. A file that isn't installed yet, the one Install or Update
