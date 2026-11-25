@@ -151,6 +151,8 @@ differ from its list (review 3, harness B).
 | R17.6.2 | The argument then passes unchanged, and the launcher says | test_the_launcher_says_why_an_argument_in_a_never_shared_folder_is_not_handed_over, test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments |
 | R17.6.2 | The system's own places of R17.3.1 are a grant's | test_a_never_shared_folder_is_handed_over_by_no_argument_and_the_helper_says_why, test_the_helper_hands_over_nothing_a_grant_could_not_share_but_under_the_systems_places, test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments |
 | R17.6.2 | A link in a granted folder is never followed out of it | test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_over, test_a_file_argument_is_handed_over_to_a_standard_app |
+| R17.6.2 | A bare word — an argument with no / in it | test_a_bare_word_is_a_file_argument_when_it_names_a_file_and_never_a_folder, test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_listed |
+| R17.6.2 | In its shared directory a command-line tool's relative path | test_a_tools_relative_path_that_leaves_its_shared_folder_is_handed_over, test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_listed |
 | R17.6.2 | A file not yet made is not handed over | deferred |
 | R17.6.2 | Strict apps have no bus and so no | test_launcher_hands_over_file_arguments_only_for_standard_apps |
 | R17.6.2 | Without python3-gi or a running document portal the | test_file_arguments_pass_through_when_they_cannot_be_handed_over, test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through |

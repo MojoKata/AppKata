@@ -2935,6 +2935,52 @@ def test_the_launcher_says_why_an_argument_in_a_never_shared_folder_is_not_hande
         assert "is handed over either way, unless it is in a never-shared folder of your home" in r.stderr, r.stderr
 
 
+def test_a_bare_word_is_a_file_argument_when_it_names_a_file_and_never_a_folder(tmp_path):
+    # CR1.5-15, part 1 (the owner's decision of 2026-11-24): every argument that named something
+    # there was taken for a file argument, so `tool build --verbose help`, run where a folder
+    # `build` lies, exported the folder, read-write, and gave the tool a path where its word was.
+    # How it slipped past: every argument the tests passed was meant as a path.
+    home = tmp_path / "home"
+    proj, docs = home / "proj", home / "Docs"
+    for d in (proj / "build", proj / "help", proj / ".git", docs / "sub"):
+        d.mkdir(parents=True)
+    for f in (proj / "notes.txt", proj / "run", docs / "in.txt"):
+        f.write_text("x")
+    (proj / "latest").symlink_to("build")
+    doc = str(tmp_path / "run" / "doc" / "DOC")
+    words, said, calls = _handed(tmp_path, proj, ["build", "--verbose", "help", "latest", "--mode=build", "notes.txt", "run", "--file=notes.txt"], home=home)
+    assert words == ["build", "--verbose", "help", "latest", "--mode=build", f"{doc}/notes.txt", f"{doc}/run", f"--file={doc}/notes.txt"], words
+    assert "AddFull" not in [c[0] for c in calls] and [c[2] for c in calls if c[2]] == [[str(proj / f)] for f in ("notes.txt", "run", "notes.txt")], calls
+    # the folder is named by a path: ./build, build/, its full path, a URI, . itself, or a dot folder
+    named = ["./build", "build/", str(proj / "build"), "file://" + str(proj / "build"), ".", ".git", "--dir=./build"]
+    words, said, calls = _handed(tmp_path, proj, named, home=home)
+    assert words == [f"{doc}/build", f"{doc}/build/", f"{doc}/build", f"file://{doc}/build", f"{doc}/proj", f"{doc}/.git", f"--dir={doc}/build"], words
+    assert [c[0] for c in calls] == ["AddFull"] * 7, calls
+    # in a granted folder the same: the word stays the program's own, and a file becomes its path there
+    assert _forward(tmp_path, docs, "", [docs], ["sub", "in.txt", "./sub", "sub/"]) == ["sub", str(docs / "in.txt"), str(docs / "sub"), str(docs / "sub") + "/"]
+
+
+def test_a_tools_relative_path_that_leaves_its_shared_folder_is_handed_over(tmp_path):
+    # CR1.5-15, part 2: in its shared folder a tool's relative path always passed unchanged, also
+    # one that leaves the folder, so `tool ../notes.txt` reached nothing inside, though R17.6.2
+    # hands over what the sandbox can't see. As typed only while it stays in the folder.
+    home = tmp_path / "home"
+    proj, docs = home / "src" / "proj", home / "Docs"
+    for d in (proj / "sub", docs):
+        d.mkdir(parents=True)
+    for f in (home / "src" / "notes.txt", proj / "a.txt", proj / "sub" / "b.txt", docs / "in.txt"):
+        f.write_text("x")
+    (proj / "up").symlink_to("..")                                         # a way out that is a link in the folder: never followed
+    doc = str(tmp_path / "run" / "doc" / "DOC")
+    typed = ["a.txt", "./a.txt", "sub/b.txt", "sub/../a.txt", ".", "sub", "../proj/a.txt", "up/notes.txt"]
+    words, said, calls = _handed(tmp_path, proj, typed + ["../notes.txt", "../../Docs/in.txt", "--file=../notes.txt"],
+                                 visible=[proj, docs], incwd=str(proj), home=home)
+    assert words == typed + [f"{doc}/notes.txt", str(docs / "in.txt"), f"--file={doc}/notes.txt"], words
+    assert [c[2] for c in calls if c[2]] == [[str(home / "src" / "notes.txt")]] * 2, calls
+    # from the folder's own sub-folder the tool is not in place: every relative path is made whole
+    assert _forward(tmp_path, proj / "sub", str(proj), [proj], ["b.txt", "../a.txt"]) == [str(proj / "sub" / "b.txt"), str(proj / "a.txt")]
+
+
 def test_the_field_test_runs_each_check_under_the_template_it_names(tmp_path):
     # Review 3, R3-11: the probe has one launcher, rewritten per template, and checks were handed its
     # path, so every Strict check after the first Online app one ran Online app (D-nosound reported a

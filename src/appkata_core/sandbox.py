@@ -1860,6 +1860,12 @@ def write_seccomp_filter() -> str | None:
 # becomes its own path in that folder, the link included, where the app finds it dangling, and
 # nothing is handed over. The other direction is as it was (R3-17): a link outside the visible
 # folders to a file inside one is the user's, and becomes the file's path.
+# A bare word, with no "/" in it and neither "." nor "~" first, is a file argument when it names a
+# file and never when it names a folder (CR1.5-15, the owner's decision of 2026-11-24): the helper
+# can't know a program's own words, and `tool build` or `app help`, run where a folder of that
+# name lies, got the folder handed over, read-write, and a path where its word was. `./build` or
+# `build/` names the folder. And in its shared folder a tool's relative path stays as typed only
+# while it stays in that folder: `../notes.txt` passed unchanged and reached nothing inside.
 # argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
 #       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
@@ -1977,15 +1983,19 @@ def export_dir(path):
 
 
 def hand(path, uri):
-    if not os.path.exists(path) or (in_place and not uri and not os.path.isabs(path)):
+    if not os.path.exists(path):
         return None
+    if not uri and os.sep not in path and path[:1] not in (".", "~") and os.path.isdir(path):
+        return None                     # a bare word that names a folder: a program's own word as likely as a path
     try:
         real, links = follow(path)
     except OSError:
         return None
-    seen = inside(real)
+    seen, where = inside(real), real
     if seen is None:                    # a link in a visible folder that leads out of them all: the path as far as it
-        seen = next((inside(rest) for step, rest in links if inside(step) is not None), None)
+        seen, where = next(((inside(rest), rest) for step, rest in links if inside(step) is not None), (None, real))
+    if in_place and not uri and not os.path.isabs(path) and within(where, os.getcwd()):
+        return None                     # a tool's relative path in its shared folder: as typed
     if seen is not None:
         if os.path.isabs(path) and os.path.normpath(path) == seen:
             return None                 # already the path the app sees

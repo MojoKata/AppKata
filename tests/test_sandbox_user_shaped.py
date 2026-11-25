@@ -58,7 +58,8 @@ if [ "$MAKE" = 1 ]; then echo MADE > "$a" 2>/dev/null && echo "WROTE"; elif [ -d
 
 
 def _corpus(h: str) -> list[tuple]:
-    """(case, where the user stands, the argument, what the app must print, make it?)"""
+    """(case, where the user stands, the argument, what the app must print, make it?[, "tool":
+    given to a command-line tool, which shares the folder it is run in])"""
     return [
         ("an absolute path outside the granted folders", h, f"{h}/Elsewhere/out.txt", "OUTSIDE", False),
         ("an absolute path in a granted folder", h, f"{h}/Docs/in.txt", "IN-GRANT", False),
@@ -76,6 +77,16 @@ def _corpus(h: str) -> list[tuple]:
         (". from a granted folder (the folder itself)", f"{h}/Docs", ".", "in.txt", False),
         ("a folder outside the granted folders", h, f"{h}/Elsewhere/sub", "listed.txt", False),
         ("a file still to be made", h, f"{h}/Elsewhere/new.txt", "WROTE", True),
+        # CR1.5-15: a word of the program's own that happens to name a folder stays that word, and
+        # the folder is named by a path; a tool's path out of its shared folder is handed over
+        ("a bare word that names a file", f"{h}/Elsewhere", "out.txt", "OUTSIDE", False),
+        ("a bare word that names a folder (the program's own word)", f"{h}/Elsewhere", "sub", "MISSING sub", False),
+        ("an option whose value is such a word", f"{h}/Elsewhere", "--mode=sub", "MISSING sub", False),
+        ("a folder named with ./", f"{h}/Elsewhere", "./sub", "listed.txt", False),
+        ("a folder named with a trailing slash", f"{h}/Elsewhere", "sub/", "listed.txt", False),
+        ("a tool's relative path in its shared folder", f"{h}/Elsewhere", "out.txt", "OUTSIDE", False, "tool"),
+        ("a tool's ../ out of its shared folder", f"{h}/Elsewhere/sub", "../out.txt", "OUTSIDE", False, "tool"),
+        ("a tool's word that names a folder of its shared folder", f"{h}/Elsewhere", "sub", "listed.txt", False, "tool"),
     ]
 
 
@@ -93,10 +104,10 @@ def _arrange(home) -> None:
 def _arguments(env: Env, bus, monkeypatch=None) -> set[str]:
     _arrange(env.home)
     gs = sb.apply_overrides(sb.resolve_template("online-app"), {"folders": {"+~/Docs": "rw"}})
-    lp = env.app("reader", gs)
+    lp, tool = env.app("reader", gs), env.app("tool", sb.resolve_template("cli-tool"))
     failing = set()
-    for case, cwd, arg, want, make in _corpus(str(env.home)):
-        r = subprocess.run([lp, APP_READS, arg], cwd=cwd, capture_output=True, text=True, timeout=60,
+    for case, cwd, arg, want, make, *kind in _corpus(str(env.home)):
+        r = subprocess.run([tool if kind else lp, APP_READS, arg], cwd=cwd, capture_output=True, text=True, timeout=60,
                            env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr, "MAKE": "1" if make else "0"})
         made = make and (env.home / "Elsewhere" / "new.txt").exists()
         if want not in r.stdout or (make and not made):
