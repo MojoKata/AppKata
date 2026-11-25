@@ -2161,6 +2161,38 @@ def test_an_uninstall_removes_what_a_stopped_change_left_beside_the_apps_files(e
 
 
 @linux_only
+@pytest.mark.parametrize("where", ["AppKata's start", "the change that kept it"])
+def test_a_file_left_beside_an_apps_files_that_cant_be_removed_is_logged_with_why(env, server, tmp_path, monkeypatch, caplog, where):
+    # #689's review, P7-B1a: a leftover beside an app's files that AppKata's start (or the app's
+    # next change, or its uninstall) can't remove was logged by its path alone, at every start that
+    # met it, and so was a file a sandbox change kept beside one and couldn't drop once it was
+    # written: the App log never said why (R14.2), where the start's other steps say theirs.
+    import logging
+    from appkata_core import sandbox
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"))
+    a = _appimage(server, "Tool-1.0-x86_64.AppImage", b"#!/bin/sh\necho 1.0\n")
+    install.install(env, {**APP, "installVersion": "1.0", "sandbox": sandbox.resolve_template("standard")}, a, "appimage", [a], portable=p)
+    start = where == "AppKata's start"
+    if start:
+        _stopped_change(tmp_path, env, p, monkeypatch, sandbox.resolve_template("strict"))
+    stuck, real = str(tmp_path / f"{_KEPT[0]}.{4241 if start else os.getpid()}.was"), os.remove
+
+    def remove(path, *a, **k):
+        if str(path) == stuck:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path, *a, **k)
+    caplog.set_level(logging.WARNING, logger="appkata.install")
+    with monkeypatch.context() as m:
+        m.setattr(install.os, "remove", remove)
+        if start:
+            assert stuck not in install.sweep_left_beside(env) and len(_beside(tmp_path, env)) == 1
+        else:
+            install.rewrite_launcher(env, {**APP, "sandbox": sandbox.resolve_template("strict")}, p)
+    assert f"couldn't remove {stuck}: Permission denied" in caplog.text
+    assert install.sweep_left_beside(env) == [stuck] and _beside(tmp_path, env) == []     # gone once it can be
+
+
+@linux_only
 def test_a_sandbox_change_removes_what_one_stopped_part_way_left_beside_the_apps_files(env, server, tmp_path, monkeypatch):
     # #689's review, P6-B3: a sandbox change removes, before it keeps the app's files beside them,
     # what an earlier change or write stopped part-way left there (_keep_aside), and no test failed

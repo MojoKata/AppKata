@@ -1481,9 +1481,10 @@ def _sweep_beside(paths: list[str]) -> list[str]:
     hard link a sandbox change kept (`<path>.<pid>.was`, :func:`_keep_aside`) and a file a write
     hadn't finished (`<path>.<pid>.tmp`, :func:`_write_whole`); nothing else beside them. Called
     with the activation lock held, so no change or write of this process is under way. Returns
-    what it removed; one it can't remove is logged and left for the next time. #689's review,
-    P6-B2: only the app's next sandbox change removed a .was, and nothing a .tmp, so an uninstall
-    left the old menu script and entry, identity marker and owner record beside where they were."""
+    what it removed; one it can't remove is logged with why (R14.2) and left for the next time.
+    #689's review, P6-B2: only the app's next sandbox change removed a .was, and nothing a .tmp,
+    so an uninstall left the old menu script and entry, identity marker and owner record beside
+    where they were. P7-B1a: a removal that failed was logged without its reason."""
     gone = []
     for p in paths:
         for left in glob.glob(glob.escape(p) + ".*.was") + glob.glob(glob.escape(p) + ".*.tmp"):
@@ -1491,8 +1492,8 @@ def _sweep_beside(paths: list[str]) -> list[str]:
                 try:
                     os.remove(left)
                     gone.append(left)
-                except OSError:
-                    log.warning("couldn't remove %s", left)
+                except OSError as e:
+                    log.warning("couldn't remove %s: %s", left, e.strerror or e)
     return gone
 
 
@@ -1584,13 +1585,14 @@ def _read(path: str) -> bytes:
 
 def _drop_aside(kept: dict) -> None:
     """Remove the hard links :func:`_keep_aside` made that are still beside their files: after the
-    change was written, or put back."""
+    change was written, or put back. One it can't remove is logged with why (R14.2; #689's review,
+    P7-B1a) and goes at the next sweep (:func:`_sweep_beside`)."""
     for k in kept["files"].values():
         if k and k[0] == "aside" and os.path.lexists(k[1]):
             try:
                 os.remove(k[1])
-            except OSError:
-                log.warning("couldn't remove %s", k[1])
+            except OSError as e:
+                log.warning("couldn't remove %s: %s", k[1], e.strerror or e)
 
 
 def refresh_command_link(db: DB, app: dict, portable: "Portable") -> bool:
