@@ -103,12 +103,15 @@ def test_todays_appkata_reads_shows_heals_changes_and_removes_yesterdays_app(be,
     assert info["applicable"] and info["active"] and info["source"] in ("pinned", "user") and info["level"] != "off", info
     assert be.sandboxLaunchCommand(URL).startswith("#!/bin/sh")
     rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
-    assert os.path.exists(rec["launcher"]) and os.path.exists(sb.identity_path("demo"))
-    # the startup pass brings yesterday's launcher up to today's text, at most once
+    assert os.path.exists(rec["launcher"])
+    # the startup pass brings yesterday's launcher up to today's text, at most once, and with it the
+    # identity marker, which is wherever today's launcher looks for it (CR1.5-13 moved the markers
+    # into a folder of their own; yesterday's launcher named yesterday's place until this pass)
     healed = be._heal_launchers()
     assert healed in ([], [URL])
     assert be._heal_launchers() == []
     assert be.sandboxLaunchCommand(URL) == open(rec["launcher"]).read()
+    assert os.path.exists(sb.identity_path("demo")) and f"info={sb.identity_path('demo')}\n" in open(rec["launcher"]).read()
     # the user can still change it, and switch it off, and come back
     be.setSandbox(URL, {"template": "strict", "overrides": {}})
     assert be.sandboxInfo(URL)["level"] == "strict" and "xdg-dbus-proxy" not in be.sandboxLaunchCommand(URL)

@@ -57,6 +57,7 @@ class Env:
             monkeypatch.delenv(v, raising=False)     # this user's places are where a home has them (conftest.own_home)
         self.env = {"HOME": str(self.home), "XDG_RUNTIME_DIR": str(self.rt), "PATH": os.environ["PATH"],
                     "LANG": "C.UTF-8"}
+        self.machines = 0
 
     def app(self, app_id: str, gs: dict) -> str:
         """Install the fake app and write its launcher; returns the launcher path."""
@@ -67,8 +68,27 @@ class Env:
         exe.chmod(0o755)
         return sb.write_launcher(app_id, app_id.title(), str(self.home / "apps"), str(appdir), "bin/app", gs)
 
+    def on_a_machine_with(self, launcher: str, path: str) -> str:
+        """`launcher` as AppKata writes it on a machine whose command folders are `path`: a copy with
+        that PATH in the one line where a launcher sets its own (sandbox.host_path, CR1.5-31). The PATH
+        a launcher is started with no longer decides what it runs, so a test that stands a bwrap in
+        front of the real one, or takes a tool away, says so here: the machine has it there, or lacks it."""
+        text = open(launcher).read()
+        new, n = re.subn(r"^PATH=.*; export PATH$", lambda m: f"PATH={shlex.quote(path)}; export PATH", text, count=1, flags=re.M)
+        assert n == 1 and text.count("export PATH") == 1, "a launcher sets its PATH once, in its header"
+        self.machines += 1
+        copy = self.home.parent / "machines" / str(self.machines) / "run"
+        copy.parent.mkdir(parents=True)
+        copy.write_text(new)
+        copy.chmod(0o755)
+        return str(copy)
+
     def run(self, launcher: str, snippet: str, cwd: str | None = None, env: dict | None = None,
             timeout: int = 30) -> subprocess.CompletedProcess:
+        """Start the launcher with `snippet` for the app to run. A PATH in `env` is the machine's
+        command folders (:meth:`on_a_machine_with`), as it was when the launcher took the caller's."""
+        if env and "PATH" in env:
+            launcher = self.on_a_machine_with(launcher, env["PATH"])
         return subprocess.run([launcher, snippet], cwd=cwd or str(self.home), env={**self.env, **(env or {})},
                               capture_output=True, text=True, timeout=timeout)
 
@@ -1641,7 +1661,8 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
     log = tmp_path / "home" / ".local" / "state" / "appkata" / "apps" / "menu.log"                # the install's id (R14.2.1)
     assert f"log={log}" in open(lp).read()
     refused = _fake_bwrap(env, "bwrap: setting up uid map: Permission denied")
-    r = subprocess.run([lp, "--appkata-menu", "echo never"], cwd=str(env.home), env={**env.env, **refused},
+    lp_refused = env.on_a_machine_with(lp, refused["PATH"])
+    r = subprocess.run([lp_refused, "--appkata-menu", "echo never"], cwd=str(env.home), env={**env.env, **refused},
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 1 and r.stderr == ""                 # the desktop's stderr got nothing ...
     text = log.read_text()
@@ -1661,7 +1682,7 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
 
     # any other way (a command link, a script): stderr stays the caller's and the log is left alone
     log.unlink()
-    r = subprocess.run([lp, "echo never"], cwd=str(env.home), env={**env.env, **refused}, capture_output=True,
+    r = subprocess.run([lp_refused, "echo never"], cwd=str(env.home), env={**env.env, **refused}, capture_output=True,
                        text=True, timeout=30)
     assert "Permission denied" in r.stderr and not log.exists()
 
@@ -1728,8 +1749,8 @@ def test_file_arguments_pass_through_when_they_cannot_be_handed_over(env):
     (fake / "python3").chmod(0o755)
     bus = _Bus(env)
     try:
-        r = subprocess.run([lp, 'echo "ARG $2"', str(docs / "a.txt")], cwd=str(env.home),
-                           env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr, "PATH": f"{fake}:{os.environ['PATH']}"},
+        r = subprocess.run([env.on_a_machine_with(lp, f"{fake}:{os.environ['PATH']}"), 'echo "ARG $2"', str(docs / "a.txt")],
+                           cwd=str(env.home), env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
                            capture_output=True, text=True, timeout=60)
     finally:
         bus.close()
@@ -2777,7 +2798,7 @@ def test_extraction_still_works_without_flock_on_the_path(env, tmp_path):
     img = env.home / "apps" / "img" / "Img.AppImage"
     _fake_appimage(img, "unpacked-without-flock")
     lp = _appimage_app(env, img)
-    r = subprocess.run([lp, ""], env={**env.env, "PATH": str(bindir)}, cwd=str(env.home), capture_output=True, text=True, timeout=60)
+    r = subprocess.run([env.on_a_machine_with(lp, str(bindir)), ""], env=env.env, cwd=str(env.home), capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and r.stdout.strip() == "unpacked-without-flock", (r.stdout, r.stderr)
     assert "flock" not in r.stderr and not os.path.exists(str(img.parent / "1.0.extracted.lock"))
 

@@ -268,14 +268,16 @@ def test_a_launcher_says_plainly_when_bwrap_is_missing(tmp_path, monkeypatch):
     for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
-    lp = sb.write_launcher("demo", "Demo App", str(home / "bin/apps"), str(home / "bin/apps/demo/1"), "bin/demo",
-                           sb.resolve_template("strict"))
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for tool in ("mkdir", "stat", "date", "mv", "id", "cat"):           # what the launcher's preamble uses
         if shutil.which(tool):
             (bindir / tool).symlink_to(shutil.which(tool))
-    env = {"PATH": str(bindir), "HOME": str(home), "XDG_RUNTIME_DIR": str(rt)}
+    # the machine's command folders, which the launcher takes as its PATH (CR1.5-31): no bwrap in them
+    monkeypatch.setattr(sb, "host_path", lambda apps_root=None: str(bindir))
+    lp = sb.write_launcher("demo", "Demo App", str(home / "bin/apps"), str(home / "bin/apps/demo/1"), "bin/demo",
+                           sb.resolve_template("strict"))
+    env = {"PATH": os.environ["PATH"], "HOME": str(home), "XDG_RUNTIME_DIR": str(rt)}
     r = subprocess.run(["/bin/sh", lp, "--version"], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 1
     assert r.stderr.strip() == ("AppKata: bubblewrap (bwrap) isn't installed, so Demo App can't run sandboxed here. "
@@ -1545,9 +1547,11 @@ def test_invalid_sandbox_template_is_ignored():
 
 def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monkeypatch):
     from appkata_core import install
+    from test_install_review import _menu_starts
     monkeypatch.setattr(sb, "have_tools", lambda: True)          # pretend bwrap/proxy are present
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(tmp_path / "data"))      # where the script the menu entry starts goes
     root = tmp_path / "apps"
     target = root / "demo"
     vdir = target / "1.0" / "bin"
@@ -1563,9 +1567,9 @@ def test_activate_generates_launcher_and_points_everything_at_it(tmp_path, monke
     launcher = str(target / "run")
     assert rec["exec"] == launcher and os.path.exists(launcher) and os.access(launcher, os.X_OK)
     assert rec["sandbox"]["level"] == "standard"
-    # the .desktop entry and the command link point at the launcher, not the program
-    desktop = next(f for f in rec["files"] if f.endswith(".desktop"))
-    assert launcher in open(desktop).read()
+    # the .desktop entry (through its script, R4.3.1.1) and the command link point at the launcher, not the program
+    desktop, menu = next(f for f in rec["files"] if f.endswith(".desktop")), str(tmp_path / "data" / "menu" / "demo")
+    assert f'Exec=/bin/sh "{menu}" --appkata-menu %U' in open(desktop).read() and _menu_starts(menu) == launcher
     cmd_link = os.path.join(str(tmp_path / "cmd"), "demo")
     assert os.path.realpath(cmd_link) == os.path.realpath(launcher)
     # the identity marker was written outside the private home (the app can't touch it)
@@ -1578,6 +1582,7 @@ def test_off_uses_the_program_directly_no_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(sb, "have_tools", lambda: True)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
     monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(tmp_path / "data"))
     target = tmp_path / "apps" / "demo"
     (target / "1.0" / "bin").mkdir(parents=True)
     exe = target / "1.0" / "bin" / "demo"
@@ -1754,6 +1759,140 @@ def test_uninstall_keeping_the_home_still_removes_the_identity_marker(tmp_path, 
          ("u", "Demo", "1", "appimage", _json.dumps({"files": []}), now()))
     install.uninstall(db, "u")                             # the home is kept ...
     assert os.path.isdir(home) and not os.path.lexists(sb.identity_path("demo"))     # ... the marker is not
+
+
+class _Full:
+    """A file being written on a full disk: it is there, and its write fails."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def write(self, *_):
+        raise OSError(28, "No space left on device")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._f.close()
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+
+@pytest.mark.parametrize("fails", ["a write", "a rename"])
+def test_a_file_the_launcher_relies_on_whose_write_fails_leaves_nothing_beside_it(tmp_path, monkeypatch, fails):
+    # #689's review, P5-B3: the launcher was written whole or not at all (P4-1), but the five files
+    # written with it -- the identity marker, the seccomp filter, the file-argument helper, the
+    # xdg-open shim and the private home's owner record -- went to <name>.<pid>.tmp and were renamed
+    # with nothing removing the .tmp when the write or the rename failed (a full disk): each failure
+    # left one in .identity/, its apps/ or bin/, or .owners/, one more per AppKata process that
+    # tried, and nothing removed them. Each write and each rename fails in turn here: nothing is left
+    # beside any of them, and each file is whole, as it was or as it is written.
+    import builtins
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    apps = str(tmp_path / "apps")
+
+    def write(template, url):
+        sb.write_launcher("demo", "Demo", apps, f"{apps}/demo/1", "bin/demo", sb.resolve_template(template))
+        sb.record_home_owner("demo", url)
+    files = lambda: {p: open(p, "rb").read() for p in (sb.launcher_path("demo", apps), sb.identity_path("demo"), sb.forward_path(),
+                                                       os.path.join(sb.shims_dir(), "xdg-open"), sb.home_owner_path("demo"))
+                     + ((sb.seccomp_path(),) if sb.seccomp_filter() is not None else ())}
+    write("online-app", "https://example.org/demo")
+    new = files()
+    shutil.rmtree(tmp_path / "sandboxes")
+    shutil.rmtree(tmp_path / "apps")
+    write("strict", "https://example.org/old")                  # what is there before: another marker, launcher and owner
+    old = files()
+    real_open, real_fdopen, real_replace = builtins.open, os.fdopen, os.replace
+    for n in range(1, 20):
+        count = []
+
+        def hit(path):
+            if str(path).startswith(str(tmp_path)):
+                count.append(path)
+                return len(count) == n
+            return False
+        if fails == "a write":
+            monkeypatch.setattr(builtins, "open", lambda p, m="r", *a, **k: (
+                _Full(real_open(p, m, *a, **k)) if "w" in m and hit(p) else real_open(p, m, *a, **k)))
+            monkeypatch.setattr(os, "fdopen", lambda fd, m="r", *a, **k: (
+                _Full(real_fdopen(fd, m, *a, **k)) if "w" in m and hit(os.readlink(f"/proc/self/fd/{fd}"))
+                else real_fdopen(fd, m, *a, **k)))
+        else:
+            def replace(a, b, *x, **k):
+                if hit(b):
+                    raise OSError(28, "No space left on device")
+                return real_replace(a, b, *x, **k)
+            monkeypatch.setattr(os, "replace", replace)
+        try:
+            write("online-app", "https://example.org/demo")
+            raised = None
+        except OSError as e:
+            raised = e
+        finally:
+            monkeypatch.setattr(builtins, "open", real_open)
+            monkeypatch.setattr(os, "fdopen", real_fdopen)
+            monkeypatch.setattr(os, "replace", real_replace)
+        left = [os.path.join(d, f) for d, _, fs in os.walk(tmp_path) for f in fs if ".tmp" in f]
+        assert left == [], (n, count[n - 1:n])                      # nothing beside the file that failed
+        now = files()
+        assert all(now[p] in (old[p], new[p]) for p in new), n     # each file whole, the old or the new
+        if raised is None:
+            assert now == new and len(count) < n                   # past the last write: all written
+            break
+        assert raised.errno == 28
+        write("strict", "https://example.org/old")              # back to before, for the next one to fail
+    else:
+        raise AssertionError("every write failed")
+    assert n == len(new) + 1                                       # each of the files' writes failed once
+
+
+# Every name AppKata's own files have beside the per-app ones, and names an app could be given to meet them
+COLLIDING_NAMES = ["bin", "Bin", "BIN!", "apps", "seccomp-tty.bpf", "forward-files.py", "xdg-open", ".identity", ".owners",
+                   "identity", "owners", "run", "tmp", "1"]
+
+
+@pytest.mark.parametrize("name", COLLIDING_NAMES)
+@pytest.mark.parametrize("first", [True, False], ids=["the-first-app", "after-another"])
+def test_no_app_name_takes_the_place_of_a_file_appkata_keeps_for_every_app(name, first, tmp_path, monkeypatch):
+    # CR1.5-13: every app's marker was .identity/<id>, and the shims' folder .identity/bin beside
+    # them. An app named "bin" -- its id is the name's slug -- installed after any other couldn't
+    # have its launcher written (a file renamed over a folder, and a .tmp left behind); installed
+    # first, its marker took the name and no app's launcher could be written again. How it slipped
+    # past: no test gave an app a name that AppKata uses itself. The class is every file an app's id
+    # names, against every file AppKata writes for all apps: here each is written, both orders, for
+    # ids that are AppKata's own file names, and all of them are still there, each what it should be.
+    from appkata_core.install import slug
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    app_id = slug(name)
+    gs, apps = sb.resolve_template("online-app"), str(tmp_path / "apps")
+    order = [app_id, "other"] if first else ["other", app_id]
+    launchers = {i: sb.write_launcher(i, i.title(), apps, f"{apps}/{i}/1", f"bin/{i}", gs) for i in order}
+    for i in order:
+        sb.record_home_owner(i, f"https://example.org/{i}")
+        os.makedirs(sb.sandbox_home(i), exist_ok=True)
+        assert open(launchers[i]).read() == sb.launcher_text(i, i.title(), apps, f"{apps}/{i}/1", f"bin/{i}", gs)
+        assert open(sb.identity_path(i)).read() == sb.flatpak_info_text(i, True)
+        assert sb.helpers_current(i, gs)                           # the marker, the shim, the helper, the filter
+        assert not sb.home_belongs_to_another(i, f"https://example.org/{i}")
+    assert os.path.isdir(sb.shims_dir()) and os.access(os.path.join(sb.shims_dir(), "xdg-open"), os.X_OK)
+    left = [os.path.join(d, f) for d, _, fs in os.walk(tmp_path) for f in fs if f.endswith(".tmp")]
+    assert left == []                                              # nothing half-written is left behind
+    # ... and the layout that makes it so: a folder for the markers alone, a folder for the owner
+    # records alone, and no id that could be one of the names beside the private homes
+    shared = [sb.shims_dir(), sb.seccomp_path(), sb.forward_path()]
+    assert all(os.path.dirname(sb.identity_path(app_id)) not in (f, os.path.dirname(f)) for f in shared)
+    assert os.path.dirname(sb.identity_path(app_id)) == os.path.dirname(sb.identity_path("other"))
+    assert os.path.dirname(sb.home_owner_path(app_id)) not in [os.path.dirname(f) for f in shared]
+    assert re.fullmatch(r"[a-z0-9-]+", app_id) and os.path.dirname(sb.sandbox_home(app_id)) == sb.sandboxes_root()
+    # the marker's folders are the user's alone, as .identity was when the markers were directly in it
+    for folder in (os.path.dirname(sb.identity_path(app_id)), os.path.dirname(os.path.dirname(sb.identity_path(app_id)))):
+        assert os.stat(folder).st_mode & 0o777 == 0o700, folder
+    sb.remove_sandbox_home(app_id)                                 # an uninstall takes the app's files and no other's
+    assert not os.path.lexists(sb.identity_path(app_id)) and os.path.exists(sb.identity_path("other"))
+    assert sb.helpers_current("other", gs)
 
 
 def test_removing_a_kept_appimage_version_drops_its_whole_cache(tmp_path):
@@ -1985,13 +2124,17 @@ def test_cli_launcher_protects_the_persistence_dirs_and_the_runtime_folder(fake_
 
 def test_profile_names_the_bwrap_actually_installed(monkeypatch, tmp_path):
     # Regression: the profile hard-coded /usr/bin/bwrap, so with bwrap elsewhere it attached to nothing.
+    # It names the bwrap the launchers run, the system's folders' (R17.4), through its links (a
+    # stand-in system folder here; tests/test_sandbox_adversarial.py has the user's bwrap beside it).
     real = tmp_path / "opt" / "bwrap"
     real.parent.mkdir()
-    real.write_text("")
+    real.write_text("#!/bin/sh\n")
+    real.chmod(0o755)
     link = tmp_path / "bin" / "bwrap"
     link.parent.mkdir()
     link.symlink_to(real)
-    monkeypatch.setattr(sb.shutil, "which", lambda name: str(link) if name == "bwrap" else None)
+    monkeypatch.setattr(sb, "HOST_PATH", str(tmp_path / "bin"))
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     assert f"profile appkata-sandbox {real} flags=(unconfined)" in sb.profile_text()
     assert "profile appkata-sandbox /usr/bin/bwrap flags=(unconfined)" in sb.PROFILE_TEXT      # the documented shape
 
@@ -2001,7 +2144,7 @@ def test_setup_counts_only_when_bwrap_then_works(monkeypatch, works):
     # Regression: install_profile returned True whatever the probe said afterwards, and the UI then
     # told the user sandbox support was set up while every app kept running Off.
     monkeypatch.setattr(sb, "OS", "linux")
-    monkeypatch.setattr(sb.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(sb.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
     ran = []
     monkeypatch.setattr(sb.subprocess, "run", lambda cmd, **kw: (ran.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
     monkeypatch.setattr(sb, "userns_works", lambda refresh=False: works)
@@ -2010,7 +2153,7 @@ def test_setup_counts_only_when_bwrap_then_works(monkeypatch, works):
     else:
         with pytest.raises(sb.SandboxError, match="still can't create a user namespace"):
             sb.install_profile()
-    assert ran and ran[0][:2] == ["pkexec", "/bin/sh"] and "apparmor_parser -r" in ran[0][-1]
+    assert ran and ran[0][:3] == ["/usr/bin/pkexec", "/bin/sh", "-c"] and "apparmor_parser -r" in ran[0][3]
 
 
 # ---------------------------------------------------------------- Ubuntu 25.04+: the system's own bwrap profile (R17.10.2)
@@ -2085,7 +2228,7 @@ def test_a_setup_whose_check_fails_for_the_user_leaves_nothing_installed(tmp_pat
     tool("getent", 'echo "kata:x:1000:1001::/home/kata:/bin/sh"\n')
     if check != "no-setpriv":
         tool("setpriv", f'echo "setpriv $1 $2 $3" >> {log}\nexit {0 if check == "passes" else 1}\n')
-    r = subprocess.run(["/bin/sh", "-c", sb.setup_script("/usr/bin/bwrap")], env={"PATH": str(stub), "PKEXEC_UID": "1000"},
+    r = subprocess.run(sb.setup_command("/usr/bin/bwrap"), env={"PATH": str(stub), "PKEXEC_UID": "1000"},
                        capture_output=True, text=True, timeout=30)
     calls = log.read_text().splitlines()
     assert calls[0] == f"apparmor_parser -r {d / 'appkata-sandbox'}"
@@ -2096,6 +2239,60 @@ def test_a_setup_whose_check_fails_for_the_user_leaves_nothing_installed(tmp_pat
     else:
         assert r.returncode == 0, r.stderr
         assert (d / "appkata-sandbox").read_text() == sb.PROFILE_TEXT and not any(" -R " in c for c in calls)
+
+
+_BWRAP_FOLDERS = {"a line break": "real\nAAEOF\ntouch {ran}\n#", "a space": "my tools", "a brace": "x{a,b}",
+                  "a quote and a dollar": "it's $(touch {ran})", "plain": "tools-1.0_x+y"}
+
+
+@pytest.mark.parametrize("folder", list(_BWRAP_FOLDERS))
+def test_the_apparmor_setup_has_no_path_in_its_script_and_profiles_only_a_path_it_can_name(tmp_path, monkeypatch, folder):
+    # #689's review, P2-B2: the one-time setup wrote bwrap's real path into the script pkexec runs as
+    # root, inside a heredoc, so a path holding a line break and the heredoc's end ran what followed
+    # it as root; a space or a brace made a profile apparmor_parser refused, with its own message
+    # alone. And pkexec was run by name, on AppKata's own PATH, where ~/.local/bin comes first. The
+    # script's text is the same whatever the paths: the profile's file, its text and the bwrap the
+    # probe runs are its arguments. A bwrap whose path an AppArmor profile can't name as it is (only
+    # letters, digits and . _ + - /) is refused before any prompt, saying why. pkexec is the
+    # system's. Here the setup runs for real, as the user, with stand-ins for the root-only tools.
+    d = _apparmor_dir(tmp_path, monkeypatch, {})
+    monkeypatch.setattr(sb, "OS", "linux")
+    ran = tmp_path / "ROOT-RAN"
+    bwrap = tmp_path / _BWRAP_FOLDERS[folder].replace("{ran}", str(ran)) / "bwrap"
+    bwrap.parent.mkdir(parents=True)
+    bwrap.write_text("#!/bin/sh\nexit 0\n")
+    bwrap.chmod(0o755)
+    monkeypatch.setattr(sb, "bwrap_path", lambda *a, **k: str(bwrap))
+    stub, system, theirs, log = tmp_path / "stub", tmp_path / "system", tmp_path / "home" / ".local" / "bin", tmp_path / "log"
+    for folder_ in (stub, system, theirs):
+        folder_.mkdir(parents=True)
+    for real in ("cat", "rm", "cut", "touch"):                                 # the script's PATH is the stand-ins alone
+        (stub / real).symlink_to(subprocess.run(["sh", "-c", f"command -v {real}"], capture_output=True, text=True).stdout.strip())
+    for where, name, body in ((stub, "apparmor_parser", f'echo "apparmor_parser $*" >> {log}\n'), (stub, "getent", 'echo "kata:x:1000:1001::/h:/bin/sh"\n'),
+                              (stub, "setpriv", "exit 0\n"), (system, "pkexec", "exit 0\n"), (theirs, "pkexec", "exit 0\n")):
+        (where / name).write_text("#!/bin/sh\n" + body)
+        (where / name).chmod(0o755)
+    monkeypatch.setattr(sb, "HOST_PATH", str(system))
+    monkeypatch.setenv("PATH", f"{theirs}:{system}")                          # a login's: the user's own folder first
+    prompts, real_run = [], subprocess.run
+
+    def run(cmd, **kw):                         # pkexec's prompt, approved: what it runs, as the user here
+        prompts.append(cmd)
+        return real_run(cmd[1:], env={"PATH": str(stub), "PKEXEC_UID": "1000"}, capture_output=True, text=True, timeout=30)
+    monkeypatch.setattr(sb.subprocess, "run", run)
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    monkeypatch.setattr(sb, "nested_userns_works", lambda refresh=False: True)
+    if folder != "plain":
+        with pytest.raises(sb.SandboxError, match="an AppArmor profile can't name"):
+            sb.install_profile()
+        assert prompts == [] and not ran.exists() and not (d / "appkata-sandbox").exists()     # no prompt, nothing run or written
+        return
+    assert sb.install_profile() is True
+    (pkexec, shell, c, script, *args), = prompts
+    assert (pkexec, shell, c) == (str(system / "pkexec"), "/bin/sh", "-c")   # the system's pkexec, not the one first on PATH
+    assert str(bwrap) not in script and str(d) not in script                  # no path is part of the script's text
+    assert str(bwrap) in args and (d / "appkata-sandbox").read_text() == sb.profile_text(str(bwrap))
+    assert log.read_text().splitlines() == [f"apparmor_parser -r {d / 'appkata-sandbox'}"]
 
 
 def test_a_chromium_app_gets_no_sandbox_only_where_its_own_cannot_run():
@@ -2156,9 +2353,9 @@ def test_the_menu_entry_passes_the_menu_word_only_to_a_launcher(fake_home, monke
     from appkata_core import install
     monkeypatch.setenv("XDG_DATA_HOME", str(fake_home / ".local/share"))
     p = install._desktop_entry("app", "App", "/x/run", "", "An app", launcher=True)
-    assert 'Exec="/x/run" --appkata-menu %U\n' in open(p).read()
+    assert 'Exec=/bin/sh "/x/run" --appkata-menu %U\n' in open(p).read()
     p = install._desktop_entry("app", "App", "/x/bin/app", "", "An app")
-    assert 'Exec="/x/bin/app" %U\n' in open(p).read()
+    assert 'Exec=/bin/sh "/x/bin/app" %U\n' in open(p).read()
 
 
 def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):
@@ -2191,7 +2388,15 @@ def _forward(tmp_path, cwd, incwd, visible, args):
     r = subprocess.run([sys.executable, str(helper), "io.appkata.t", str(tmp_path / "run"), incwd, *map(str, visible), "--", *args],
                        cwd=str(cwd), capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    return shlex.split(r.stdout)
+    return forwarded_words(r.stdout)
+
+
+def forwarded_words(answer: str) -> list[str]:
+    """The file-argument helper's answer, read by its own rules: an argument a line, "=" first, a
+    backslash doubled and a line break as a backslash and n (CR1.5-31: it is data, no longer shell)."""
+    lines = answer.split("\n")
+    assert lines.pop() == "" and all(l.startswith("=") for l in lines), answer
+    return [re.sub(r"\\(.)", lambda m: "\n" if m[1] == "n" else m[1], l[1:]) for l in lines]
 
 
 def test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees(tmp_path):

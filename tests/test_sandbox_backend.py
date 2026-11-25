@@ -17,16 +17,55 @@ URL = "https://github.com/example/demo"
 
 @pytest.fixture
 def be(tmp_path, monkeypatch):
+    """A Backend whose home is the test's folder. It runs no start-up pass (a test that wants one
+    calls it), and every thread the test started has ended before monkeypatch gives HOME back, so
+    nothing it does reaches the real home (#689's review, P6-C1)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from appkata.backend import Backend
-    b = Backend(db_path=str(tmp_path / "appkata.db"))
+    before = set(threading.enumerate())
+    b = Backend(db_path=str(tmp_path / "appkata.db"), heal=False)
     b.db.x("INSERT INTO trusts(url, name, enabled, score) VALUES(?,?,1,3)", ("https://example.org/trust", "Alice"))
     b._is_cli = lambda url, eff=None: False
     b._sandbox_kind = lambda url: "appimage"
-    return b
+    yield b
+    b._timer.stop()
+    late = [t for t in set(threading.enumerate()) - before if not isinstance(t, threading._DummyThread)]
+    for t in late:
+        t.join(timeout=30)
+    assert [t.name for t in late if t.is_alive()] == [], "a thread the test started outlives it, and would run with the real HOME"
+
+
+def test_the_fixtures_backend_starts_no_thread_that_could_outlive_the_test(request, monkeypatch):
+    # #689's review, P6-C1: the fixture's Backend started AppKata's start-up pass on a thread of its
+    # own. Run late (a loaded machine), it read the test's database after the test had given HOME
+    # back, and wrote the test's Demo into the real ~/bin: ~/bin/apps/demo/run and ~/bin/demo.
+    # A test that wants the pass calls it, on its own thread or not, and waits for it.
+    started = []
+    real = threading.Thread.start
+    monkeypatch.setattr(threading.Thread, "start", lambda self: started.append(self.name) or real(self))
+    request.getfixturevalue("be")
+    assert started == []
+
+
+def test_no_backend_a_test_builds_runs_appkatas_start_up_pass_on_its_own(tmp_path):
+    # P6-C1's class: a Backend built with the default (heal=True) starts that pass on a thread the
+    # test doesn't wait for; four of them did, in three files. Each passes heal=False now.
+    import ast
+    folder = os.path.dirname(os.path.abspath(__file__))
+    healing = []
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".py"):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for call in ast.walk(tree):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Backend"
+                        and not any(k.arg == "heal" and isinstance(k.value, ast.Constant) and k.value.value is False
+                                    for k in call.keywords)):
+                    healing.append(f"{name}:{call.lineno}")
+    assert healing == []
 
 
 def _review(be, template: str) -> None:
@@ -702,6 +741,409 @@ def test_a_sandbox_chosen_in_install_options_for_an_installed_app_applies_at_onc
     text = open(rec["launcher"]).read()
     assert "--share-net" not in text and "xdg-dbus-proxy" not in text      # the launcher says what the detail says
     assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
+
+
+def test_a_sandbox_change_that_cant_be_written_says_so_and_leaves_the_app_as_it_was(be, tmp_path, monkeypatch):
+    # #689's review, P4-B3: turning a sandbox Off with the menu entry's write failing (a full disk)
+    # left the launcher removed under a record that still named it, and the Sandbox dialog's Save
+    # said nothing: _regenerate_launcher only logged it. The change is taken back (install's
+    # test_a_sandbox_change_whose_menu_file_cant_be_written_leaves_the_app_as_it_was), and a toast
+    # says it wasn't made.
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    with open(rec["launcher"], "rb") as f:
+        launcher = f.read()
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full_once(path, data, mode):
+        if path.endswith(".desktop") and not failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+    monkeypatch.setattr(install, "_write_whole", full_once)
+    be.setSandbox(URL, {"template": "off"})
+    assert failed and toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: [Errno 28] No space left on device")]
+    assert json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"]) == rec
+    with open(rec["launcher"], "rb") as f:
+        assert f.read() == launcher and be.sandboxInfo(URL)["active"]          # it runs sandboxed, as it did
+    be.setSandbox(URL, {"template": "off"})                                   # saved again, with room on the disk
+    assert len(toasts) == 1 and not os.path.exists(rec["launcher"]) and not be.sandboxInfo(URL)["active"]
+
+
+# What App Detail and the Sandbox dialog say of an app's sandbox (sandboxInfo's own words for it)
+_SHOWN = ("source", "template", "level", "grants", "chips", "network", "customized", "active", "launcherHash", "reviewBadge",
+          "isCli")
+
+
+@pytest.mark.parametrize("how", ["the Sandbox dialog, Strict", "the Sandbox dialog, Off", "Install options, Strict",
+                                 "a corrected kind"])
+def test_a_sandbox_change_that_cant_be_written_takes_its_choice_back_with_it(be, tmp_path, monkeypatch, how):
+    # #689's review, P5-3: a Save whose change was taken back (the menu entry's write failing on a
+    # full disk) kept the choice saved. App Detail and the Sandbox dialog showed it as in force,
+    # Strict and no network, while the app ran with the network; the Audit's "set the sandbox of"
+    # row named the old launcher's hash as written for Strict; and a failed Off stayed sandboxed
+    # under "Off", which AppKata's start never rewrites. The choice goes back with the change, and a
+    # failed change has no Audit entry (R13.3).
+    from appkata_core import install
+    if how == "a corrected kind":           # the kind the user says the app is, as the dialog saves it (R17.3.3):
+        monkeypatch.setattr(be, "_is_cli", lambda url, eff=None: be._install_settings(url).get("cliKind") == "cli")
+    else:                                   # with no review, the default for that kind applies
+        _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    shown, settings = {k: be.sandboxInfo(URL)[k] for k in _SHOWN}, be._install_settings(URL)
+    audited = [(r["action"], r["subject"]) for r in be.db.all("SELECT action, subject FROM audit")]
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full_once(path, data, mode):
+        if path.endswith(".desktop") and not failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+    monkeypatch.setattr(install, "_write_whole", full_once)
+    monkeypatch.setattr(be, "_install", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no install expected")))
+    strict = {"template": "strict", "overrides": {}}
+
+    def save():
+        if how == "the Sandbox dialog, Strict":
+            be.setSandbox(URL, strict)
+        elif how == "the Sandbox dialog, Off":
+            be.setSandbox(URL, {"template": "off"})
+        elif how == "Install options, Strict":
+            be.installWith(URL, {"kind": "tarball", "appMenu": True, "install": False, "sandbox": strict})
+        else:
+            be.installWith(URL, {"kind": "tarball", "appMenu": True, "install": False, "cliKind": "cli"})
+    save()
+    assert failed and toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: [Errno 28] No space left on device")]
+    assert json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"]) == rec      # it runs as it did
+    assert {k: be.sandboxInfo(URL)[k] for k in _SHOWN} == shown                 # and is shown as it runs
+    assert {k: v for k, v in be._install_settings(URL).items() if k in be._SANDBOX_KEYS + ("cliKind",)} == \
+           {k: v for k, v in settings.items() if k in be._SANDBOX_KEYS + ("cliKind",)}
+    assert [r["action"] for r in be.db.all("SELECT action FROM audit")][len(audited):] in ([], ["chose how to install"])                            # no sandbox change to audit
+    save()                                                                      # saved again, with room on the disk
+    assert len(toasts) == 1 and be.sandboxInfo(URL)["template"] == {"the Sandbox dialog, Off": "off", "a corrected kind": "cli-tool"}.get(how, "strict")
+    assert be.db.one("SELECT action FROM audit ORDER BY id DESC LIMIT 1")["action"] == "set the sandbox of"
+
+
+def test_a_sandbox_change_that_cant_be_put_back_says_what_isnt_as_it_was(be, tmp_path, monkeypatch):
+    # #689's review, P5-2: where a failed change couldn't all be put back either, the toast said the
+    # app "runs as it did" all the same. Here the file system makes no hard links, so putting the
+    # change back writes what it replaced, and the disk is full from the menu entry's write on: the
+    # toast names what isn't as it was (install's
+    # test_a_sandbox_change_that_cant_be_put_back_names_what_isnt_as_it_was holds the names to the
+    # files), and the choice goes back as for a change put back in full (P5-3).
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    shown = {k: be.sandboxInfo(URL)[k] for k in _SHOWN if k not in ("active", "launcherHash")}
+    toasts, real, failed = [], install._write_whole, []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+
+    def full(path, data, mode):             # the menu entry's write, and every one after it
+        if path.endswith(".desktop") or failed:
+            failed.append(path)
+            raise OSError(28, "No space left on device")
+        return real(path, data, mode)
+
+    def no_hard_links(*a, **k):
+        raise OSError(1, "Operation not permitted")
+    monkeypatch.setattr(install, "_write_whole", full)
+    monkeypatch.setattr(os, "link", no_hard_links)
+    be.setSandbox(URL, {"template": "off"})
+    assert toasts == [("error", "Couldn't change the sandbox of Demo: [Errno 28] No space left on device. It couldn't all be "
+                                "put back either: its launcher and its app-menu entry aren't as they were.")]
+    assert {k: be.sandboxInfo(URL)[k] for k in shown} == shown              # the choice it runs with, as it was
+
+
+def test_an_error_rewriting_one_apps_launcher_is_said_and_stops_nothing_else(be, tmp_path, monkeypatch):
+    # #689's review, C-1 (its checker's note on P4-1): _regenerate_launcher caught InstallError and
+    # OSError alone. Any other error (P4-1's UnicodeEncodeError was one) left the Sandbox dialog's
+    # Save after the choice was saved and before its audit row and the reload: the choice was in
+    # force, unaudited, and the window not refreshed. At AppKata's start it stopped the heal pass,
+    # so the apps after that one kept their stale launchers, at every start. Here the launcher's
+    # rewrite fails for one app with an error AppKata doesn't expect.
+    from appkata_core import install
+    other = URL + "-other"
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    target = tmp_path / "bin" / "apps" / "other"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    (target / "1.0" / "bin" / "other").write_text("#!/bin/sh\n")
+    (target / "1.0" / "bin" / "other").chmod(0o755)
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/other"},
+           "target": str(target), "links": [], "files": []}
+    be.db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)",
+            (other, "Other", "1.0", "tarball", json.dumps(rec), now()))
+    be._app = lambda url: {"url": url, "name": "Demo" if url == URL else "Other", "installed": "1.0"}
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    launchers = {}
+    for url in (URL, other):
+        be._regenerate_launcher(url)
+        be._pin_sandbox(url, be._resolved_sandbox(url))
+        launchers[url] = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])["launcher"]
+        with open(launchers[url], "wb") as f:
+            f.write(b"#!/bin/sh\n# hand-edited\n")                     # not today's text: the start rewrites it
+    real, toasts, reloads = install.rewrite_launcher, [], []
+
+    def fails_for_demo(db, app, portable):
+        if app["url"] == URL:
+            raise ValueError("a stand-in for an error AppKata doesn't expect")
+        return real(db, app, portable)
+    monkeypatch.setattr(install, "rewrite_launcher", fails_for_demo)
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+    monkeypatch.setattr(be, "reload", lambda: reloads.append(1))
+    be._heal_launchers()                                                    # AppKata's start goes on past Demo
+    with open(launchers[other], "rb") as f:
+        assert f.read() != b"#!/bin/sh\n# hand-edited\n"
+    audited = be.db.one("SELECT COUNT(*) AS n FROM audit")["n"]
+    be.setSandbox(URL, {"template": "strict", "overrides": {}})
+    assert toasts == [("error", "Couldn't change the sandbox of Demo, so it runs as it did: a stand-in for an error AppKata doesn't expect")]
+    # the window is refreshed, and the choice goes back with the change, which isn't audited (P5-3)
+    assert reloads == [1] and be.sandboxInfo(URL)["template"] == "online-app"
+    assert be.db.one("SELECT COUNT(*) AS n FROM audit")["n"] == audited
+
+
+@pytest.mark.parametrize("fails", ["the menu entry", "the launcher"])
+def test_a_launcher_appkatas_start_cant_rewrite_is_left_as_it_was_and_not_audited(be, tmp_path, monkeypatch, caplog, fails):
+    # #689's review, P6-1: AppKata's start rewrites a launcher that isn't today's text (an older
+    # AppKata's, or a hand-edited one), and dropped what the rewrite returned. Where it couldn't be
+    # written (a full disk, the menu folder read-only), the rewrite was put back (P5-2) and the start
+    # still wrote "rewrote the launcher of Demo", with the hash of the launcher left on disk, written
+    # for a set it wasn't written for, again at every start while the failure lasted, and logged
+    # that it had brought the launcher up to today's text. A failed operation is no Audit entry; the
+    # App log has it (R13.3), and the next start tries again.
+    import hashlib
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    launcher = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])["launcher"]
+    with open(launcher, "wb") as f:
+        f.write(b"#!/bin/sh\n# hand-edited\n")                            # not today's text: the start rewrites it
+    audit = lambda: [json.loads(r["detail"]) for r in be.db.all(                               # noqa: E731
+        "SELECT detail FROM audit WHERE action='rewrote the launcher of' ORDER BY id")]
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    with monkeypatch.context() as m:
+        m.setattr(install, "_desktop_entry", full) if fails == "the menu entry" else m.setattr(sb, "write_launcher", full)
+        assert be._heal_launchers() == [] and be._heal_launchers() == []      # two starts: nothing rewritten
+    with open(launcher, "rb") as f:
+        assert f.read() == b"#!/bin/sh\n# hand-edited\n"                    # put back, as R17.4 has it
+    assert audit() == []                                                    # and no Audit entry says otherwise
+    assert caplog.text.count("couldn't regenerate the launcher for") == 2 and "up to today's text" not in caplog.text
+    caplog.clear()
+    assert be._heal_launchers() == [URL]                                    # with room, the next start rewrites it
+    with open(launcher, "rb") as f:
+        written = f.read()
+    assert written != b"#!/bin/sh\n# hand-edited\n" and "up to today's text" in caplog.text
+    assert [d["launcher"] for d in audit()] == [hashlib.sha256(written).hexdigest()[:16]]   # once, the launcher it wrote
+    assert be._heal_launchers() == [] and len(audit()) == 1
+
+
+def test_a_launcher_appkatas_start_wrote_and_couldnt_put_back_is_audited_as_it_runs(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-1: AppKata's start rewrites a hand-edited launcher; the launcher is written,
+    # the menu entry's write fails (a full disk), and putting the launcher back fails too. The start
+    # skipped every failed rewrite (P6-1), this one included: today's launcher was left in place,
+    # the one that runs, with no Audit entry, and the next start found it current, so no start ever
+    # audited it, though R17.4 has the Audit record a hash each time AppKata writes a launcher.
+    import hashlib
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    launcher = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])["launcher"]
+    with open(launcher, "wb") as f:
+        f.write(b"#!/bin/sh\n# hand-edited\n")                            # not today's text: the start rewrites it
+    audit = lambda: [json.loads(r["detail"]) for r in be.db.all(                               # noqa: E731
+        "SELECT detail FROM audit WHERE action='rewrote the launcher of' ORDER BY id")]
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+    real = os.replace
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    def no_put_back(src, dst, *a, **k):
+        if dst == launcher and str(src).endswith(".was"):
+            raise OSError(28, "No space left on device")
+        return real(src, dst, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr(install, "_desktop_entry", full)
+        m.setattr(install.os, "replace", no_put_back)
+        assert be._heal_launchers() == [URL]                                # its launcher was rewritten
+    with open(launcher, "rb") as f:
+        written = f.read()
+    assert written != b"#!/bin/sh\n# hand-edited\n" and not [n for n in os.listdir(os.path.dirname(launcher)) if n.endswith(".was")]
+    assert [d["launcher"] for d in audit()] == [hashlib.sha256(written).hexdigest()[:16]]   # the launcher that runs
+    assert "not put back: its launcher" in caplog.text and "couldn't be put back: it runs as written" in caplog.text
+    assert be._heal_launchers() == [] and len(audit()) == 1                 # the next start finds it current
+
+
+def test_appkatas_own_launcher_the_start_cant_remove_is_left_and_not_said_removed(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-1 (the second read's P7-T2): AppKata's start removes the launcher an older
+    # AppKata gave AppKata itself (R17.1). Where that can't be written (here its record can't be
+    # stored), it is put back, and the start neither says AppKata runs unsandboxed again nor returns
+    # it as done; the next start removes it. No test failed with the start saying so whatever
+    # happened.
+    import logging
+    from appkata_core import APPKATA_REPO, install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    image = tmp_path / "Downloads" / "AppKata-x86_64.AppImage"
+    image.parent.mkdir()
+    image.write_text("#!/bin/sh\n")
+    image.chmod(0o755)
+    monkeypatch.setenv("APPIMAGE", str(image))
+    be._ensure_self()
+    be._app = lambda url: {"url": url, "name": "AppKata", "installed": "9.9"} if url == APPKATA_REPO else None
+    rec = lambda: json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (APPKATA_REPO,))["record"])  # noqa: E731
+    install.rewrite_launcher(be.db, {"url": APPKATA_REPO, "name": "AppKata", "sandbox": sb.resolve_template("strict")},
+                             be._app_options(APPKATA_REPO))                 # what an older AppKata left behind
+    left = rec()["launcher"]
+    with open(left, "rb") as f:
+        text = f.read()
+    caplog.set_level(logging.INFO, logger="appkata.gui")
+    real, failed = be.db.x, []
+
+    def store(sql, *a, **k):
+        if sql.startswith("UPDATE installs") and not failed:
+            failed.append(sql)
+            raise OSError(28, "No space left on device")
+        return real(sql, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr(be.db, "x", store)
+        assert be._heal_launchers() == []                                   # not done
+    assert failed and rec()["launcher"] == left and rec()["exec"] == left
+    with open(left, "rb") as f:
+        assert f.read() == text                                             # put back, as it was
+    assert "couldn't regenerate the launcher for" in caplog.text and "runs unsandboxed again" not in caplog.text
+    assert be._heal_launchers() == [APPKATA_REPO]                           # the next start removes it
+    assert not rec().get("launcher") and not os.path.exists(left) and "runs unsandboxed again" in caplog.text
+
+
+def test_appkatas_start_removes_what_a_stopped_change_left_beside_an_apps_files(be, tmp_path, monkeypatch):
+    # #689's review, P6-B2: a sandbox change keeps the files it replaces as hard links beside them
+    # (<path>.<pid>.was) and drops them once it is written or put back. A process stopped between
+    # the two (killed, the power gone) left them, as a write stopped part-way leaves
+    # <path>.<pid>.tmp, and only the app's next sandbox change removed the .was. AppKata's start
+    # removes both now, for every app it installed, and nothing else.
+    import re
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    be._regenerate_launcher(URL)
+    be._pin_sandbox(URL, be._resolved_sandbox(URL))
+    with monkeypatch.context() as m:
+        m.setattr(install, "_drop_aside", lambda kept: None)                # stopped before it dropped what it kept
+        assert be._regenerate_launcher(URL) is None
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    files = [rec["launcher"], sb.identity_path("demo"), sb.home_owner_path("demo")] + rec["files"][1:]
+    assert len(files) == 5 and all(os.path.isfile(f) for f in files), files    # its launcher, marker, owner, menu script and entry
+    for f in files:
+        open(f"{f}.4242.tmp", "w").close()                                  # a write another process didn't finish
+        open(f"{f}.mine", "w").close()                                      # and a file that isn't AppKata's
+    beside = lambda: sorted(os.path.join(d, n) for d, _, names in os.walk(tmp_path) for n in names      # noqa: E731
+                            if re.search(r"\.[0-9]+\.(was|tmp)$", n))
+    assert len(beside()) == 10, beside()
+    be._heal_launchers_at_startup()
+    assert beside() == [] and all(os.path.isfile(f) and os.path.isfile(f + ".mine") for f in files)
+
+
+def test_appkatas_start_removes_what_a_stopped_write_left_beside_the_launchers_shared_files_and_logs_what_it_removed(be, tmp_path, monkeypatch, caplog):
+    # #689's review, P7-B2 and P7-B1b, the owner's decisions (option A each). Every launcher write
+    # writes the files all the sandboxed apps' launchers share -- the seccomp filter, the
+    # file-argument helper and the xdg-open shim -- through <path>.<pid>.tmp, and no sweep reached
+    # what a stopped write left beside them. And AppKata's start removed what it found beside an
+    # app's files and said nothing of it, though it logs each launcher and command link it changes.
+    # The start removes the shared files' leftovers too (a .tmp only: nothing keeps them aside, so a
+    # .was beside them isn't AppKata's), and the App log has one line for each app whose files it
+    # removed something beside, naming what, and one for the shared files (R17.4).
+    import logging
+    from appkata_core import install
+    _review(be, "online-app")
+    _tarball_install(be, tmp_path)
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(sb, "userns_works", lambda refresh=False: True)
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    shared = [p for p in (sb.seccomp_path(), sb.forward_path(), os.path.join(sb.shims_dir(), "xdg-open")) if os.path.isfile(p)]
+    assert shared[-2:] == [sb.forward_path(), os.path.join(sb.shims_dir(), "xdg-open")], shared
+    apps = [f"{rec['launcher']}.4241.was", f"{sb.identity_path('demo')}.4242.tmp"]          # beside Demo's own files
+    stopped = [f"{p}.4242.tmp" for p in shared]                                            # and beside the shared ones
+    kept = [f"{p}.4242.was" for p in shared] + [f"{p}.abc.tmp" for p in shared] + [f"{shared[0]}.4242.tmp.d", f"{shared[0]}.mine"]
+    for f in apps + stopped + kept:
+        open(f, "w").close()
+    os.mkdir(f"{shared[-1]}.77.tmp")                                                       # a folder of the shape
+    kept.append(f"{shared[-1]}.77.tmp")
+    caplog.set_level(logging.INFO, logger="appkata.install")
+    be._heal_launchers_at_startup()
+    assert [f for f in apps + stopped if os.path.lexists(f)] == [] and [f for f in kept if not os.path.lexists(f)] == []
+    assert all(os.path.isfile(p) for p in shared)
+    said = [r.getMessage() for r in caplog.records if r.name == "appkata.install" and r.getMessage().startswith("removed")]
+    assert said == ["removed what a stopped change or write left beside the files of Demo: " + ", ".join(apps),
+                    "removed what a stopped write left beside the files every sandboxed app's launcher uses: " + ", ".join(stopped)], said
+    caplog.clear()
+    be._heal_launchers_at_startup()                                                        # nothing left: nothing said
+    assert [r for r in caplog.records if r.getMessage().startswith("removed")] == []
+    assert install.sweep_left_beside(be.db) == []
+
+
+def test_a_launcher_whose_paths_arent_utf8_is_shown_and_hashed_as_it_is_written(be, tmp_path, monkeypatch):
+    # #689's review, P4-1: a launcher holds its paths as their own bytes, UTF-8 or not (an install
+    # folder named in Latin-1 on a UTF-8 system), where it was written as text and such a folder
+    # stopped the install. "Show the launch command" and the Audit's hash of it read it back as
+    # UTF-8 text, which such a launcher isn't: App Detail and the change's audit row stopped with
+    # Python's decoding error. The command is shown with the byte as the replacement character,
+    # and the hash is of the bytes written, as it always was of a UTF-8 launcher's.
+    import hashlib
+    _review(be, "online-app")
+    target = _tarball_install(be, tmp_path / os.fsdecode(b"\xe9t\xe9"))
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    be.db.x("UPDATE installs SET record=? WHERE url=?", (json.dumps({**rec, "root": os.path.dirname(target)}), URL))
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "support_status", lambda: {"status": "ok"})
+    be._regenerate_launcher(URL)
+    rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])
+    with open(rec["launcher"], "rb") as f:
+        data = f.read()
+    assert rec["launcher"] == os.path.join(target, "run") and os.fsencode(target) in data
+    assert be.sandboxLaunchCommand(URL) == data.decode("utf-8", "replace") and "�t�" in be.sandboxLaunchCommand(URL)
+    assert be.sandboxInfo(URL)["launcherHash"] == hashlib.sha256(data).hexdigest()[:16]
+    assert be._heal_launchers() == []                                     # AppKata's start finds it up to date
+    be.setSandbox(URL, {"template": "strict", "overrides": {}})
+    row = be.db.one("SELECT action, detail FROM audit ORDER BY id DESC LIMIT 1")
+    with open(rec["launcher"], "rb") as f:
+        assert row["action"] == "set the sandbox of" and hashlib.sha256(f.read()).hexdigest()[:16] in row["detail"]
 
 
 def test_follow_reviewers_off_uses_the_users_default_and_never_badges(be, monkeypatch):

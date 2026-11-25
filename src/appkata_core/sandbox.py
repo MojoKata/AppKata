@@ -932,8 +932,9 @@ DEFAULT_BWRAP = "/usr/bin/bwrap"
 
 
 def bwrap_path() -> str:
-    """The bwrap the profile must name: the one on PATH, with symlinks resolved."""
-    found = shutil.which("bwrap")
+    """The bwrap the profile must name: the one every launcher runs (:func:`host_which`), with
+    symlinks resolved."""
+    found = host_which("bwrap")
     return os.path.realpath(found) if found else DEFAULT_BWRAP
 
 
@@ -960,8 +961,9 @@ _nested_cache: bool | None = None
 def have_tools() -> bool:
     """Whether this system can sandbox at all: bwrap is all a launcher needs. xdg-dbus-proxy only gives
     a Standard app its filtered session bus, and without it the app still runs sandboxed, with no bus
-    (:func:`have_bus_filter`; review 2, F12: a missing proxy left every app, Strict too, unsandboxed)."""
-    return bool(shutil.which("bwrap"))
+    (:func:`have_bus_filter`; review 2, F12: a missing proxy left every app, Strict too, unsandboxed).
+    The bwrap a launcher can run (:func:`host_which`), not just any on AppKata's own PATH."""
+    return bool(host_which("bwrap"))
 
 
 # The xdg-dbus-proxy the launcher runs (R17.5): the one its PATH finds, every link followed, where
@@ -997,9 +999,10 @@ TOOL_PACKAGES = {"bwrap": "bubblewrap", "xdg-dbus-proxy": "xdg-dbus-proxy"}
 
 
 def missing_tools() -> list[str]:
-    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order: xdg-dbus-proxy
-    where none the launcher runs is here (:func:`have_bus_filter`)."""
-    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not (have_bus_filter() if exe == "xdg-dbus-proxy" else shutil.which(exe))]
+    """The packages of the sandbox's tools this system lacks, in TOOL_PACKAGES' order, as
+    :func:`have_tools` and :func:`have_bus_filter` say: xdg-dbus-proxy where none the launcher runs
+    is here."""
+    return [pkg for exe, pkg in TOOL_PACKAGES.items() if not (have_tools() if exe == "bwrap" else have_bus_filter())]
 
 
 def tools_hints(missing: list[str], elsewhere: str = "") -> dict:
@@ -1051,12 +1054,13 @@ def userns_works(refresh: bool = False) -> bool:
     global _userns_cache, _userns_failed_at
     if _userns_cache is not None and not refresh and (_userns_cache or time.monotonic() - _userns_failed_at < PROBE_RETRY_S):
         return _userns_cache
-    if OS != "linux" or not shutil.which("bwrap"):
+    bwrap = host_which("bwrap") if OS == "linux" else None      # the one the launchers run, and no other
+    if not bwrap:
         _userns_cache, _userns_failed_at = False, time.monotonic()
         return False
     try:
         p = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
+            [bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
              "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
              "--unshare-user", "--die-with-parent", "--", "/usr/bin/true"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
@@ -1083,7 +1087,7 @@ def nested_userns_works(refresh: bool = False) -> bool:
         return True
     try:
         p = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+            [host_which("bwrap") or "bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
              "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-user", "--die-with-parent",
              "--", unshare, "--user", "--map-root-user", "/usr/bin/true"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
@@ -1307,41 +1311,56 @@ def bus_warning() -> dict:
                     "trust offline."}
 
 
-def _bwrap_probe_words(bwrap: str) -> str:
-    """The userns_works() probe as shell words, for the setup script to run as the user."""
-    return " ".join(shlex.quote(w) for w in [
-        bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
-        "--proc", "/proc", "--dev", "/dev", "--unshare-user", "--die-with-parent", "--", "/usr/bin/true"])
+# What the one-time setup runs as root behind pkexec (R17.10): write and load the profile, then run
+# the bwrap probe (userns_works') *as the user who asked* (pkexec sets PKEXEC_UID) -- loading a
+# profile is not the goal, bwrap working for the user is. If it doesn't, the profile is unloaded and
+# removed in the same run, so a failed setup leaves nothing behind (review 2, F2: on Ubuntu 26.04 a
+# profile loaded beside Ubuntu's own left bwrap unable to start for anyone, and it stayed, across
+# reboots). Its text is the same whatever the paths: the profile's file, its text and the bwrap are
+# its arguments, $1 to $3, never part of the script (#689's review, P2-B2: bwrap's path was written
+# into a heredoc, and one holding a line break and the heredoc's end ran what followed it as root).
+SETUP_SCRIPT = (
+    "set -e\n"
+    'profile=$1 text=$2 bwrap=$3\n'
+    'printf "%s" "$text" > "$profile"\n'
+    'apparmor_parser -r "$profile"\n'
+    'if [ -n "${PKEXEC_UID:-}" ] && command -v setpriv >/dev/null 2>&1; then\n'
+    '  gid=$(getent passwd "$PKEXEC_UID" | cut -d: -f4)\n'
+    '  if ! setpriv --reuid="$PKEXEC_UID" --regid="${gid:-$PKEXEC_UID}" --clear-groups -- "$bwrap" --ro-bind /usr /usr'
+    ' --symlink usr/lib /lib --symlink usr/lib64 /lib64 --proc /proc --dev /dev --unshare-user --die-with-parent'
+    ' -- /usr/bin/true >/dev/null 2>&1; then\n'
+    '    apparmor_parser -R "$profile" >/dev/null 2>&1 || true\n'
+    '    rm -f "$profile"\n'
+    '    echo "the profile loaded, but bwrap still couldn\'t create a user namespace for you, so it was removed again" >&2\n'
+    "    exit 3\n"
+    "  fi\n"
+    "fi\n")
+# The paths an AppArmor profile's attachment names as they are: any other character is a glob (`*`,
+# `{`, `[`), ends the name (white space) or the rule (a line break), so a bwrap whose real path
+# holds one is refused before any prompt, saying why (#689's review, P2-B2).
+_PROFILE_NAMES = re.compile(r"/[A-Za-z0-9._+/-]*")
 
 
-def setup_script(bwrap: str | None = None) -> str:
-    """What the one-time setup runs as root behind pkexec (R17.10): write and load the profile, then
-    run the bwrap probe *as the user who asked* (pkexec sets PKEXEC_UID) -- loading a profile is not
-    the goal, bwrap working for the user is. If it doesn't, the profile is unloaded and removed in the
-    same run, so a failed setup leaves nothing behind (review 2, F2: on Ubuntu 26.04 a profile loaded
-    beside Ubuntu's own left bwrap unable to start for anyone, and it stayed, across reboots)."""
+def setup_command(bwrap: str | None = None) -> list[str]:
+    """The one-time setup's command (:data:`SETUP_SCRIPT`, with its arguments), for pkexec to run as
+    root. Raises SandboxError for a bwrap whose real path a profile can't name as it is."""
     bwrap = bwrap or bwrap_path()
-    p = shlex.quote(PROFILE_PATH)
-    return (
-        "set -e\n"
-        f"cat > {p} <<'AAEOF'\n{profile_text(bwrap)}AAEOF\n"
-        f"apparmor_parser -r {p}\n"
-        'if [ -n "${PKEXEC_UID:-}" ] && command -v setpriv >/dev/null 2>&1; then\n'
-        '  gid=$(getent passwd "$PKEXEC_UID" | cut -d: -f4)\n'
-        f'  if ! setpriv --reuid="$PKEXEC_UID" --regid="${{gid:-$PKEXEC_UID}}" --clear-groups -- {_bwrap_probe_words(bwrap)} >/dev/null 2>&1; then\n'
-        f"    apparmor_parser -R {p} >/dev/null 2>&1 || true\n"
-        f"    rm -f {p}\n"
-        '    echo "the profile loaded, but bwrap still couldn\'t create a user namespace for you, so it was removed again" >&2\n'
-        "    exit 3\n"
-        "  fi\n"
-        "fi\n")
+    if not _PROFILE_NAMES.fullmatch(bwrap):
+        raise SandboxError(f"the bwrap AppKata found, {bwrap!r}, has characters an AppArmor profile can't name "
+                           "(only letters, digits and . _ + - /), so its profile isn't set up. Install bubblewrap "
+                           "from your system's packages (sudo apt install bubblewrap) and restart AppKata")
+    return ["/bin/sh", "-c", SETUP_SCRIPT, "appkata-setup", PROFILE_PATH, profile_text(bwrap), bwrap]
 
 
-def _run_privileged(script: str, what: str) -> None:
-    if not shutil.which("pkexec"):
+def _run_privileged(command: list[str], what: str) -> None:
+    """Run `command` as root behind pkexec's one prompt. pkexec is the system's (:data:`HOST_PATH`),
+    never one first on AppKata's own PATH, where a login's ~/.local/bin comes first (#689's review,
+    P2-B2)."""
+    pkexec = shutil.which("pkexec", path=HOST_PATH)
+    if not pkexec:
         raise SandboxError("pkexec isn't available to ask for administrator rights")
     try:
-        p = subprocess.run(["pkexec", "/bin/sh", "-c", script], capture_output=True, text=True, timeout=120)
+        p = subprocess.run([pkexec, *command], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         raise SandboxError(f"couldn't run the {what}: {e}") from None
     if p.returncode == 126:
@@ -1362,7 +1381,7 @@ def install_profile() -> bool:
     if others := other_bwrap_profiles():
         raise SandboxError(f"this system has its own AppArmor profile for bwrap ({', '.join(others)}); "
                            "AppKata's beside it would stop bwrap working, so it isn't installed")
-    _run_privileged(setup_script(), "AppArmor setup")
+    _run_privileged(setup_command(), "AppArmor setup")
     # The script checked as the user; check again from here, in case this process differs.
     if not userns_works(refresh=True):
         raise SandboxError("the AppArmor profile loaded, but bwrap still can't create a user namespace here")
@@ -1375,8 +1394,8 @@ def remove_profile() -> bool:
     status "conflict", AppKata's profile left beside the system's own after an upgrade (R17.10.2)."""
     if OS != "linux":
         raise SandboxError("AppArmor setup is only needed on Linux")
-    p = shlex.quote(PROFILE_PATH)
-    _run_privileged(f"apparmor_parser -R {p} >/dev/null 2>&1 || true\nrm -f {p}\n", "AppArmor repair")
+    _run_privileged(["/bin/sh", "-c", 'apparmor_parser -R "$1" >/dev/null 2>&1 || true\nrm -f "$1"\n', "appkata-repair", PROFILE_PATH],
+                    "AppArmor repair")
     userns_works(refresh=True)
     nested_userns_works(refresh=True)
     return True
@@ -1418,8 +1437,14 @@ def identity_path(app_id: str) -> str:
     the app can write anything in its home, so a marker there could be swapped for a symlink to a
     host file (bwrap resolves bind sources on the host side, so that file would be bound read-only at
     /.flatpak-info for the app to read, and the next regeneration would overwrite it). The sandbox
-    never sees this folder."""
-    return os.path.join(sandboxes_root(), ".identity", app_id)
+    never sees this folder.
+
+    The markers have a folder of their own, `.identity/apps/`: a marker is named by the app's id,
+    which is whatever the app's name makes it, and `.identity/` also holds AppKata's own files under
+    fixed names (the shims' folder `bin`, the seccomp filter, the file-argument helper). Side by
+    side, an app named "bin" had the shims' folder for its marker: its launcher couldn't be written,
+    or, installed first, no app's could (CR1.5-13)."""
+    return os.path.join(sandboxes_root(), ".identity", "apps", app_id)
 
 
 def write_flatpak_info(app_id: str, network: bool = False) -> str:
@@ -1429,23 +1454,17 @@ def write_flatpak_info(app_id: str, network: bool = False) -> str:
     as available, so `network` says whether the app has it. The portals never see it: they look at
     the bus proxy's root, which has no marker, so the app is a host caller to them (R17.6.1).
 
-    Written to a temporary file and renamed over the target, so a symlink at the target is replaced
-    rather than followed. A marker left in the private home by an older AppKata is removed (unlinked,
-    never followed)."""
+    Written whole beside the target and renamed over it (:func:`_write_whole`), so a symlink at the
+    target is replaced rather than followed. A marker left in the private home by an older AppKata
+    is removed (unlinked, never followed)."""
     os.makedirs(sandbox_home(app_id), exist_ok=True)
     legacy = os.path.join(sandbox_home(app_id), ".flatpak-info")
     if os.path.lexists(legacy):
         os.unlink(legacy)
     path = identity_path(app_id)
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    if os.path.lexists(tmp):
-        os.unlink(tmp)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "w") as f:
-        f.write(flatpak_info_text(app_id, network))
-    os.replace(tmp, path)
-    return path
+    for folder in (os.path.dirname(os.path.dirname(path)), os.path.dirname(path)):       # .identity, then its apps/
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+    return _write_whole(path, flatpak_info_text(app_id, network).encode(), 0o644)
 
 
 def flatpak_info_text(app_id: str, network: bool = False) -> str:
@@ -1457,7 +1476,7 @@ def flatpak_info_text(app_id: str, network: bool = False) -> str:
 
 def remove_identity(app_id: str) -> None:
     """Remove the app's identity marker: it belongs with the launcher, not with the private home, so
-    an uninstall that keeps the home (R17.14) leaves nothing behind in `.identity/` (round two, R10)."""
+    an uninstall that keeps the home (R17.14) leaves nothing behind in `.identity/apps/` (round two, R10)."""
     if os.path.lexists(identity_path(app_id)):
         os.unlink(identity_path(app_id))
 
@@ -1480,10 +1499,7 @@ def record_home_owner(app_id: str, url: str) -> None:
     except OSError:
         pass
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(url + "\n")
-    os.replace(tmp, path)
+    _write_whole(path, (url + "\n").encode(), 0o644)
 
 
 def home_belongs_to_another(app_id: str, url: str) -> bool:
@@ -1746,11 +1762,7 @@ def write_seccomp_filter() -> str | None:
         return None
     path = seccomp_path()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
-    return path
+    return _write_whole(path, data, 0o644)
 
 
 # -------------------------------------------------------------------------- file arguments (R17.6.2)
@@ -1766,11 +1778,14 @@ def write_seccomp_filter() -> str | None:
 # side, it works whatever the portal makes of the sandbox's marker (R17.6.1). Review 2, F6: a relative
 # path or `.` from a granted folder reached the private home; review 3, R3-17: a link outside the
 # granted folders to a file inside one was passed by the link's path, which the app can't see; R3-16:
-# option values and folders were never handed over. Prints the new arguments shell-quoted, one line;
-# an argument that can't be handed over passes unchanged, and any failure of the whole leaves the
-# launcher passing them all unchanged.
+# option values and folders were never handed over. Prints the new arguments as data, one a line: a
+# "=" first (so an empty argument is still a line), a backslash doubled and a line break as `\n`. The
+# launcher reads them word by word and never evaluates them (CR1.5-31: they were printed shell-quoted
+# and the launcher ran `eval "set -- $fwd"` on them, so whatever answered to the name python3 wrote a
+# line of the launcher's shell). An argument that can't be handed over passes unchanged, and any
+# failure of the whole leaves the launcher passing them all unchanged.
 # argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...] -- <arguments...>
-FORWARD_HELPER = """import os, shlex, sys, urllib.parse
+FORWARD_HELPER = """import os, sys, urllib.parse
 ident, rt, incwd, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 sep = rest.index("--")
 pairs = [(d, os.path.realpath(d)) for d in rest[:sep]]        # (where the app sees it, where the host has it)
@@ -1867,7 +1882,8 @@ for a in args:
     elif new == a and a.startswith("-") and not a.startswith("--") and a[2:3] == "/":
         new = a[:2] + one(a[2:])
     out.append(new)
-print(" ".join(shlex.quote(a) for a in out))
+BS, NL = chr(92), chr(10)
+sys.stdout.buffer.write(os.fsencode("".join("=" + a.replace(BS, BS + BS).replace(NL, BS + "n") + NL for a in out)))
 """
 
 
@@ -1879,11 +1895,7 @@ def forward_path() -> str:
 def write_forward_helper() -> str:
     path = forward_path()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(FORWARD_HELPER)
-    os.replace(tmp, path)
-    return path
+    return _write_whole(path, FORWARD_HELPER.encode(), 0o644)
 
 
 # -------------------------------------------------------------------------- opening things on the host (R17.6.3)
@@ -1980,12 +1992,7 @@ def shims_dir() -> str:
 def write_shims() -> str:
     d = shims_dir()
     os.makedirs(d, mode=0o755, exist_ok=True)
-    path = os.path.join(d, "xdg-open")
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(XDG_OPEN_SHIM)
-    os.chmod(tmp, 0o755)
-    os.replace(tmp, path)
+    _write_whole(os.path.join(d, "xdg-open"), XDG_OPEN_SHIM.encode(), 0o755)
     return d
 
 
@@ -2013,6 +2020,76 @@ _PROXY_PASSTHROUGH = ("http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no
 # *filtered* proxy socket, so the launcher sets it explicitly to unix:path=$rt/bus after --clearenv
 # (below). Passing the host address through would point the app at the real (unfiltered) bus address.
 
+# The host commands a launcher runs by name -- before and around bwrap, as the user, outside every
+# sandbox -- come from these folders alone, whatever PATH the launcher is started with. The user's
+# own folders (~/bin, ~/.local/bin) come first on a login's PATH, and ~/bin is where AppKata's own
+# command links go, each named after an app: with the caller's PATH, an app named python3, readlink
+# or mktemp answered the launcher's own calls (CR1.5-31).
+HOST_PATH = "/usr/local/bin:/usr/bin:/bin"
+# Every command a launcher runs by name out there, the ones a shell usually has built in among them
+# (one that hasn't looks them up like any other). No command link is ever made under one of these
+# names (install.RESERVED_COMMANDS); tests/test_sandbox_adversarial.py runs launchers with these
+# alone to be found, so a command added to the launcher's text is added here.
+HOST_COMMANDS = ("bwrap", "xdg-dbus-proxy", "python3", "id", "mkdir", "stat", "mv", "date", "cat", "flock", "mktemp", "rm",
+                 "dirname", "sleep", "readlink", "printf", "echo", "kill", "test", "[", "pwd", "true")
+
+
+def host_path(apps_root: str | None = None) -> str:
+    """The PATH a launcher written now sets for itself (R17.4): :data:`HOST_PATH`, and after it the
+    folder of the bwrap AppKata finds when the system's folders hold none (one the user built, or
+    a package manager of their own installed), so a sandbox AppKata reports as working still starts.
+    The system's folders stay first, so that folder decides bwrap and nothing the system has. Never
+    a folder whose bwrap is something in the install folder or the private homes: that is an app."""
+    found = shutil.which("bwrap")
+    if not found or shutil.which("bwrap", path=HOST_PATH):
+        return HOST_PATH
+    folder, real = os.path.dirname(os.path.abspath(found)), os.path.realpath(found)
+    for root in ([apps_root] if apps_root else []) + [sandboxes_root()]:
+        if (real + os.sep).startswith(os.path.realpath(root) + os.sep):
+            return HOST_PATH
+    return HOST_PATH if ":" in folder else f"{HOST_PATH}:{folder}"
+
+
+def host_which(name: str, apps_root: str | None = None) -> str | None:
+    """The host command `name` a launcher written now runs (R17.4), as its PATH (:func:`host_path`)
+    finds it, or None; `apps_root` is the install folder, the default one when not given. Everything
+    AppKata decides about bwrap asks this -- whether it is here, the bwrap the AppArmor profile names
+    (R17.10), the probes that say the sandbox works and whether an app's own sandbox can run inside,
+    the AppImage kind probe -- so each answer is about the very file the launchers run. They asked
+    AppKata's own PATH, where a login's ~/.local/bin comes first: with a newer bwrap of the user's
+    there, the setup profiled and the probe passed on that one while every launcher ran the
+    system's, which no profile covered (#689's review, P1-4)."""
+    if apps_root is None:
+        from .platform import apps_dir
+        apps_root = apps_dir()
+    return shutil.which(name, path=host_path(apps_root))
+
+
+def bwrap_answers_hold(apps_root: str) -> bool:
+    """Whether what AppKata says of this system's bwrap -- :func:`have_tools`, the probes, the bwrap
+    the profile names, each asked with the default install folder -- holds for the apps in
+    `apps_root`: a launcher written for one finds that same bwrap, or none, as both do but where
+    the system's folders hold no bwrap and the one AppKata found is inside `apps_root`, which a
+    launcher there never runs (:func:`host_path`). With the install folder set to ~/bin and the
+    user's own ~/bin/bwrap, Settings said the sandbox works, an install there was sandboxed, and
+    its launcher stopped at "bubblewrap (bwrap) isn't installed" (#689's review, P2-B3)."""
+    return OS != "linux" or host_which("bwrap", apps_root) == host_which("bwrap")
+
+
+def support_status_in(apps_root: str | None) -> dict:
+    """:func:`support_status` for the apps in `apps_root`: the install folder Settings names, for
+    the system and a new install, or an installed app's own. Where a launcher there finds no bwrap
+    (:func:`bwrap_answers_hold`), bubblewrap is missing for them, as on a system without one: the
+    status is "unsupported", and the hints say so (R17.4, R17.10)."""
+    st = support_status()
+    if not apps_root or bwrap_answers_hold(apps_root):
+        return st
+    missing = ["bubblewrap"] + [m for m in st.get("missing", []) if m != "bubblewrap"]
+    hints = tools_hints(missing)
+    return {**st, "status": "unsupported", "tools": False, "missing": missing,
+            "toolsHint": hints["system"], "appToolsHint": hints["app"], "brokenHint": hints["broken"]}
+
+
 # The session's runtime folder and its bus, as the launcher finds them, and as AppKata's own ask of
 # that bus finds them (password_service_withheld): the same words in both
 _RT = 'rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"'
@@ -2021,6 +2098,9 @@ _UPSTREAM = 'upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"'
 _LAUNCHER_HEADER = """#!/bin/sh
 # Generated by AppKata for {name}. Do not edit — regenerated on update / settings change (R17.4).
 set -eu
+# What this script runs itself, before and around bwrap, runs on the host, as you, outside the
+# sandbox: each command is the system's own, whatever PATH this was started with (R17.4).
+PATH={path}; export PATH
 id={id}
 {rt}
 home={home}
@@ -2169,9 +2249,28 @@ esac
 _FORWARD_BLOCK = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
-# a document portal the arguments pass through unchanged (R17.6.2).
+# a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
+# argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
+# word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
 {shown}if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
-  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then eval "set -- $fwd"; fi
+  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then
+    n=0
+    while IFS= read -r w; do
+      case "$w" in =*) n=$((n + 1)) ;; esac
+    done <<EOF
+$fwd
+EOF
+    if [ "$n" -eq $# ]; then
+      while IFS= read -r w; do
+        case "$w" in =*) w=${{w#=}} ;; *) continue ;; esac
+        case "$w" in *\\\\*) w=$(printf '%bx' "$w"); w=${{w%x}} ;; esac
+        set -- "$@" "$w"
+      done <<EOF
+$fwd
+EOF
+      shift "$n"
+    fi
+  fi
 fi
 """
 
@@ -2421,7 +2520,8 @@ fi
 def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None, apps_root: str | None = None,
                    seccomp: str | None = None, log_path: str | None = None, forward: str | None = None,
-                   shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True) -> str:
+                   shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True,
+                   path: str | None = None) -> str:
     """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (R17.4). The launcher
     does no run-time policy resolution; its text is exactly what runs (shown in App Detail, audited).
 
@@ -2439,6 +2539,8 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     (:func:`nested_userns_works`); where it can't, such an app is started with --no-sandbox (R17.10.2).
     `bus_filter`: whether xdg-dbus-proxy is here (:func:`have_bus_filter`); without it a Standard app
     runs with no session bus, and the files it is given still reach it (R17.10; review 2, F12).
+    `path`: the PATH the launcher sets for the host commands it runs, :data:`HOST_PATH` unless given
+    (:func:`host_path`); the PATH it is started with never decides what runs out there.
     """
     from . import applog
     gs, refused = strip_protected(gs, apps_root)
@@ -2471,7 +2573,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731
     note = _STRICT_NOTE.format(qname=q(name)) if strict else ""
-    out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), id=app_identity(app_id), home=q(home),
+    out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), path=q(path or HOST_PATH), id=app_identity(app_id), home=q(home),
                                    rt=_RT, info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
                                    log=q(log_path or applog.app_log_path(app_id)), bus=_BUS_BLOCK if standard else "",
                                    cwd=cwd, forward=fwd, note=note), _GUARD_FN]
@@ -2809,16 +2911,17 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
                   appimage_path: str | None = None) -> str:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
-    set and three facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
-    run inside, R17.10.2, and whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10) -- and, for a folder grant that
-    holds it, where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
+    set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
+    run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
+    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant that holds it,
+    where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""
     return build_launcher(app_id, name, appdir, exec_rel, gs, appimage_path, apps_root,
                           seccomp_path() if seccomp_filter() is not None else None,
                           forward=forward_path(), shims=shims_dir(), inner_sandbox=nested_userns_works(),
-                          bus_filter=have_bus_filter())
+                          bus_filter=have_bus_filter(), path=host_path(apps_root))
 
 
 def _marker_network(gs: dict) -> bool:
@@ -2862,13 +2965,24 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # is a waiting `sh` with this file open that has yet to read its teardown, and a sandbox change,
     # an update or the startup pass rewrites it while apps run. Truncating the inode made such a shell
     # find EOF (no teardown, exit 0, the socket left behind) or read the new text at its old offset
-    # (round five, R5-3). The old inode stays whole for the shells that hold it.
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path))
-    os.chmod(tmp, 0o755)
-    os.replace(tmp, path)
-    return path
+    # (round five, R5-3). The old inode stays whole for the shells that hold it. Its text is written
+    # as the paths' own bytes, UTF-8 or not (#689's review, P4-1: written as text, an install folder
+    # whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error), by the
+    # helper that writes every file here, which removes the file beside when the write fails.
+    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path)), 0o755)
+
+
+def _write_whole(path: str, data: bytes, mode: int) -> str:
+    """Write `data` to `path` whole or not at all, as the app-menu files are (install._write_whole,
+    imported here when called: install imports this module): beside it, renamed over it, and the
+    file beside removed when the write or the rename fails (a full disk). Every file AppKata keeps
+    for the sandboxes goes through it: the launcher, its identity marker, the seccomp filter, the
+    file-argument helper, the xdg-open shim and a private home's owner record. #689's review,
+    P5-B3: the five beside the launcher were written to `<name>.<pid>.tmp` and renamed with nothing
+    removing the .tmp on a failure, so each failed write left one in `.identity/`, its `apps/` or
+    `bin/`, or `.owners/`, one more for each AppKata process that tried, and nothing removed them."""
+    from .install import _write_whole as write
+    return write(path, data, mode)
 
 
 # -------------------------------------------------------------------------- AppImage extraction (R17.7)

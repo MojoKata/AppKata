@@ -79,6 +79,14 @@ R5.7.4. Action buttons, each an icon plus a word:
   and **Open**.
 - While it installs: the phase in the Install or Update button, and **Cancel** (R4.8).
 
+**Open** on a system package (R16.3) starts the app-menu entry the package installed, as the
+desktop does (`gio launch`, else `gtk-launch`): the one named after the package when it has several,
+never one the menu doesn't show (hidden, meant for other desktops by `OnlyShowIn` or `NotShowIn`, or
+for a program that isn't installed, by `TryExec` or its `Exec`); when it installed none, the entry of a program it installed
+(Ubuntu's `neovim` installs `nvim`, whose entry is `neovim-runtime`'s). A package's program is often
+named otherwise (`libreoffice-writer` installs `lowriter`). A package with no such entry isn't
+opened: AppKata says "<App> has no app-menu entry to open it with".
+
 There is no "Add to sources" action for an app that comes from a Trust (R2.9.2).
 
 R5.7.5. Version information:

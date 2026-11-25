@@ -312,6 +312,99 @@ def test_uninstall_entries_are_read():
     assert entries and all({"hive", "key"} <= set(e) for e in entries.values())
 
 
+# ---------------------------------------------------------------- a portable install that fails part-way (CR1.3-15)
+@pytest.fixture
+def windows_road(winenv, monkeypatch):
+    """install.py's Windows road on any OS, with a Start-menu shortcut that is a plain file and
+    nothing written to the user's PATH. Off Windows a junction is a symbolic link. Returns the
+    calls that made a shortcut, and `refuse`: what the next one fails with."""
+    from appkata_core import install
+    road = {"made": [], "refuse": None}
+
+    def make_shortcut(lnk, target, elevate=False, description=""):
+        if road["refuse"]:
+            error, road["refuse"] = road["refuse"], None
+            raise error
+        os.makedirs(os.path.dirname(lnk), exist_ok=True)
+        with open(lnk, "w") as f:
+            f.write(target)
+        road["made"].append(lnk)
+
+    def make_junction(target, link):
+        if os.path.islink(link):
+            os.remove(link)
+        os.symlink(target, link)
+
+    monkeypatch.setattr(w, "make_shortcut", make_shortcut)
+    monkeypatch.setattr(w, "add_to_user_path", lambda folder: None)
+    monkeypatch.setattr(w, "remove_from_user_path", lambda folder: None)
+    if os.name != "nt":
+        monkeypatch.setattr(install, "OS", "windows")
+        monkeypatch.setattr(w, "make_junction", make_junction)
+    return road
+
+
+def _plain_zip(root, version: str) -> str:
+    import zipfile
+    name = f"tool-{version}-win-x64.zip"
+    with zipfile.ZipFile(root / name, "w") as z:
+        z.writestr(f"tool-{version}/tool.exe", "MZ, and not a program")
+    return name
+
+
+@pytest.mark.parametrize("update", [False, True], ids=["a first install", "an update"])
+@pytest.mark.parametrize("refused", ["the shortcut", "the command link", "the command link, after the check"])
+def test_a_refused_portable_install_leaves_everything_as_it_was(windows_road, env, server, tmp_path, monkeypatch, refused, update):
+    # CR1.3-15, Windows' side: a Start-menu shortcut Windows wouldn't make, or someone else's
+    # <app>.cmd where the command link goes, stopped the install after the version's folder and the
+    # `current` junction were made, and the record is stored last: a first install left them with no
+    # record, an update left `current` on the new version under the old version's record. The .cmd
+    # is now looked at before anything is placed; a refusal that only shows later is taken back.
+    from appkata_core import install
+    from test_install_review import _changed, _left
+    root, base = server
+    apps, theirs = tmp_path / "apps", tmp_path / "their-bin"
+    theirs.mkdir()
+    (theirs / "tool.cmd").write_bytes(b"@echo mine\r\n")
+    app = {**APP, "name": "Tool"}
+    # without the stable name each version's program has its own path, so an update makes the shortcut again
+    stable = refused != "the shortcut"
+    good = install.Portable(folder=str(apps), stable_name=stable, command_dir=str(tmp_path / "bin"), keep=2)
+    if update:
+        a1 = Asset(_plain_zip(root, "1.0"), f"{base}/tool-1.0-win-x64.zip")
+        rec = install.install(env, {**app, "installVersion": "1.0"}, a1, "zip", [a1], portable=good)
+        assert len(windows_road["made"]) == 1 and rec["shims"] == [str(tmp_path / "bin" / "tool.cmd")]
+        assert os.path.realpath(apps / "tool" / "current").endswith("1.0") is stable
+    a2 = Asset(_plain_zip(root, "2.0"), f"{base}/tool-2.0-win-x64.zip")
+    before = _left(tmp_path, env)
+    p = good
+    if refused == "the shortcut":
+        windows_road["refuse"], match = OSError("Access is denied"), "couldn't add the Start-menu shortcut: Access is denied"
+    elif refused == "the command link":
+        p, match = install.Portable(folder=str(apps), command_dir=str(theirs), keep=2), "isn't a command link AppKata made"
+    else:
+        real, failed, match = w.write_shim, [], "appeared since"
+
+        def write_shim(folder, name, program):
+            if not failed:
+                failed.append(1)
+                raise FileExistsError("appeared since")
+            return real(folder, name, program)
+        monkeypatch.setattr(w, "write_shim", write_shim)
+    with pytest.raises(install.InstallError, match=match):
+        install.install(env, {**app, "installVersion": "2.0"}, a2, "zip", [a2], portable=p)
+    assert _changed(before, _left(tmp_path, env)) == {}
+    assert (theirs / "tool.cmd").read_bytes() == b"@echo mine\r\n" and os.path.lexists(apps / "tool") is update
+    if update:                                                  # and the app is whole: it updates, and uninstalls
+        assert os.path.realpath(apps / "tool" / "current").endswith("1.0") is stable
+        a3 = Asset(_plain_zip(root, "3.0"), f"{base}/tool-3.0-win-x64.zip")
+        rec = install.install(env, {**app, "installVersion": "3.0"}, a3, "zip", [a3], portable=good)
+        assert [k["version"] for k in rec["kept"]] == ["1.0"] and os.path.isdir(apps / "tool" / "3.0")
+        install.uninstall(env, APP["url"])
+        assert not os.path.lexists(apps / "tool") and not os.path.exists(tmp_path / "bin" / "tool.cmd")
+        assert not any(os.path.exists(lnk) for lnk in windows_road["made"])
+
+
 # ---------------------------------------------------------------- the Visual C++ run-time (R15.18)
 def make_pe(path, dlls, delay=(), pe32plus=True):
     """A minimal Windows program whose import tables name `dlls` (and delay-loaded `delay`)."""
