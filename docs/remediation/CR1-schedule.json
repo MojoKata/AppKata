@@ -3,6 +3,35 @@
  "sweep": "CR1",
  "units": [
   {
+   "id": "U01",
+   "name": "The backend's hand-off to the main thread",
+   "findings": [
+    463,
+    464
+   ],
+   "files": [
+    "docs/requirements/R7-sources-perspective.md",
+    "scripts/areas.py",
+    "src/appkata/backend.py",
+    "tests/skips/windows.txt",
+    "tests/test_backend.py"
+   ]
+  },
+  {
+   "id": "U02",
+   "name": "The release job attaches only the release files",
+   "findings": [
+    592
+   ],
+   "files": [
+    ".github/workflows/ci.yml",
+    "docs/RELEASE.md",
+    "docs/github-workflows.md",
+    "scripts/areas.py",
+    "tests/test_workflows.py"
+   ]
+  },
+  {
    "id": "U47",
    "name": "The Windows suite is collected again: scripts/mutate.py loads without SIGUSR1",
    "findings": [
@@ -116,6 +145,9 @@
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
     "tests/test_windows.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -388,6 +420,9 @@
     "tests/test_pinned_inputs.py",
     "tests/test_pins_newest.py",
     "tests/test_third_party_notices.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -417,6 +452,9 @@
     "tests/test_docs_facts.py",
     "tests/test_selfinstall.py",
     "tests/test_windows.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -915,6 +953,9 @@
     "src/appkata_core/sync.py",
     "tests/test_backend.py",
     "tests/test_core.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -1111,6 +1152,9 @@
     "tests/test_dialog_contract.py",
     "tests/test_prefs.py",
     "tests/test_sandbox_ui_surfaces.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -1165,6 +1209,7 @@
     "tests/test_trust.py"
    ],
    "depends_on": [
+    "U01",
     "U28"
    ]
   },
@@ -1246,6 +1291,7 @@
     "tests/test_selfinstall.py"
    ],
    "depends_on": [
+    "U01",
     "U04",
     "U28"
    ]
@@ -1289,6 +1335,9 @@
     "tests/test_hardening.py",
     "tests/test_qml_slots.py",
     "tests/test_screens_contract.py"
+   ],
+   "depends_on": [
+    "U01"
    ]
   },
   {
@@ -4901,6 +4950,9 @@
     "tests/test_backend.py",
     "tests/test_windows.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     467,
     486,
@@ -6848,6 +6900,9 @@
     "tests/test_audit_log_explore.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     321,
     456,
@@ -6870,6 +6925,7 @@
     "tests/test_backend.py"
    ],
    "depends_on": [
+    463,
     477
    ],
    "size": "small",
@@ -7125,6 +7181,9 @@
     "src/appkata/backend.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     439,
     457,
@@ -7215,6 +7274,42 @@
    "note": "Decided 2026-11-23: write down today's order (your own review's App name, then the Trusts' by Score, then the project's, then the install's); the requirement and the comment at catalog.py:192-193 change, the order in the code stays."
   },
   {
+   "finding": 463,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py",
+    "scripts/areas.py",
+    "tests/skips/windows.txt"
+   ],
+   "related": [
+    464,
+    480,
+    484,
+    487
+   ],
+   "size": "small",
+   "proof": "A new test under a running event loop with real threads (threading.Thread.start not patched): Backend.install() on a never-installed app whose plan has ask False reaches _install once, on the main thread; the same for a plan with an error (its toast shows) and for addSourceWith(url, True, {}) reaching install. No VM needed: the finding's own VM run showed the fault, and the test holds the fix.",
+   "note": "The step's one High. tests/test_backend.py doesn't exist: this fix makes it, with its line under `ui-backend` in scripts/areas.py (tests/test_areas.py holds every test file to one area) and its line in tests/skips/windows.txt (no PySide6 on the Windows VM), and with the fixture of a real Backend, an event loop and real threads that the step's other findings then use. Most records of this step depend on it for that file alone. #464 is the same fault in syncNow; #480 and #484 change the same plan worker of install()."
+  },
+  {
+   "finding": 464,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
+   ],
+   "related": [
+    487
+   ],
+   "size": "small",
+   "proof": "A test under a running event loop with real threads: syncNow(callback) with sync.sync_all and foreign.scan stubbed runs the callback on the main thread after the reload; _background_sync() emits `notify` for a new update and for a newly vetoed installed version, and not with notifications off.",
+   "note": "The same fault as #463, fixed the same way (a private signal to a main-thread slot); the remedy's two forms give the same behaviour, so the pick is the unit's. Its test goes in tests/test_backend.py, a file that doesn't exist yet: #463's fix makes it (hence the dependency)."
+  },
+  {
    "finding": 465,
    "readiness": "ready",
    "files": [
@@ -7222,6 +7317,9 @@
     "src/appkata/qml/AppDetail.qml",
     "docs/requirements/R4-installing-updating-and-uninstalling.md",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     223,
@@ -7258,6 +7356,9 @@
     "src/appkata/backend.py",
     "tests/test_install_review.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     326,
@@ -7308,6 +7409,9 @@
     "src/appkata/qml/ConfirmDialog.qml",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     410,
     475,
@@ -7327,6 +7431,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     439,
@@ -7351,6 +7458,7 @@
     "tests/test_dialog_contract.py"
    ],
    "depends_on": [
+    463,
     647
    ],
    "related": [
@@ -7376,6 +7484,9 @@
     "tests/test_core.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     472,
     479
@@ -7393,6 +7504,9 @@
     "src/appkata_core/db.py",
     "tests/test_trust.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     173,
@@ -7416,6 +7530,9 @@
     "tests/test_core.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     470,
     478,
@@ -7436,6 +7553,9 @@
     "tests/test_selfinstall.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "size": "small",
    "proof": "Tests: a new Backend with $APPIMAGE naming this process's own image writes an `adopted` Audit entry with the file and version; with $APPIMAGE naming another program's file (a run from source in an AppImage terminal) nothing is adopted and selfInstallOffer is null.",
    "note": "The entry's actor (You, or System) is the unit's pick. The finding's aside, whether Run from here (declineSelfInstall) belongs in the Audit under R2.11.3.1, is no part of the remedy and is left as it is; if the unit finds R2.11.3.1 asks for it, that is a new question. Its test goes in tests/test_backend.py, a file that doesn't exist yet: #463's fix makes it (hence the dependency)."
@@ -7447,6 +7567,9 @@
     "src/appkata/backend.py",
     "src/appkata/qml/ConfirmDialog.qml",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     440,
@@ -7464,6 +7587,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     470,
@@ -7486,6 +7612,9 @@
     "tests/test_audit_log_explore.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     249,
     333,
@@ -7505,6 +7634,9 @@
     "src/appkata/qml/InstallDialog.qml",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     470,
     478,
@@ -7520,6 +7652,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     470,
@@ -7538,6 +7673,9 @@
     "tests/test_sandbox_audit.py",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     439,
     456
@@ -7552,6 +7690,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     458,
@@ -7572,6 +7713,9 @@
     "src/appkata_core/install.py",
     "tests/test_backend.py",
     "tests/test_dialog_contract.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     480,
@@ -7602,6 +7746,9 @@
     "docs/requirements/R1-platform-and-architecture.md",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     326,
     593,
@@ -7619,6 +7766,8 @@
     "tests/test_backend.py"
    ],
    "depends_on": [
+    463,
+    464,
     465,
     466,
     467,
@@ -7681,6 +7830,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     488,
@@ -9266,6 +9418,23 @@
    "note": "The three calls of ex.expected (fieldtest.py:313, tests/test_sandbox_exposure.py:250 and :360) pass no kinds, so none changes."
   },
   {
+   "finding": 592,
+   "readiness": "ready",
+   "files": [
+    ".github/workflows/ci.yml",
+    "tests/test_workflows.py",
+    "docs/RELEASE.md"
+   ],
+   "related": [
+    609,
+    635,
+    217
+   ],
+   "size": "small",
+   "proof": "A tier 1 test that reads ci.yml's release job and holds its downloads (appimage, windows, signature) and the five names it gives gh release create to publish.sh's expect. The job runs only on a v* tag, so the run itself is proven by the next tag, or by a trial on a fork with a throwaway key, as publish.sh's GitHub half was (tests/test_publish.py's header).",
+   "note": "tests/test_workflows.py doesn't exist: the fix makes it, and #609 fills it out (the finding says the two go well together). If this is a unit of its own, to merge before the next tag, its test can read the job line by line and needs no YAML reader. Not run by the review: what gh release create does with a folder; it doesn't change the remedy. docs/RELEASE.md section 7 gets the line for a draft a failed release job left."
+  },
+  {
    "finding": 593,
    "readiness": "ready",
    "files": [
@@ -9794,6 +9963,9 @@
     "docs/requirements/R3-app-metadata.md",
     "tests/test_backend.py"
    ],
+   "depends_on": [
+    463
+   ],
    "related": [
     488,
     490
@@ -9982,6 +10154,9 @@
    "files": [
     "src/appkata/backend.py",
     "tests/test_backend.py"
+   ],
+   "depends_on": [
+    463
    ],
    "related": [
     326,
@@ -10731,6 +10906,7 @@
   }
  ],
  "shared_files": [
+  ".github/workflows/ci.yml",
   "DEVELOP.md",
   "docs/GENESIS.md",
   "docs/RELEASE.md",
