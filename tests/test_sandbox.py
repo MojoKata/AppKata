@@ -371,11 +371,14 @@ if "xdg-dbus-proxy" in argv:
 """
 
 
-def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None):
+def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
-    where no proxy was started), the app's bwrap's, the run, and the runtime folder."""
+    where no proxy was started), the app's bwrap's (None where `app` is False and it didn't run),
+    the run, and the runtime folder. The xdg-dbus-proxy its PATH finds is a stand-in that is
+    really at `proxy_at`, as `readlink -f` tells the launcher (no machine's /usr is a test's)."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -384,6 +387,11 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     (fake / "record.py").write_text(_RECORDER)
     (fake / "bwrap").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fake / "record.py"))} {shlex.quote(str(log))} "$@"\n')
     (fake / "bwrap").chmod(0o755)
+    (fake / "xdg-dbus-proxy").write_text("#!/bin/sh\nexit 1\n")
+    (fake / "readlink").write_text(f'#!/bin/sh\n[ "$*" = {shlex.quote("-f " + str(fake / "xdg-dbus-proxy"))} ] && exec echo {shlex.quote(proxy_at)}\n'
+                                   f'exec {shlex.quote(shutil.which("readlink"))} "$@"\n')
+    for tool in ("xdg-dbus-proxy", "readlink"):
+        (fake / tool).chmod(0o755)
     for tool, script in (tools or {}).items():
         (fake / tool).write_text(script)
         (fake / tool).chmod(0o755)
@@ -395,9 +403,9 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
         env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
     r = subprocess.run(["sh", str(lp)], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    app = next((c for c in calls if "/.flatpak-info" in c), None)
-    assert app is not None, (r.returncode, r.stdout, r.stderr)
-    return next((c for c in calls if "xdg-dbus-proxy" in c), None), app, r, rt
+    run = next((c for c in calls if "/.flatpak-info" in c), None)
+    assert (run is not None) is app, (r.returncode, r.stdout, r.stderr)
+    return next((c for c in calls if "xdg-dbus-proxy" in c), None), run, r, rt
 
 
 def _binds(words: list) -> dict:
@@ -470,9 +478,29 @@ def test_the_proxys_own_sandbox_holds_its_socket_folder_and_the_session_bus_alon
     assert words[words.index("--seccomp") + 1] == "3" and "--new-session" not in words
     # nor the launcher's environment, which a terminal can fill with tokens: the app's own bwrap
     # clears it, the proxy's kept it whole (PR #694's review, P1-B2). Its address and socket are
-    # arguments; PATH is for bwrap to find it.
-    assert "--clearenv" in words and [words[i + 1:i + 3] for i, w in enumerate(words) if w == "--setenv"] == [["PATH", "/usr/bin:/bin"]], words
+    # arguments; PATH is for bwrap to find it, the folder of the one the launcher's PATH finds.
+    assert "--clearenv" in words and [words[i + 1:i + 3] for i, w in enumerate(words) if w == "--setenv"] == [["PATH", "/usr/bin"]], words
     assert not [w for w in words if w in ("--unsetenv", "--chdir")] and words.index("--clearenv") < words.index("--setenv"), words
+
+
+# PR #694's review, P2-B4: the proxy's bwrap had PATH=/usr/bin:/bin, while AppKata's own check
+# (have_bus_filter) finds xdg-dbus-proxy on the launcher's PATH. One in /usr/local/bin -- a build of
+# your own, the way to the fixed 0.1.8 where a distribution ships 0.1.7 (R17.17) -- failed every
+# Standard app with "did not start", or, beside the distribution's, the older one ran without a word.
+# How it slipped past: every test's proxy was /usr/bin's, or no program at all. The launcher now runs
+# the one its PATH finds, from that folder, and refuses one its sandbox (/usr alone) can't run.
+@pytest.mark.parametrize("found,runs", [("/usr/local/bin/xdg-dbus-proxy", True), ("/usr/bin/xdg-dbus-proxy", True),
+                                        ("/opt/xdp/bin/xdg-dbus-proxy", False), ("/usr/libexec/xdp/dbus-proxy-0.1.8", False)])
+def test_the_bus_filter_is_the_one_the_launchers_path_finds_run_where_its_sandbox_can(tmp_path, monkeypatch, found, runs):
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, None, proxy_at=found, app=runs)
+    if runs:
+        words = proxy[:proxy.index("--")]
+        assert r.returncode == 0 and r.stderr == "" and words[words.index("PATH") + 1] == os.path.dirname(found), (words, r.stderr)
+        assert proxy[proxy.index("--") + 1] == "xdg-dbus-proxy", proxy
+    else:
+        assert proxy is None and r.returncode == 1, (r.returncode, r.stderr)
+        assert r.stderr == (f"AppKata: the session-bus filter this PATH finds, {found}, is not an xdg-dbus-proxy under /usr, the one tree "
+                            "its own sandbox holds, so Demo cannot run sandboxed here.\n"), r.stderr
 
 
 def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
