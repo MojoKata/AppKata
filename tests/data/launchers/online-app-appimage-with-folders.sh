@@ -38,7 +38,7 @@ command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't 
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 busfile=
 case "$upstream" in
-  *";"*|unix:path=*%*) ;;
+  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
 # Every socket file the address names, one a line: no working directory or folder of the app's may
@@ -49,31 +49,35 @@ bussocks= busok=1 rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
-  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
-  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
-  f=
-  while [ -n "$p" ]; do
-    case "$p" in
-      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
-        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
-        f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
-      %*) busok=0; f=; break ;;
-      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
-      *) f="$f$p"; p= ;;
-    esac
+  keys="${e#unix:},"
+  while [ -n "$keys" ]; do
+    p=${keys%%,*}; keys=${keys#*,}
+    case "$p" in path=*) p=${p#path=} ;; *) continue ;; esac
+    f=
+    while [ -n "$p" ]; do
+      case "$p" in
+        %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+          case "$x" in 00) break ;; 0[aA]) busok=0; f=; break ;; esac
+          f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
+        %*) busok=0; f=; break ;;
+        *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+        *) f="$f$p"; p= ;;
+      esac
+    done
+    case "$f" in /*) ;; *) busok=0; continue ;; esac
+    case "$f" in *"$nl"*) busok=0; continue ;; esac
+    if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+    bussocks="$bussocks$f$nl"
+    if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
   done
-  case "$f" in /*) ;; *) busok=0; continue ;; esac
-  case "$f" in *"$nl"*) busok=0; continue ;; esac
-  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
-  bussocks="$bussocks$f$nl"
-  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
 done
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2).
+folders=1; [ "${busok:-1}" = 1 ] || folders=
 if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
-  if fwd=$(python3 /home/kata/.local/share/appkata/sandboxes/.identity/forward-files.py "$id" "$rt" "" /home/kata/Media /home/kata/Projects -- "$@" 2>/dev/null); then eval "set -- $fwd"; fi
+  if fwd=$(python3 /home/kata/.local/share/appkata/sandboxes/.identity/forward-files.py "$id" "$rt" "" ${folders:+/home/kata/Media} ${folders:+/home/kata/Projects} -- "$@" 2>/dev/null); then eval "set -- $fwd"; fi
 fi
 # The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
@@ -122,14 +126,21 @@ if [ ! -d "$appdir" ] || [ "$(cat "$appdir.stamp" 2>/dev/null)" != "$stamp" ]; t
 fi
 
 # A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).
-rest=$bussocks
-while [ -n "$rest" ]; do
-  s=${rest%%"$nl"*}; rest=${rest#*"$nl"}
-  if [ -S "$s" ] && [ ! -L "$s" ]; then
-    r=/home/kata/Media; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac
-    r=/home/kata/Projects; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac
-  fi
-done
+if [ "${busok:-1}" = 1 ]; then
+  rest=$bussocks
+  while [ -n "$rest" ]; do
+    s=${rest%%"$nl"*}; rest=${rest#*"$nl"}
+    if [ -S "$s" ] && [ ! -L "$s" ]; then
+      r=/home/kata/Media; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac
+      r=/home/kata/Projects; case "$s" in "$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac
+    fi
+  done
+else
+  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty.
+  if [ -S /home/kata/Media ]; then set -- --ro-bind /dev/null /home/kata/Media "$@"; elif [ -d /home/kata/Media ]; then set -- --tmpfs /home/kata/Media --remount-ro /home/kata/Media "$@"; fi
+  if [ -S /home/kata/Projects ]; then set -- --ro-bind /dev/null /home/kata/Projects "$@"; elif [ -d /home/kata/Projects ]; then set -- --tmpfs /home/kata/Projects --remount-ro /home/kata/Projects "$@"; fi
+  printf "%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file AppKata can't read, which could be in one of them.\n" App '~/Media, ~/Projects' "$upstream" >&2
+fi
 
 sock="$rt/appkata/bus-a172cedcae47474b.$$"
 rm -f "$sock"
@@ -178,10 +189,11 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
 # word (CR1.5-18). An abstract socket has no file: it is in the host's network namespace,
 # so the proxy stays in that only then, and has a network of its own otherwise. Any other
 # address is one the launcher can't read (a list of addresses, a path with an escaped byte or
-# a relative one, another transport), so the proxy couldn't be shown its bus: no proxy then.
+# a relative one, two paths, of which GDBus takes the last, another transport), so the proxy
+# couldn't be shown its bus: no proxy then.
 proxy=
 case "$upstream" in
-  *";"*|unix:path=*%*) ;;
+  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
   unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
   unix:abstract=*) start_proxy ;;
 esac

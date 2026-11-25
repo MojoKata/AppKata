@@ -2034,18 +2034,20 @@ set -- -- "$appdir/$exe" "$@"
 # directory and the folder grants must never show the app its socket file, wherever that lies
 # (R17.3.1): dbus-run-session and dbus-launch put it under /tmp, and a tool run in /tmp, or a grant
 # of /tmp, showed the app the unfiltered bus (the review of PR #694, P1-2). $bussocks holds every
-# socket file the address names, as bus_sockets() reads them (PR #694's review, P2-1: the launcher
-# read a plain `unix:path=` alone, so a list, `guid=` first or an escaped byte left the file shown):
-# each `unix:` entry of a list, `path=` among its keys in any place, %XX unescaped as a byte; each as
-# `pwd -P` names folders, the way the working directory is compared, and a link as its target too;
-# one a line. $busok is 0 where an entry names a file the launcher can't read (a relative path, a
-# broken escape, a newline): no working directory is shared then. An abstract socket has no file.
+# socket file the address names, by bus_files()'s rule (PR #694's review, P2-1: the launcher read a
+# plain `unix:path=` alone, so a list, `guid=` first or an escaped byte left the file shown): each
+# `unix:` entry of a list, every `path=` among its keys (P3-B4: the first alone, and GIO takes the
+# last of two), %XX unescaped as a byte, a path ending at an escaped NUL as libdbus and sd-bus end it
+# (P3-B4: it counted as unreadable, and the cover never asked); each as `pwd -P` names folders, the
+# way the working directory is compared, and a link as its target too; one a line. $busok is 0
+# where an entry names a file the launcher can't read (a path that isn't absolute, a broken escape,
+# a newline): no working directory and no granted folder is shown then. An abstract socket has no file.
 _BUS_BLOCK = """# The session bus to filter. With no address set it is where a login session's bus is, which is
 # where libdbus and GLib look too (and a default keeps `set -u` from aborting the launcher).
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 busfile=
 case "$upstream" in
-  *";"*|unix:path=*%*) ;;
+  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
 # Every socket file the address names, one a line: no working directory or folder of the app's may
@@ -2056,35 +2058,40 @@ bussocks= busok=1 rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
-  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
-  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
-  f=
-  while [ -n "$p" ]; do
-    case "$p" in
-      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
-        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
-        f="$f$(printf "\\\\$(printf %o "$((0x$x))")")" ;;
-      %*) busok=0; f=; break ;;
-      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
-      *) f="$f$p"; p= ;;
-    esac
+  keys="${e#unix:},"
+  while [ -n "$keys" ]; do
+    p=${keys%%,*}; keys=${keys#*,}
+    case "$p" in path=*) p=${p#path=} ;; *) continue ;; esac
+    f=
+    while [ -n "$p" ]; do
+      case "$p" in
+        %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+          case "$x" in 00) break ;; 0[aA]) busok=0; f=; break ;; esac
+          f="$f$(printf "\\\\$(printf %o "$((0x$x))")")" ;;
+        %*) busok=0; f=; break ;;
+        *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+        *) f="$f$p"; p= ;;
+      esac
+    done
+    case "$f" in /*) ;; *) busok=0; continue ;; esac
+    case "$f" in *"$nl"*) busok=0; continue ;; esac
+    if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+    bussocks="$bussocks$f$nl"
+    if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
   done
-  case "$f" in /*) ;; *) busok=0; continue ;; esac
-  case "$f" in *"$nl"*) busok=0; continue ;; esac
-  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
-  bussocks="$bussocks$f$nl"
-  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
 done
 """
 
 # File arguments (R17.6.2), Standard apps only -- Strict ones have no bus and so no document portal.
 # {visible}: the granted folders (and, for a CLI tool, the directory it runs in), where a file is
-# already in view and keeps its real path.
+# already in view and keeps its real path; the granted folders only where the launcher shows them,
+# which it doesn't where the session bus's address names a file it can't read ($busok 0, the cover
+# below; PR #694's review, P3-B4), so a file there is handed over instead.
 _FORWARD_BLOCK = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2).
-if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
+{shown}if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
   if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then eval "set -- $fwd"; fi
 fi
 """
@@ -2338,10 +2345,11 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it
-        visible = [q(os.path.expanduser(p)) for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        visible = ["${folders:+" + q(os.path.expanduser(p)) + "}" for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
-        fwd = _FORWARD_BLOCK.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
+        fwd = _FORWARD_BLOCK.format(helper=q(forward), incwd=incwd, visible=" ".join(visible), shown=shown)
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731
@@ -2365,18 +2373,31 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # is inside a granted folder all the same, the file is covered, after that folder's bind, so the
     # app never sees the unfiltered bus (R17.3.1). Each folder as the app sees it, and as it really is;
     # each socket file the address names, but a link, which the folder shows pointing at a file it
-    # doesn't (its target is in $bussocks too, and covered where a granted folder holds it).
+    # doesn't (its target is in $bussocks too, and covered where a granted folder holds it). Where the
+    # address names a file the launcher can't read ($busok 0), that file could be in any of them, at
+    # any depth, so each granted folder is shown empty and read-only (a tmpfs over its bind), and a
+    # granted socket file is covered, as the working directory is refused then, with a line (PR
+    # #694's review, P3-B4: the cover never asked $busok, and an address the clients read past the
+    # launcher left a live socket in sight). A file or a folder not there is left as its bind left it.
     granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
     if standard and granted:
         cover = ["# A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).",
-                 'rest=$bussocks',
-                 'while [ -n "$rest" ]; do',
-                 '  s=${rest%%"$nl"*}; rest=${rest#*"$nl"}',
-                 '  if [ -S "$s" ] && [ ! -L "$s" ]; then']
+                 'if [ "${busok:-1}" = 1 ]; then',
+                 '  rest=$bussocks',
+                 '  while [ -n "$rest" ]; do',
+                 '    s=${rest%%"$nl"*}; rest=${rest#*"$nl"}',
+                 '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'    r={q(os.path.realpath(dest))}; case "$s" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
-        out.append("\n".join(cover + ["  fi", "done"]) + "\n")
+            cover.append(f'      r={q(os.path.realpath(dest))}; case "$s" in "$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+        cover += ["    fi", "  done", "else",
+                  "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
+        for p in granted:
+            d = q(os.path.expanduser(p))
+            cover.append(f'  if [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
+        cover.append(f"  printf \"%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file "
+                     f"AppKata can't read, which could be in one of them.\\n\" {q(name)} {q(', '.join(granted))} \"$upstream\" >&2")
+        out.append("\n".join(cover + ["fi"]) + "\n")
 
     # 1. The filtered session-bus proxy (Standard only; Strict adds none).
     if standard and not bus:
@@ -2441,10 +2462,11 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
             '# word (CR1.5-18). An abstract socket has no file: it is in the host\'s network namespace,\n'
             '# so the proxy stays in that only then, and has a network of its own otherwise. Any other\n'
             '# address is one the launcher can\'t read (a list of addresses, a path with an escaped byte or\n'
-            '# a relative one, another transport), so the proxy couldn\'t be shown its bus: no proxy then.\n'
+            '# a relative one, two paths, of which GDBus takes the last, another transport), so the proxy\n'
+            '# couldn\'t be shown its bus: no proxy then.\n'
             'proxy=\n'
             'case "$upstream" in\n'
-            '  *";"*|unix:path=*%*) ;;\n'
+            '  *";"*|unix:path=*%*|unix:path=*,path=*) ;;\n'
             '  unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;\n'
             '  unix:abstract=*) start_proxy ;;\n'
             'esac\n'

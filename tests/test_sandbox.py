@@ -374,7 +374,7 @@ if "xdg-dbus-proxy" in argv:
 
 
 def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
-              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=()):
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=()):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
@@ -382,7 +382,8 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     the run, and the runtime folder. The xdg-dbus-proxy its PATH finds is a stand-in that is
     really at `proxy_at` (None: no stand-in), as `readlink -f` tells the launcher (no machine's /usr
     is a test's). The
-    rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them."""
+    rest of its PATH is this one's, without the programs `hide` names: a machine that lacks them.
+    `forward`: the file-argument helper the launcher calls, and `args` its arguments."""
     home, rt, fake, log = tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     for d in (home, rt, fake):
         d.mkdir()
@@ -402,7 +403,7 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
         (fake / tool).chmod(0o755)
     lp = tmp_path / "launcher"
     lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
-                                    seccomp=str(fake / "record.py")))            # any file there is: nothing here reads it as a filter
+                                    seccomp=str(fake / "record.py"), forward=forward))   # any file there is: nothing here reads it as a filter
     path = os.environ["PATH"]
     if hide:
         bare = tmp_path / "bare"
@@ -415,7 +416,7 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{path}"}
     if address is not None:
         env["DBUS_SESSION_BUS_ADDRESS"] = address.format(rt=rt)
-    r = subprocess.run(["sh", str(lp)], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
+    r = subprocess.run(["sh", str(lp), *args], env=env, cwd=str(cwd or home), capture_output=True, text=True, timeout=60)
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
     run = next((c for c in calls if "/.flatpak-info" in c), None)
     assert (run is not None) is app, (r.returncode, r.stdout, r.stderr)
@@ -581,6 +582,7 @@ def test_the_proxy_takes_the_terminal_filter_or_a_session_of_its_own():
 
 
 @pytest.mark.parametrize("address", ["unix:path=/tmp/a%20b/bus", "unix:path={rt}/bus;unix:path=/tmp/dbus-MZ8lHbtZ8K", "unix:path=relative/bus",
+                                     "unix:path=/tmp/dbus-one,path={rt}/bus",           # GDBus, the proxy's, takes the last (P3-B4)
                                      "unix:abstract=/tmp/dbus-one;unix:abstract=/tmp/dbus-two", "unix:tmpdir=/tmp", "unix:runtime=yes",
                                      "tcp:host=127.0.0.1,port=4000", "autolaunch:", "nonsense"])
 def test_a_bus_address_the_launcher_cannot_read_is_said_and_the_app_runs_with_no_bus(tmp_path, monkeypatch, address):
@@ -780,6 +782,10 @@ BUS_FORMS = {
     "a list": "unix:abstract=/tmp/dbus-none;unix:path={tmp}/dbus-MZ8lHbtZ8K",
     "an escaped byte": "unix:path={up}/%74mp/dbus-%4dZ8lHbtZ8K",
     "a link to it": "unix:path={up}/elsewhere/bus",
+    # PR #694's review, P3-B4: GIO takes the last of two `path=` keys, and libdbus and sd-bus end a
+    # path at an escaped NUL; the launcher read the first alone, and counted the NUL unreadable
+    "a second path=": "unix:path={up}/elsewhere/none,path={tmp}/dbus-MZ8lHbtZ8K",
+    "an escaped NUL": "unix:path={tmp}/dbus-MZ8lHbtZ8K%00zz",
 }
 
 
@@ -817,6 +823,79 @@ def test_a_tool_is_shown_no_folder_where_the_session_bus_names_a_file_it_cannot_
     assert proxy is None and r.returncode == 0 and str(run_in) not in _binds(app), (app, r.stderr)
     assert (f"Demo runs sandboxed and can't see {run_in}, nor any folder here: this session bus's address ({address}) names a socket "
             "file AppKata can't read, which could be there.") in r.stderr, r.stderr
+
+
+_FORWARD_STUB = """import json, sys
+with open(sys.argv[0] + ".args", "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\\n")
+sys.exit(1)
+"""
+
+
+@pytest.mark.parametrize("address", ["unix:path=relative/dbus-MZ8lHbtZ8K", "unix:path=/tmp/dbus-%zz", "unix:abstract=/tmp/x;unix:path=/tmp/a%0Ab", None])
+def test_no_granted_folder_is_shown_where_the_session_bus_names_a_file_it_cannot_read(tmp_path, monkeypatch, address):
+    # PR #694's review, P3-B4: ...and such an address could name a socket in any granted folder, at any
+    # depth, while the cover asked $bussocks alone. Each granted folder is shown empty and read-only
+    # now, a granted socket file covered, a granted file left as it is, the app told why, and a file
+    # named in a granted folder handed over rather than given as a path the app can't see.
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")      # AppKata's own: the grants stand
+    folder, notes = tmp_path / "project", tmp_path / "notes.txt"
+    sock, deep = _a_bus_socket(folder / "deep")
+    other, single = _a_bus_socket(tmp_path / "sockets")
+    notes.write_text("x")
+    granted = {str(folder): "rw", str(single): "rw", str(notes): "ro"}
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {f"+{p}": m for p, m in granted.items()}})
+    stub = tmp_path / "forward.py"
+    stub.write_text(_FORWARD_STUB)
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, address, gs=gs, forward=str(stub), args=[str(folder / "a.txt")])
+    sock.close()
+    other.close()
+    emptied = {app[i + 1]: (i, app[i + 2:i + 4]) for i, w in enumerate(app) if w == "--tmpfs" and app[i + 1] in granted}
+    told = json.loads(stub.with_name("forward.py.args").read_text())
+    visible = told[3:told.index("--")]                                      # id, runtime folder, working folder, then these
+    assert r.returncode == 0 and _binds(app)[str(folder)] == ("--bind-try", str(folder)), (app, r.stderr)
+    if address is None:                                                   # the address is read: the folders are shown
+        assert emptied == {} and str(single) not in [app[i + 2] for i, w in enumerate(app) if w == "--ro-bind" and app[i + 1] == "/dev/null"]
+        assert sorted(visible) == sorted(granted) and "can't see the folders" not in r.stderr, (visible, r.stderr)
+        return
+    assert emptied == {str(folder): (emptied[str(folder)][0], ["--remount-ro", str(folder)])}, app
+    assert emptied[str(folder)][0] > app.index(str(folder)), app                       # after the folder's own bind
+    assert _binds(app)[str(single)] == ("--ro-bind", "/dev/null") and _binds(app)[str(notes)] == ("--ro-bind-try", str(notes)), app
+    assert visible == [], told                                            # a file named there is handed over instead
+    assert (f"Demo runs sandboxed and can't see the folders it was given ({', '.join(sorted(granted))}): this session bus's address "
+            f"({address}) names a socket file AppKata can't read, which could be in one of them.\n") in r.stderr, r.stderr
+
+
+# PR #694's review, P3-B4 (and P3-2 before it): two readers of one address, bus_files() when a grant
+# is judged and the launcher's shell at the launch, read it differently: the shell took the first
+# `path=` of an entry alone (GIO takes the last) and counted an escaped NUL unreadable (libdbus and
+# sd-bus end the path there), so a live socket the clients reach stayed in sight of a granted folder.
+# How it slipped past: each reader was tested on forms of its own, never one against the other. This
+# runs the launcher's own reader on each form and holds it to bus_files(): the same files, and the
+# same answer to whether the address names one it can't read. The paths are under no folder there
+# is, so neither names them further (the shell's `pwd -P` and a link's target are tried above).
+BUS_READS = [
+    "unix:path=/nowhere/a/bus", "unix:path=/nowhere/a/bus,guid=0123", "unix:guid=0123,path=/nowhere/a/bus",
+    "unix:path=/nowhere/a/first,path=/nowhere/b/second", "unix:path=/nowhere/a,path=relative",
+    "unix:path=/nowhere/a/bus;unix:path=/nowhere/b/bus;", "unix:abstract=/nowhere/x;unix:path=/nowhere/b/bus",
+    "unix:path=%2Fnowhere%2Fa%2Fbus", "unix:path=/nowhere/a%00b", "unix:path=/nowhere/a%00%zz", "unix:path=%00/nowhere",
+    "unix:path=/nowhere/%e9t%C3%A9/bus", "unix:path=/nowhere/a%25b%2cc%5C%2a", "unix:path=/nowhere/a/../b/bus", "unix:path=/nowhere/a/",
+    "unix:path=relative/bus", "unix:path=./bus", "unix:path=", "unix:path=/nowhere/%zz", "unix:path=/nowhere/%2", "unix:path=/nowhere/a%",
+    "unix:path=/nowhere/a%0Ab", "unix:path=/nowhere/a%0ab", "unix:path=/nowhere/a\nb",
+    "unix:path", "unix:", "unix:abstract=/nowhere/x,guid=1", "unix:runtime=yes", "tcp:host=localhost,port=4000", ";;", "nonsense",
+]
+
+
+@pytest.mark.parametrize("address", BUS_READS)
+def test_the_launcher_reads_the_bus_address_as_bus_files_does(address):
+    script = "set -u\nrt=/nowhere-rt\n" + sb._BUS_BLOCK + 'printf "%s" "$bussocks"; echo "busok=$busok"\n'
+    r = subprocess.run(["sh", "-c", script], env={"PATH": os.environ["PATH"], "DBUS_SESSION_BUS_ADDRESS": address},
+                       capture_output=True, timeout=30)
+    assert r.returncode == 0 and r.stderr == b"", r.stderr
+    *files, said, end = r.stdout.split(b"\n")
+    assert said in (b"busok=1", b"busok=0") and end == b"", r.stdout
+    want, readable = sb.bus_files(address)
+    assert (files, said) == ([os.fsencode(f) for f in want], b"busok=1" if readable else b"busok=0"), address
 
 
 @pytest.mark.parametrize("form", BUS_FORMS)
@@ -1746,7 +1825,10 @@ def test_launcher_hands_over_file_arguments_only_for_standard_apps(fake_home):
     text = open(lp).read()
     helper = sb.forward_path()
     assert os.path.exists(helper) and "org.freedesktop.portal.Documents" in open(helper).read()
-    assert f'python3 {helper} "$id" "$rt" "" {fake_home}/Projects -- "$@"' in text
+    # ...each only where the launcher shows it, which it doesn't where the session bus's address names
+    # a file it can't read (PR #694's review, P3-B4)
+    assert f'python3 {helper} "$id" "$rt" "" ${{folders:+{fake_home}/Projects}} -- "$@"' in text
+    assert text.index('folders=1; [ "${busok:-1}" = 1 ] || folders=') < text.index("forward-files.py")
     assert text.index("forward-files.py") < text.index('set -- -- "$appdir/$exe" "$@"')     # before the words are fixed
     assert text.index("--appkata-menu") < text.index("forward-files.py")                  # after the menu word is shifted off
     cli = sb.build_launcher("t", "T", "/x/1", "bin/t", sb.resolve_template("cli-tool"), forward=helper)

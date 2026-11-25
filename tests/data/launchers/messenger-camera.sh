@@ -38,7 +38,7 @@ command -v bwrap >/dev/null 2>&1 || { printf "AppKata: bubblewrap (bwrap) isn't 
 upstream="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$rt/bus}"
 busfile=
 case "$upstream" in
-  *";"*|unix:path=*%*) ;;
+  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
   unix:path=/*) busfile="${upstream#unix:path=}"; busfile="${busfile%%,*}" ;;
 esac
 # Every socket file the address names, one a line: no working directory or folder of the app's may
@@ -49,24 +49,27 @@ bussocks= busok=1 rest="$upstream;"
 while [ -n "$rest" ]; do
   e=${rest%%;*}; rest=${rest#*;}
   case "$e" in unix:*) ;; *) continue ;; esac
-  case ",${e#unix:}," in *,path=*) ;; *) continue ;; esac
-  p=",${e#unix:}"; p=${p#*,path=}; p=${p%%,*}
-  f=
-  while [ -n "$p" ]; do
-    case "$p" in
-      %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
-        case "$x" in 00|0[aA]) busok=0; f=; break ;; esac
-        f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
-      %*) busok=0; f=; break ;;
-      *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
-      *) f="$f$p"; p= ;;
-    esac
+  keys="${e#unix:},"
+  while [ -n "$keys" ]; do
+    p=${keys%%,*}; keys=${keys#*,}
+    case "$p" in path=*) p=${p#path=} ;; *) continue ;; esac
+    f=
+    while [ -n "$p" ]; do
+      case "$p" in
+        %[0-9A-Fa-f][0-9A-Fa-f]*) x=${p#%}; x=${x%"${x#??}"}; p=${p#%??}
+          case "$x" in 00) break ;; 0[aA]) busok=0; f=; break ;; esac
+          f="$f$(printf "\\$(printf %o "$((0x$x))")")" ;;
+        %*) busok=0; f=; break ;;
+        *%*) f="$f${p%%"%"*}"; p=%${p#*%} ;;
+        *) f="$f$p"; p= ;;
+      esac
+    done
+    case "$f" in /*) ;; *) busok=0; continue ;; esac
+    case "$f" in *"$nl"*) busok=0; continue ;; esac
+    if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
+    bussocks="$bussocks$f$nl"
+    if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
   done
-  case "$f" in /*) ;; *) busok=0; continue ;; esac
-  case "$f" in *"$nl"*) busok=0; continue ;; esac
-  if d=$(cd "${f%/*}/" 2>/dev/null && pwd -P); then f="${d%/}/${f##*/}"; fi
-  bussocks="$bussocks$f$nl"
-  if r=$(readlink -f "$f" 2>/dev/null) && [ -n "$r" ] && [ "$r" != "$f" ]; then bussocks="$bussocks$r$nl"; fi
 done
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
@@ -141,10 +144,11 @@ start_proxy() {   # "$@": the bwrap words that put this session's bus in the pro
 # word (CR1.5-18). An abstract socket has no file: it is in the host's network namespace,
 # so the proxy stays in that only then, and has a network of its own otherwise. Any other
 # address is one the launcher can't read (a list of addresses, a path with an escaped byte or
-# a relative one, another transport), so the proxy couldn't be shown its bus: no proxy then.
+# a relative one, two paths, of which GDBus takes the last, another transport), so the proxy
+# couldn't be shown its bus: no proxy then.
 proxy=
 case "$upstream" in
-  *";"*|unix:path=*%*) ;;
+  *";"*|unix:path=*%*|unix:path=*,path=*) ;;
   unix:path=/*) start_proxy --ro-bind-try "$busfile" "$busfile" --unshare-net ;;
   unix:abstract=*) start_proxy ;;
 esac
