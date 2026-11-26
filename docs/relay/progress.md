@@ -582,3 +582,281 @@ before and after: empty.
 9. The cover of a bus socket in a granted folder still asks `readlink -f` for where the grant
     leads; with the launch check that is where it led when written, for a grant that stands. Left
     as it was.
+
+## Batch 4
+
+The places of the home the never-shared and secret lists miss: #384, #632, #701, #383, #392, and
+#745 (added by the coordinator after batch 3). Fable 5.2, high effort. Nothing was taken over: the
+worktree was clean at the start.
+
+**The merge of U04's tip**: 4164112, "Merge U04's branch in at 97cf7e3". One conflict outside
+`docs/relay/`: `docs/remediation/CR1-schedule.json`, where both sides added records at the end of
+the findings (U04's #737–#742; this branch's #734, #736, #743–#745). Both kept, in the issues'
+order; the units' findings and files merged by themselves (U04, U06 and U10 as U04's branch has
+them, U05 and U42 as this branch has them). `triage.py check --offline`: "49 units holding 600
+findings, 0 set aside: no problems". `docs/relay/` stayed this unit's. **U04's tip moved after
+that**, by eight commits, to 0c08e3f (its batch 4, its `docs/relay/` deleted, `upstream/master`
+merged in): not in this batch. `git merge-tree` says the next merge conflicts, outside
+`docs/relay/`, in `docs/remediation/CR1-schedule.json` and in `tests/test_backend.py`, where both
+branches added tests at the file's end (keep both).
+
+**Counts**: fixed 6, no defect 0, remedy changed 0, set aside 0, still left 0, new 2 (both Low,
+none fixed).
+
+**Files touched**: `src/appkata_core/sandbox.py`, `src/appkata_core/install.py`,
+`src/appkata/backend.py`, `tests/test_sandbox.py`, `tests/test_sandbox_adversarial.py`,
+`tests/test_sandbox_one_fact.py`, `tests/test_sandbox_run.py`, `tests/test_backend.py`, the five
+goldens under `tests/data/launchers/` (written again by `UPDATE_GOLDEN=1`, in #384's and #632's
+commits), `docs/requirements/R17-app-sandboxing/R17.3-templates.md`,
+`docs/requirements/R17-app-sandboxing/R17.17-limits.md`,
+`docs/architecture/A1-app-sandboxing/A1.11-claims.md`, `docs/requirements-trace.md`; and, outside
+U05's files (see **Guard**), `tests/test_sandbox_claims_table.py`, `tests/test_dialog_contract.py`
+and `tests/test_launcher_golden.py`.
+
+### The findings
+
+**#384, fixed, b5af552 (and d1bc8bc, a test it broke).** `_protected_roots()` gains, each with what
+is inside and above it: Cinnamon's `~/.local/share/cinnamon`, whole, and `~/.cinnamon`;
+bash-completion's `~/.bash_completion`, `~/.config/bash_completion` and
+`~/.local/share/bash-completion`; im-config's `~/.xinputrc`; the compositors' and window managers'
+configurations (`~/.config/sway`, `~/.sway`, `~/.config/i3`, `~/.i3`, `~/.config/hypr`,
+`~/.config/labwc`, `~/.config/openbox`, `~/.config/river`, `~/.config/niri`,
+`~/.config/wayfire.ini`); `~/.config/pipewire`; `~/.vscode/extensions` and
+`~/.vscode-oss/extensions`; `~/.cargo/bin` and `~/go/bin`. A command-line tool run from one is not
+given it, and the file-argument helper, which is given the same list since #651, hands no file of
+one over. The alternatives (no dot folder for a review; an allow-list) are not taken. Tests:
+- tier 1, `tests/test_sandbox.py`: 39 new cases of `test_protected_folders_are_never_granted`,
+    `test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one` (the
+    finding's road: a review's line through `config_from_review` and `choose`, the chips, the
+    launcher, the picker's `strip_protected`, a tool's list); `tests/test_sandbox_adversarial.py`:
+    `test_a_place_code_runs_from_later_is_refused_and_never_bound_however_it_is_written` (39 paths).
+    Shown failing: the tree of 4164112 (`git archive`) with the new test files over it, in the
+    scratch home: 33 of the list's new cases, the road test and 37 of the 39 adversarial ones.
+- tier 2, a part of `test_every_file_the_distributions_default_bashrc_sources_is_refused` (see
+    **Guard**): `_what_the_desktops_own_programs_load_from_the_home_is_refused` asks the platform,
+    as that test asks the default `.bashrc`: what bash-completion's script and profile script,
+    Cinnamon's `js/ui/main.js` and panel-launchers applet, and im-config's `xinputrc.common`
+    themselves name as the places in the home they load from, each reader first held to the lines
+    it was written from. **The launcher images carry neither bash-completion nor Cinnamon**, so
+    there the part finds nothing. Shown failing and passing where the programs are:
+    in both launcher containers with the distribution's own bash-completion package unpacked into
+    the container for the run (`apt-get download`, then `dpkg-deb -x`: 2.11 on Mint 22.3, 2.16 on
+    LMDE 7; no image built or changed): failed on the 4164112 tree, passed with the fix; and in the
+    `appkata-desktop-mint22.3` and `appkata-desktop-lmde7` images (Cinnamon 6.6.9, im-config 0.57),
+    where the file's tests are skipped for want of bwrap, by calling the part itself: "AssertionError:
+    /usr/share/cinnamon loads ~/.cinnamon/panel-launchers, which would be shared" on that tree,
+    seven places held with the fix. `tests/test_sandbox_one_fact.py`'s agreement test gains eight
+    folders (it passes before and after: it holds the tool's rule to the grant check).
+- d1bc8bc: `tests/test_sandbox_claims_table.py` holds A1.11's inferred rows to its own list; the
+    new row is listed there. b5af552 was committed without that file run.
+
+**#632, fixed, 437fa6f (and 10148e0, a test it turned round).** `sandbox.Own` names AppKata's own
+folders beside the app's install folder; `protected_folder`, `refused_folders`, `strip_protected`,
+`summary_chips`, `summary`, `build_launcher`, `launcher_text` and `write_launcher` take one where
+they take `apps_root`. The list holds the app's install folder, the default one whatever Settings
+name, and the command links folders: the default `~/bin` and those of `own`.
+`install.Portable` carries them (`others`, and `own`, which adds the folder the app's own link
+goes in) to the launcher's writers and the startup pass's comparison; the backend fills them in
+(`_own_folders`): the command links folder of Settings, and each folder an installed app's command
+link is in today. The alternative (every folder of the login PATH) is not taken. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_the_command_links_folder_and_the_default_install_folder_are_never_shared_wherever_apps_are_installed`
+    (six settings: each folder's reason, the chips, the picker, the binds, a tool's list and the
+    helper's), `test_a_review_cannot_grant_the_command_links_folder_and_a_launcher_an_install_writes_keeps_it_out`
+    (through `install._activate` and `launcher_is_current`), and
+    `test_launcher_and_summary_refuse_protected_folders`' line that held `~/bin/apps` as granted
+    under a custom install folder, turned round; `tests/test_backend.py`:
+    `test_the_sandbox_is_told_the_command_links_folder_of_settings_and_of_every_install`.
+    Shown failing on the b5af552 tree: all ten (the turned-round line on what the launcher holds;
+    the others at `sb.Own`, which is new, so the fault itself by a scratch script on that tree:
+    with the install folder `~/Apps`, `protected_folder` gave "" for `~/bin`, `~/bin/apps`,
+    `~/bin/apps/x/run` and `~/tools`).
+- tier 2: `tests/test_sandbox_one_fact.py`'s agreement test asks every folder twice, with the links
+    in `~/bin` and in `~/tools` (a real launcher, a stand-in bwrap), and holds `~/bin`, the default
+    install folder and `~/tools` to the right answer. Mint 22.3 and LMDE 7: failed on the b5af552
+    tree (at the new argument), passed with the fix.
+- 10148e0: `tests/test_dialog_contract.py` told an installed app's own folder from Settings' by the
+    chips' answer, which is now the same for both (the first is the default install folder); it
+    reads the folder the backend hands the chips. 437fa6f's run had left that file out.
+
+**#701, fixed, 03e86bb.** `sandbox.Own.roots`: every install folder AppKata has apps in, and the
+one Settings name for the next install, gathered by the backend from the install records. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_an_app_in_one_install_folder_is_never_given_another_folder_apps_are_installed_in` (both
+    directions: a review's line, the user's pick, a tool's lists),
+    `test_a_launcher_an_install_writes_keeps_out_the_other_folders_apps_are_installed_in`;
+    `tests/test_sandbox_adversarial.py`:
+    `test_another_folder_apps_are_installed_in_is_refused_and_never_bound_however_it_is_written` (12
+    paths); `tests/test_backend.py`:
+    `test_the_sandbox_is_told_every_install_folder_apps_are_in_and_the_one_settings_name` (apps
+    recorded in two folders, Settings naming a third). Shown failing on the 437fa6f tree: all 16
+    (at `Own.roots`, which is new; by a scratch script on that tree an app in `~/Apps` asked of
+    `~/OldApps` and `~/OldApps/victim/run`: "" for both).
+
+**#383, fixed, b191b0b.** `_secret_roots()` gains the Chromium family's eight data folders, whole
+(their top stays never shared, and that answer comes first), `~/.config/mozilla/firefox`, the
+Firefox forks' `~/.librewolf`, `~/.waterfox`, `~/.floorp` and `~/.zen`, Tor Browser's
+`~/.local/share/torbrowser`, Evolution's two folders and `~/.config/goa-1.0`. Tests:
+- tier 1, `tests/test_sandbox.py`: 24 new paths in `SECRETS`
+    (`test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can`),
+    `test_a_chromium_data_folder_is_never_shared_at_its_top_and_what_is_in_it_is_a_secret` (the
+    eight folders: the finding's road, the user's own pick, what the launcher mounts), five
+    look-alikes in `test_ordinary_folders_are_no_secrets`; the line that held the profile as
+    grantable says what it is now. Shown failing on the 03e86bb tree: the 24 and the 8; by a
+    scratch script the finding's line kept all four folders there, and has them refused now.
+
+**#392, fixed, e8b5eab.** A root of either list under `~/.config` or `~/.local/share` is also
+under `$XDG_CONFIG_HOME` or `$XDG_DATA_HOME` where the variable names another folder; the
+never-shared list also holds `$GNUPGHOME` and zsh's startup files in `$ZDOTDIR`. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_it_and_at_its_default_place`
+    (all four variables: 26 moved and 7 default never-shared places, 12 secrets, 8 folders still
+    shared; a review's line, the picker, a tool's two lists; the lists unchanged for the default,
+    empty and relative values),
+    `test_the_startup_pass_writes_a_launcher_again_once_a_variable_moves_a_never_shared_folder`.
+    Shown failing on the b191b0b tree: both, on the fault itself ("" for `~/cfg/autostart`; the
+    launcher still current after `XDG_CONFIG_HOME` changed). The goldens don't change.
+
+**#745, fixed, ae0aba5.** `Backend._given()` is a grant set without the folders AppKata refuses,
+judged as the app's launcher judges them; the badge (its words, `reviewBadge`, `hasSuggestion`)
+and the Audit's sandbox detail (`added`, `removed`, the template's label, `written for`) compare
+sets so. The sets themselves stay as written, so the summary, the dialog's "what they suggest"
+and the launcher still say a folder was refused. Tests:
+- tier 1, `tests/test_backend.py`:
+    `test_the_review_badge_and_the_audit_leave_a_refused_folder_out_of_what_a_reviewers_set_adds`,
+    `test_a_review_that_asks_only_for_refused_folders_suggests_nothing_to_act_on`. Shown failing on
+    the e8b5eab tree: both (the badge read "Desk suggests adding ~/.local/share/cinnamon/applets
+    (read-write), ~/.ssh (read-only), ~/Documents/../.cache (read-only), ~/Notes (read-write) and
+    ~/bin/apps/other (read-write)"; with that assertion taken out of a scratch copy, the Audit's
+    `added` held the same five).
+
+After the last commit (ae0aba5): the whole launcher tier in the Mint 22.3 container, 147 passed, 5
+skipped, and in the LMDE 7 container, 147 passed, 5 skipped; the whole tier 1 suite in its
+container under a 3 GB cap, 5356 passed, 138 skipped, none failed. Before a commit, in the scratch
+home, beside the touched files and the document checks: for #632 every test file that names the
+sandbox with the backend's and the install's (3444 passed; `tests/test_dialog_contract.py` was not
+among them, see 10148e0), for #701 the same with the dialogs' (3512 passed, and that one failure),
+for #383 the same without the four run files (2990 passed), for #392 all of them (3551 passed),
+for #745 the 14 files that use the backend, the badge or the Audit's detail (1121 passed).
+
+### Needs your eye
+
+- b5af552 (#384): R17.3.1's list gains the places above, and the sentence "It is a list of the
+    places AppKata knows, kept by hand, and it is not complete …"; R17.17 gains "the never-shared
+    folders of R17.3.1 are a list of the places AppKata knows and not of every place …". The
+    reasons a user sees: "Cinnamon's applets, desklets, extensions and panel launchers",
+    "Cinnamon's panel launchers", "your shell's completion scripts", "PipeWire's configuration,
+    which can start programs", "your editor's extensions", "your window manager's configuration,
+    which starts programs", and for the PATH folders "programs on your PATH". Mine, beside the
+    remedy: `~/.local/share/cinnamon` whole, not its three folders (its `search_providers` and
+    `panel-launchers` are read the same way, by Cinnamon's own files); `~/.config/bash_completion`,
+    `~/.sway`, `~/.i3`, river, niri, Wayfire and `~/.vscode-oss/extensions`. `~/go` and `~/.cargo`
+    are refused as folders above (`~/go/src/…` is shared). A file in one of these is no longer
+    handed to a sandboxed app by being named (`editor ~/.config/sway/config`): the helper's list
+    is the same one (#651's decision). A1.11 gains five rows; one is **inferred** (i3, Hyprland,
+    labwc, Openbox, river, niri, Wayfire, VS Code, Cargo, Go: none installed in a tier), and is
+    listed in `tests/test_sandbox_claims_table.py` as such.
+- 437fa6f (#632): R17.3.1 says which of AppKata's folders are never shared: the install root
+    "(the folder the app is installed in, and the default one whatever Settings name …)" and "its
+    command links folder (R4.3.1.3, on `PATH`: the one Settings name, the default `~/bin`, and any
+    folder a command link AppKata made is still in)". The reason a user sees: "the command links
+    folder, which is on your PATH". Mine: the default `~/bin` is refused whatever Settings name; a
+    folder an installed app's link is still in is refused until that app is updated; a command
+    links folder that is the home folder or above it adds nothing.
+- 03e86bb (#701): R17.3.1's install root is "the folder the app is installed in, every other
+    folder AppKata has an app in and the one Settings name for the next …".
+- b191b0b (#383): R17.3.1's Secrets sentence names the new places, and its sentence on the
+    Chromium folders is corrected. The reasons: "a browser's profiles and saved logins", "Tor
+    Browser and its profile", "Evolution's mail and accounts", "your online accounts' sign-ins".
+    The forks' list is mine (the record leaves it), and so is `~/.config/mozilla/firefox`.
+- e8b5eab (#392): R17.3.1 gains "A folder of the list that lies in `~/.config` or `~/.local/share`
+    is refused there and where `XDG_CONFIG_HOME` or `XDG_DATA_HOME` puts it …". **What the brief
+    left to the batch**: the startup pass sees a variable changed after a launcher was written
+    when AppKata itself is started with it, and then writes the sandboxed apps' launchers again; a
+    variable set only where AppKata's own start doesn't read it (a shell's startup file, for an
+    AppKata started from the menu) it never sees, and the moved folder is not refused. The
+    sentence says the first half.
+- ae0aba5 (#745): no requirement changes. The badge and the Audit no longer name a refused folder;
+    a review that asks only for refused folders raises no badge and offers no "Use theirs".
+
+### Needs a run
+
+The VMs (the coordinator's), where bash-completion is installed and the launcher images don't have
+it: #384's part reads the system's own files there, and #632's agreement runs under Ubuntu's
+kernel and AppArmor profile:
+
+```
+scripts/test-sandbox.sh launcher-vm -k "default_bashrc or agree_on_every_folder or sees_and_writes_the_project"
+scripts/test-sandbox.sh launcher-vm26 -k "default_bashrc or agree_on_every_folder or sees_and_writes_the_project"
+```
+
+A Mint or LMDE desktop VM would run #384's part against a real Cinnamon; the two desktop images
+gave the same files to the part called by itself (above).
+
+### Guard
+
+The guard (`triage.py guard U05 --on U04 --base origin/cr1-u04-downloads-checksums`, from the main
+checkout's `agents/`) passes on every commit. Outside U05's plan, each "no other unmerged unit
+claims it: add it to U05's files": `tests/test_sandbox_claims_table.py` (d1bc8bc) and
+`tests/test_launcher_golden.py` (e8b5eab: its fixed host unsets the three variables #392 reads).
+`tests/test_dialog_contract.py` (10148e0) is a shared file, and the guard says to add it too. `tests/skips/tier1.txt` is U44's and
+names every test of `tests/test_sandbox_run.py`, as batch 1 said: #384's platform check is a part
+of a run test that file already names. `tests/test_sandbox_surfaces.py` is U16's and stands in for
+`summary_chips` with a function of three arguments: `summary()` passes `own` only when it is given
+one, so that file is unchanged.
+
+### New
+
+1. **Low. AppKata's data folder follows a relative `XDG_DATA_HOME` as it is written.**
+    `src/appkata_core/platform.py`, `data_dir()`: with `XDG_DATA_HOME=cfg` the database, the logs
+    and every private home are in `cfg/appkata` under whatever folder AppKata was started in (seen
+    in #392's test: the never-shared list's own entry was `cfg/appkata`). The XDG rule is that a
+    value that is no full path is ignored. `sandbox.user_folders()` reads `XDG_CONFIG_HOME` the
+    same way. Not U05's file.
+2. **Low. An install folder that is the home folder, or above it, makes every folder of the home
+    "AppKata's installed apps" to the app installed there.** `src/appkata_core/sandbox.py`,
+    `_protected_roots()`, the `apps_root` entry: `protected_folder("~/Notes", apps_root=<home>)`
+    is refused, as it was before this batch. For the folders this batch added (`own`) such a
+    folder is left out; the app's own is as it was, since leaving it out there would share the
+    folder its program is in. It needs Settings' install folder set to the home folder.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `~/.local/share/appkata` and `~/.local/share/applications`
+before and after: empty.
+
+### Doubts for the coordinator
+
+1. **Two commits broke a test in a file I had not run, and each has a follow-up commit**: #384's
+    inferred row (`tests/test_sandbox_claims_table.py`, d1bc8bc) and #632's default install folder
+    (`tests/test_dialog_contract.py`, 10148e0). From #701 on, every test file that names the
+    sandbox, the backend or an install was run before each commit.
+2. The never-shared list is in every sandboxed app's launcher (the helper's list), so a new
+    command links folder, an install into a new folder, or a changed variable makes the startup
+    pass write all of them again, once. Between the change and AppKata's next start the launchers
+    hold the earlier list.
+3. `~/bin` reads "a folder above AppKata's installed apps" where the install folder is the
+    default, as before: the install folders are asked first. `~/bin/<anything else>` reads "the
+    command links folder, which is on your PATH".
+4. What #384's list still doesn't hold, that I know of and didn't add for want of evidence:
+    `~/.config/cinnamon/spices` (an applet's settings; Cinnamon 6.6.9 reads them, whether one
+    names a command is the applet's), `~/.cargo/env` (sourced by the shell where rustup set it
+    up), WirePlumber's and other desktops' folders. The requirement now says the list is not
+    complete.
+5. #392 follows the four variables the finding names. Others move a secret the same way and are
+    not followed: `PASSWORD_STORE_DIR`, `KUBECONFIG`, `DOCKER_CONFIG`, `CARGO_HOME`,
+    `AWS_SHARED_CREDENTIALS_FILE`.
+6. #745 leaves a review's set as written in `sandboxReviewSeen` (what the badge remembers) and in
+    the install record; only comparisons use the set as given. The "kept the sandbox of" Audit
+    entry lists the suggestion's chips, a refused folder among them with "· refused: …".
+7. `tests/test_sandbox_one_fact.py`'s agreement test runs its folders twice now (about twice as
+    long: some 9 s more on this machine).
+8. In the launcher containers `/home/kata` is a real home, and `tests/test_sandbox.py`'s
+    `a_users_home` names it without writing there; the new tests that use it write nothing.
+9. `Backend._app_options()` reads every install record at each call now (`_own_folders`), where it
+    read one; the startup pass asks it once for each sandboxed app, so that pass parses the records
+    a number of times that grows with the square of the apps installed. Not measured beyond the
+    tests; a cache would need to know when an install changes.
+10. For #384's run with bash-completion, each distribution's package was fetched from its archive
+    (`apt-get download` in a throwaway container) into a scratch folder under /tmp, read there and
+    unpacked into throwaway containers; nothing of it is in the repository or in an image.
