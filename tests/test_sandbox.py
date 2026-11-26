@@ -3891,7 +3891,7 @@ def test_a_never_shared_folder_is_handed_over_by_no_argument_and_the_helper_says
         assert f"runs sandboxed and isn't handed {arg}: {why} with a sandboxed app." in said, (arg, said)
     assert len(said) == len(refused), said                              # a file named three ways is said once
     # ...and what is no never-shared place is handed over as before: a file, a folder, an option's
-    # value, a file under /tmp (a system place is refused to an argument only whole, as a folder: R17.6.2)
+    # value, a file under /tmp (of a system place only a folder is refused, the place or one in /proc, /sys, /dev or /run: R17.6.2)
     (tmp_path / "work").mkdir()
     (tmp_path / "work" / "draft.txt").write_text("x")
     given = ["Documents/notes.txt", str(home / "proj"), "--file=" + str(home / "Documents" / "notes.txt"), str(tmp_path / "work" / "draft.txt"),
@@ -3933,6 +3933,49 @@ def test_a_system_place_or_a_folder_above_one_is_handed_over_whole_by_no_argumen
                                  home=home)
     assert words == [f"{doc}/report.txt", f"{doc}/passwd", f"--in={doc}/passwd", f"{doc}/build", f"{doc}/share"] and said == [], (words, said)
     assert [c[0] for c in calls] == ["Add", "GrantPermissions"] * 3 + ["AddFull", "AddFull"], calls
+
+
+def test_a_folder_in_a_system_place_that_holds_live_state_is_handed_over_by_no_argument(tmp_path):
+    # The owner's decision of 2026-11-26, on the check read of f8b1c0d (R17.6.2): that commit
+    # refused the system's places whole and left every folder below one to the argument, so
+    # `tool /proc/1`, `tool /proc/self`, `tool /dev/shm` and a folder of /run were exported: a
+    # process's files, every program's shared memory, the system's sockets. A folder in /proc,
+    # /sys, /dev, /run or /var/run is handed over no more than the place; one below /tmp, /var/tmp,
+    # /etc, /usr or /boot still is, and so is a file anywhere. How it slipped past: f8b1c0d's test
+    # held "a folder below one is handed over" with /usr/share and a folder under /tmp alone.
+    home = "/home/appkata-no-such-user"                                  # under no system place, and nothing is written to it
+    inside = lambda place: f"it is in {place}, one of the system's own folders that hold its live state, and no folder in one is handed over"   # noqa: E731
+    refused = {"/proc/1": inside("/proc"), "/proc/self": inside("/proc"), "/proc/self/": inside("/proc"), "/dev/shm": inside("/dev"),
+               "/sys/kernel": inside("/sys"), "/usr/../proc/1/": inside("/proc")}
+    in_run = next(d for d in sorted(os.listdir("/run")) if d != "media" and os.path.isdir(f"/run/{d}") and not os.path.islink(f"/run/{d}"))
+    refused[f"/run/{in_run}"] = inside("/run")
+    if os.path.realpath("/var/run") == "/run" and not os.access("/var", os.W_OK):     # root's own link, which is followed
+        refused[f"/var/run/{in_run}"] = inside("/run")
+    args = list(refused) + ["file:///proc/1", "--dir=/dev/shm", "-C/sys/kernel"]
+    words, said, calls = _handed(tmp_path, tmp_path, args, home=home)
+    assert words == args and calls == [], (words, calls)                # each passes as it was, and the portal is asked nothing
+    for arg, why in refused.items():
+        assert f"runs sandboxed and isn't handed {arg}: {why}." in said, (arg, said)
+    assert len(said) == len(refused), said
+    # the runtime folder keeps its own reason, under /run as it is on a desktop or wherever a test has it
+    rt = tmp_path / "run"
+    (rt / "inside").mkdir(parents=True)
+    words, said, calls = _handed(tmp_path, tmp_path, [str(rt / "inside")], home=home)
+    assert said == [f"runs sandboxed and isn't handed {rt}/inside: {rt} is never shared with a sandboxed app."] and calls == [], said
+    # ...a folder below the other places is handed over as before, and so is a file in any of them;
+    # and what the desktop mounts under /run/media is a stick or a disk of the user's, left to an
+    # argument as it is to a grant (the helper's own lines, asked directly: no test can mount one)
+    assert sb.system_folder(str(tmp_path)) or os.path.realpath(tmp_path).startswith("/tmp/"), tmp_path
+    (tmp_path / "build").mkdir()
+    given = [str(tmp_path / "build"), "/usr/local", "/var/lib", "/usr/share/doc", "/proc/cpuinfo", "--in=/proc/cpuinfo"]
+    given += ["/tmp/.X11-unix"] if os.path.isdir("/tmp/.X11-unix") and not os.path.islink("/tmp/.X11-unix") else []
+    assert all(os.path.isdir(p) for p in given[1:4]), given
+    doc = str(tmp_path / "run" / "doc" / "DOC")
+    words, said, calls = _handed(tmp_path, tmp_path, given, home=home)
+    assert words == [(f"--in={doc}/cpuinfo" if g.startswith("--in=") else f"{doc}/{os.path.basename(g)}") for g in given] and said == [], (words, said)
+    assert [c[0] for c in calls] == ["AddFull"] * 4 + ["Add", "GrantPermissions"] * 2 + ["AddFull"] * (len(given) - 6), calls
+    assert "/run/media" in sb.SYSTEM_MEDIA and "media = " + repr(sb.SYSTEM_MEDIA) in sb.FORWARD_HELPER
+    assert set(sb.SYSTEM_LIVE) == {"/proc", "/sys", "/dev", "/run", "/var/run"} and set(sb.SYSTEM_LIVE) < set(sb.SYSTEM_PLACES)
 
 
 def test_the_session_bus_socket_is_handed_over_by_no_argument_nor_a_folder_above_it(tmp_path, monkeypatch):

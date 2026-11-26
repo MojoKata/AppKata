@@ -813,6 +813,9 @@ def bus_files(address: str | None = None) -> tuple[list[str], bool]:
 SYSTEM_PLACES = ("/proc", "/sys", "/dev", "/run", "/var/run", "/tmp", "/var/tmp", "/etc", "/usr", "/boot")
 # ...but where the desktop mounts a stick or a disk for the user, which is under /run
 SYSTEM_MEDIA = ("/run/media", "/var/run/media")
+# The places among them that hold the system's live state: a folder in one is handed over by no file
+# argument either (R17.6.2), where a folder below the others (/tmp/build, /usr/share/doc) is
+SYSTEM_LIVE = ("/proc", "/sys", "/dev", "/run", "/var/run")
 
 
 def _as_written_and_real(path: str) -> list[str]:
@@ -2274,12 +2277,18 @@ def write_seccomp_filter() -> str | None:
 # over, judged by where it leads and by each link on the way there (`~/.ssh/config`, a link to a
 # file kept elsewhere, is in `~/.ssh`: said so, where the link rule below would name the file it
 # leads to as the one to give). The system's own places are not in the list: a file under
-# /tmp is handed over like any other (R17.3.3). A folder is another matter (the owner's decision
+# /tmp is handed over like any other (R17.3.3). A folder is another matter (the owner's decisions
 # of 2026-11-26, on #735): `tool /tmp`, `tool /proc` and `tool /etc` were exported whole, with
 # every other program's sockets or every process's files in them. So an argument that is a folder
 # and one of SYSTEM_PLACES, as it is written or as it resolves here, or a folder above one (`/`,
-# `/var`), is handed over to no app; a file in one is, and so is a folder below one (`/tmp/build`),
-# which the user named and is no more than a folder of theirs. Each refusal is a line of the
+# `/var`), is handed over to no app. Nor is a folder in one of SYSTEM_LIVE (/proc, /sys, /dev,
+# /run, /var/run), which hold the system's live state: `/proc/1` and `/proc/self` are a process's
+# files, `/dev/shm` every program's shared memory, a folder of /run the system's sockets (the
+# first rule alone left them to the argument). The runtime folder, which is in /run, keeps its
+# own reason, and what is under SYSTEM_MEDIA is a stick or a disk of the user's, left to an
+# argument as it is to a grant. A file in any system place is handed over, and so is a folder
+# below the other places (`/tmp/build`, `/usr/share/doc`), which the user named and is no more
+# than a folder of theirs. Each refusal is a line of the
 # answer, "!" first and then what the launcher says after the app's name, on stderr.
 # A file argument is never followed through a link (CR1.5-55, the owner's decision of 2026-11-25).
 # A link is the app's to make wherever it can write, and stays on the disk longer than AppKata
@@ -2342,6 +2351,8 @@ sep = rest.index("--")
 never = [os.path.normpath(n) for n in rest[1:sep] + [rt] + rest[0].split(chr(10)) if n]
 args = rest[sep + 1:]
 system = @SYSTEM_PLACES@        # the system's own places (R17.3.1): no folder argument hands one over whole
+live = @SYSTEM_LIVE@            # ...nor a folder in one of these, which hold the system's live state
+media = @SYSTEM_MEDIA@          # ...but what the desktop mounts for the user there
 in_place = bool(incwd) and os.path.realpath(incwd) == os.path.realpath(os.getcwd())
 said = []
 
@@ -2419,6 +2430,12 @@ def never_shared(real, links):
                 return root + " is never shared with a sandboxed app"
             if within(spot, real):
                 return "it holds " + root + ", which is never shared with a sandboxed app"
+    if os.path.isdir(real):         # a folder in a place that holds the system's live state, where it leads and by each link there
+        at = [real] + links
+        if not any(within(p, spot) for m in media for spot in (m, os.path.realpath(m)) for p in at):
+            for place in live:
+                if any(within(p, spot) for spot in (place, os.path.realpath(place)) for p in at):
+                    return "it is in " + place + ", one of the system's own folders that hold its live state, and no folder in one is handed over"
     return None
 
 
@@ -2581,7 +2598,7 @@ for a in args:
 BS, NL = chr(92), chr(10)
 lines = ["!" + line for line in said] + ["=" + a for a in out]
 sys.stdout.buffer.write(os.fsencode("".join(line.replace(BS, BS + BS).replace(NL, BS + "n") + NL for line in lines)))
-""".replace("@SYSTEM_PLACES@", repr(SYSTEM_PLACES))
+""".replace("@SYSTEM_PLACES@", repr(SYSTEM_PLACES)).replace("@SYSTEM_LIVE@", repr(SYSTEM_LIVE)).replace("@SYSTEM_MEDIA@", repr(SYSTEM_MEDIA))
 
 
 def forward_path() -> str:

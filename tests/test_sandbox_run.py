@@ -1769,9 +1769,10 @@ def _through_a_link(app, arg, link, real) -> str:
 
 def _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env, lp, e):
     """The owner's decision of 2026-11-26, on #735 (R17.6.2), with the real document portal: `/etc`,
-    `/proc`, `/tmp` and `/` named as arguments were exported whole. Each passes as typed now, with
-    the launcher's line, and nothing new is under $XDG_RUNTIME_DIR/doc; a file in one (`/etc/passwd`)
-    is handed over and read. A part of the test below, which tests/skips/tier1.txt names."""
+    `/proc`, `/tmp` and `/` named as arguments were exported whole, and so was a folder in /proc,
+    /sys, /dev or /run. Each passes as typed now, with the launcher's line, and nothing new is under
+    $XDG_RUNTIME_DIR/doc; a file in one (`/etc/passwd`) is handed over and read, and so is a folder
+    below the other places (`/usr/share/doc`). A part of the test below, which tests/skips/tier1.txt names."""
     exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
     before = exported()
     whole = ["/etc", "/proc", "/tmp", "/", "file:///etc"]
@@ -1782,6 +1783,20 @@ def _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env
     for place in ("/etc", "/proc"):
         assert f"isn't handed {place}: {place} is one of the system's own folders, and none of them is handed over whole." in r.stderr, r.stderr
     assert "isn't handed /tmp: " in r.stderr and "isn't handed /: it holds " in r.stderr, r.stderr      # the home's reason, where the home is under it
+    # ...nor is a folder in /proc, /sys, /dev or /run, which hold the system's live state (the
+    # owner's decision on the check read of f8b1c0d), where a folder below the others still is
+    live = ["/proc/1", "/proc/self", "/dev/shm", "/sys/kernel"]
+    r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; true', *live], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == live, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)
+    for arg in live:
+        place = arg[:arg.index("/", 1)]
+        assert (f"isn't handed {arg}: it is in {place}, one of the system's own folders that hold its live state, and no folder in one is handed over."
+                in r.stderr), r.stderr
+    r = subprocess.run([lp, 'shift; printf "ARG %s\\n" "$1"; ls "$1" >/dev/null && echo LISTED', "/usr/share/doc"], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and f"ARG {env.rt}/doc/" in r.stdout and "LISTED" in r.stdout and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
     r = subprocess.run([lp, 'shift; printf "ARG %s\\n" "$1"; cat "$1"', "/etc/passwd"], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
     assert f"ARG {env.rt}/doc/" in r.stdout and "/passwd\n" in r.stdout and "root:" in r.stdout, (r.stdout, r.stderr)
