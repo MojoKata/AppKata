@@ -1188,7 +1188,10 @@
     431,
     654,
     663,
-    754
+    754,
+    763,
+    764,
+    765
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -11759,6 +11762,60 @@
    "size": "small",
    "proof": "A test with dnf 4's refusal: the dry run is never rerun through pkexec on the download's path.",
    "note": "Found by pr-review pass 2 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 763,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    764,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt in the channels container: a trusted=yes repository whose address holds U+0085 or U+2028 reads Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 764,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt: a .sources file opening with \\r# and one with a paragraph ending in a line with no colon each read their Trusted: yes stanza Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule; the second shape (a paragraph apt drops) is in its comment."
+  },
+  {
+   "finding": 765,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    764
+   ],
+   "size": "small",
+   "proof": "Real apt with TrustCDROM set: an unsigned cdrom: repository reads Unverified whatever the disc's name.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
   }
  ],
  "shared_files": [
