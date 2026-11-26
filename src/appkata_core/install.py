@@ -1550,7 +1550,14 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
                 rec["msvcrt"] = windows.needs_msvcrt(rec["current"]["path"])
             portable = _apply_kind(rec, app, portable, kind, target, prev)
             _activate(rec, app, portable, target)
-            retired = _retain(rec, portable.keep)
+            # This very version's earlier copy, where it is at another place than the new one (the
+            # release renamed its file, or the place its name gives was another version's then,
+            # :func:`_not_anothers`), is no previous version to keep: it stayed among the kept ones,
+            # so the Versions list offered the installed version as one to go back to.
+            again = [k for k in rec["kept"] if k.get("version") == rel_version and k["path"] != rec["current"]["path"]
+                     and not k.get("external")]
+            rec["kept"] = [k for k in rec["kept"] if k not in again]
+            retired = _retain(rec, portable.keep) + again
         elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
             rec.update(_run_installer(app, file, got, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
         elif kind == "msix" and OS == "windows":            # R15.7.4

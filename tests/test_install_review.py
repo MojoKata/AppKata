@@ -3361,6 +3361,43 @@ def test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own(e
     assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
 
 
+@linux_only
+@pytest.mark.parametrize("case", ["an archive whose name's place was another version's", "an AppImage whose name's place was another version's",
+                                  "an AppImage whose release renamed its file"])
+def test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one(env, server, tmp_path, case):
+    """R4.3.1.5 keeps *previous* versions. Found beside CR1.3-52: a version installed again where
+    its file's name, or the place its name gives, had changed left its earlier copy among the kept
+    versions, so the Versions list offered the installed version as one to go back to."""
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    folder, n = tmp_path / "apps" / "demo-tool", iter(range(9))
+
+    def put(v, name=""):
+        i = str(next(n))
+        (server[0] / i).mkdir()
+        if "archive" in case:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+        else:
+            a = _appimage(server, f"{i}/{name or 'Tool-x86_64.AppImage'}", f"#!/bin/sh\necho {i}\n".encode())
+        a = Asset(a.name.split("/")[1], a.url)
+        return install.install(env, {**APP, "installVersion": v}, a, "tarball" if "archive" in case else "appimage", [a], portable=p), i
+
+    if "renamed" in case:
+        rec, _ = put("2.0", "Tool-2.0-x86_64.AppImage")
+        was = rec["current"]["path"]
+        rec, says = put("2.0", "Tool-2.0-amd64.AppImage")
+    else:
+        put("1.0 beta")
+        rec, _ = put("1.0_beta")                                     # beside it, under the name with _2
+        was = rec["current"]["path"]
+        install.remove_version(env, APP["url"], "1.0 beta")          # the user removes the kept one: its place is free again
+        rec, says = put("1.0_beta")
+    assert rec["current"]["path"] != was and not os.path.lexists(was)
+    assert rec["kept"] == [] == install.kept_versions(env, APP["url"]) and rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    mine = "tool-" + says + "/tool" if "archive" in case else says
+    assert _runs(tmp_path / "cmd" / "demo-tool") == mine
+    assert sorted(f.name for f in folder.iterdir() if not f.is_symlink()) == [os.path.basename(rec["current"]["path"])]
+
+
 @pytest.mark.parametrize("system", ["linux", "windows"])
 def test_the_place_a_version_gets_when_its_names_is_another_versions(monkeypatch, system):
     monkeypatch.setattr(install, "OS", system)
