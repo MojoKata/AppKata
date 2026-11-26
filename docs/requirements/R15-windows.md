@@ -123,7 +123,8 @@ package's full name is recorded for uninstalling.
 R15.7.5. **An installer AppKata elevates** (the "elevated" cells of R15.7.2, and the Visual C++
 run-time, R15.18.3) is never started from the downloads folder, which the user's other programs
 can change (R4.4). AppKata asks Windows to elevate Windows PowerShell with a script, so the UAC
-prompt names Windows PowerShell and not the installer. The script:
+prompt names Windows PowerShell and not the installer. That PowerShell is the one in the system
+folder Windows itself names, never in a folder the environment names. The script:
 
 1. Makes a new folder in Windows' own `Temp` folder that only Administrators and SYSTEM can
    change, and copies the download there. It opens the download once, following no link put at
