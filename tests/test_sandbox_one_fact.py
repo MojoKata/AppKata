@@ -238,6 +238,9 @@ def _folders(env: Env) -> dict[str, str]:
         "a window manager's configuration": f"{h}/.config/sway", "an editor's extensions": f"{h}/.vscode/extensions",
         "above an editor's extensions": f"{h}/.vscode", "Cargo's programs": f"{h}/.cargo/bin", "above Go's programs": f"{h}/go",
         "a Go project": f"{h}/go/src/proj",
+        # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
+        "the desktop's settings": f"{h}/.config/dconf", "the settings database": f"{h}/.config/dconf/user",
+        "the folders' names": f"{h}/.config/user-dirs.dirs",
         # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
         # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
         # folder beside that, and ~/tools, which is the links' folder only where Settings say so

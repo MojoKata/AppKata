@@ -642,6 +642,12 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
              (h(".cinnamon"), "Cinnamon's panel launchers"),
              (h(".local", "share", "bash-completion"), "your shell's completion scripts"),
              (h(".config", "pipewire"), "PipeWire's configuration, which can start programs"),
+             # the desktop's settings database (GSettings in dconf): Cinnamon runs the command of each
+             # custom keybinding it lists, at the key, and opens the terminal it names; and the file
+             # of the user's folder names, which xdg-user-dir runs as a shell script whenever a
+             # program asks it for a folder (pr-review pass 1 of #735, P1-2)
+             (h(".config", "dconf"), "your desktop's settings, which name programs to start"),
+             (h(".config", "user-dirs.dirs"), "your folders' names, which some programs run as a script"),
              (h(".vscode", "extensions"), "your editor's extensions"),
              (h(".vscode-oss", "extensions"), "your editor's extensions"),
              (h(".cargo", "bin"), "programs on your PATH"),

@@ -2425,6 +2425,10 @@ def fake_home(tmp_path, monkeypatch):
     ("~/.config/niri", True), ("~/.config/wayfire.ini", True), ("~/.config/pipewire", True),
     ("~/.config/pipewire/pipewire.conf.d", True), ("~/.vscode/extensions", True), ("~/.vscode", True),
     ("~/.vscode-oss/extensions", True), ("~/.cargo/bin", True), ("~/.cargo", True), ("~/go/bin", True), ("~/go", True),
+    # the desktop's settings database, which names commands Cinnamon runs, and the file xdg-user-dir
+    # runs as a script (pr-review pass 1 of #735, P1-2); the files beside them are no code
+    ("~/.config/dconf", True), ("~/.config/dconf/user", True), ("~/.config/user-dirs.dirs", True),
+    ("~/.config/dconf-editor", False), ("~/.config/user-dirs.locale", False), ("~/.config/user-dirs.conf", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2542,7 +2546,8 @@ WM = "your window manager's configuration, which starts programs"
 MOVED_PROTECTED = {
     "~/cfg/autostart": "autostart entries", "~/cfg/autostart/x.desktop": "autostart entries", "~/cfg/systemd/user": "systemd user units",
     "~/cfg/environment.d": "your login environment", "~/cfg/git": "your git configuration (hooks, aliases)", "~/cfg/fish": "your shell's startup files",
-    "~/cfg/sway": WM, "~/cfg/bash_completion": "your shell's startup files", "~/cfg/google-chrome/NativeMessagingHosts": "programs browser extensions may start",
+    "~/cfg/sway": WM, "~/cfg/bash_completion": "your shell's startup files",
+    "~/cfg/dconf/user": "your desktop's settings, which name programs to start", "~/cfg/user-dirs.dirs": "your folders' names, which some programs run as a script", "~/cfg/google-chrome/NativeMessagingHosts": "programs browser extensions may start",
     "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
     "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
     "~/data/flatpak": "Flatpak's user installation", "~/data/gnome-shell/extensions": "GNOME Shell extensions",
@@ -2773,7 +2778,11 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          "~/.config/i3/config": "your window manager's configuration, which starts programs",
          "~/.config/pipewire": "PipeWire's configuration, which can start programs",
          "~/.vscode/extensions": "your editor's extensions", "~/.vscode": "a folder above your editor's extensions",
-         "~/.cargo/bin": "programs on your PATH", "~/go": "a folder above programs on your PATH"}
+         "~/.cargo/bin": "programs on your PATH", "~/go": "a folder above programs on your PATH",
+         # pr-review pass 1 of #735, P1-2: Cinnamon runs a custom keybinding's command, and opens the
+         # terminal, that the settings database names; xdg-user-dir runs user-dirs.dirs as shell
+         "~/.config/dconf": "your desktop's settings, which name programs to start", "~/.config/dconf/user": "your desktop's settings, which name programs to start",
+         "~/.config/user-dirs.dirs": "your folders' names, which some programs run as a script"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):

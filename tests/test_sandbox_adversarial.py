@@ -190,7 +190,10 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.config/labwc/autostart", "~/.config/openbox", "~/.config/river/init", "~/.config/niri", "~/.config/wayfire.ini",
          "~/.config/pipewire", "~/.config/pipewire/pipewire.conf.d/x.conf", "~/.vscode/extensions", "~/.vscode", "~/./.vscode/extensions/a.b-1.0",
          "~/.vscode-oss/extensions", "~/.cargo/bin", "~/.cargo", "~/.cargo/bin/cargo", "~/go/bin", "~/go", "~/Notes/../go/bin",
-         "~/.config/sway/it's", "~/.cargo/bin/new\nline", "~/go/bin/$(id)"]
+         "~/.config/sway/it's", "~/.cargo/bin/new\nline", "~/go/bin/$(id)",
+         # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
+         "~/.config/dconf", "~/.config/dconf/", "~/.config/dconf/user", "/home/kata/.config/dconf", "~//.config/dconf/user",
+         "~/.config/user-dirs.dirs", "/home/kata/.config/user-dirs.dirs", "~/Notes/../.config/user-dirs.dirs", "~/.config/./dconf"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])

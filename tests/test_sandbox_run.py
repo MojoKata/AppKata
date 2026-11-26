@@ -2624,6 +2624,18 @@ def _cinnamon_loads(main_js: str, launchers_js: str) -> list[str]:
     return sorted(set(out))
 
 
+def _sourced_from_the_home(text: str) -> list[str]:
+    """The files in the home a shell script sources (`. <file>`), wherever on a line it does."""
+    import re
+    return sorted({_home_path(m.group(1)) for m in re.finditer(
+        r"(?:^|&&|\|\||;|\bthen\b)\s*\.\s+\"?((?:\$\{XDG_\w+_HOME:-[^}]+\}|\$HOME|~)/[^\s\";]+)", text, re.M)})
+
+
+def _cinnamon_runs_what_its_settings_name(keybindings_js: str) -> bool:
+    """Cinnamon's shell runs the command of each custom keybinding its settings list."""
+    return all(w in keybindings_js for w in ('get_strv("custom-list")', "Util.spawnCommandLine(command)"))
+
+
 def _read(path: str) -> str:
     try:
         with open(path, errors="replace") as f:
@@ -2644,6 +2656,14 @@ def _loaded_from_the_home() -> dict[str, str]:
     for line in _read("/usr/share/im-config/xinputrc.common").splitlines():     # the file im-config's Xsession hook sources
         if line.startswith("IM_CONFIG_XINPUTRC_USR="):
             found[_home_path(line.split("=", 1)[1].strip().strip('"'))] = "im-config"
+    for script in ("/usr/bin/xdg-user-dir",):                                   # sources the user's folder names as shell
+        for path in _sourced_from_the_home(_read(script)):
+            found[path] = script
+    # the settings Cinnamon takes a custom keybinding's command from are GSettings', kept in dconf's
+    # database in the user's configuration folder where its backend is installed (the default one)
+    import glob
+    if _cinnamon_runs_what_its_settings_name(_read(f"{cinnamon}/js/ui/keybindings.js")) and glob.glob("/usr/lib/*/gio/modules/libdconfsettings.so"):
+        found["~/.config/dconf"] = f"{cinnamon}/js/ui/keybindings.js"
     return found
 
 
@@ -2667,6 +2687,13 @@ def _what_the_desktops_own_programs_load_from_the_home_is_refused():
             "~/.cinnamon/panel-launchers", "~/.local/share/cinnamon/applets", "~/.local/share/cinnamon/desklets",
             "~/.local/share/cinnamon/extensions", "~/.local/share/cinnamon/panel-launchers", "~/.local/share/cinnamon/search_providers"]
     assert [_home_path(w) for w in ("$HOME/.xinputrc", "~/.x/", "${XDG_CONFIG_HOME:-$HOME/.config}/y")] == ["~/.xinputrc", "~/.x", "~/.config/y"]
+    # xdg-user-dirs 0.18's xdg-user-dir and Cinnamon 6.6.9's js/ui/keybindings.js (pr-review pass 1 of #735, P1-2)
+    assert _sourced_from_the_home(
+        '#!/bin/sh\ntest -f ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs && . ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs\n'
+        'if [ "x$1" = "xDESKTOP" ]; then\n  eval echo \\${XDG_${1}_DIR:-$HOME/Desktop}\nfi\n. /etc/os-release\n') == ["~/.config/user-dirs.dirs"]
+    assert _cinnamon_runs_what_its_settings_name(
+        '        let list = this.kb_schema.get_strv("custom-list");\n            let command = schema.get_string("command");\n'
+        '                Util.spawnCommandLine(command);\n') and not _cinnamon_runs_what_its_settings_name("Util.spawnCommandLine(command);")
     # ...and what this system's own copies name
     for path, where in sorted(_loaded_from_the_home().items()):
         assert path.startswith("~/") and sb.protected_folder(path), f"{where} loads {path}, which would be shared"
