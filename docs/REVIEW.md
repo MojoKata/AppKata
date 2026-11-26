@@ -104,6 +104,12 @@ no rejected-ideas file.
 AppKata adds no claim kinds. A wrong trust verdict is at least Med: the user shown an app as
 reviewed, signed, verified or sandboxed when the code didn't establish it, or the reverse.
 
+A misbehaviour that needs root as a necessary part of it is Low at most, a wrong trust verdict
+included: one that happens only where a root-owned file says something in a particular way (apt's
+sources files, `/etc`), or only after a change only root can make. Whoever can make it already
+controls the computer, so the case it describes is an accident, not an attack; it is filed, not
+held against the stopping rule.
+
 ## Branch and labels
 
 The target branch is `master`. The labels are the skills' defaults: `question` is a question issue,
