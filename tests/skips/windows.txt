@@ -70,6 +70,7 @@ tests/test_install_review.py::test_installing_a_version_never_removes_one_named_
 tests/test_install_review.py::test_portable_options  # the Linux install layout
 tests/test_install_review.py::test_tarball_and_foreign_refused  # the Linux install layout
 tests/test_install_review.py::test_tarball_versions_and_current_link  # the Linux install layout
+tests/test_install_review.py::test_the_command_that_runs_as_root_reads_its_input_alone_and_no_more_than_the_length_that_was_checked  # the Linux install layout
 tests/test_install_review.py::test_the_install_notice_says_why_no_command_was_added_and_says_it_once  # could not import 'PySide6': No module named 'PySide6'
 tests/test_install_review.py::test_the_menu_entry_starts_the_app_through_its_script_whatever_the_install_folder_holds  # the Linux install layout
 tests/test_install_review.py::test_the_program_of_an_archive_is_the_one_its_desktop_file_its_name_or_its_kind_says  # the Linux install layout

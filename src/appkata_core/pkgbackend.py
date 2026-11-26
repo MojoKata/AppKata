@@ -5,9 +5,11 @@ pkexec (R16.8.2). Every change is dry-run first, and the plan is reviewed before
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -293,8 +295,13 @@ APT_OPTS = ["-y", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options:
 # would read it again as root after the password prompt. So the command that runs as root takes
 # a copy to a folder only root can change, compares the copy's SHA-256 with the one AppKata
 # checked, and installs that copy: what is installed is what was checked, or nothing is.
-# $1 is the file, $2 its SHA-256, $3 the copy's name; the rest is the package manager's command,
-# which gets the copy's path as its last word.
+# It opens nothing by a path of the user's. The file is its standard input, opened by AppKata
+# (:func:`_open_checked`), and it reads no more of it than the checked file's length and one byte:
+# a link, a device or a FIFO put at the download's path is never opened as root, and a file made
+# longer can't fill root's folder (it had `cp` the path, which follows a link, and copied
+# /dev/zero until the file system was full).
+# $1 is the file's length in bytes, $2 its SHA-256, $3 the copy's name; the rest is the package
+# manager's command, which gets the copy's path as its last word and none of the file as its input.
 STAGING = "/var/cache"          # where the copy's folder is made: only root can write here
 CHANGED = 65                    # the command's exit code when the copy isn't the file AppKata checked
 CHANGED_TEXT = "the downloaded file changed after AppKata checked it; nothing was installed"
@@ -304,7 +311,7 @@ dir=$(mktemp -d @STAGING@/appkata-install.XXXXXX)
 trap 'rm -rf "$dir"' EXIT
 trap 'exit 130' HUP INT TERM
 copy=$dir/$3
-cp -- "$1" "$copy"
+head -c "$(($1 + 1))" > "$copy"
 sum=$(sha256sum < "$copy")
 if [ "${sum%% *}" != "$2" ]; then
     echo "@CHANGED_TEXT@" >&2
@@ -313,7 +320,7 @@ fi
 chmod 755 "$dir"
 chmod 644 "$copy"
 shift 3
-"$@" "$copy"
+"$@" "$copy" < /dev/null
 """
 
 
@@ -321,6 +328,31 @@ def file_install_script() -> str:
     """The shell script that installs a checked package file from root's own copy of it."""
     return (_FILE_INSTALL.replace("@STAGING@", _q(STAGING)).replace("@CHANGED_TEXT@", CHANGED_TEXT)
             .replace("@CHANGED@", str(CHANGED)))
+
+
+def _open_checked(file: str, sha256: str):
+    """(the downloaded file open for reading, its length), for the command that runs as root to
+    read as its standard input: a regular file, opened without following a link and without
+    waiting on a FIFO, whose bytes as read through this very handle have the SHA-256 AppKata
+    checked. PackageError(CHANGED_TEXT) for anything else, before anything runs as root."""
+    try:        # the two flags are Linux's, as this road is; elsewhere only the tests come by. No buffer: the handle's own place is what root reads from
+        f = os.fdopen(os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)), "rb", buffering=0)
+    except OSError:
+        raise PackageError(CHANGED_TEXT) from None
+    try:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise PackageError(CHANGED_TEXT)
+        h, size = hashlib.sha256(), 0
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            size += len(chunk)
+        if h.hexdigest() != sha256.lower():
+            raise PackageError(CHANGED_TEXT)
+        f.seek(0)
+    except BaseException:
+        f.close()
+        raise
+    return f, size
 
 
 def _apt_progress(line: str):
@@ -380,7 +412,8 @@ class Cli(Backend):
                      package: str = "") -> Plan:
         """Install a package file a release published, whose SHA-256 AppKata checked (R16.8.5): the
         dry run and its review as for any install (R16.3.5), then the administrator's side installs
-        its own copy of the file, and only when that copy is the file that was checked. `package`
+        its own copy of the file, read from the handle AppKata opened and never by its path, and
+        only when that copy is the file that was checked. `package`
         is the name of the package in the file: upgrading it is what an update of the app is, and
         needs no confirmation (the file's own name is no package's)."""
         file = os.path.abspath(file)
@@ -396,8 +429,10 @@ class Cli(Backend):
         else:
             wait_for_lock(RPM_LOCKS, on_wait, cancel)
             inner, env = ["dnf", "-y", "install"], None
-        cmd = _priv(["/bin/sh", "-c", file_install_script(), "appkata-install", file, sha256.lower(), os.path.basename(file), *inner], env)
-        _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
+        checked, size = _open_checked(file, sha256)
+        with checked:
+            cmd = _priv(["/bin/sh", "-c", file_install_script(), "appkata-install", str(size), sha256.lower(), os.path.basename(file), *inner], env)
+            _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None, stdin=checked)
         return plan
 
 
@@ -410,11 +445,11 @@ def _last(text: str) -> str:
     return lines[-1].strip() if lines else ""
 
 
-def _stream(cmd: list[str], progress=None, cancel=None, parse=None) -> None:
+def _stream(cmd: list[str], progress=None, cancel=None, parse=None, stdin=None) -> None:
     import logging
     lg = logging.getLogger("appkata.cmd")
     lg.info("$ %s", " ".join(cmd))
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    p = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     for line in iter(p.stdout.readline, ""):
         lg.info("  out| %s", line.rstrip())
         if parse and progress:

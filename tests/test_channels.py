@@ -1,6 +1,7 @@
 """Package channels (R16) against recorded data: AppStream catalogs, flatpak and package
 manager output, D-Bus messages, and fakes for everything that would need root or the network."""
 
+import hashlib
 import io
 import json
 import os
@@ -192,33 +193,49 @@ def test_packagekit_backend():
 
 # ---------------------------------------------------------------- a release's own package file (R16.8.5; CR1, #327)
 @pytest.mark.parametrize("manager, command", [
-    ("apt", ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "/bin/sh", "-c", "<script>", "appkata-install", "<file>", "ab" * 32,
+    ("apt", ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "/bin/sh", "-c", "<script>", "appkata-install", "<length>", "<sha256>",
              "demo_1.0_all.deb", "apt-get", *pkgbackend.APT_OPTS, "install"]),
-    ("dnf", ["pkexec", "env", "/bin/sh", "-c", "<script>", "appkata-install", "<file>", "ab" * 32, "demo_1.0_all.deb", "dnf", "-y", "install"]),
+    ("dnf", ["pkexec", "env", "/bin/sh", "-c", "<script>", "appkata-install", "<length>", "<sha256>", "demo_1.0_all.deb", "dnf", "-y", "install"]),
 ])
-def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_and_installs(monkeypatch, manager, command):
-    """What pkexec is asked to run is the script, with the file and the SHA-256 AppKata checked as
-    its words: never the package manager on the downloaded file. tests/test_install_review.py runs
+def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_and_installs(monkeypatch, tmp_path, manager, command):
+    """What pkexec is asked to run is the script, with the length and the SHA-256 AppKata checked as
+    its words and the file itself, open, as its standard input: never the package manager on the
+    downloaded file, and no path of the user's for root to open. tests/test_install_review.py runs
     the script; here are its words and its text."""
     ran = []
-    file = os.path.abspath(os.path.join("downloads", "demo", "demo_1.0_all.deb"))
+    data = b"a package, as its release published it"
+    monkeypatch.chdir(tmp_path)
+    file = os.path.join("downloads", "demo", "demo_1.0_all.deb")
+    os.makedirs(os.path.dirname(file))
+    with open(file, "wb") as f:
+        f.write(data)
+    sha = hashlib.sha256(data).hexdigest()
     monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
     monkeypatch.setattr(pkgbackend.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
     monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
-    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None: ran.append(cmd))
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None, stdin=None: ran.append((cmd, stdin.read())))
     monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"]))
     script = pkgbackend.file_install_script()
-    pkgbackend.Cli(manager).install_file(os.path.relpath(file), "AB" * 32)
-    assert ran == [[{"<script>": script, "<file>": file}.get(word, word) for word in command]]
+    pkgbackend.Cli(manager).install_file(file, sha.upper())
+    words = {"<script>": script, "<length>": str(len(data)), "<sha256>": sha}
+    assert ran == [([words.get(word, word) for word in command], data)]         # the whole file is there to read, from its start
+    assert not any(os.path.sep in word for word in ran[0][0][ran[0][0].index("appkata-install"):])      # and no path among the words
     assert "demo" not in script and "mktemp -d '/var/cache'/appkata-install.XXXXXX" in script      # the same text for every file
-    steps = [script.index(step) for step in ('cp -- "$1" "$copy"', 'sha256sum < "$copy"', '!= "$2"', 'exit 65', '"$@" "$copy"')]
+    steps = [script.index(step) for step in ('head -c "$(($1 + 1))" > "$copy"', 'sha256sum < "$copy"', '!= "$2"', 'exit 65', '"$@" "$copy" < /dev/null')]
     assert steps == sorted(steps)                       # copied, hashed, compared, and only then handed on
+    assert "cp " not in script and '"$1"' not in script.replace('"$(($1 + 1))"', "")     # nothing is opened by a name it was given
     # a plan that needs the user's OK runs nothing as root
     ran.clear()
     monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["other"]))
     with pytest.raises(pkgbackend.NeedsConfirmation):
-        pkgbackend.Cli(manager).install_file(file, "ab" * 32)
+        pkgbackend.Cli(manager).install_file(file, sha)
+    assert ran == []
+    # nor does a file that is no longer the one that was checked: it isn't handed to root at all
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"]))
+    for sha_now, file_now in ((hashlib.sha256(b"another").hexdigest(), file), (sha, os.path.dirname(file)), (sha, file + ".gone")):
+        with pytest.raises(pkgbackend.PackageError, match=f"^{pkgbackend.CHANGED_TEXT}$"):
+            pkgbackend.Cli(manager).install_file(file_now, sha_now)
     assert ran == []
 
 
@@ -228,22 +245,24 @@ def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_a
     (pkgbackend.Plan(install=["demo"], remove=["other"]), ["Removes other"]),
     (pkgbackend.Plan(downgrade=["demo"]), ["Downgrades demo"]),
 ])
-def test_updating_an_app_from_its_releases_package_file_asks_only_about_other_packages(monkeypatch, plan, asks):
+def test_updating_an_app_from_its_releases_package_file_asks_only_about_other_packages(monkeypatch, tmp_path, plan, asks):
     """A new finding beside #327: the review took the file's name for the package's, so every update
     of an app installed from a release's .deb asked to confirm "Upgrades <the app's own package>"."""
     ran = []
     monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
     monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
-    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None: ran.append(cmd))
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None, stdin=None: ran.append(cmd))
     monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: plan)
-    file = os.path.join(os.sep, "downloads", "demo", "demo_2.0_all.deb")
+    file = tmp_path / "demo_2.0_all.deb"
+    file.write_bytes(b"the next version's package")
+    sha = hashlib.sha256(file.read_bytes()).hexdigest()
     if asks:
         with pytest.raises(pkgbackend.NeedsConfirmation) as e:
-            pkgbackend.Cli("apt").install_file(file, "ab" * 32, package="demo")
+            pkgbackend.Cli("apt").install_file(str(file), sha, package="demo")
         assert e.value.lines == asks and ran == []
     else:
-        pkgbackend.Cli("apt").install_file(file, "ab" * 32, package="demo")
+        pkgbackend.Cli("apt").install_file(str(file), sha, package="demo")
         assert len(ran) == 1
 
 

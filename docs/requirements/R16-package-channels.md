@@ -315,7 +315,9 @@ needs administrator rights for `--user`).
 R16.8.5. **A package file from a release** (`.deb`, `.rpm`; R4.3.3) is always installed through
 the command line (R16.8.2), also where PackageKit is running: PackageKit takes a file by its
 path, reads it as root later, and can't be held to the file AppKata checked. After the dry run
-(R16.3.5) one command runs through `pkexec`. It copies the file to a new folder under `/var/cache`
+(R16.3.5) one command runs through `pkexec`. AppKata hands it the file already open, and it opens
+nothing by the download's path: a link, a device or a FIFO put there is never read as root. It
+copies the file, and no more than the length AppKata checked, to a new folder under `/var/cache`
 that only root can change, compares the copy's SHA-256 with the download's (R4.4), hands the copy
 to `apt-get install` or `dnf install`, and removes the folder. When the two differ, nothing is
 installed.
