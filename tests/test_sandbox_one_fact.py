@@ -245,7 +245,8 @@ def _folders(env: Env) -> dict[str, str]:
         "the app menu's layout": f"{h}/.config/menus", "a merged menu folder": f"{h}/.config/menus/applications-merged",
         "what Cinnamon's session sources at login": f"{h}/.gnomerc", "Xsession's other session script": f"{h}/.Xsession",
         "the user's thumbnailers": f"{h}/.local/share/thumbnailers", "WirePlumber's configuration": f"{h}/.config/wireplumber",
-        "Readline's key bindings": f"{h}/.inputrc",
+        "Readline's key bindings": f"{h}/.inputrc", "the sound clients' configuration": f"{h}/.config/pulse",
+        "the sound clients' older folder": f"{h}/.pulse",
         # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
         # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
         # folder beside that, and ~/tools, which is the links' folder only where Settings say so

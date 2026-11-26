@@ -2649,6 +2649,49 @@ def _read(path: str) -> str:
 # asked of the program itself: it is run by the system's python3 in a home of its own, with a file
 # planted in the place, and says whether it read it. {the place: (the program, what is run)}; what is
 # run is given the place, prints "absent" where the program isn't installed, and "read" or "not read".
+# libpulse, in a client of its own: a client.conf in the place that names a server at a socket this
+# probe listens on; "read" where the client connects to it (P2B-2)
+_PULSE_CLIENT = r"""
+import ctypes, os, socket, sys, threading, time
+try:
+    pulse = ctypes.CDLL("libpulse.so.0")
+except OSError:
+    sys.exit(print("absent"))
+place = sys.argv[1]
+os.makedirs(place)
+got = []
+server = socket.socket(socket.AF_UNIX)
+server.bind(place + "/s"); server.listen(1); server.settimeout(10)
+def serve():
+    try:
+        client, _ = server.accept()
+        got.append(len(client.recv(64)))
+    except OSError:
+        pass
+listener = threading.Thread(target=serve)
+listener.start()
+with open(place + "/client.conf", "w") as f:
+    f.write("autospawn = no\ndefault-server = unix:%s/s\n" % place)
+for name, result, args in (("pa_mainloop_new", ctypes.c_void_p, []), ("pa_mainloop_get_api", ctypes.c_void_p, [ctypes.c_void_p]),
+                           ("pa_context_new", ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_char_p]),
+                           ("pa_context_connect", ctypes.c_int, [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]),
+                           ("pa_mainloop_iterate", ctypes.c_int, [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p])):
+    getattr(pulse, name).restype = result
+    getattr(pulse, name).argtypes = args
+loop = pulse.pa_mainloop_new()
+context = pulse.pa_context_new(pulse.pa_mainloop_get_api(loop), b"appkata-probe")
+pulse.pa_context_connect(context, None, 0, None)
+end = time.time() + 5
+while time.time() < end and not got:
+    pulse.pa_mainloop_iterate(loop, 0, None)
+    time.sleep(0.02)
+server.close()
+listener.join()
+print("read" if got else "not read")
+sys.stdout.flush()
+os._exit(0)                                # the context is not taken down: nothing of it is used again
+"""
+
 _ASKED = {
     # cinnamon-menus, which Cinnamon builds its app menu and its app system from: a menu file merged
     # from the user's folder adds a folder of entries from anywhere (P2-1)
@@ -2751,6 +2794,8 @@ wait(lambda: os.path.exists(home + "/ran"), 5)
 os.write(fd, b"\x04")
 print("read" if os.path.exists(home + "/ran") else "not read")
 """),
+    "~/.config/pulse": ("libpulse", _PULSE_CLIENT),
+    "~/.pulse": ("libpulse", _PULSE_CLIENT),          # the older folder, read instead where it exists
 }
 
 

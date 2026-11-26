@@ -2444,6 +2444,9 @@ def fake_home(tmp_path, monkeypatch):
     ("~/.config/wireplumber/wireplumber.conf.d", True), ("~/.config/wireplumber-old", False), ("~/.local/state/wireplumber", False),
     # Readline's file, where a key can be made to type a command (P2C-2)
     ("~/.inputrc", True), ("~/.inputrc.bak", False), ("~/.input", False),
+    # the sound clients' configuration, and the older folder libpulse reads instead where it exists (P2B-2)
+    ("~/.config/pulse", True), ("~/.config/pulse/client.conf", True), ("~/.config/pulse/cookie", True), ("~/.pulse", True),
+    ("~/.pulse/client.conf", True), ("~/.config/pulseeffects", False), ("~/.config/pavucontrol.ini", False), ("~/.pulse-old", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2567,6 +2570,7 @@ MOVED_PROTECTED = {
     "~/cfg/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
     "~/data/thumbnailers": "thumbnailers, which your file manager runs as it shows a folder",
     "~/cfg/wireplumber/wireplumber.conf": "WirePlumber's configuration, which can start programs",
+    "~/cfg/pulse/client.conf": "your sound setup, which can start a program or send your sound elsewhere", "~/.config/pulse": "your sound setup, which can start a program or send your sound elsewhere", "~/.pulse": "your sound setup, which can start a program or send your sound elsewhere",
     "~/rl/inputrc": "your terminal's key bindings, which can type commands", "~/rl": "a folder above your terminal's key bindings, which can type commands", "~/.inputrc": "your terminal's key bindings, which can type commands",
     "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
     "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
@@ -2817,7 +2821,9 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          # P2C-1: WirePlumber's own file has PipeWire's list of programs to start
          "~/.config/wireplumber": "WirePlumber's configuration, which can start programs", "~/.config/wireplumber/wireplumber.conf": "WirePlumber's configuration, which can start programs",
          # P2C-2: a key macro in Readline's file adds a command to the line the user wrote
-         "~/.inputrc": "your terminal's key bindings, which can type commands"}
+         "~/.inputrc": "your terminal's key bindings, which can type commands",
+         # P2B-2: client.conf names the program a sound client starts and the server it talks to
+         "~/.config/pulse": "your sound setup, which can start a program or send your sound elsewhere", "~/.pulse": "your sound setup, which can start a program or send your sound elsewhere"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):

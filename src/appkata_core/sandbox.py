@@ -648,6 +648,12 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
              # main.conf, policy.conf, bluetooth.conf), 0.5 adds each one's .conf.d fragments, and
              # they decide which modules and scripts it loads (pr-review pass 2 of #735, P2C-1)
              (h(".config", "wireplumber"), "WirePlumber's configuration, which can start programs"),
+             # every PulseAudio client (which is every program with sound, on PipeWire too) reads
+             # client.conf here: it names the program to start when no sound server answers, and
+             # the server to talk to, which can be a socket the app serves. libpulse reads ~/.pulse
+             # instead where that older folder exists (pr-review pass 2 of #735, P2B-2)
+             (h(".config", "pulse"), "your sound setup, which can start a program or send your sound elsewhere"),
+             (h(".pulse"), "your sound setup, which can start a program or send your sound elsewhere"),
              # the desktop's settings database (GSettings in dconf): Cinnamon runs the command of each
              # custom keybinding it lists, at the key, and opens the terminal it names; and the file
              # of the user's folder names, which xdg-user-dir runs as a shell script whenever a

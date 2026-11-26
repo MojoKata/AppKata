@@ -206,7 +206,10 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.config/wireplumber", "~/.config/wireplumber/", "~/.config/wireplumber/wireplumber.conf", "/home/kata/.config/wireplumber/main.conf",
          "~/.config//wireplumber/wireplumber.conf.d/x.conf", "~/Notes/../.config/wireplumber",
          # ...and Readline's file, where a key can be made to type a command (P2C-2)
-         "~/.inputrc", "/home/kata/.inputrc", "~//.inputrc", "~/Notes/../.inputrc"]
+         "~/.inputrc", "/home/kata/.inputrc", "~//.inputrc", "~/Notes/../.inputrc",
+         # ...and the sound clients' configuration, in both folders libpulse reads (P2B-2)
+         "~/.config/pulse", "~/.config/pulse/", "~/.config/pulse/client.conf", "/home/kata/.config/pulse", "~/.config/./pulse/cookie",
+         "~/.pulse", "/home/kata/.pulse/client.conf", "~/Notes/../.pulse"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])
