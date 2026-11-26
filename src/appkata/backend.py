@@ -1984,6 +1984,19 @@ class Backend(QObject):
         gs = sandbox.resolve(reviews=reviews, is_cli=self._is_cli(url))[1]
         return sandbox.strip_secrets(gs) if sandbox.level_of(gs) != "off" else (gs, [])
 
+    def _given(self, url: str, gs: dict | None) -> dict | None:
+        """The grant set `gs` as the app at `url` is really given it: without the folders AppKata
+        refuses, judged as the app's launcher judges them (R17.3.1). A set is kept as it was written,
+        a refused folder too, so that the summary and the launcher can say it was refused; but where
+        two sets are compared for what one adds, such a folder is nothing either of them gives. The
+        review badge said "suggests adding ~/.ssh (read-only)" and the Audit "added: ~/.ssh
+        (read-only)" of a folder that is never mounted, and a review asking for nothing else stood
+        as a suggestion that adopting never settled (CR1.8-39)."""
+        if gs is None or sandbox.level_of(gs) == "off":
+            return gs
+        opts = self._app_options(url)
+        return sandbox.strip_protected(gs, opts.root, opts.own)[0]
+
     def _suggested_template(self, url: str) -> str | None:
         """The template the reviews suggest, when one review does; merged ones are "custom" (R17.3.2)."""
         cfgs = self._review_sandbox_configs(url)
@@ -2253,6 +2266,8 @@ class Backend(QObject):
         opts = self._app_options(url)                # the chips judge refused folders as the launcher does
         root, own = opts.root, opts.own
         suggested, srefused = self._suggestion(url)
+        # what each set gives: a folder AppKata refuses is nothing a suggestion adds (CR1.8-39)
+        given, offered = self._given(url, gs), self._given(url, suggested)
         a = self._app(url) or {}
         # whether the app really runs sandboxed: its launcher exists. An app installed while the system
         # couldn't sandbox runs Off until then, whatever its grants say (R17.10).
@@ -2285,13 +2300,13 @@ class Backend(QObject):
                 # review that named only that was never offered (the review of PR #694, P1-1).
                 "reviewBadge": bool(self._prefs.get("sandboxReviewBadge", True)
                                     and self._prefs.get("followReviewerSandbox", True) and suggested is not None
-                                    and sandbox.differs(gs, suggested)
+                                    and sandbox.differs(given, offered)
                                     and sandbox.grant_terms(suggested) != self._install_settings(url).get("sandboxReviewSeen")),
                 # a suggestion that differs from what's in force: the dialog offers to adopt it
-                "hasSuggestion": suggested is not None and sandbox.differs(gs, suggested),
+                "hasSuggestion": suggested is not None and sandbox.differs(given, offered),
                 "reviewBy": self._sandbox_reviewer(url),
                 # the badge's words: what the suggestion adds and removes, and what that means (R17.11)
-                "reviewBadgeText": sandbox.suggestion_text(gs, suggested, self._sandbox_reviewer(url) or "A reviewer")
+                "reviewBadgeText": sandbox.suggestion_text(given, offered, self._sandbox_reviewer(url) or "A reviewer")
                                    if suggested is not None else "",
                 "appImage": self._sandbox_kind(url) == "appimage",
                 "home": sandbox.sandbox_home(self._app_id(url)),
@@ -2327,9 +2342,11 @@ class Backend(QObject):
         """An Audit entry's detail for a sandbox change (R17.16; review 2, F11: it said only the template
         and level, so a folder added read "set the sandbox of X · Custom · standard"): the template as
         the dialog names it, the level, what was added and removed, and the launcher it wrote: a hash
-        of its text and the set it was written for (R17.4)."""
+        of its text and the set it was written for (R17.4). Both sets as the app is given them: a
+        folder AppKata refuses is not among what was added (CR1.8-39)."""
         off = sandbox.resolve_template("off")
         bg, ag = (before or {}).get("grants") or off, (after or {}).get("grants") or off
+        bg, ag = self._given(url, bg), self._given(url, ag)
         tpl = (after or {}).get("template") or "off"
         label = sandbox.TEMPLATE_LABELS.get(tpl, tpl) + (" · customized" if tpl in sandbox.TEMPLATES and sandbox.customized(tpl, ag) else "")
         added, removed = sandbox.changes(bg, ag)
@@ -2617,7 +2634,7 @@ class Backend(QObject):
                 r = self._resolved_sandbox(url)
                 self._audit(actor, "app", "rewrote the launcher of", (self._app(url) or {}).get("name", url), url,
                             {"by": f"AppKata {APPKATA_VERSION}", "launcher": self._launcher_hash(url),
-                             "written for": sandbox.describe(r["template"], r["grants"]) if r else ""})
+                             "written for": sandbox.describe(r["template"], self._given(url, r["grants"])) if r else ""})
         self._tell_sandboxed(first, actor)
         return done
 

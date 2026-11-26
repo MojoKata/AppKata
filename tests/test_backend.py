@@ -919,3 +919,64 @@ def test_the_sandbox_is_told_every_install_folder_apps_are_in_and_the_one_settin
     be.toast.connect(lambda kind, text: said.append((kind, text)))
     be.setSandbox(URL, {"custom": sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/Apps": "rw", "+~/Notes": "rw"}}))})
     assert [t for k, t in said if k == "error"] == [f"Not shared: ~/Apps ({APPS}). AppKata never gives an app these folders."]
+
+
+# ---------------------------------------------------------------- a refused folder is nothing a review adds (R17.11, R17.16; CR1, #745)
+# A review's set is kept as it was written, a folder AppKata refuses too (R17.3.1), so that the
+# summary and the launcher say it was refused. The badge and the Audit compared the sets as written:
+# "Desk suggests adding ~/.ssh (read-only)", "added: ~/.ssh (read-only)", for a folder never mounted.
+# How it slipped past: the badge's and the Audit's tests used reviews of folders that can be shared.
+
+def a_sandbox_review(be, lines):
+    """Desk's review of Demo with these Settings lines, as a sync stores it."""
+    from appkata_core import trustfile
+    parsed, _ = trustfile.parse_section("Demo", f"## Demo::Settings\n\n- Trust: 4\n{lines}")
+    row = be.db.one("SELECT id FROM trusts WHERE name='Desk'")
+    tid = row["id"] if row else be.db.x("INSERT INTO trusts(url, name, own, verified_commit, score) VALUES(?,?,?,?,?)",
+                                        ("https://example.org/trust", "Desk", 0, "abc", 3)).lastrowid
+    be.db.x("DELETE FROM reviews WHERE url=?", (URL,))
+    be.db.x("INSERT INTO reviews(trust_id, url, app, settings) VALUES(?,?,?,?)", (tid, URL, "Demo", json.dumps(parsed["opts"])))
+    be.reload()
+
+
+REFUSED_LINE = "~/.ssh:ro, ~/Documents/../.cache:ro, ~/.local/share/cinnamon/applets, ~/bin/apps/other"
+
+
+def test_the_review_badge_and_the_audit_leave_a_refused_folder_out_of_what_a_reviewers_set_adds(be):
+    home = os.path.expanduser("~")
+    source(be, published("1.0"))
+    installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
+                             "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo", "links": []})
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})          # the user's own choice, before any review
+    # a review asks for folders AppKata refuses (never shared, a `..`, AppKata's own) and for one it can give
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}, ~/Notes\n")
+    info = be.sandboxInfo(URL)
+    assert info["hasSuggestion"] and info["reviewBadge"]
+    assert info["reviewBadgeText"] == "Desk suggests adding ~/Notes (read-write). Until you review it, the app may not work fully."
+    chips = [c[0] for c in info["reviewSuggests"]]                         # the dialog names them, as refused
+    assert {"~/Notes", "~/.ssh · refused: SSH keys", f"~/Documents/../.cache · refused: {sandbox.DOTDOT}",
+            "~/.local/share/cinnamon/applets · refused: Cinnamon's applets, desklets, extensions and panel launchers",
+            "~/bin/apps/other · refused: AppKata's installed apps"} <= set(chips), chips
+    # "Use theirs": the Audit says what the app was given
+    be.useSuggestion(URL)
+    entry = audit.page(be.db, kind="app")[0]
+    detail = json.loads(entry["detail"])
+    assert (entry["action"], detail.get("added"), detail.get("removed")) == ("set the sandbox of", "~/Notes (read-write)", None), entry
+    assert ".ssh" not in entry["detail"] and "cinnamon" not in entry["detail"]
+    assert be._resolved_sandbox(URL)["source"] in ("reviews", "pinned") and "~/.ssh" in be._resolved_sandbox(URL)["grants"]["folders"]   # kept as written
+    info = be.sandboxInfo(URL)
+    assert not info["hasSuggestion"] and not info["reviewBadge"] and info["reviewBadgeText"] == ""
+    assert "~/.ssh · refused: SSH keys" in [c[0] for c in info["chips"]]   # the summary still says so
+
+
+def test_a_review_that_asks_only_for_refused_folders_suggests_nothing_to_act_on(be):
+    source(be, published("1.0"))
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}\n")
+    info = be.sandboxInfo(URL)
+    assert not info["hasSuggestion"] and not info["reviewBadge"] and info["reviewBadgeText"] == ""
+    assert "~/.ssh · refused: SSH keys" in [c[0] for c in info["reviewSuggests"]]         # what they suggest is still shown
+    # ...and one that also drops something the user has is a suggestion for that alone
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}\n- Sandbox network (linux): no\n")
+    info = be.sandboxInfo(URL)
+    assert info["hasSuggestion"] and info["reviewBadgeText"] == "Desk suggests removing the network. The app may have more access than it needs."
