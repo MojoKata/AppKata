@@ -136,8 +136,11 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         try:
             install.uninstall(db, a["url"])
             ok("removing it with a desktop metapackage is refused", False, "it was removed")
-        except install.InstallError as e:
+        except pkgbackend.Refused as e:         # as a refusal, which the plan dialog shows, and no plain install error
             ok("removing it with a desktop metapackage is refused", "needs" in str(e).lower() or "metapackage" in str(e), e)
+        except install.InstallError as e:
+            ok("removing it with a desktop metapackage is refused", False, f"as a plain install error: {e}")
+        ok("and the package is still installed", bool(pkgbackend.installed_version("akdemo", mgr)))
         sh(f"{'apt-get remove -y -qq' if mgr == 'apt' else 'dnf -y -q remove --noautoremove'} {meta} >/dev/null")
         # a dependent package that isn't special: confirmation first
         dep = "akdemo-plugins"
@@ -184,11 +187,17 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
     ok(f"{distro_pkg} installed from the distribution", bool(pkgbackend.installed_version(distro_pkg, mgr)))
     ok("Verified, signed by its repository", rec["verified"] == "signed" and rec["signer"], rec)
     if mgr == "apt":
-        # the same package put in by hand over the distribution's (`dpkg -i`): no repository offers
-        # that version, so adopting it finds no key that checked it
-        install.uninstall(db, b["url"])
+        # the same package put in by hand over the distribution's (`dpkg -i`), under AppKata's
+        # record of the Verified one: the next sync finds another copy there, which no key checked
         byhand = tempfile.mkdtemp()
         deb(byhand, distro_pkg, "99.0-1")
+        sh(f"dpkg -i {byhand}/{distro_pkg}_99.0-1_all.deb >/dev/null")
+        sync.track_channel_installs(db)
+        rec = json.loads(db.one("SELECT record FROM installs WHERE url=?", (b["url"],))["record"])
+        ok("a package replaced by hand outside AppKata is no longer Verified after a sync (R16.3.6)",
+           (rec["verified"], rec["signer"], rec["repository"], rec["pkgVersion"]) == ("unverified", "", "", "99.0-1"), rec)
+        # ...and no repository offers that version, so adopting it finds no key that checked it
+        install.uninstall(db, b["url"])
         sh(f"dpkg -i {byhand}/{distro_pkg}_99.0-1_all.deb >/dev/null")
         foreign.scan(db)
         rec = foreign.adopt(db, b["url"])

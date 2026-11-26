@@ -511,8 +511,15 @@ def sync_channels(db: DB, http: Http, progress: Progress | None = None) -> None:
 
 
 def track_channel_installs(db: DB, http: Http | None = None) -> None:
-    """R16.4.1, R16.5.4, R16.5.5, R16.5.6, R16.6.3."""
-    from . import autoupdate, flatpak, pkgbackend
+    """R16.4.1, R16.5.4, R16.5.5, R16.5.6, R16.6.3.
+
+    A copy that was changed outside AppKata is another copy: what checked it is asked again
+    (install.channel_verdict, R16.3.6), of the remote a Flatpak now comes from. Its record kept
+    the verdict of the copy that was there before, so a distribution's package that a vendor's
+    .deb of the same name was put over with `dpkg -i` still read Verified, "Signed by Ubuntu"
+    (CR1.6-33). Only then: a copy that didn't change keeps the verdict of its own install, though
+    its repository offers a newer version by now and no longer the installed one."""
+    from . import autoupdate, flatpak, install, pkgbackend
     rows = [r for r in db.all("SELECT * FROM installs") if json.loads(r["record"] or "{}").get("channel")]
     if not rows:
         return
@@ -544,6 +551,8 @@ def track_channel_installs(db: DB, http: Http | None = None) -> None:
                 _changed_elsewhere(db, r, rec, i.version, channels.project_version("flatpak", i.version), who,
                                    ch.time if ch else "", det, "flatpak")
                 rec["commit"] = i.commit
+                rec["remote"] = i.origin
+                rec.update(install.channel_verdict(rec))
             up = fp_updates.get(rec["flatpak"])
             if up:
                 new_perms = flatpak.permissions(flatpak.metadata(rec["flatpak"], rec.get("remote") or flatpak.FLATHUB))
@@ -562,6 +571,7 @@ def track_channel_installs(db: DB, http: Http | None = None) -> None:
                 _changed_elsewhere(db, r, rec, ver, channels.project_version(rec.get("manager", ""), ver), who, when,
                                    det, "package")
                 rec["pkgVersion"] = ver
+                rec.update(install.channel_verdict(rec))
             if rec["package"] in pending:
                 rec["pending"] = {"version": pending[rec["package"]],
                                   "projectVersion": channels.project_version(rec.get("manager", ""), pending[rec["package"]])}

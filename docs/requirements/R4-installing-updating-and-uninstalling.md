@@ -53,7 +53,9 @@ version's folder is the app's folder itself, the install folder above it, or hid
 is a name AppKata keeps in the app's folder itself, in any case (`current`, the link of R4.3.1.2;
 `run`, a sandboxed app's launcher, 17.4), gets `_` before it too (`_current/`), and one that ends
 as the folders AppKata makes while it places a version do (`.new`, `.old`) gets `_` after it
-(`2.0.old_/`).
+(`2.0.old_/`). Two versions whose names come out the same this way (`1.0 beta` and `1.0_beta`)
+each keep a place of their own: the one installed later gets `_2` after its name
+(`1.0_beta_2/`, `Tool-1.0_beta_2.AppImage`), a third `_3`.
 
 An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
 is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
@@ -157,6 +159,27 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
 1. Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest, when one
    exists.
 2. On Windows, reads the file's code-signing status, Authenticode (R15.11).
+
+The checksum is a SHA-256: the forge's own digest of the file when it gives one, else the one a
+checksum file of the release lists for it. A release can have several, and each is read until one
+lists the file: the file's own first (`<file>.sha256`, `<file>.sha256sum`), then the release's
+lists (`SHA256SUMS`, `checksums.txt`) in the release's order. A checksum of another kind
+(`<file>.sha512`, `SHA512SUMS`) is not read.
+
+When a release has checksum files and none of them gives the file's SHA-256, the file is installed
+as Unverified, as one whose release publishes none is, and the Unverified chip's tooltip says what
+became of each: it couldn't be read, it doesn't list the file, or it is longer than the 1 MB AppKata
+reads of it and that part doesn't list the file ("Its release has a checksum file, but this download
+was checked against none: couldn't read SHA256SUMS (HTTP 404)").
+
+Downloads are made over `https:` only. A release's file, the first bytes AppKata reads of a
+Windows `.exe` to tell its kind (R4.2.1) and a checksum file are fetched from no other kind of
+address (`http:`, `file:`, `ftp:`, `data:`), and a redirect is followed only to another `https:`
+address. An install whose file is at another kind of address, or is sent on to one, stops and says
+so ("AppKata downloads over https: only, and this isn't an https: address (…)"); a checksum file
+there is one that couldn't be read. The one exception is plain `http:` to this computer itself
+(`localhost` or a loopback address, as AppKata's own tests use), never as where a redirect from
+`https:` leads.
 
 A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
 `.minisig`, a sigstore bundle) is not checked.

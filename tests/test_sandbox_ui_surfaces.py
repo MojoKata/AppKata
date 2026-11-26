@@ -166,6 +166,8 @@ def _file(name, digest=""):
       "No checksum published": "2.0 publishes no checksum for the file Update would take: there is nothing to check the download against."}),
     ({"verified": "signed", "signer": "Demo Ltd"}, None, {"Verified · Demo Ltd": ""}),
     ({"verified": "unverified"}, _file("demo-2.0.dmg"), {"Unverified": ""}),            # 2.0 has no file for this computer
+    ({"verified": "unverified", "checksum_reason": "SHA256SUMS doesn't list this file"}, None,       # CR1, #328
+     {"Unverified": "Its release has a checksum file, but this download was checked against none: SHA256SUMS doesn't list this file"}),
     # a channel's copy: the chip and who signed it are its record's (R16.3.6; CR1, #318)
     ({"channel": "flatpak", "flatpak": "org.example.Demo", "remote": "vendor", "verified": "signed", "signer": "vendor"}, None,
      {"Verified": "Signed by vendor"}),
@@ -176,6 +178,7 @@ def _file(name, digest=""):
     (None, None, {"No checksum published": "1.0 publishes no checksum for the file Install would take: "
                                            "there is nothing to check the download against."}),
 ], ids=["unverified-and-an-update-with-a-digest", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest",
+        "a-checksum-file-without-the-file",
         "a-vendors-flatpak", "a-ppas-package", "a-flatpak-no-key-checked", "not-installed"])
 def test_app_detail_shows_what_the_installed_file_was_checked_against_and_a_forecast_for_the_next_one(ui, be, app, record, newer, chips):
     rels = json.loads(be.db.one("SELECT releases FROM apps WHERE url=?", (URL,))["releases"])

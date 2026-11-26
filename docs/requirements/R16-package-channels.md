@@ -134,7 +134,10 @@ R16.3.5. **Installing a package.** Through the package backend (R16.8):
 2. A plan that removes or downgrades anything, or upgrades packages other than new dependencies,
    is shown in a confirmation listing those packages; **Install** is red and the default is
    **Cancel**. A plan that removes a package marked essential or protected, or a metapackage of
-   the desktop (`ubuntu-desktop`, `task-gnome-desktop`, `@workstation-product`…), is refused.
+   the desktop (`ubuntu-desktop`, `task-gnome-desktop`, `@workstation-product`…), is refused:
+   a dialog titled "Can't install <app>" (or "Can't uninstall <app>", R16.4.3) says what the plan
+   would remove ("It would remove ubuntu-desktop, which this computer needs.") and has **Close**
+   alone. Nothing is installed, updated or removed.
 3. The record holds the package name, the manager, the repository, and whether the package was
    already marked as a dependency (R16.4.3).
 
@@ -153,8 +156,9 @@ gives none):
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
-package manager each time it installs, adopts (R16.4.2) or updates the copy; the chip is their
-answer, kept in the install record (R4.1).
+package manager each time it installs, adopts (R16.4.2) or updates the copy, and again when a sync
+finds the copy changed outside AppKata (R16.5.4), of the remote a Flatpak then comes from; the chip
+is their answer, kept in the install record (R4.1). A copy that hasn't changed keeps its chip.
 
 R16.4. **Tracking.**
 

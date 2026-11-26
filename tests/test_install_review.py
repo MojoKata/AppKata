@@ -1,5 +1,6 @@
 """Installing from a local web server (R4), and writing reviews with git (R8)."""
 
+import email
 import hashlib
 import http.server
 import io
@@ -8,14 +9,17 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
 import threading
+import urllib.request
+import urllib.response
 
 import pytest
 
-from appkata_core import devtools, forges, install, review
+from appkata_core import assets, devtools, forges, install, review
 from appkata_core.db import DB
 from appkata_core.forges import Asset
 
@@ -80,6 +84,147 @@ def test_checksum_mismatch_installs_nothing(env, server, tmp_path):
         install.install(env, APP, a, "appimage", [a, sums])
     assert not (tmp_path / "apps").exists() or not os.listdir(tmp_path / "apps")
     assert _downloads() == []                   # R4.8.2: the complete file that failed its checksum is deleted
+
+
+_FILE = b"\x7fELF the program"
+_SHA = hashlib.sha256(_FILE).hexdigest()
+_OTHER = hashlib.sha256(b"another file").hexdigest()
+_SHA512 = hashlib.sha512(_FILE).hexdigest()
+# A release's other files, in the release's order, each with what it holds -> the one whose SHA-256 is used
+_CHECKSUM_FILES = {
+    "a .sha512 beside the file, and SHA256SUMS":                    # the finding's case
+        ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a .sha512 beside the file, of the digest alone, and SHA256SUMS":
+        ([("App.AppImage.sha512", _SHA512 + "\n"), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n{_SHA} *App.AppImage\n")], "SHA256SUMS"),
+    "a list for another platform's files first":
+        ([("arm64-SHA256SUMS.txt", f"{_OTHER}  App-arm64.AppImage\n"), ("x86_64-SHA256SUMS.txt", f"{_SHA}  App.AppImage\n")],
+         "x86_64-SHA256SUMS.txt"),
+    "a list of SHA-512 digests first":
+        ([("checksums.txt", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list of MD5 digests first":
+        ([("checksums", f"{hashlib.md5(_FILE).hexdigest()}  App.AppImage\n"), ("checksums.txt", f"{_SHA}  ./dist/App.AppImage\n")],
+         "checksums.txt"),
+    "the file's own .sha256 before any list":
+        ([("SHA256SUMS", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256", _SHA + "\n")], "App.AppImage.sha256"),
+    "the file's own .sha256sum before any list":
+        ([("sha256sums.txt", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256sum", f"{_SHA}  App.AppImage\n")], "App.AppImage.sha256sum"),
+    "the file's own .sha256 names another file":
+        ([("App.AppImage.sha256", f"{_OTHER}  Other.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list that is missing, then one that is there":
+        ([("SHA256SUMS", None), ("checksums.txt", f"{_SHA}  App.AppImage\n")], "checksums.txt"),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], ""),
+    "only a .sha512 and a signature": ([("App.AppImage.sha512", _SHA512), ("App.AppImage.asc", "-----BEGIN PGP SIGNATURE-----")], ""),
+    "no list names the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n"), ("checksums.txt", f"{_SHA512}  App.AppImage\n")], ""),
+    "nothing else in the release": ([], ""),
+}
+
+
+def _release_with(server, others, data=_FILE):
+    """A release on the test's server: App.AppImage and its other files (a file whose text is None
+    is listed and isn't there). -> (the file, the release's files)."""
+    root, base = server
+    (root / "App.AppImage").write_bytes(data)
+    for name, text in others:
+        if text is not None:
+            (root / name).write_text(text)
+    a = Asset("App.AppImage", base + "/App.AppImage")
+    return a, [a] + [Asset(name, f"{base}/{name}") for name, _ in others]
+
+
+@pytest.mark.parametrize("release", list(_CHECKSUM_FILES))
+def test_a_file_is_checked_against_the_first_of_its_releases_checksum_files_that_lists_it(env, server, release):
+    """R4.4 (CR1.3-6): "Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest,
+    when one exists". One checksum file was picked by its name, a `<file>.sha512` before any
+    `SHA256SUMS`, and only that one was read, for 64 digits: a release with both was installed
+    Unverified, and a file that didn't match its `SHA256SUMS` wasn't stopped. No test had a release
+    with two such files. Here each of them, in each order, as a release publishes them."""
+    others, used = _CHECKSUM_FILES[release]
+    a, files = _release_with(server, others)
+    assert install.expected_sha256(a, files)[:2] == ((_SHA, used) if used else ("", ""))
+    # the same release with another file under that name: stopped wherever a SHA-256 of it is published
+    a, files = _release_with(server, others, data=b"tampered")
+    if used:
+        with pytest.raises(install.InstallError, match=re.escape(f"doesn't match its checksum ({used})")):
+            install.install(env, APP, a, "appimage", files)
+        assert _downloads() == [] and env.one("SELECT * FROM installs") is None
+
+
+@linux_only
+def test_a_release_with_a_sha512_and_sha256sums_is_installed_as_checked(env, server, tmp_path):
+    a, files = _release_with(server, _CHECKSUM_FILES["a .sha512 beside the file, and SHA256SUMS"][0])
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert (rec["verified"], rec["checksum_source"]) == ("checksum", "SHA256SUMS")
+
+
+def _long_list(end, at=1 << 20):
+    """A checksum list of other files that is `at` bytes long and ends with the text `end`."""
+    line = _OTHER + "  filler-{:08d}.bin\n"
+    n, rest = divmod(at - len(end), len(line.format(0)))
+    return "".join(line.format(i) for i in range(n - 1)) + f"{_OTHER}  {'x' * (len(line.format(0)) - 67 + rest)}\n" + end
+
+
+_MINE = f"{_SHA}  App.AppImage\n"
+_NO_ANSWER = "http://127.0.0.1:1/"          # nothing listens there: the connection is refused
+# A release's checksum files, as _CHECKSUM_FILES has them (a text that starts "http" is where the file
+# is said to be) -> what the install is checked against, and the reason kept when that is nothing
+_NO_CHECKSUM = {
+    "a list that answers 404": ([("SHA256SUMS", None)], "", "couldn't read SHA256SUMS (HTTP 404)"),
+    "a list on a server that doesn't answer": ([("SHA256SUMS", _NO_ANSWER)], "", "couldn't read SHA256SUMS"),
+    "a list without the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "", "SHA256SUMS doesn't list this file"),
+    "a list of another kind of digest": ([("checksums.txt", f"{_SHA512}  App.AppImage\n")], "", "checksums.txt doesn't list this file"),
+    "an empty list": ([("SHA256SUMS", "")], "", "SHA256SUMS doesn't list this file"),
+    "the file listed after the first 1 MB":
+        ([("SHA256SUMS", _long_list("") + _MINE)], "", "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the first 1 MB ends inside the line of a file whose name starts as this one's":
+        ([("SHA256SUMS", _long_list(f"{_OTHER}  App.AppImage") + ".zsync\n" + _MINE)], "",
+         "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the file's own .sha256 answers 404 and the list is without it":
+        ([("App.AppImage.sha256", None), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "",
+         "couldn't read App.AppImage.sha256 (HTTP 404); SHA256SUMS doesn't list this file"),
+    # ...and where there is a checksum, or no checksum file at all, there is nothing to say
+    "a list that answers 404, then one with the file": ([("SHA256SUMS", None), ("checksums.txt", _MINE)], "checksums.txt", ""),
+    "the file listed at the end of the first 1 MB": ([("SHA256SUMS", _long_list(_MINE) + f"{_OTHER}  later.bin\n")], "SHA256SUMS", ""),
+    "a list of just 1 MB, the file on its last line": ([("SHA256SUMS", _long_list(_MINE.rstrip()))], "SHA256SUMS", ""),
+    "no checksum file": ([], "", ""),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], "", ""),
+}
+
+
+def _release_of(server, others):
+    a, files = _release_with(server, [(n, None if str(t).startswith("http") else t) for n, t in others])
+    return a, [Asset(f.name, t + f.name) if str(t := dict(others).get(f.name)).startswith("http") else f for f in files]
+
+
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_a_checksum_file_that_gives_no_checksum_is_said_with_the_reason(server, release):
+    """R4.4 (CR1.3-29): a checksum file that is there and can't be used is not "none exists". The
+    install went on as Unverified with no word of it, as if the release published nothing."""
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    assert install.expected_sha256(a, files) == (_SHA if used else "", used, why)
+
+
+@linux_only
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_an_install_that_couldnt_use_its_releases_checksum_file_keeps_why_in_its_record(env, server, tmp_path, caplog, release):
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    assert (rec["verified"], rec["checksum_source"], rec.get("checksum_reason")) == ("checksum" if used else "unverified", used, why or None)
+    assert ("checked against no checksum: " + why in caplog.text) == bool(why)
+
+
+def test_the_checksum_files_of_a_release_are_the_files_own_then_its_lists_and_never_another_digests():
+    A = lambda *names: [Asset(n, "https://example.org/" + n) for n in names]      # noqa: E731
+    rel = A("App.AppImage", "SHA256SUMS", "App.AppImage.sha512", "App.AppImage.SHA256", "checksums.txt", "App.AppImage.sha256sum",
+            "App.AppImage.md5", "Other.AppImage.sha256", "linux-sha256sums.txt", "App.AppImage.asc", "SHA512SUMS", "notes.txt")
+    assert [x.name for x in assets.checksums_for(rel[0], rel)] == ["App.AppImage.SHA256", "App.AppImage.sha256sum", "SHA256SUMS",
+                                                                   "checksums.txt", "linux-sha256sums.txt"]
+    assert assets.checksum_for(rel[0], rel).name == "App.AppImage.SHA256"
+    for only in ("App.AppImage.sha512", "SHA512SUMS", "Other.AppImage.sha256", "App.AppImage.asc"):
+        rel = A("App.AppImage", only)
+        assert assets.checksums_for(rel[0], rel) == [] and assets.checksum_for(rel[0], rel) is None
 
 
 @linux_only
@@ -322,6 +467,315 @@ def test_cancelled_download_leaves_nothing(range_server, tmp_path):
     with pytest.raises(install.Cancelled):
         install.download(range_server, str(dest), cancel=lambda: True)
     assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------- what a server can do to a download (R4.8.2; CR1.3-16)
+# How it slipped past: the one test of a break (above) cut an answer that has a Content-Length, and
+# a cut is then a short read. An answer sent in chunks has no length: its cut is http.client's
+# IncompleteRead, which is no OSError, so it was retried by nothing and reached the user raw.
+class _BadAnswers(http.server.BaseHTTPRequestHandler):
+    """One file, answered as `how` says: whole, or broken in one of the ways a server or a proxy
+    breaks an answer, `times` times (None: every time)."""
+    protocol_version = "HTTP/1.1"
+    data, how, times = b"", "", None
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def chunk(self, data, said=None):
+        self.wfile.write(b"%x\r\n" % (len(data) if said is None else said) + data + (b"\r\n" if said is None else b""))
+
+    def do_GET(self):
+        self.close_connection = True
+        self.asked.append(self.headers.get("Range"))
+        d, how, half = self.data, self.how, len(self.data) // 2
+        breaks = self.times is None or len(self.asked) <= self.times
+        if breaks and how == "a status line that isn't one":
+            self.wfile.write(b"\x00\x01 what is this\r\n\r\n")
+            return
+        if breaks and how == "a header line with no end":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Long: " + b"x" * 70000 + b"\r\n\r\n")
+            return
+        rng = self.headers.get("Range")
+        if rng and self.headers.get("If-Range") == '"v1"':            # the rest, to a request that resumes
+            start = int(rng.split("=")[1].split("-")[0])
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{len(d) - 1}/{len(d)}")
+            self.send_header("Content-Length", str(len(d) - start))
+            self.end_headers()
+            self.wfile.write(d[start:])
+            return
+        self.send_response(200)
+        if "resume" in how:
+            self.send_header("ETag", '"v1"')
+        if how == "a Content-Length that is no number":
+            self.send_header("Content-Length", "a lot")
+            self.end_headers()
+            self.wfile.write(d)
+            return
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        self.chunk(d[:half])
+        if breaks and how == "a chunk size that is no number":
+            self.wfile.write(b"zz\r\n" + d[half:] + b"\r\n0\r\n\r\n")
+        elif breaks:                                                  # the connection closes inside the second chunk
+            self.chunk(d[half:half + 10], said=len(d) - half)
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_RDWR)
+        else:
+            self.chunk(d[half:])
+            self.chunk(b"")
+
+
+@pytest.fixture
+def bad_answers(monkeypatch):
+    _BadAnswers.data, _BadAnswers.asked = os.urandom(300_000), []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BadAnswers)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/file.bin"
+    httpd.shutdown()
+
+
+_HALF = 150_000
+_CAME = _HALF - _HALF % (1 << 16)        # what download() had written when the second chunk broke: it reads 64 KiB at a time
+# how the answer breaks, how many times -> the Range of each request made, and whether the file comes whole
+_BREAKS = {
+    "an answer in chunks, cut inside a chunk, every time": ("cut in a chunk", None, [None] * 4, False),      # the finding's case
+    "an answer in chunks, cut inside a chunk, once": ("cut in a chunk", 1, [None, None], True),              # no validator: it starts over
+    "an answer in chunks, cut once, from a server that can resume": ("cut in a chunk, resume", 1, [None, f"bytes={_CAME}-"], True),
+    "an answer in chunks, cut three times": ("cut in a chunk", 3, [None] * 4, True),
+    "a chunk size that is no number, every time": ("a chunk size that is no number", None, [None] * 4, False),
+    "a status line that isn't one, every time": ("a status line that isn't one", None, [None] * 4, False),
+    "a status line that isn't one, once": ("a status line that isn't one", 1, [None, None], True),
+    "a header line with no end, every time": ("a header line with no end", None, [None] * 4, False),
+    "a Content-Length that is no number": ("a Content-Length that is no number", 0, [None], True),
+    "an answer in chunks, whole": ("cut in a chunk", 0, [None], True),
+}
+
+
+@pytest.mark.parametrize("breaks", list(_BREAKS))
+def test_a_download_whose_answer_breaks_is_retried_then_kept_and_fails_as_an_install_error(bad_answers, tmp_path, breaks):
+    """R4.8.2: "If the connection breaks, AppKata retries up to three times, continuing from where it
+    stopped ... Otherwise it starts over. A download that still fails ... is kept and resumed"."""
+    _BadAnswers.how, _BadAnswers.times, ranges, whole = _BREAKS[breaks]
+    dest = tmp_path / "file.bin"
+    if whole:
+        assert install.download(bad_answers, str(dest)) == hashlib.sha256(_BadAnswers.data).hexdigest()
+        assert dest.read_bytes() == _BadAnswers.data and sorted(os.listdir(tmp_path)) == ["file.bin"]
+    else:
+        with pytest.raises(install.InstallError, match="^download failed: .*; press Update again to resume$") as e:
+            install.download(bad_answers, str(dest))
+        assert "IncompleteRead(" not in str(e.value) and not dest.exists()
+        if "chunk" in breaks:           # what had come is kept, for the next try (a server that can resume takes it from there)
+            assert (tmp_path / "file.bin.part").read_bytes() == _BadAnswers.data[:_CAME]
+    assert _BadAnswers.asked == ranges
+
+
+@pytest.mark.parametrize("breaks", [b for b in _BREAKS if b.endswith("every time")])
+def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(bad_answers, breaks):
+    """The same break in the two other requests of an install: each caught an OSError alone."""
+    _BadAnswers.how, _BadAnswers.times = _BREAKS[breaks][:2]
+    assert install.head_bytes(bad_answers, 200_000) == b""
+    a = Asset("App.AppImage", bad_answers + "?the-file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", bad_answers)]) == ("", "", "couldn't read SHA256SUMS")
+
+
+# ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
+# How it slipped past: every test's file was on the test's own http server, so nothing asked what
+# else an address could be. download(), head_bytes() and expected_sha256() each opened whatever the
+# release gave, with urllib's default opener: file:, ftp: and data: as well, and any redirect.
+_NOT_HTTPS = [
+    "{file}", "file://localhost{path}", "FILE://{path}", "\tfile://{path}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage",
+    "data:application/octet-stream;base64,f0VMRg==", "http://example.org/x.AppImage", "HTTP://example.org/x.AppImage",
+    "http://192.0.2.7/x.AppImage", "http://192.168.1.9:8000/x.AppImage", "http://[2001:db8::7]/x.AppImage",
+    "http://127.0.0.1.example.org/x.AppImage", "http://localhost.example.org/x.AppImage", "http://127.0.0.1@example.org/x.AppImage",
+    "http://example.org@127.0.0.1/x.AppImage", "http://example.org:80@localhost/x.AppImage", "http://127.1/x.AppImage",
+    "http://0x7f.0.0.1/x.AppImage", "http://2130706433/x.AppImage", "http://0.0.0.0/x.AppImage", "http:///x.AppImage",
+    "https:///x.AppImage", "https:x.AppImage", "//example.org/x.AppImage", "example.org/x.AppImage", "/x.AppImage", "x.AppImage", "",
+    "gopher://example.org/x", "jar:file://{path}!/x", "ws://127.0.0.1/x",
+]
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Every connection and name lookup that isn't to this computer itself is refused, and kept."""
+    reached = []
+    real_connect, real_lookup = socket.socket.connect, socket.getaddrinfo
+
+    def connect(sock, address):
+        if isinstance(address, tuple) and address[0] not in ("127.0.0.1", "::1"):
+            reached.append(address)
+            raise OSError("the test reaches no network")
+        return real_connect(sock, address)
+
+    def lookup(host, *a, **k):
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            reached.append(host)
+            raise OSError("the test reaches no network")
+        return real_lookup(host, *a, **k)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    return reached
+
+
+def _refused_everywhere(url, folder, at_once=False):
+    """download(), the .exe probe and the checksum fetch each refuse `url`. `at_once`: for its own
+    address, before anything is asked, so download() leaves an unfinished download of another
+    address as it was."""
+    dest = folder / "x.AppImage"
+    folder.mkdir(exist_ok=True)
+    (folder / "x.AppImage.part").write_bytes(b"half of it")
+    (folder / "x.AppImage.part.json").write_text(json.dumps({"url": "https://example.org/earlier.AppImage", "validator": '"v1"'}))
+    with pytest.raises(install.InstallError, match=r"isn't https:|isn't an https: address|HTTP 30[0-9]"):
+        install.download(url, str(dest))
+    left = sorted(os.listdir(folder))
+    assert "x.AppImage" not in left and (not at_once or (left == ["x.AppImage.part", "x.AppImage.part.json"]
+                                                        and (folder / "x.AppImage.part").read_bytes() == b"half of it")), left
+    assert install.head_bytes(url) == b""
+    a = Asset("App.AppImage", "https://example.org/App.AppImage")
+    hex_, source, why = install.expected_sha256(a, [a, Asset("SHA256SUMS", url)])
+    assert (hex_, source) == ("", "") and why.startswith("couldn't read SHA256SUMS"), why
+    return why
+
+
+@pytest.mark.parametrize("address", _NOT_HTTPS, ids=[repr(a) for a in _NOT_HTTPS])
+def test_nothing_is_fetched_from_an_address_that_isnt_https(tmp_path, no_network, address):
+    """R4.4, the owner's decision on CR1.3-10: https: only. `file:///proc/self/cwd/<path>` as a
+    release link's address copied a file of the user's into the app's folder as "the download"."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_SHA + "  App.AppImage\n")                     # readable, and a checksum file if it were read
+    url = address.format(file=secret.as_uri(), path=secret.as_uri()[len("file://"):])
+    with pytest.raises(install.NotFetched, match="AppKata downloads over https: only"):
+        install.download(url, str(tmp_path / "y.AppImage"))
+    assert _refused_everywhere(url, tmp_path / "dl", at_once=True) == "couldn't read SHA256SUMS: it isn't at an https: address"
+    assert no_network == [] and sorted(os.listdir(tmp_path)) == ["dl", "secret.txt"]
+
+
+@pytest.mark.parametrize("host,itself", [
+    ("127.0.0.1", True), ("127.0.0.1:8000", True), ("localhost", True), ("LocalHost:80", True), ("[::1]", True), ("[::1]:8080", True),
+    ("127.8.9.1", True), ("example.org", False), ("example.org:443", False), ("127.0.0.1.example.org", False),
+    ("localhost.example.org", False), ("example.org@127.0.0.1", False), ("127.0.0.1@example.org", False), ("192.168.1.5", False),
+    ("10.0.0.1:80", False), ("0.0.0.0", False), ("[::]", False), ("[2001:db8::7]:80", False), ("127.1", False), ("0x7f.0.0.1", False),
+    ("2130706433", False), ("localhost.", False), ("", False), (":80", False),
+])
+def test_the_one_host_plain_http_is_used_to_is_this_computer_by_its_own_words(host, itself):
+    assert install._loopback(host) is itself
+
+
+class _SendsOn(http.server.BaseHTTPRequestHandler):
+    """Sends a request for /go on to `to`; anything else gets the file."""
+    to = ""
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        self.asked.append(self.path)
+        body = b"" if self.path == "/go" else _MINE.encode() if self.path == "/sums" else _FILE
+        self.send_response(302 if self.path == "/go" else 200)
+        if self.path == "/go":
+            self.send_header("Location", self.to)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def sends_on():
+    _SendsOn.to, _SendsOn.asked = "", []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SendsOn)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+@pytest.mark.parametrize("to", ["{file}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage", "http://example.org/x.AppImage",
+                                "http://192.0.2.7/x.AppImage", "//example.org/x.AppImage", "data:,x", "gopher://example.org/x"])
+def test_a_redirect_is_followed_to_no_address_that_isnt_https(tmp_path, no_network, sends_on, to):
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_MINE)
+    _SendsOn.to = to.format(file=secret.as_uri())
+    why = _refused_everywhere(sends_on + "/go", tmp_path / "dl")
+    assert why in ("couldn't read SHA256SUMS: it isn't at an https: address", "couldn't read SHA256SUMS (HTTP 302)")    # the second: urllib's own no
+    assert no_network == [] and set(_SendsOn.asked) == {"/go"}
+
+
+def test_a_redirect_on_this_computer_itself_is_followed_as_the_tests_servers_need(tmp_path, no_network, sends_on):
+    _SendsOn.to = sends_on + "/file"
+    assert install.download(sends_on + "/go", str(tmp_path / "x.AppImage")) == _SHA and (tmp_path / "x.AppImage").read_bytes() == _FILE
+    assert install.head_bytes(sends_on + "/go", 4) == _FILE[:4]
+    _SendsOn.to = sends_on + "/sums"
+    a = Asset("App.AppImage", sends_on + "/file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", sends_on + "/go")]) == (_SHA, "SHA256SUMS", "")
+
+
+class _NoTLS(urllib.request.HTTPSHandler):
+    """Stands in for https: with no TLS server: answers each address from a table of
+    {address: where it sends the request on, or the bytes it gives}."""
+    answers = {}
+    asked = []
+
+    def https_open(self, req):
+        self.asked.append(req.full_url)
+        answer = self.answers[req.full_url]
+        to = answer if isinstance(answer, str) else ""
+        headers = email.message_from_string(f"Location: {to}\n" if to else "Content-Length: %d\n" % len(answer))
+        r = urllib.response.addinfourl(io.BytesIO(b"" if to else answer), headers, req.full_url, 302 if to else 200)
+        r.msg = "Found" if to else "OK"
+        return r
+
+
+@pytest.fixture
+def no_tls(monkeypatch):
+    _NoTLS.answers, _NoTLS.asked = {}, []
+    monkeypatch.setattr(urllib.request, "HTTPSHandler", _NoTLS)
+    monkeypatch.setattr(urllib.request, "_opener", None)          # urllib's own default opener, made again with it
+    return _NoTLS
+
+
+@pytest.mark.parametrize("to", ["http://dl.example.org/x.AppImage", "{loopback}/file", "ftp://dl.example.org/x.AppImage",
+                                "http://localhost/x.AppImage"])
+def test_a_redirect_from_https_down_to_http_is_not_followed(tmp_path, no_network, no_tls, sends_on, to):
+    """R4.4: with no checksum published a download is Unverified and installed all the same, so a
+    file an https: address hands on to plain http: is whoever's sits on the network. Not even to
+    this computer itself: plain http: is for the tests' own servers, asked for as such."""
+    no_tls.answers = {"https://example.org/x.AppImage": to.format(loopback=sends_on)}
+    why = _refused_everywhere("https://example.org/x.AppImage", tmp_path / "dl")
+    assert why == "couldn't read SHA256SUMS: it isn't at an https: address"
+    with pytest.raises(install.NotFetched, match=r"sent on to an address that isn't https: \(" + re.escape(no_tls.answers["https://example.org/x.AppImage"])):
+        install.download("https://example.org/x.AppImage", str(tmp_path / "y.AppImage"))
+    assert no_network == [] and _SendsOn.asked == [] and set(no_tls.asked) == {"https://example.org/x.AppImage"}
+
+
+def test_an_https_address_and_a_redirect_from_it_to_another_are_downloaded_from(tmp_path, no_network, no_tls):
+    no_tls.answers = {"https://example.org/x.AppImage": "https://cdn.example.net/files/1", "https://cdn.example.net/files/1": _FILE,
+                      "https://example.org/SHA256SUMS": "https://cdn.example.net/files/2", "https://cdn.example.net/files/2": _MINE.encode()}
+    assert install.download("https://example.org/x.AppImage", str(tmp_path / "x.AppImage")) == _SHA
+    assert (tmp_path / "x.AppImage").read_bytes() == _FILE and install.head_bytes("https://example.org/x.AppImage", 4) == _FILE[:4]
+    a = Asset("App.AppImage", "https://example.org/x.AppImage")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", "https://example.org/SHA256SUMS")]) == (_SHA, "SHA256SUMS", "")
+    assert no_network == []
+
+
+def test_every_request_install_makes_is_made_by_the_one_function_that_checks_its_address():
+    """The class: three functions each opened an address of their own. A fourth that does is found
+    here, whatever it downloads."""
+    import ast
+    import inspect
+    made = {}
+    for fn in ast.walk(ast.parse(inspect.getsource(install))):
+        if isinstance(fn, (ast.FunctionDef, ast.ClassDef)):
+            for node in ast.walk(fn):
+                name = isinstance(node, ast.Call) and (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", ""))
+                if name in ("urlopen", "urlretrieve", "build_opener", "install_opener", "Request", "OpenerDirector", "HTTPConnection",
+                            "HTTPSConnection", "create_connection"):
+                    made.setdefault(name, set()).add(fn.name)
+    assert made == {"Request": {"_request"}, "OpenerDirector": {"_opener"}}
 
 
 def test_app_that_updates_itself_has_no_version_folders(env, server, tmp_path):
@@ -2854,6 +3308,114 @@ def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_asid
     assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))
 
 
+# ---------------------------------------------------------------- two versions whose names in a path are one (R4.3.1; CR1.3-52)
+# How it slipped past: every test's versions were numbers, which are their own names. A version is
+# the release author's text, and its name in a path isn't the version: the characters a path can't
+# hold become `_`, and a name AppKata keeps for itself gets a `_` of its own (CR1.3-9, CR1.3-47).
+_ONE_FOLDER = [("1.0 beta", "1.0_beta"), ("1.0_beta", "1.0 beta"), ("1.0 beta", "1.0_beta", "1.0/beta"), ("2.0~rc1", "2.0_rc1", "2.0 rc1"),
+               ("current", "_current"), ("_current", "Current", "current"), ("run", "_run"), ("..", "_.."), ("2.0.old", "2.0.old_"),
+               ("2.0.new_", "2.0.new"), ("1.0_beta", "1.0 beta", "1.0_beta_2"), ("1.0_beta_2", "1.0 beta", "1.0_beta")]
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["tarball", "appimage"])
+@pytest.mark.parametrize("versions", _ONE_FOLDER, ids=[" then ".join(v) for v in _ONE_FOLDER])
+def test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own(env, server, tmp_path, versions, kind):
+    """R4.3.1.5: "AppKata keeps up to *N* previous versions ... A kept version reinstalls instantly".
+    The later of two such versions was placed where the earlier was, which was then gone, and no
+    longer kept: installing 1.0_beta over 1.0 beta left nothing to go back to."""
+    nothing = _left(tmp_path, env)
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    cmd, says = tmp_path / "cmd" / "demo-tool", {}
+
+    def release(v, again=""):
+        """Version `v` as its release has it: under one file name for every version, as many projects do."""
+        i = f"{versions.index(v)}{again}"
+        (server[0] / i).mkdir(exist_ok=True)
+        if kind == "appimage":
+            a = _appimage(server, f"{i}/Tool-x86_64.AppImage", f"#!/bin/sh\necho {i}\n".encode())
+            says[v] = i
+        else:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+            says[v] = f"tool-{i}/tool"
+        return Asset(a.name.split("/")[1], a.url)
+
+    for n, v in enumerate(versions):
+        a = release(v)
+        rec = install.install(env, {**APP, "installVersion": v}, a, kind, [a], portable=p)
+        assert _runs(cmd) == says[v] and rec["current"]["version"] == v
+        assert [k["version"] for k in rec["kept"]] == list(reversed(versions[:n])) == install.kept_versions(env, APP["url"])
+    places = {k["version"]: k["path"] for k in [rec["current"]] + rec["kept"]}
+    assert len(set(places.values())) == len(versions) and all(os.path.dirname(x) == str(tmp_path / "apps" / "demo-tool") for x in places.values())
+    for v in versions:                                  # each one is there to go back to, and is itself
+        if v != rec["current"]["version"]:
+            rec = install.switch_to(env, dict(APP), v, p)
+        assert _runs(cmd) == says[v] and rec["current"] == {"version": v, "path": places[v], "exec": rec["current"]["exec"]}
+    # the same version again takes its own place, and no other version's
+    a = release(versions[-1], again="-again")
+    rec = install.install(env, {**APP, "installVersion": versions[-1]}, a, kind, [a], portable=p)
+    assert _runs(cmd) == says[versions[-1]] and rec["current"]["path"] == places[versions[-1]]
+    assert sorted(k["version"] for k in rec["kept"]) == sorted(versions[:-1])
+    for v in versions[:-1]:
+        assert _runs(install.switch_to(env, dict(APP), v, p)["exec"]) == says[v]
+    assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
+
+
+@linux_only
+@pytest.mark.parametrize("case", ["an archive whose name's place was another version's", "an AppImage whose name's place was another version's",
+                                  "an AppImage whose release renamed its file"])
+def test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one(env, server, tmp_path, case):
+    """R4.3.1.5 keeps *previous* versions. Found beside CR1.3-52: a version installed again where
+    its file's name, or the place its name gives, had changed left its earlier copy among the kept
+    versions, so the Versions list offered the installed version as one to go back to."""
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    folder, n = tmp_path / "apps" / "demo-tool", iter(range(9))
+
+    def put(v, name=""):
+        i = str(next(n))
+        (server[0] / i).mkdir()
+        if "archive" in case:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+        else:
+            a = _appimage(server, f"{i}/{name or 'Tool-x86_64.AppImage'}", f"#!/bin/sh\necho {i}\n".encode())
+        a = Asset(a.name.split("/")[1], a.url)
+        return install.install(env, {**APP, "installVersion": v}, a, "tarball" if "archive" in case else "appimage", [a], portable=p), i
+
+    if "renamed" in case:
+        rec, _ = put("2.0", "Tool-2.0-x86_64.AppImage")
+        was = rec["current"]["path"]
+        rec, says = put("2.0", "Tool-2.0-amd64.AppImage")
+    else:
+        put("1.0 beta")
+        rec, _ = put("1.0_beta")                                     # beside it, under the name with _2
+        was = rec["current"]["path"]
+        install.remove_version(env, APP["url"], "1.0 beta")          # the user removes the kept one: its place is free again
+        rec, says = put("1.0_beta")
+    assert rec["current"]["path"] != was and not os.path.lexists(was)
+    assert rec["kept"] == [] == install.kept_versions(env, APP["url"]) and rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    mine = "tool-" + says + "/tool" if "archive" in case else says
+    assert _runs(tmp_path / "cmd" / "demo-tool") == mine
+    assert sorted(f.name for f in folder.iterdir() if not f.is_symlink()) == [os.path.basename(rec["current"]["path"])]
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_place_a_version_gets_when_its_names_is_another_versions(monkeypatch, system):
+    monkeypatch.setattr(install, "OS", system)
+    free = install._not_anothers
+    at = lambda *names: tuple(os.path.join("apps", "tool", n) for n in names)      # noqa: E731
+    (one,) = at("1.0_beta")
+    assert free(one, ()) == one and free(one, at("1.0", "1.0_beta_2", "2.0")) == one
+    assert free(one, at("1.0_beta")) == at("1.0_beta_2")[0]
+    assert free(one, at("1.0_beta_2", "1.0_beta", "1.0_beta_3")) == at("1.0_beta_4")[0]
+    assert free(at("1.0")[0], at("1.0")) == at("1.0_2")[0]                           # a folder's name ends where it ends: no extension
+    assert free(at("Tool-1.0_beta.AppImage")[0], at("Tool-1.0_beta.AppImage")) == at("Tool-1.0_beta_2.AppImage")[0]
+    assert free(at("nvim-0.9.appimage")[0], at("nvim-0.9.appimage", "nvim-0.9_2.appimage")) == at("nvim-0.9_3.appimage")[0]
+    # Windows keeps one folder for 1.0-RC and 1.0-rc; elsewhere they are two
+    assert free(at("1.0-RC")[0], at("1.0-rc")) == at("1.0-RC_2" if system == "windows" else "1.0-RC")[0]
+    for name in ("1.0_beta_2", "_current_2", "2.0.old__2"):                         # never a name AppKata keeps or makes for itself
+        assert install._version_folder(name) == name
+
+
 # ---------------------------------------------------------------- a release's .deb or .rpm (R4.4, R16.8.5; CR1, #327)
 # How it slipped past: no test installed a release's package file at all, so none saw which file the
 # package manager is handed. It was the downloaded one, in a folder any program of the user's can
@@ -2985,6 +3547,24 @@ def test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_wi
     a, data = _package_file(server, "deb")
     install.install(env, {**APP, "installVersion": "2.0"}, a, "deb", [a])
     assert (out / "file").read_bytes() == data
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK"])
+def test_a_releases_package_whose_plan_is_refused_is_refused_as_such_and_nothing_of_it_stays(env, server, package_tools, monkeypatch, kind,
+                                                                                               confirmed):
+    """R16.3.5 (CR1.3-53): "A plan that removes a package marked essential or protected, or a
+    metapackage of the desktop ... is refused." install() made a plain install error of it, so the
+    backend's dialog for a refused plan was never shown."""
+    from appkata_core import pkgbackend
+    out, staging = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["ubuntu-desktop"]))
+    monkeypatch.setattr(pkgbackend.Cli, "facts", lambda self, names: pkgbackend.Facts())
+    a, _ = _package_file(server, kind)
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$"):
+        install.install(env, {**APP, "installVersion": "1.0", "confirmed": confirmed}, a, kind, [a])
+    assert os.listdir(out) == [] and os.listdir(staging) == [] and _downloads() == [] and env.one("SELECT * FROM installs") is None
 
 
 @linux_only

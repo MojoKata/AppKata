@@ -520,6 +520,9 @@ class Backend(QObject):
                 verify_tip = "Checked against " + ("the forge's digest" if how == "forge digest" else how)
             elif irec.get("verified") == "adopted":
                 verify_tip = "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"
+            elif verify == "unverified" and irec.get("checksum_reason"):
+                # its release has a checksum file that gave no checksum: said, not passed over (CR1, #328)
+                verify_tip = "Its release has a checksum file, but this download was checked against none: " + irec["checksum_reason"]
         # The file Install or Update would take hasn't been checked: a forecast, worded as one, of
         # what its own release publishes for it. That release isn't always the newest one (a
         # pre-release, a minimum age), so it is found by the file. Nothing is forecast where
@@ -1463,7 +1466,7 @@ class Backend(QObject):
         if and_uninstall:
             try:
                 left = install.uninstall(self.db, url)
-            except install.InstallError as e:
+            except (install.InstallError, PackageRefused) as e:     # a refused plan is said here as it was: no dialog on this road
                 self.toast.emit("error", str(e))
                 return
         a = self._app(url)

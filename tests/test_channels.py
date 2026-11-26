@@ -622,6 +622,37 @@ def test_adopt(db, monkeypatch, fake_pkgs):
 
 
 # ---------------------------------------------------------------- what checked a channel's copy (R16.3.6; CR1, #318)
+# R16.3.5, R16.4.3 (CR1.3-53): a plan that would remove what the computer needs is refused, and the
+# refusal reaches the caller as one. How it slipped past: the tests of a refusal stopped at
+# pkgbackend's own `apply`, and the backend's dialog for one was reached by no test, so nothing saw
+# that install.py turned every refusal into a plain install error on the way.
+@pytest.mark.parametrize("road", ["install", "update", "uninstall"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK to another plan"])
+def test_a_plan_appkata_refuses_reaches_the_caller_as_a_refusal_and_runs_nothing(db, fake_pkgs, road, confirmed):
+    app, rec = {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "package": "keepassxc", "manager": "apt", "pkgVersion": "2.7.6-1"}
+    if road != "install":
+        fake_pkgs.installed["keepassxc"] = "2.7.6-1"
+        db.x("INSERT INTO installs(url, name, version, kind, record) VALUES(?,?,?,?,?)", (KEEPASSXC, "KeePassXC", "2.7.6", "apt", json.dumps(rec)))
+    before = db.all("SELECT * FROM installs")
+    fake_pkgs.plan_ = {"install": pkgbackend.Plan(install=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "update": pkgbackend.Plan(upgrade=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "uninstall": pkgbackend.Plan(remove=["keepassxc", "ubuntu-desktop"])}[road]
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$") as e:
+        if road == "install":
+            install.install_channel(db, app, {"channel": "package", "value": "keepassxc"}, confirmed=confirmed)
+        elif road == "update":
+            install.update_channel(db, KEEPASSXC, confirmed=confirmed)
+        else:
+            install.uninstall(db, KEEPASSXC, confirmed=confirmed)
+    assert not isinstance(e.value, install.InstallError) and fake_pkgs.ran == [] and db.all("SELECT * FROM installs") == before
+
+
+def test_a_package_error_that_is_no_refusal_is_an_install_error(db, fake_pkgs, monkeypatch):
+    monkeypatch.setattr(FakeBackend, "run", lambda self, *a, **k: (_ for _ in ()).throw(pkgbackend.PackageError("apt-get failed: no space left")))
+    with pytest.raises(install.InstallError, match="no space left"):
+        install.install_channel(db, {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "value": "keepassxc"})
+
+
 # How it slipped past: every record of a channel's copy was written "signed" by a fixed name, and
 # no test asked what the tools say of the copy. These hold the record to apt's and flatpak's own
 # words (recorded from Ubuntu 24.04, apt 2.7.14 and Flatpak 1.14.6; scripts/channels_e2e.py asks
@@ -804,7 +835,7 @@ def test_a_package_is_recorded_as_what_apt_says_checked_it_when_adopted_installe
     assert (rec["verified"], rec["signer"], rec["repository"]) == ("unverified", "", "")
 
 
-def test_tracking(db, monkeypatch, fake_pkgs):
+def test_tracking(db, monkeypatch, fake_pkgs, remotes):
     """Removed and updated outside AppKata, and pending updates (R16.4.1, R16.5.4, R16.5.5)."""
     monkeypatch.setattr(channels, "manager", lambda: "apt")
     monkeypatch.setattr(flatpak, "available", lambda: True)
@@ -828,6 +859,86 @@ def test_tracking(db, monkeypatch, fake_pkgs):
     assert not db.one("SELECT 1 FROM installs WHERE url='https://github.com/b/b'")
     acts = [r["action"] for r in db.all("SELECT action, actor FROM audit WHERE actor='system'")]
     assert acts == ["was updated outside AppKata", "was removed outside AppKata"]
+
+
+# R16.3.6 (CR1.6-33): the verdict in a channel copy's record is of the copy that is installed.
+# How it slipped past: #318 made every road by which AppKata itself puts a copy there ask what
+# checked it (install, adopt, update), and the one road it doesn't take was left: the copy changed
+# outside AppKata, which Sync finds. No test changed a copy there and read its chip's record after.
+def _tracked(db, monkeypatch, record, version="1.0"):
+    """One channel copy AppKata tracks, with this record, on a machine with no pending updates."""
+    monkeypatch.setattr(channels, "manager", lambda: "apt")
+    monkeypatch.setattr(pkgbackend, "pending_updates", lambda names, manager=None: {})
+    monkeypatch.setattr(autoupdate, "_out", lambda cmd: "")
+    monkeypatch.setattr(autoupdate, "last_change", lambda manager, package, version: ("", ""))
+    monkeypatch.setattr(flatpak, "updates", lambda system=False: {})
+    monkeypatch.setattr(flatpak, "history", lambda since="": [])
+    db.x("INSERT INTO installs(url, name, version, kind, record) VALUES(?,?,?,?,?)", (KEEPASSXC, "KeePassXC", version, "", json.dumps(record)))
+
+    def after():
+        sync.track_channel_installs(db)
+        return json.loads(db.one("SELECT record FROM installs WHERE url=?", (KEEPASSXC,))["record"])
+    return after
+
+
+UBUNTUS = {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+BY_HAND = {"verified": "unverified", "signer": "", "repository": ""}
+CHANGED_PACKAGES = {
+    # what the record says, the version that is installed now, what apt says of it -> the record after
+    "a vendor's .deb put over the distribution's by hand":                      # the finding's case
+        (UBUNTUS, "9.9", _policy("9.9", ("9.9", [STATUS]), ("2.10-3build1", [NOBLE])), BY_HAND),
+    "the distribution's put back over one put in by hand": (BY_HAND, "2.10-3build1", _policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])), UBUNTUS),
+    "a PPA's version over the distribution's":
+        (UBUNTUS, "130.0", _policy("130.0", ("130.0", [PPA, STATUS]), ("125.0", [NOBLE])),
+         {"verified": "signed", "signer": "LP-PPA-mozillateam", "repository": "LP-PPA-mozillateam"}),
+    "one from a repository taken without a key":
+        (UBUNTUS, "1.0-1", _policy("1.0-1", ("1.0-1", [LOCAL, STATUS])), {"verified": "unverified", "signer": "", "repository": "file:/tmp/akrepo"}),
+    "the distribution's own update, made by the system": (UBUNTUS, "2.11-1", _policy("2.11-1", ("2.11-1", [NOBLE, STATUS])), UBUNTUS),
+    # ...and a copy that didn't change keeps the verdict of its own install, whatever is offered by now
+    "the same version, its repository now offering a newer one": (UBUNTUS, "2.10-2", _policy("2.10-2", ("2.10-3build1", [NOBLE]), ("2.10-2", [STATUS])), UBUNTUS),
+}
+
+
+@pytest.mark.parametrize("case", list(CHANGED_PACKAGES))
+def test_a_package_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now(db, monkeypatch, fake_pkgs, apt_says, case):
+    was, now_installed, policy, verdict = CHANGED_PACKAGES[case]
+    after = _tracked(db, monkeypatch, {"channel": "package", "package": "keepassxc", "manager": "apt", "pkgVersion": "2.10-2", **was})
+    fake_pkgs.installed["keepassxc"] = now_installed
+    apt_says(policy)
+    rec = after()
+    assert {k: rec[k] for k in verdict} == verdict and rec["pkgVersion"] == now_installed
+    said = [r["action"] for r in db.all("SELECT action FROM audit WHERE actor='system'")]
+    assert said == ([] if now_installed == "2.10-2" else ["was updated outside AppKata"])
+    assert after() == rec                                                # and it stays so at the next Sync
+
+
+FLATHUBS = {"remote": "flathub", "verified": "signed", "signer": "Flathub"}
+CHANGED_FLATPAKS = {
+    # what the record says, the copy flatpak has now (its origin, its commit) -> remote, verified and signer after
+    "one from a remote flatpak doesn't check": (FLATHUBS, ("aktest", "bbbbbbbbbbbb"), ("aktest", "unverified", "")),
+    "a bundle put in by hand": (FLATHUBS, ("org.a.B-origin", "bbbbbbbbbbbb"), ("org.a.B-origin", "unverified", "")),
+    "one from a vendor's remote": (FLATHUBS, ("vendor", "bbbbbbbbbbbb"), ("vendor", "signed", "vendor")),
+    "one flatpak names no origin for": (FLATHUBS, ("", "bbbbbbbbbbbb"), ("", "unverified", "")),
+    "Flathub's, over one no key checked": ({"remote": "aktest", "verified": "unverified", "signer": ""}, ("flathub", "bbbbbbbbbbbb"),
+                                           ("flathub", "signed", "Flathub")),
+    "Flathub's own update, made by the system": (FLATHUBS, ("flathub", "bbbbbbbbbbbb"), ("flathub", "signed", "Flathub")),
+    # ...and a copy that didn't change keeps the verdict of its own install (flatpak lists a shortened commit)
+    "the same commit, from a remote whose checking is off by now": ({"remote": "vendor", "verified": "signed", "signer": "vendor"}, ("aktest", "aaaaaaaaaaaa"),
+                                                                    ("vendor", "signed", "vendor")),
+}
+
+
+@pytest.mark.parametrize("case", list(CHANGED_FLATPAKS))
+def test_a_flatpak_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now(db, monkeypatch, remotes, case):
+    was, (origin, commit), verdict = CHANGED_FLATPAKS[case]
+    after = _tracked(db, monkeypatch, {"channel": "flatpak", "flatpak": "org.a.B", "installation": "user", "commit": "a" * 64, "perms": [], **was})
+    monkeypatch.setattr(flatpak, "available", lambda: True)
+    monkeypatch.setattr(flatpak, "installed", lambda: {"org.a.B": flatpak.Installed("org.a.B", "2.0", origin, "user", commit)})
+    rec = after()
+    assert (rec["remote"], rec["verified"], rec["signer"]) == verdict
+    said = [r["action"] for r in db.all("SELECT action FROM audit WHERE actor='system'")]
+    assert said == ([] if commit.startswith("a") else ["was updated outside AppKata"])
+    assert after() == rec
 
 
 @pytest.mark.skipif(not os.path.exists(dbus.SYSTEM_BUS), reason="no system bus")
