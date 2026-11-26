@@ -703,11 +703,16 @@ def _sets_trusted(entry: str) -> bool:
     here: apt takes yes, true, on, enable, with and 1 for yes, in any case, and what it makes of
     the entry is its own answer (:func:`apt_checked_repositories`). A `.sources` file is judged
     whole: one `Trusted:` in it counts for each of its stanzas. An entry that can't be read counts
-    as setting it."""
+    as setting it.
+
+    The file's lines are apt's: "\n" alone ends one. `str.splitlines` ends a line at a form feed,
+    U+2028 and seven more characters as well, a lone carriage return among them, which a file
+    opened as text has made a line end before anything is split: either way a line is counted that
+    apt doesn't count, and another line looked at than the one apt names."""
     path, _, n = entry.rpartition(":")
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
+        with open(path, encoding="utf-8", errors="replace", newline="") as f:
+            lines = f.read().split("\n")
     except OSError:
         return True
     if path.endswith(".sources"):

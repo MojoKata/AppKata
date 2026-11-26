@@ -150,6 +150,16 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
             v = pkgbackend.signed_by("akdemo", mgr)
             ok("where the package of the one taken without a key still isn't", (v["verified"], v["repository"]) == ("unverified", f"file:{repo}"), v)
             os.remove("/etc/apt/apt.conf.d/99akinsecure")
+            # the entry apt names is a line as apt counts lines: "\n" alone ends one, where Python ends one at these too
+            for name, c in (("a form feed", "\x0c"), ("a lone carriage return", "\r"), ("a line separator (U+2028)", "\u2028")):
+                with open("/etc/apt/sources.list.d/akrepo.list", "w", encoding="utf-8", newline="") as f:
+                    f.write(f"# a note{c}pasted from a page\ndeb [trusted=yes] file:{repo} ./\n")
+                apt_repo_refresh(repo)
+                v = pkgbackend.signed_by("akdemo", mgr)
+                ok(f"nor one whose [trusted=yes] line comes after {name} in a comment", (v["verified"], v["repository"]) == ("unverified", f"file:{repo}"), v)
+            with open("/etc/apt/sources.list.d/akrepo.list", "w") as f:
+                f.write(f"deb [trusted=yes] file:{repo} ./\n")
+            apt_repo_refresh(repo)
         # a newer version appears in the repository
         if mgr == "apt":
             deb(repo, "akdemo", "2.0-1")

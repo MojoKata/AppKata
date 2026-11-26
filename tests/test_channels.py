@@ -717,10 +717,11 @@ def apt_says(monkeypatch, tmp_path):
     """The apt of a machine with Ubuntu's archive, a PPA, a vendor's repository that names itself
     nowhere and a local one taken without a key. apt_says(policy) sets what it says of the package.
     apt_says.rows is what `apt-get indextargets` knows of each repository (the first is the local
-    one), and apt_says.local(text, trusted, insecure) gives the local one another sources entry
-    and apt's own answers for it."""
+    one), and apt_says.local(text, trusted, insecure, n) gives the local one another sources file,
+    apt's own answers for it, and its entry's number in that file as apt gives it."""
     def entry(name, text, n=1):
-        (tmp_path / name).write_text(text)
+        with open(tmp_path / name, "w", encoding="utf-8", newline="") as f:     # the file's line ends are the test's own, on any system
+            f.write(text)
         return f"{tmp_path / name}:{n}"
     entry("vendor.list", "deb [arch=amd64 signed-by=/etc/apt/keyrings/vendor.gpg] https://deb.example.org/apt stable main\n"
                          "deb [signed-by=/etc/apt/keyrings/ppa.gpg] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble main\n")
@@ -743,10 +744,10 @@ def apt_says(monkeypatch, tmp_path):
             return _apt_targets(cmd[cmd.index("--format") + 1], rows)
         raise AssertionError(cmd)
 
-    def local(text, trusted, insecure=None):
+    def local(text, trusted, insecure=None, n=1):
         os.remove(tmp_path / "akrepo.list")
         rows[0] = {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": trusted, **({"ALLOW_INSECURE": insecure} if insecure else {}),
-                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n")}
+                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n", n)}
     monkeypatch.setattr(pkgbackend, "_text", text)
     says = lambda policy: said.update(policy=policy)      # noqa: E731
     says.rows, says.local = rows, local
@@ -832,6 +833,32 @@ def test_a_repository_apt_checked_against_its_key_is_signed_though_allow_insecur
     assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
 
 
+# How it slipped past (pass 2 of the unit's own review): every sources file of these tests ended
+# its lines with "\n", where Python and apt agree. They differ on nine other characters: the entry
+# apt names by its line's number was looked up among the lines `str.splitlines` and a text-mode
+# open make, so one such character above a `[trusted=yes]` line (in a comment pasted from a web
+# page, say) put another line under that number, and the package read Verified. The class is
+# counting another program's lines with Python's idea of a line: each character Python ends a line
+# at is asked here, apt's answer for each is its own (2.4.14, 2.8.3, 3.2.1: "<file>:2", TRUSTED
+# yes), and scripts/channels_e2e.py asks the real apt for three of them.
+NOT_A_LINE_END_TO_APT = {"a-form-feed": "\x0c", "a-vertical-tab": "\x0b", "a-lone-carriage-return": "\r", "a-file-separator": "\x1c",
+                         "a-group-separator": "\x1d", "a-record-separator": "\x1e", "a-next-line": "\x85", "a-line-separator": "\u2028",
+                         "a-paragraph-separator": "\u2029", "none": " "}
+assert all(len(f"a{c}b".splitlines()) == 2 for name, c in NOT_A_LINE_END_TO_APT.items() if name != "none")
+
+
+@pytest.mark.parametrize("above", ["# a note{c}pasted from a page\n", "# a note{c}\r\n", "# a note\n# and{c}{c}another\n# {c}\n"],
+                         ids=["in-a-comment", "before-a-windows-line-end", "in-three-comments"])
+@pytest.mark.parametrize("character", list(NOT_A_LINE_END_TO_APT))
+def test_the_line_of_a_sources_file_that_apt_names_is_counted_as_apt_counts_it(apt_says, character, above):
+    above = above.format(c=NOT_A_LINE_END_TO_APT[character])
+    apt_says.local(above + "deb [trusted=yes] file:/tmp/akrepo ./\ndeb [signed-by=/usr/share/keyrings/other.gpg] http://other.example.org/ ./",
+                   "yes", n=above.count("\n") + 1)
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
 def _says_nothing(rows, tmp_path):
     rows.clear()                                    # `apt-get indextargets` failed, or apt has no lists
 
@@ -885,6 +912,8 @@ def test_a_sources_entry_that_sets_the_trusted_option(tmp_path):
                    "deb [ arch=amd64 Trusted = yes ] http://c/ ./\ndeb [trusted=no] http://d/ ./\ndeb-src [trusted=1] http://e/ ./\n")
     assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4, 5)] == [False, False, True, True, True]
     assert sets(f"{one}:9") and sets(f"{tmp_path / 'gone.list'}:1") and sets("$(SOURCESENTRY)") and sets("")
+    one.write_bytes(b"deb [signed-by=/k.gpg] http://a/ stable main\r\ndeb [trusted=yes] http://b/ ./\r\n# \xff not UTF-8\ndeb http://c/ ./\n")
+    assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4)] == [False, True, False, False]      # a Windows line end is one line end
     many = tmp_path / "x.sources"
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: YES\n")
     assert sets(f"{many}:1") and sets(f"{many}:2")
