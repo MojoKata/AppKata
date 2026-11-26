@@ -154,9 +154,10 @@ gives none):
   replaced) was checked against nothing AppKata can tell. Nor was a package of a repository that
   apt is told to trust without a key (its `trusted` option, however the entry spells it), of one
   apt took unsigned, or of one apt doesn't itself say it checked: AppKata asks apt
-  (`apt-get indextargets`), and what apt doesn't say counts as not checked. A repository apt did
-  check against its key stays Verified where `allow-insecure`, the entry's or apt's own setting,
-  would have let it come unsigned.
+  (`apt-get indextargets`), and what apt doesn't say counts as not checked. The `trusted` option
+  marks the one entry that sets it, a line of a `.list` file or a stanza of a `.sources` file, and
+  no other repository of that file. A repository apt did check against its key stays Verified
+  where `allow-insecure`, the entry's or apt's own setting, would have let it come unsigned.
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the

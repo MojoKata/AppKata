@@ -697,13 +697,42 @@ def apt_installed_sources(text: str) -> list[tuple[str, str]]:
     return out
 
 
+_APT_SPACE = " \t\n\v\f\r"         # what apt's own parser takes for a space, and no other character
+
+
+def _stanza(lines: list[str], n: int) -> list[str] | None:
+    """Stanza `n` of a `.sources` file, numbered as apt numbers it in `$(SOURCESENTRY)`, or None
+    when the file has no such stanza. As apt 2.4.14, 2.8.3 and 3.2.1 read one, each run on files
+    made to ask (tests/test_channels.py has their answers):
+
+    - a line that starts with "#" is no part of the file, wherever it stands;
+    - a line that is empty, or carriage returns alone, ends a paragraph, and any number of them
+      end it once. Carriage returns before a line's first character are no part of the line;
+    - a paragraph is a stanza when a field starts in it: a line that starts with anything but a
+      space. One with none isn't counted. One that is switched off (`Enabled: no`) is."""
+    count, stanza = 0, []
+    for line in [*lines, ""]:
+        if line.startswith("#"):
+            continue
+        line = line.lstrip("\r")
+        if line:
+            stanza.append(line)
+            continue
+        if any(l[0] not in _APT_SPACE for l in stanza):
+            count += 1
+            if count == n:
+                return stanza
+        stanza = []
+    return None
+
+
 def _sets_trusted(entry: str) -> bool:
     """Does a sources entry (`$(SOURCESENTRY)`: "<file>:<n>", the line of a `.list` file or the
     stanza of a `.sources` file) set apt's `trusted` option, to anything? To what is never read
     here: apt takes yes, true, on, enable, with and 1 for yes, in any case, and what it makes of
-    the entry is its own answer (:func:`apt_checked_repositories`). A `.sources` file is judged
-    whole: one `Trusted:` in it counts for each of its stanzas. An entry that can't be read counts
-    as setting it.
+    the entry is its own answer (:func:`apt_checked_repositories`). Only the entry apt names is
+    read: a `Trusted:` field marks its own stanza (:func:`_stanza`) and no other of the file. An
+    entry that can't be read or found counts as setting it.
 
     The file's lines are apt's: "\n" alone ends one. `str.splitlines` ends a line at a form feed,
     U+2028 and seven more characters as well, a lone carriage return among them, which a file
@@ -716,7 +745,9 @@ def _sets_trusted(entry: str) -> bool:
     except OSError:
         return True
     if path.endswith(".sources"):
-        return any(re.match(r"^\s*Trusted\s*:", l, re.I) for l in lines)
+        stanza = _stanza(lines, int(n)) if n.isdigit() else None
+        # the field's name starts its line, in any case, with apt's spaces alone before the colon, which may be on the next line
+        return stanza is None or any(re.match(r"Trusted[ \t\v\f\r]*(:|$)", l, re.I | re.A) for l in stanza)
     if n.isdigit() and 0 < int(n) <= len(lines):
         lines = [lines[int(n) - 1]]
     return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=", l, re.I) for l in lines)

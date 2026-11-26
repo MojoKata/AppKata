@@ -786,7 +786,6 @@ TAKEN_WITHOUT_A_KEY = {
     **{f"trusted={word}": (f"deb [trusted={word}] file:/tmp/akrepo ./", "yes", None) for word in ("yes", "true", "1", "on", "enable", "with", "YES", "True")},
     "trusted-among-other-options": ("deb [ arch=amd64 Trusted = on ] file:/tmp/akrepo ./", "yes", None),
     "Trusted-in-a-sources-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nTrusted: true", "yes", None),
-    "trusted-in-another-stanza-of-its-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: 1", "yes", None),
     "allow-insecure=yes": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "no", "true"),
     "allow-insecure=1": ("deb [allow-insecure=1] file:/tmp/akrepo ./", "no", "true"),
     "allowed-by-apts-configuration": ("deb file:/tmp/akrepo ./", "no", "true"),         # Acquire::AllowInsecureRepositories
@@ -859,6 +858,108 @@ def test_the_line_of_a_sources_file_that_apt_names_is_counted_as_apt_counts_it(a
     assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
 
 
+# How it slipped past (pass 2 of the unit's own review): a `.sources` file was judged whole, one
+# `Trusted:` line counting for each of its stanzas, and the test of a second stanza's line asked
+# for exactly that. apt names the stanza itself ("<file>:2"), so the others of the file, which apt
+# checked against their keys, read Unverified for a line that isn't theirs. The class is the one
+# above, AppKata reading apt's files in its own way: how apt numbers a file's stanzas and which of
+# their lines it takes for the field was asked of apt itself (2.4.14, 2.8.3 and 3.2.1, with
+# unsigned repositories, which apt takes only where the stanza sets `trusted`), and
+# APT_STANZAS holds its answers.
+ONE_FILE = ("# The distribution's own repositories,\n# and a local one.\n\nTypes: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n"
+            "Components: main\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n# The local one:\n\n"
+            "Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n{trusted}")
+
+
+@pytest.mark.parametrize("trusted, apt_trusts_it", [("Trusted: yes\n", "yes"), ("trusted: 1\n", "yes"), ("Trusted: no\n", "no")])
+def test_a_trusted_line_marks_its_own_stanza_of_a_sources_file_and_no_other(apt_says, tmp_path, trusted, apt_trusts_it):
+    with open(tmp_path / "all.sources", "w", encoding="utf-8", newline="") as f:
+        f.write(ONE_FILE.format(trusted=trusted))
+    local, ubuntu = apt_says.rows[:2]
+    local.update(TRUSTED=apt_trusts_it, SOURCESENTRY=f"{tmp_path / 'all.sources'}:2")
+    ubuntu.update(SOURCESENTRY=f"{tmp_path / 'all.sources'}:1")
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
+def _st(k, *more):
+    """A stanza for the repository file:/u-<k>."""
+    return "".join(f"{line}\n" for line in ("Types: deb", f"URIs: file:/u-{k}", "Suites: ./", *more))
+
+
+# A `.sources` file, and what apt says of it: "<the stanza's number in $(SOURCESENTRY)>=<the
+# repository apt gives that number>" for each repository, with "!" where apt took the repository,
+# which is unsigned: it does that only where it reads the stanza as setting `trusted`.
+APT_STANZAS = {
+    "plain": (_st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-first": ("# a note\n# of two lines\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "two-comment-paragraphs-first": ("# a\n\n# b\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-between": (_st(1) + "\n# between\n\n" + _st(2) + "\n# c\n\n# d\n\n" + _st(3), "1=u-1 2=u-2 3=u-3"),
+    "comment-glued-below": (_st(1) + "# glued\n\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-glued-above": (_st(1) + "\n# glued\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-inside": ("Types: deb\n# inside\nURIs: file:/u-1\nSuites: ./\n\n" + _st(2), "1=u-1 2=u-2"),
+    "many-blank-lines": (_st(1) + "\n\n\n\n" + _st(2), "1=u-1 2=u-2"),
+    "two-blank-first": ("\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "crlf": ((_st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "crlf-comment-first": (("# a\n\n" + _st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "cr-cr-lf-blank": (_st(1) + "\r\r\n" + _st(2), "1=u-1 2=u-2"),
+    "space-line-between": (_st(1) + " \n" + _st(2), "1=u-2"),
+    "formfeed-line-between": (_st(1) + "\x0c\n" + _st(2), "1=u-2"),
+    "lone-cr-between": (_st(1) + "\r" + _st(2), "1=u-2"),
+    "u2028-blank": (_st(1) + "\u2028\n" + _st(2), "1=u-2"),
+    "indented-comment-between": (_st(1) + "\n # not a comment\n\n" + _st(2), "1=u-1 2=u-2"),
+    "fieldless-two-then-trusted": (_st(1) + "\n # c\n\n x\n\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "fieldless-first-then-trusted": (" x\n\n" + _st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "trusted-second-disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "2=u-2! 3=u-3"),
+    "trusted-in-disabled": (_st(1, "Enabled: no", "Trusted: yes") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "no-newline-at-end": ((_st(1) + "\n" + _st(2)).rstrip("\n"), "1=u-1 2=u-2"),
+    "comment-at-end": (_st(1) + "\n" + _st(2) + "\n# the end", "1=u-1 2=u-2"),
+    "two-uris": ("Types: deb\nURIs: file:/u-1 file:/u-1b\nSuites: ./ x/\n\n" + _st(2), "1=u-1 1=u-1b 2=u-2"),
+    "trusted-first-only": (_st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-yes-second": (_st(1) + "\n" + _st(2, "Trusted: yes"), "1=u-1 2=u-2!"),
+    "trusted-third-only": (_st(1) + "\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "trusted-second-after-comment-paragraph": ("# c\n\n" + _st(1) + "\n# d\n\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-crlf-second": ((_st(1) + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3)).replace("\n", "\r\n"), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-upper": (_st(1, "TRUSTED: YES") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-spaced": (_st(1, "trusted : yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-tab-colon": (_st(1, "Trusted\t:\tyes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-no-space": (_st(1, "Trusted:yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-colon-next-line": (_st(1, "Trusted\n: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-value-next-line": (_st(1, "Trusted:\n yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-cr-led": (_st(1) + "\n\r\rTrusted: yes\n" + _st(2) + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-cr-led-mid": ("Types: deb\nURIs: file:/u-1\n\rTrusted: yes\nSuites: ./\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-after-ff-line": ("Types: deb\nURIs: file:/u-1\nSuites: ./\n\x0c\nTrusted: yes\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-second-ff-blank-before-3": (_st(1) + "\n" + _st(2, "Trusted: yes") + "\x0c\n" + _st(3), "1=u-1 2=u-3!"),
+    "trusted-third-cr-between-1-2": (_st(1) + "\r" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-2 2=u-3!"),
+    "trusted-space-line-merged": (_st(1) + " \n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-2! 2=u-3"),
+    "trusted-continuation": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\n Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-tab-led": (_st(1, "X-Note: a", "\tTrusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-cr": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\rTrusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-u2028": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\u2028Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-nbsp-colon": (_st(1, "Trusted\u00a0: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "x-trusted": (_st(1, "X-Trusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-extra": (_st(1, "Trusted-Extra: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+}
+
+
+@pytest.mark.parametrize("case", list(APT_STANZAS))
+def test_the_stanzas_of_a_sources_file_are_numbered_and_read_as_apt_numbers_and_reads_them(tmp_path, case):
+    text, apt = APT_STANZAS[case]
+    file = tmp_path / "x.sources"
+    file.write_bytes(text.encode("utf-8"))
+    said = [(int(n), address.rstrip("!"), address.endswith("!")) for n, address in (one.split("=") for one in apt.split())]
+    assert [(n, address, pkgbackend._sets_trusted(f"{file}:{n}")) for n, address, trusted in said] == said
+    for n, address, trusted in said:                # ...and it is that repository's stanza which was read
+        uris = [line for line in pkgbackend._stanza(text.split("\n"), n) if line.lower().startswith("uris")]
+        assert f"file:/{address}" in uris[-1].split()
+    # a stanza apt could name and the file doesn't have: not found, which counts as setting it
+    assert pkgbackend._stanza(text.split("\n"), 4) is None and pkgbackend._sets_trusted(f"{file}:4") and pkgbackend._sets_trusted(f"{file}:0")
+
+
 def _says_nothing(rows, tmp_path):
     rows.clear()                                    # `apt-get indextargets` failed, or apt has no lists
 
@@ -916,7 +1017,8 @@ def test_a_sources_entry_that_sets_the_trusted_option(tmp_path):
     assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4)] == [False, True, False, False]      # a Windows line end is one line end
     many = tmp_path / "x.sources"
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: YES\n")
-    assert sets(f"{many}:1") and sets(f"{many}:2")
+    assert not sets(f"{many}:1") and sets(f"{many}:2")              # its own stanza, and no other
+    assert sets(f"{many}:3") and sets(f"{many}:0") and sets(f"{many}:x") and sets(f"{many}:")     # no such stanza: not shown to be without it
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n# Trusted: yes\nSigned-By: /etc/apt/trusted.gpg.d/k.gpg\n")
     assert not sets(f"{many}:1")
 
