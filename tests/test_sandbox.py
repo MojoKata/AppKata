@@ -3882,7 +3882,7 @@ def test_a_never_shared_folder_is_handed_over_by_no_argument_and_the_helper_says
         assert f"runs sandboxed and isn't handed {arg}: {why} with a sandboxed app." in said, (arg, said)
     assert len(said) == len(refused), said                              # a file named three ways is said once
     # ...and what is no never-shared place is handed over as before: a file, a folder, an option's
-    # value, a file under /tmp (the system's own places are a grant's rule, never an argument's: R17.3.3)
+    # value, a file under /tmp (a system place is refused to an argument only whole, as a folder: R17.6.2)
     (tmp_path / "work").mkdir()
     (tmp_path / "work" / "draft.txt").write_text("x")
     given = ["Documents/notes.txt", str(home / "proj"), "--file=" + str(home / "Documents" / "notes.txt"), str(tmp_path / "work" / "draft.txt"),
@@ -3893,6 +3893,37 @@ def test_a_never_shared_folder_is_handed_over_by_no_argument_and_the_helper_says
     assert words == [f"{doc}/notes.txt", f"{doc}/proj", f"--file={doc}/notes.txt", f"{doc}/draft.txt", f"{doc}/other.conf", f"{doc}/file"] and said == []
     assert [c[0] for c in calls] == ["Add", "GrantPermissions", "AddFull", "Add", "GrantPermissions", "Add", "GrantPermissions",
                                      "Add", "GrantPermissions", "Add", "GrantPermissions"], calls
+
+
+def test_a_system_place_or_a_folder_above_one_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(tmp_path):
+    # The owner's decision of 2026-11-26, on #735 (R17.6.2): the helper is not given the system's
+    # own places, so that a file under /tmp is handed over, and so `tool /tmp`, `tool /proc` and
+    # `tool /etc` were exported whole through the document portal. How it slipped past: every
+    # test's home is under /tmp, so `/tmp` and `/` were refused here for holding the home, and no
+    # test named a system place from a home elsewhere.
+    home = "/home/appkata-no-such-user"                                  # under no system place, and nothing is written to it
+    places = [p for p in sb.SYSTEM_PLACES if os.path.isdir(p) and not os.path.islink(p)]
+    assert {"/tmp", "/proc", "/etc", "/usr"} <= set(places), places
+    refused = {p: f"{p} is one of the system's own folders" for p in places}
+    refused |= {"/etc/": "/etc is one of the system's own folders", "/usr/../proc": "/proc is one of the system's own folders"}
+    refused |= {"/var": "it holds /var/run, one of the system's own folders"}       # the first of the list it is above
+    args = list(refused) + ["/", "file:///etc", "--dir=/proc", "-C/tmp"]
+    words, said, calls = _handed(tmp_path, tmp_path, args, home=home)
+    assert words == args and calls == [], (words, calls)                # each passes as it was, and the portal is asked nothing
+    for arg, why in refused.items():
+        assert f"runs sandboxed and isn't handed {arg}: {why}, and none of them is handed over whole." in said, (arg, said)
+    assert any(line.startswith("runs sandboxed and isn't handed /: it holds ") for line in said), said
+    assert len(said) == len(refused) + 1, said
+    # ...a file in a system place is handed over as before, and so is a folder below one, which is
+    # no more than a folder the user named (R17.3.3 leaves a file under /tmp to the command line)
+    assert sb.system_folder(str(tmp_path)) or os.path.realpath(tmp_path).startswith("/tmp/"), tmp_path
+    (tmp_path / "build").mkdir()
+    (tmp_path / "report.txt").write_text("x")
+    doc = str(tmp_path / "run" / "doc" / "DOC")
+    words, said, calls = _handed(tmp_path, tmp_path, [str(tmp_path / "report.txt"), "/etc/passwd", "--in=/etc/passwd", str(tmp_path / "build"), "/usr/share"],
+                                 home=home)
+    assert words == [f"{doc}/report.txt", f"{doc}/passwd", f"--in={doc}/passwd", f"{doc}/build", f"{doc}/share"] and said == [], (words, said)
+    assert [c[0] for c in calls] == ["Add", "GrantPermissions"] * 3 + ["AddFull", "AddFull"], calls
 
 
 def test_the_session_bus_socket_is_handed_over_by_no_argument_nor_a_folder_above_it(tmp_path, monkeypatch):

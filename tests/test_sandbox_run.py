@@ -1767,6 +1767,26 @@ def _through_a_link(app, arg, link, real) -> str:
     return f"{app} runs sandboxed and isn't handed {arg}: {link} is a link, and a file argument is never followed through one (give {real} instead)."
 
 
+def _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env, lp, e):
+    """The owner's decision of 2026-11-26, on #735 (R17.6.2), with the real document portal: `/etc`,
+    `/proc`, `/tmp` and `/` named as arguments were exported whole. Each passes as typed now, with
+    the launcher's line, and nothing new is under $XDG_RUNTIME_DIR/doc; a file in one (`/etc/passwd`)
+    is handed over and read. A part of the test below, which tests/skips/tier1.txt names."""
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    whole = ["/etc", "/proc", "/tmp", "/", "file:///etc"]
+    r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; true', *whole], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == whole, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)
+    for place in ("/etc", "/proc"):
+        assert f"isn't handed {place}: {place} is one of the system's own folders, and none of them is handed over whole." in r.stderr, r.stderr
+    assert "isn't handed /tmp: " in r.stderr and "isn't handed /: it holds " in r.stderr, r.stderr      # the home's reason, where the home is under it
+    r = subprocess.run([lp, 'shift; printf "ARG %s\\n" "$1"; cat "$1"', "/etc/passwd"], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+    assert f"ARG {env.rt}/doc/" in r.stdout and "/passwd\n" in r.stdout and "root:" in r.stdout, (r.stdout, r.stderr)
+
+
 def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
     """CR1.5-4 (#379), with the real document portal, by the finding's own road: the app, given
     ~/Projects read-write, puts a link to a file of the user's where its own file was, and a link
@@ -1885,6 +1905,7 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()

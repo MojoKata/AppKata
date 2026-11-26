@@ -2272,8 +2272,13 @@ def write_seccomp_filter() -> str | None:
 # over, judged by where it leads and by each link on the way there (`~/.ssh/config`, a link to a
 # file kept elsewhere, is in `~/.ssh`: said so, where the link rule below would name the file it
 # leads to as the one to give). The system's own places are not in the list: a file under
-# /tmp is handed over like any other (R17.3.3). Each refusal is a line of the answer, "!" first and
-# then what the launcher says after the app's name, on stderr.
+# /tmp is handed over like any other (R17.3.3). A folder is another matter (the owner's decision
+# of 2026-11-26, on #735): `tool /tmp`, `tool /proc` and `tool /etc` were exported whole, with
+# every other program's sockets or every process's files in them. So an argument that is a folder
+# and one of SYSTEM_PLACES, as it is written or as it resolves here, or a folder above one (`/`,
+# `/var`), is handed over to no app; a file in one is, and so is a folder below one (`/tmp/build`),
+# which the user named and is no more than a folder of theirs. Each refusal is a line of the
+# answer, "!" first and then what the launcher says after the app's name, on stderr.
 # A file argument is never followed through a link (CR1.5-55, the owner's decision of 2026-11-25).
 # A link is the app's to make wherever it can write, and stays on the disk longer than AppKata
 # knows the app could write there: an app with ~/Documents read-write put a link to ~/.bashrc where
@@ -2334,6 +2339,7 @@ rest = rest[sep + 1:]
 sep = rest.index("--")
 never = [os.path.normpath(n) for n in rest[1:sep] + [rt] + rest[0].split(chr(10)) if n]
 args = rest[sep + 1:]
+system = @SYSTEM_PLACES@        # the system's own places (R17.3.1): no folder argument hands one over whole
 in_place = bool(incwd) and os.path.realpath(incwd) == os.path.realpath(os.getcwd())
 said = []
 
@@ -2398,6 +2404,13 @@ def never_shared(real, links):
         return "your whole home folder is never shared with a sandboxed app"
     if within(home, real):
         return "it holds your whole home folder, which is never shared with a sandboxed app"
+    if os.path.isdir(real):         # a system place whole, or a folder above one; a file in one is handed over
+        for place in system:
+            for spot in dict.fromkeys((place, os.path.realpath(place))):
+                if real == spot:
+                    return place + " is one of the system's own folders, and none of them is handed over whole"
+                if within(spot, real):
+                    return "it holds " + place + ", one of the system's own folders, and none of them is handed over whole"
     for root in never:              # where it leads now, and by its own name where it is a link
         for spot in (os.path.realpath(root), os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root))):
             if any(within(p, spot) for p in [real] + links):
@@ -2566,7 +2579,7 @@ for a in args:
 BS, NL = chr(92), chr(10)
 lines = ["!" + line for line in said] + ["=" + a for a in out]
 sys.stdout.buffer.write(os.fsencode("".join(line.replace(BS, BS + BS).replace(NL, BS + "n") + NL for line in lines)))
-"""
+""".replace("@SYSTEM_PLACES@", repr(SYSTEM_PLACES))
 
 
 def forward_path() -> str:
