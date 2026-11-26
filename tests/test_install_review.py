@@ -126,7 +126,7 @@ def _release_with(server, others, data=_FILE):
     (root / "App.AppImage").write_bytes(data)
     for name, text in others:
         if text is not None:
-            (root / name).write_text(text)
+            (root / name).write_text(text, newline="\n")      # as the release has it: Windows would write each line end as two bytes
     a = Asset("App.AppImage", base + "/App.AppImage")
     return a, [a] + [Asset(name, f"{base}/{name}") for name, _ in others]
 
