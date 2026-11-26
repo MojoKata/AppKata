@@ -25,6 +25,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import time
 import unicodedata
@@ -1868,12 +1869,68 @@ def revoke_documents(app_id: str) -> bool:
     return True
 
 
-def remove_sandbox_home(app_id: str) -> None:
-    """Remove the app's private home on uninstall (R17.14), its identity marker and its owner record."""
-    shutil.rmtree(sandbox_home(app_id), ignore_errors=True)
+def _give_folders_back(top: str) -> None:
+    """Give the owner read, write and search back on every folder of the tree at `top`, `top`
+    among them, so that what is in them can be removed. Each folder is opened as itself, by its
+    name in the folder above that is already open and never through a link (O_NOFOLLOW), and its
+    mode is changed through that descriptor: a link the app left in its home leads nowhere here,
+    and nothing outside the tree changes. A file's own mode is left alone: removing a file asks
+    its folder. A folder that can't be opened or changed is passed over."""
+    stack: list[tuple[int, list[str]]] = []         # the folders open on the way down, each with its names still to visit
+
+    def enter(name: str, parent: int | None = None) -> None:
+        try:
+            fd = os.open(name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        except OSError:
+            return
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                if mode & 0o700 != 0o700:
+                    os.chmod(f"/proc/self/fd/{fd}", stat.S_IMODE(mode) | 0o700)
+                inside = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=fd)
+                try:
+                    stack.append((inside, os.listdir(inside)))
+                except OSError:
+                    os.close(inside)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
+    enter(top)
+    while stack:
+        fd, names = stack[-1]
+        if names:
+            enter(names.pop(), fd)
+        else:
+            os.close(stack.pop()[0])
+
+
+def remove_sandbox_home(app_id: str) -> bool:
+    """Remove the app's private home on uninstall (R17.14), its identity marker and, once the
+    home is gone, its owner record. Returns whether the home is gone.
+
+    A private home is its app's to write, so it can hold folders its owner may not open or change:
+    Go's module cache is read-only by design, and `mkdir -p a/b; chmod 000 a` is one line for an
+    app that means it. Such a tree was left in place without a word, the owner record was removed
+    all the same, and a home with no owner is no app's (:func:`home_belongs_to_another`): the data
+    the user asked to have deleted stayed, and not even the same app installed again was given it
+    (CR1.5-20). Now the folders are made the owner's again (:func:`_give_folders_back`) and the
+    removal tried once more; a home that still can't be removed whole keeps its owner record, so it
+    stays that app's as a kept home does (R17.6), and the caller is told."""
+    home = sandbox_home(app_id)
+    shutil.rmtree(home, ignore_errors=True)
+    if os.path.lexists(home):
+        _give_folders_back(home)
+        shutil.rmtree(home, ignore_errors=True)
     remove_identity(app_id)
+    if os.path.lexists(home):
+        log.warning("couldn't remove the private home %s whole: it stays, with its owner record", home)
+        return False
     if os.path.lexists(home_owner_path(app_id)):
         os.unlink(home_owner_path(app_id))
+    return True
 
 
 # -------------------------------------------------------------------------- D-Bus proxy (R17.5)

@@ -1828,8 +1828,9 @@ class Backend(QObject):
     def _left_note(left: list[str]) -> str:
         """What an uninstall's notice adds when something the app's record names is still there
         (R4.7): a folder that isn't AppKata's to remove or couldn't be deleted, the user's own file
-        where a command link was (R4.3.1.3). The app's row is gone by then, so this is the one
-        place it is said (CR1.3-12)."""
+        where a command link was (R4.3.1.3), the private home the user asked to have removed
+        where it couldn't be removed whole (R17.14; CR1.5-20). The app's row is gone by then, so
+        this is the one place it is said (CR1.3-12)."""
         return f" Not removed: {', '.join(left)}." if left else ""
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:

@@ -1988,7 +1988,8 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
     is AppKata's is removed (a folder inside the install folder the app was installed into, a link
     that leads there, R4.3.1.3), and a folder can fail to delete. The app's row goes either way,
     and nothing said what stayed (CR1.3-12: every version of an app, once its record's root was
-    another folder)."""
+    another folder). The private home is in it when it was to be removed and couldn't be removed
+    whole (R17.14; CR1.5-20)."""
     row = db.one("SELECT * FROM installs WHERE url=?", (url,))
     if not row:
         return []
@@ -2031,8 +2032,8 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
         app_id = app_id_of(rec, {"name": row["name"]})
         sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (R17.14)
         sandbox.revoke_documents(app_id)         # what it was handed is no later app's of that id (R17.14; CR1.5-25)
-        if remove_sandbox:
-            sandbox.remove_sandbox_home(app_id)
+        if remove_sandbox and not sandbox.remove_sandbox_home(app_id):
+            left.append(sandbox.sandbox_home(app_id))       # said like the rest that stayed; it is still this app's (CR1.5-20)
         if rec.get("current") and rec.get("target"):     # what a stopped change or write left beside its files (P6-B2)
             with _ACTIVATE_LOCK:
                 _sweep_beside(_kept_paths(rec, app_id, rec.get("root") or os.path.dirname(rec["target"])))

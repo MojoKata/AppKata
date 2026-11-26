@@ -153,6 +153,32 @@ def test_what_one_notes_was_handed_is_never_the_next_notes_with_its_id(be, two, 
         assert not os.path.lexists(sb.handed_path("notes"))
 
 
+def test_a_home_that_cannot_be_removed_whole_is_said_and_stays_its_apps(be, two, monkeypatch):
+    # CR1.5-20 (#395): the user ticked "remove its private home", a file in it couldn't be removed,
+    # and the uninstall said "uninstalled" and removed the owner record: the home was then no
+    # app's, and A installed again got the next id and an empty home beside its old data.
+    home = sb.sandbox_home("notes")
+    os.makedirs(os.path.join(home, "data"), exist_ok=True)
+    for f in ("immutable.dat", "plain.dat"):
+        with open(os.path.join(home, "data", f), "w") as out:
+            out.write("x")
+    unlink = os.unlink
+
+    def refusing(path, *args, **kwargs):            # as for a file made immutable, which no test can make
+        if os.path.basename(os.fspath(path)) == "immutable.dat":
+            raise PermissionError(1, "Operation not permitted", os.fspath(path))
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", refusing)
+    toasts = []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+    be._uninstall(A, False, remove_home=True)
+    assert toasts == [("info", f"Notes uninstalled. Not removed: {home}.")]
+    assert not be.db.one("SELECT 1 FROM installs WHERE url=?", (A,)) and os.listdir(os.path.join(home, "data")) == ["immutable.dat"]
+    assert install.new_app_id(be.db, C, "Notes") == "notes-3"                # not what is left of A's home, nor B's id
+    assert install.new_app_id(be.db, A, "Notes") == "notes"                  # A installed again finds it
+
+
 def test_an_install_record_without_an_id_still_keys_on_the_slug(be, tmp_path):
     # a record written before round six: the slug is the id, so nothing moves on upgrade
     assert install.app_id_of({}, {"name": "My Notes"}) == "my-notes"

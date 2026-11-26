@@ -3790,6 +3790,96 @@ def test_an_uninstall_a_change_away_from_standard_and_a_first_launcher_take_back
     assert json.loads(docs.read_text()) == {"io.appkata.notes": {}} and _portal_calls(log) == [["RevokePermissions", ["d1", "io.appkata.notes", ALL_PERMISSIONS]]]
 
 
+# CR1.5-20 (#395): a private home is its app's to write, and what an app leaves there need not be
+# removable as it lies. The uninstall removed what it could, said nothing of the rest, and removed
+# the owner record, after which the home was no app's (a home with no owner counts as another's):
+# the data the user asked to have deleted stayed, and not even the same app installed again got it.
+# How it slipped past: every uninstall test's home was one a file manager could delete.
+def _a_home_its_app_made_hard_to_remove(home, outside):
+    """The private home `home`, as an app can leave it: a folder no one may open with more inside
+    (the finding's first case), two nested read-only folders (its second), a read-only tree as
+    Go's module cache is, and links to a file and to a read-only folder in `outside`, the user's."""
+    (outside / "kept").mkdir(parents=True)
+    (outside / "kept" / "notes.txt").write_text("NOTES")
+    (outside / "file.txt").write_text("FILE")
+    for d in ("a/b", "locked/inner", "go/pkg/mod/example.org/x@v1.0.0/sub", ".config/app"):
+        (home / d).mkdir(parents=True)
+    for f in ("a/b/f", "locked/inner/f", "go/pkg/mod/example.org/x@v1.0.0/x.go", "go/pkg/mod/example.org/x@v1.0.0/sub/y.go", ".config/app/token"):
+        (home / f).write_text("x")
+        (home / f).chmod(0o444)
+    (home / "to-folder").symlink_to(outside / "kept")
+    (home / "locked" / "inner" / "to-file").symlink_to(outside / "file.txt")
+    (home / "a" / "b" / "to-folder").symlink_to(outside / "kept")
+    (outside / "kept").chmod(0o500)
+    (outside / "file.txt").chmod(0o400)
+    for d in ("go/pkg/mod/example.org/x@v1.0.0/sub", "go/pkg/mod/example.org/x@v1.0.0", "go/pkg/mod", "locked/inner", "locked"):
+        (home / d).chmod(0o500)
+    (home / "a").chmod(0o000)
+
+
+def test_a_private_home_with_folders_no_one_may_open_or_change_is_removed_whole_and_nothing_outside_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    home, outside = type(tmp_path)(sb.sandbox_home("demo")), tmp_path / "users"
+    _a_home_its_app_made_hard_to_remove(home, outside)
+    sb.record_home_owner("demo", "https://example.org/demo")
+    sb.write_flatpak_info("demo")
+    try:
+        assert sb.remove_sandbox_home("demo") is True
+        assert not os.path.lexists(home) and not os.path.lexists(sb.home_owner_path("demo")) and not os.path.lexists(sb.identity_path("demo"))
+        # a link in the home was removed as a link: what it led to is as it was, its mode too
+        assert os.stat(outside / "kept").st_mode & 0o777 == 0o500 and os.stat(outside / "file.txt").st_mode & 0o777 == 0o400
+        assert os.listdir(outside / "kept") == ["notes.txt"] and (outside / "file.txt").read_text() == "FILE"
+        assert sb.remove_sandbox_home("demo") is True                      # no home: nothing to do, and that is gone too
+    finally:                                                               # for pytest's own cleanup, whatever was left
+        for d in (outside / "kept", home / "a", home / "locked", home / "locked" / "inner", home / "go" / "pkg" / "mod",
+                  home / "go" / "pkg" / "mod" / "example.org" / "x@v1.0.0", home / "go" / "pkg" / "mod" / "example.org" / "x@v1.0.0" / "sub"):
+            if d.is_dir() and not d.is_symlink():
+                d.chmod(0o700)
+
+
+def test_a_private_home_that_cannot_be_removed_whole_stays_its_apps_and_the_uninstall_says_so(tmp_path, monkeypatch, caplog):
+    import json as _json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    monkeypatch.setattr(install, "OS", "linux")
+    url, other = "https://example.org/alice/notes", "https://example.org/bob/notes"
+    home = type(tmp_path)(sb.sandbox_home("notes"))
+    (home / "data" / "deep").mkdir(parents=True)
+    for f in ("data/deep/immutable.dat", "data/deep/plain.dat", "settings.ini"):
+        (home / f).write_text("x")
+    sb.record_home_owner("notes", url)
+    sb.write_flatpak_info("notes")
+    db = DB(str(tmp_path / "a.db"))
+    rec = {"id": "notes", "files": [], "links": []}
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Notes", "1", "tarball", _json.dumps(rec), now()))
+    # a file its owner can't remove whatever the folders' modes (an immutable one, `chattr +i`, which
+    # no test can make as an ordinary user): the removal of that one file is refused
+    unlink = os.unlink
+
+    def refusing(path, *args, **kwargs):
+        if os.path.basename(os.fspath(path)) == "immutable.dat":
+            raise PermissionError(1, "Operation not permitted", os.fspath(path))
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", refusing)
+    assert install.uninstall(db, url, remove_sandbox=True) == [str(home)]                  # the uninstall's result names the home
+    assert db.one("SELECT 1 FROM installs WHERE url=?", (url,)) is None                  # the app itself is gone
+    assert sorted(os.path.join(d, f)[len(str(home)) + 1:] for d, _, fs in os.walk(home) for f in fs) == ["data/deep/immutable.dat"]
+    assert not os.path.lexists(sb.identity_path("notes"))                                 # the marker went with the launcher, as ever
+    assert [r.getMessage() for r in caplog.records if r.name == "appkata.sandbox"] == [
+        f"couldn't remove the private home {home} whole: it stays, with its owner record"]
+    # what is left is still that app's (R17.6): its own again when it is installed again, and no other's
+    with open(sb.home_owner_path("notes")) as f:
+        assert f.read().strip() == url
+    assert not sb.home_belongs_to_another("notes", url) and sb.home_belongs_to_another("notes", other)
+    assert install.new_app_id(db, url, "Notes") == "notes" and install.new_app_id(db, other, "Notes") == "notes-2"
+    # once it can be removed, it is, and the id is free
+    monkeypatch.setattr(os, "unlink", unlink)
+    assert sb.remove_sandbox_home("notes") is True and not os.path.lexists(home) and not os.path.lexists(sb.home_owner_path("notes"))
+    assert install.new_app_id(db, other, "Notes") == "notes"
+
+
 def test_the_field_test_runs_each_check_under_the_template_it_names(tmp_path):
     # Review 3, R3-11: the probe has one launcher, rewritten per template, and checks were handed its
     # path, so every Strict check after the first Online app one ran Online app (D-nosound reported a
