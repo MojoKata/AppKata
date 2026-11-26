@@ -1019,7 +1019,7 @@ def refused_folders(gs: dict, apps_root: str | None = None, own: Own | None = No
     ~/Projects/sub/deep granted too, the app put a link where `sub` was, and what the link named was
     mounted at the next launch, the user's keys among it (CR1.5-40). The launcher drops a grant that
     no longer leads where it led when it was judged (:func:`folder_leads`); this is the rule for
-    the judging itself, an install's or the user's next Save of the sandbox, so that it doesn't
+    the judging itself, an install's or the user's Save that grants the folder, so that it doesn't
     take the app's link for the folder's place. The
     link is judged by where it lies, not by where it leads or who made it: the user's own link in
     a granted folder is refused the same way, and the folder it names can be granted itself."""
@@ -1052,7 +1052,9 @@ def folder_leads(gs: dict, kept: dict | None = None) -> dict[str, str]:
     which stand for every folder still in the set; only a folder with none is asked now.
 
     Where a folder leads is judged when its grant is: at the install that takes it and at the
-    user's own Save of the app's sandbox, and the install keeps the answers (its record's
+    user's own Save of the app's sandbox that adds it (a Save judges no folder the app already
+    had: one is judged anew by taking it out and granting it again), and the install keeps the
+    answers (its record's
     "sandboxLeads", install._sandbox_launcher). It was asked each time a launcher was written, and
     AppKata's start writes a launcher again whenever its text would differ -- which it did as soon
     as a link led a grant elsewhere, the place being part of the text. So the launch that dropped
@@ -3084,7 +3086,8 @@ def _launcher_env(net: bool = False) -> list[str]:
 # baked beside it, and dropped with a line on stderr otherwise. Compared with where it led, not
 # with the path as written: a grant through the user's own link (~/Documents kept on another disk)
 # stands. Where it led is the install's to keep (folder_leads): judged when an install takes the
-# grant and when the user saves the app's sandbox, and the same in every launcher written between,
+# grant and when the user's Save of the app's sandbox adds it, and the same in every launcher
+# written until the folder is taken out,
 # so writing one again never takes the app's link for the place (CR1.5-53: it was asked at each
 # writing, and AppKata's start wrote the launcher again as soon as a link had moved a grant). And
 # where a grant is judged, one that a link in another granted folder is on the way to is refused
@@ -3094,14 +3097,14 @@ def _launcher_env(net: bool = False) -> list[str]:
 _GRANT_FN = """# A folder the app was given is mounted only while it leads where it led when the app was given it
 # (R17.4): bwrap follows each link on the way to it, and a link put there since -- the app can put
 # one in a folder it could write, above another -- would mount whatever the link names. Where it led
-# is kept with the install, and is the same in every launcher AppKata writes until an install or
-# your own Save of the app's sandbox judges the folder anew.
+# is kept with the install, and is the same in every launcher AppKata writes until you take the
+# folder out in the app's Sandbox dialog and give it again, which judges it anew.
 # "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
 # while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
 leads() {{
   now=$(readlink -m -- "$1" 2>/dev/null) || now=
   [ "$now" = "$2" ] && return 0
-  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox dialog, and the folder is judged anew.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox dialog, save, and give it again, and the folder is judged anew.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
   return 1
 }}
 """

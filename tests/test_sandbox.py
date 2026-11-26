@@ -1442,8 +1442,9 @@ def test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_
 
 
 def test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_the_launcher_is_written(tmp_path, monkeypatch):
-    # ...and a grant is judged anew: at the user's next Save of the sandbox (and, until CR1.5-53
-    # below, at AppKata's next start, which wrote the launcher again once a grant led elsewhere).
+    # ...and a grant is judged anew: when the user takes the folder out and grants it again (and,
+    # until the walk thru of #735, at any Save of the sandbox; until CR1.5-53 below, at AppKata's
+    # next start too, which wrote the launcher again once a grant led elsewhere).
     # Judged afresh there, the app's link would have become the folder's place for good, for every
     # folder no list names (~/Documents). So a grant is refused when a link on its way lies in
     # another folder of the set, whoever made the link: the chips, the launcher and the Sandbox
@@ -1503,15 +1504,15 @@ def test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_
 # AppKata's next start read the user's ~/Documents there. How it slipped past: #665's tests wrote
 # the launcher again through the function that judges, and held the one road its rule names.
 # Where each folder led is kept with the install now (its record), judged when an install takes the
-# grant and when the user saves the app's sandbox, and every launcher written between is written
+# grant and when the user's Save of the app's sandbox adds it, and every launcher written after is written
 # with it: here through the code that writes them, with the launcher AppKata's start compares.
 LED = ("{app} runs sandboxed and isn't given {folder} this time: it led to {was} when the app was given it and leads to {now} now, so a link on the "
-       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox "
-       "dialog, and the folder is judged anew.")
+       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox "
+       "dialog, save, and give it again, and the folder is judged anew.")
 
 
-def test_a_launcher_written_again_keeps_where_each_folder_led_and_only_an_install_or_the_users_save_judges_it_anew(fake_home, tmp_path, tmp_path_factory,
-                                                                                                                   monkeypatch, server):   # noqa: F811
+def test_a_launcher_written_again_keeps_where_each_folder_led_and_only_a_folder_granted_again_is_judged_anew(fake_home, tmp_path, tmp_path_factory,
+                                                                                                             monkeypatch, server):   # noqa: F811
     import json as _json
     from appkata_core import install
     from appkata_core.db import DB, now
@@ -1579,9 +1580,17 @@ def test_a_launcher_written_again_keeps_where_each_folder_led_and_only_an_instal
         LED.format(app="Demo", folder=home / "Docs", was=home / "disk/Documents", now=home / "disk/Other"),
         LED.format(app="Demo", folder=home / "src/proj/data", was=home / "src/proj/data", now=home / "Documents")], r.stderr
 
-    # The user's own Save of the app's sandbox judges every folder anew: the link that is theirs
-    # is followed again, and so is any other on a grant's way, which is why the line names both places
-    install.rewrite_launcher(db, {**app, "sandboxAnew": True}, port)         # as the backend asks for it (Backend._apply_sandbox)
+    # The user's own Save of the app's sandbox keeps the answers too (the owner's decision of
+    # 2026-11-26 on #735; the backend asks for it as AppKata's start does, Backend._apply_sandbox).
+    # A folder taken out loses its answer with that Save, and granted again it is judged anew: the
+    # link that is theirs is followed again, and so is any other on its way, which is why the line
+    # names both places
+    install.rewrite_launcher(db, app, port)
+    assert stored()["sandboxLeads"] == led and lp.read_text() == first
+    only_music = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+~/Music": "ro"}})
+    install.rewrite_launcher(db, {**app, "sandbox": sb.to_json(only_music)}, port)
+    assert stored()["sandboxLeads"] == {"~/Music": str(home / "Music")}
+    install.rewrite_launcher(db, app, port)
     anew = {"~/Docs": str(home / "disk/Other"), "~/Music": str(home / "Music"), "~/src/proj/data": str(home / "Documents")}
     assert stored()["sandboxLeads"] == anew and f'g1={home}/Docs; leads "$g1" {home}/disk/Other || g1=\n' in lp.read_text()
     assert install.launcher_is_current(stored(), app, port)

@@ -136,7 +136,6 @@ class Backend(QObject):
         self._busy: dict[str, dict] = {}
         self._install_lock = threading.Lock()      # one install at a time; the rest wait (R4.8.1)
         self._cancel: set[str] = set()
-        self._saving: set[str] = set()             # the apps whose sandbox the user is saving now (_apply_sandbox)
         self._preview_assets: dict[str, list] = {}
         self._sync = sync.Progress()
         self._syncing = False
@@ -2458,9 +2457,12 @@ class Backend(QObject):
 
     def _regenerate_launcher(self, url: str) -> Exception | None:
         """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
-        For the user's own Save of the app's sandbox (`_saving`, :meth:`_apply_sandbox`) where each
-        granted folder leads is judged anew; AppKata's start and the setup keep where each led
-        when its grant was judged (install._sandbox_launcher; CR1.5-53).
+        Every road here keeps where each granted folder led when its grant was judged, the
+        user's own Save of the app's sandbox (:meth:`_apply_sandbox`) as AppKata's start and the
+        setup do: only a folder new to the set is judged, and one is judged anew by taking it out
+        and granting it again (install._sandbox_launcher; CR1.5-53, and the owner's decision of
+        2026-11-26 on #735: the Save judged every folder anew, so a link put on a kept grant's
+        way became the grant at the next Save made for any other reason).
         Returns None, or the error that kept it from being written: the app is then as it was,
         install.rewrite_launcher having put the change back (#689's review, P4-B3), or, where even
         that couldn't be done, an install.NotPutBack that names what isn't (P5-2). An error AppKata
@@ -2473,8 +2475,7 @@ class Backend(QObject):
             return None
         gs = self._sandbox_for_install(url)
         try:
-            install.rewrite_launcher(self.db, {**a, "sandbox": gs, **({"sandboxAnew": True} if url in self._saving else {})},
-                                     self._app_options(url))
+            install.rewrite_launcher(self.db, {**a, "sandbox": gs}, self._app_options(url))
         except (install.InstallError, OSError) as e:
             log.warning("couldn't regenerate the launcher for %s: %s%s", url, e,
                         f"; not put back: {', '.join(e.left)}" if isinstance(e, install.NotPutBack) else "")
@@ -2503,11 +2504,7 @@ class Backend(QObject):
         force (Strict and no network, while the app ran with the network), the Audit's row named the
         old launcher's hash as written for it, and a failed Off stayed sandboxed under "Off", which
         AppKata's start never rewrites."""
-        self._saving.add(url)           # the user's Save: where each granted folder leads is judged anew (R17.4)
-        try:
-            e = self._regenerate_launcher(url)
-        finally:
-            self._saving.discard(url)
+        e = self._regenerate_launcher(url)      # a folder the app already had keeps where it led; one the Save adds is judged (R17.4)
         if e is None:
             return True
         saved = self._install_settings(url)

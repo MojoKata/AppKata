@@ -2248,7 +2248,7 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
     # user's real ~/.ssh at the app's (read-only as the inner grant was; with a read-write one, the
     # real ~/.config/autostart, written to). Each grant is asked again at every launch now, and one
     # that no longer leads where it led when it was judged is dropped, with a line; and a grant
-    # judged anew (written here as an install or the user's Save writes it, CR1.5-53) is refused
+    # judged anew (written here as an install or a Save that adds it writes it, CR1.5-53) is refused
     # where a link in another granted folder is on the way to it.
     # (Parts of the test above, not tests of their own: a run test is named in tests/skips/tier1.txt,
     # which is another unit's file while this is written.)
@@ -2315,7 +2315,7 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
 
     # The user's own link is no plant: a grant through one stands (~/Docs kept on another disk). Pointed
     # elsewhere after the grant was judged, it is not given at that launch, and is again once the
-    # grant is judged anew (the user's Save of the sandbox; the part below holds AppKata's start to it).
+    # grant is judged anew (taken out and granted again; the part below holds AppKata's start and a Save to it).
     for d in ("Documents", "Other"):
         (env.home / "disk" / d).mkdir(parents=True)
         (env.home / "disk" / d / "note.txt").write_text(d.upper() + "-NOTE\n")
@@ -2335,8 +2335,8 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
 
 
 LED = ("{app} runs sandboxed and isn't given {folder} this time: it led to {was} when the app was given it and leads to {now} now, so a link on the "
-       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox "
-       "dialog, and the folder is judged anew.")
+       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox "
+       "dialog, save, and give it again, and the folder is judged anew.")
 
 
 def _a_launcher_written_again_keeps_where_a_folder_led(env):
@@ -2346,7 +2346,8 @@ def _a_launcher_written_again_keeps_where_a_folder_led(env):
     part of the launcher's text, so AppKata's next start found the launcher stale, wrote it again
     for where the link led, and the launch after read the user's ~/Documents at the tool's folder.
     The install keeps where each folder led now, and every launcher written again is written with
-    that; the user's own Save of the sandbox judges it anew. A part of the test above, which
+    that, the user's own Save of the sandbox too; a folder taken out and granted again is judged
+    anew. A part of the test above, which
     tests/skips/tier1.txt names (that file is another unit's)."""
     import json
     from appkata_core import install
@@ -2407,9 +2408,10 @@ def _a_launcher_written_again_keeps_where_a_folder_led(env):
     assert r.returncode == 0 and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
 
     # The user's own link is judged when they save the grant; pointed elsewhere, the folder is not
-    # given, AppKata's start changes nothing, and their next Save of the sandbox gives it again.
+    # given, and neither AppKata's start nor their next Save of the sandbox changes that (the
+    # owner's decision of 2026-11-26 on #735): taken out and granted again, it is given again.
     both = {**app, "sandbox": sb.to_json(sb.apply_overrides(gs, {"folders": {"+~/Docs6": "rw"}}))}
-    install.rewrite_launcher(db, {**both, "sandboxAnew": True}, portable)    # as the backend asks for a Save (Backend._apply_sandbox)
+    install.rewrite_launcher(db, both, portable)                             # as the backend asks for a Save (Backend._apply_sandbox)
     r = env.run(lp, 'cat "$HOME/Docs6/note.txt" "$HOME/src6/proj/data/mine.txt"', cwd=str(other))
     assert r.returncode == 0 and "A-NOTE" in r.stdout and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
     (env.home / "Docs6").unlink()
@@ -2418,7 +2420,10 @@ def _a_launcher_written_again_keeps_where_a_folder_led(env):
     not_given("the user's link moved", *moved)
     assert not appkata_starts(both)
     not_given("the user's link moved, after AppKata's next start", *moved)
-    install.rewrite_launcher(db, {**both, "sandboxAnew": True}, portable)    # the user's Save
+    install.rewrite_launcher(db, both, portable)                             # the user's Save, of the same set
+    not_given("the user's link moved, after their next Save", *moved)
+    install.rewrite_launcher(db, app, portable)                              # the folder taken out, and saved...
+    install.rewrite_launcher(db, both, portable)                             # ...and granted again
     r = env.run(lp, 'cat "$HOME/Docs6/note.txt"', cwd=str(other))
     assert r.returncode == 0 and "B-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
 

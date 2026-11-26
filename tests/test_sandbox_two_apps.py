@@ -14,6 +14,7 @@ import pytest
 
 from appkata_core import install, sandbox as sb
 from appkata_core.db import now
+from test_sandbox import _binds, _launched
 from test_sandbox_backend import be   # noqa: F401
 from test_sandbox_transitions import snapshot
 
@@ -254,12 +255,12 @@ def test_the_keyspace_catches_round_sixs_one_id_for_both(be, two):
     assert any("notes" in k and "notes-2" not in k and "Notes.log" not in k for k in found), found
 
 
-def test_appkatas_start_keeps_where_a_granted_folder_led_and_the_users_save_judges_it_anew(be, two):
+def test_appkatas_start_and_the_users_save_keep_where_a_granted_folder_led(be, two):
     # CR1.5-53 (#743), through the backend: where a granted folder leads is in its launcher's text,
     # so once a link an app made led it elsewhere, AppKata's next start found the launcher stale and
     # wrote it again for where the link led; the app then read ~/Documents at the folder it was
     # given. The start writes nothing for it now, and a launcher it does write again holds where the
-    # folder led when the user saved the grant; the user's next Save is what judges it anew.
+    # folder led when the user saved the grant; so does the user's next Save (the test below).
     home = two
     (home / "proj" / "data").mkdir(parents=True)
     (home / "Documents").mkdir()
@@ -276,6 +277,48 @@ def test_appkatas_start_keeps_where_a_granted_folder_led_and_the_users_save_judg
     assert be._heal_launchers() == [B] and open(lp).read() == text
     assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
     assert be._heal_launchers() == [] and _rec(be, A).get("sandboxLeads") is None       # A has no folder: nothing kept
-    be.setSandbox(B, cfg)                                                    # the user's own Save, of the same set
-    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "Documents")}
-    assert f'g1={home}/proj/data; leads "$g1" {home}/Documents || g1=\n' in open(lp).read() and be._heal_launchers() == []
+    be.setSandbox(B, cfg)                                                    # the user's own Save, of the same set: kept too
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    assert open(lp).read() == text and be._heal_launchers() == []
+
+
+def test_a_save_of_the_sandbox_judges_only_the_folders_it_adds(be, two, tmp_path_factory, monkeypatch):
+    # The owner's decision of 2026-11-26, on #735 (R17.4): the user's Save judged every granted
+    # folder anew, so a link an app had put on a kept grant's way, which each launch refused,
+    # became the grant at the next Save made for any other reason (the network turned off). A
+    # folder the app already had keeps its answer through a Save now, as it does through AppKata's
+    # start; a folder the Save adds is judged; and one is judged anew by taking it out and
+    # granting it again. How it slipped past: the tests held the Save to judging anew, as the
+    # requirement said, and none changed a link and then saved something else.
+    home = two
+    for d in ("proj/data", "Documents", "Music", "disk/A", "disk/B"):
+        (home / d).mkdir(parents=True)
+    (home / "Docs").symlink_to(home / "disk" / "A")                          # the user's own link, there when it is granted
+    folders = {"+~/proj/data": "ro", "+~/Docs": "rw"}
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders}})
+    led = {"~/Docs": str(home / "disk" / "A"), "~/proj/data": str(home / "proj" / "data")}
+    assert _rec(be, B)["sandboxLeads"] == led
+    (home / "proj" / "data").rename(home / "proj" / "data.old")           # what an app that could write ~/proj once left there
+    (home / "proj" / "data").symlink_to("../Documents")
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / "disk" / "B")                          # ...and the user's link, moved
+    # a Save that changes something else, and one that adds a folder: the kept answers stand, the new folder is judged
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders, "network": False}})
+    assert _rec(be, B)["sandboxLeads"] == led
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": {**folders, "+~/Music": "ro"}, "network": False}})
+    assert _rec(be, B)["sandboxLeads"] == {**led, "~/Music": str(home / "Music")}
+    text = open(_rec(be, B)["launcher"]).read()
+    assert f'leads "$g1" {home}/disk/A || g1=\n' in text and f'leads "$g3" {home}/proj/data || g3=\n' in text, text
+    # so the launch still drops both, and says how each is judged anew
+    _, bw, r, _ = _launched(tmp_path_factory.mktemp("launch"), monkeypatch, None, gs=sb.normalize(_rec(be, B)["sandbox"]), home=home, leads=_rec(be, B)["sandboxLeads"])
+    assert r.returncode == 0 and str(home / "Music") in _binds(bw), r.stderr
+    assert not [w for w in bw if "/Documents" in w or "/Docs" in w or "/proj/data" in w or "/disk" in w], bw
+    said = [line for line in r.stderr.splitlines() if "isn't given" in line]
+    assert len(said) == 2 and all(line.endswith("take the folder out in the app's Sandbox dialog, save, and give it again, and the folder is judged anew.")
+                                  for line in said), r.stderr
+    # taken out, the folder's answer goes with that Save; granted again, it is judged anew
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": {"+~/proj/data": "ro"}}})
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders}})
+    assert _rec(be, B)["sandboxLeads"] == {"~/Docs": str(home / "disk" / "B"), "~/proj/data": str(home / "proj" / "data")}
+    assert f'leads "$g1" {home}/disk/B || g1=\n' in open(_rec(be, B)["launcher"]).read()
