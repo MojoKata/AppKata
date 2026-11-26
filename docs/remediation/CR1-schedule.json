@@ -150,7 +150,8 @@
     739,
     740,
     742,
-    746
+    746,
+    757
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -185,7 +186,7 @@
    "depends_on": [
     "U01"
    ],
-   "oversize": "22 findings: 15 from the review, and seven its own batches found in its own work (#729, #730, #731, #739, #740, #742, #746), which are cheapest fixed while the unit is in them; #740, #742 and #746 are on what #318, #327 and #731 just built."
+   "oversize": "23 findings: 15 from the review, and eight its own batches and rounds found in its own work (#729, #730, #731, #739, #740, #742, #746, #757), which are cheapest fixed while the unit is in them; #740, #742, #746 and #757 are on what #318, #327 and #731 just built."
   },
   {
    "id": "U05",
@@ -512,8 +513,7 @@
     750,
     751,
     752,
-    753,
-    757
+    753
    ],
    "files": [
     "docs/build.md",
@@ -11738,13 +11738,13 @@
    "readiness": "ready",
    "files": [
     "src/appkata_core/install.py",
-    "tests/test_install_review.py"
+    "tests/test_windows.py"
    ],
    "depends_on": [],
    "related": [],
    "size": "small",
    "proof": "A test of a failed package install with a folder at the download's path: the install's own error is shown.",
-   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator."
+   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator; fixed in U04's round 3 (7ea064e), beside P3-4."
   },
   {
    "finding": 758,
