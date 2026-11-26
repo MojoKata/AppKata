@@ -757,7 +757,9 @@
     500,
     501,
     617,
-    703
+    703,
+    769,
+    770
    ],
    "files": [
     "docs/requirements-trace.md",
@@ -12036,6 +12038,41 @@
    "size": "small",
    "proof": "A test of an update of a sandboxed app: the portal is asked to revoke nothing.",
    "note": "Found by U05's sixth batch (2026-11-25) on what #400 just built, and filed by the coordinator; fixed in U05's first review round."
+  },
+  {
+   "finding": 769,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md"
+   ],
+   "depends_on": [
+    383
+   ],
+   "related": [
+    384
+   ],
+   "size": "small",
+   "proof": "A test per added root: each other channel's NativeMessagingHosts folder is never shared and its profile is a secret.",
+   "note": "Found by pr-review pass 1 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule."
+  },
+  {
+   "finding": 770,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    401
+   ],
+   "size": "small",
+   "proof": "A test that plants a link to a folder whose name holds a control character under a granted folder: the grant is refused, and neither the record's leads nor the launcher's text holds one.",
+   "note": "Found by pr-review pass 1 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule."
   }
  ],
  "shared_files": [
