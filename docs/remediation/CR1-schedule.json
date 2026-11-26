@@ -513,7 +513,8 @@
     750,
     751,
     752,
-    753
+    753,
+    766
    ],
    "files": [
     "docs/build.md",
@@ -11816,6 +11817,21 @@
    "size": "small",
    "proof": "Real apt with TrustCDROM set: an unsigned cdrom: repository reads Unverified whatever the disc's name.",
    "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 766,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    757
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a second download over a folder left at its path: an install error naming it.",
+   "note": "Found by the last check read of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   }
  ],
  "shared_files": [
