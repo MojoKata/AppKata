@@ -527,7 +527,7 @@ def installer_road(windows_road, monkeypatch):
     """The installers' road on any OS: no signature, no Uninstall entries, and Windows' own start of a
     program replaced by `started`, the calls, each answered with `road["code"]` or, for the script
     that runs with administrator rights, by what that script would find: the file's own SHA-256
-    compared with the one it was given."""
+    compared with the one it was given, or that it couldn't open it."""
     import hashlib
     road = {"started": [], "code": 0, "swap": None}
 
@@ -538,8 +538,11 @@ def installer_road(windows_road, monkeypatch):
         v = _elevated_values(args)
         if road["swap"]:
             road["swap"](v["src"])
-        with open(v["src"], "rb") as f:
-            return road["code"] if hashlib.sha256(f.read()).hexdigest() == v["want"] else w.CHANGED
+        try:
+            with open(v["src"], "rb") as f:
+                return road["code"] if hashlib.sha256(f.read()).hexdigest() == v["want"] else w.CHANGED
+        except OSError:
+            return w.NOT_STARTED                                  # what it can't open as a file, it makes no copy of
     monkeypatch.setattr(w, "shell_execute", shell_execute)
     monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
     monkeypatch.setattr(w, "uninstall_entries", lambda: {})
@@ -643,6 +646,75 @@ def test_the_visual_cpp_runtime_is_started_by_the_same_script_held_to_the_file_w
         install.install_msvcrt()
 
 
+# How it slipped past (found answering pass 3's P3-4): every test of an install that fails left a
+# file at the download's path that could be removed, so nothing asked what the user is told when it
+# can't be. The removal runs as the install's own error is on its way out, and its failure took
+# that error's place: "[Errno 21] Is a directory", or Windows' own words for a file another program
+# holds, where the install's reason should be. The class is a cleanup step that can fail in an
+# install's last lines; the two that remove a download are held here.
+@pytest.mark.parametrize("in_the_way", ["a folder at its path", "a file that can't be removed"])
+def test_a_download_that_cant_be_removed_takes_nothing_from_what_the_install_says(installer_road, env, server, tmp_path, monkeypatch, caplog, in_the_way):
+    import hashlib
+    import logging
+    from appkata_core import install
+    caplog.set_level(logging.WARNING, logger="appkata.install")
+    remove = os.remove
+
+    def block(path):
+        """After this, the download at `path` can't be removed: as a folder, or as Windows refuses a file that is held."""
+        if in_the_way == "a folder at its path":
+            remove(path)
+            os.mkdir(path)
+        else:
+            def held(p, *a, **k):
+                if p == path:
+                    raise PermissionError(13, "held by another program", p)
+                remove(p, *a, **k)
+            monkeypatch.setattr(os, "remove", held)
+
+    # an installer that fails: the install says why, whatever becomes of the file it ran
+    root, base = server
+    (root / "setup.exe").write_bytes(b"MZ")
+    a = Asset("setup.exe", f"{base}/setup.exe", 2)
+    start = w.shell_execute
+    monkeypatch.setattr(w, "shell_execute", lambda program, args="", **how: (start(program, args, **how), block(program))[0])
+    installer_road["code"] = 1603
+    with pytest.raises(install.InstallError, match="^the installer exited with code 1603$"):
+        install.install(env, {**APP, "installVersion": "1.0", "exeKind": "inno"}, a, "exe", [a],
+                        portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="me"))
+    file = os.path.join(install.downloads_dir(), "demo-tool", "setup.exe")
+    assert not env.one("SELECT 1 FROM installs") and f"couldn't remove the download {file}: " in caplog.text
+    monkeypatch.setattr(os, "remove", remove)
+    monkeypatch.setattr(w, "shell_execute", start)
+
+    # the Visual C++ run-time: installed is installed, and a refusal is said as it is
+    data = b"MZ, vc_redist as Microsoft published it"
+    file = os.path.join(install.downloads_dir(), "vc_redist.x64.exe")
+
+    def download(url, dest, *a, **k):
+        if os.path.isdir(dest):
+            os.rmdir(dest)
+        with open(dest, "wb") as f:
+            f.write(data)
+        block(dest)
+        return hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(install, "download", download)
+    monkeypatch.setattr(w, "authenticode", lambda path: ("Valid", "Microsoft Corporation"))
+    monkeypatch.setattr(w, "msvcrt_installed", lambda: "14.40")
+    monkeypatch.setattr(w, "run_elevated", lambda file, sha256, args="", **how: installer_road["code"])
+    for code, said in ((0, "ok"), (w.CHANGED, "the downloaded file changed after AppKata checked it; nothing was installed")):
+        installer_road["code"] = code
+        caplog.clear()
+        if code:
+            with pytest.raises(install.InstallError) as e:
+                install.install_msvcrt()
+            assert str(e.value) == said
+        else:
+            assert install.install_msvcrt() == said
+        assert f"couldn't remove the download {file}: " in caplog.text
+        monkeypatch.setattr(os, "remove", remove)
+
+
 def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_folder_of_its_own(tmp_path):
     """The script that runs with administrator rights. On any system, what its text must hold to,
     since it runs with nothing to rely on but Windows' own files. On Windows itself (the test VM's
@@ -651,11 +723,11 @@ def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_fo
     import hashlib
     import re
     import shutil
-    script = w.elevated_script("C:\\d\\setup.exe", "ab" * 32, "/S", False)
+    script = w.elevated_script("C:\\d\\setup.exe", "ab" * 32, 44, "/S", False)
     assert not re.search(r"\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b", script)              # no cmdlet: one could come from the user's own modules
     assert "$env:" not in script and "%" not in script                         # nor a folder the user's environment names
     assert "'O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)'" in script          # the folder: Administrators' and SYSTEM's, nothing inherited
-    steps = [script.index(step) for step in ("::CreateDirectory($dir, $only)", "[IO.File]::Copy($src, $copy)", "ComputeHash($in)",
+    steps = [script.index(step) for step in ("::CreateDirectory($dir, $only)", "::CreateFileW($src,", "$out.Write($buf, 0, $n)", "ComputeHash($in)",
                                              "if ($got -ne $want)", "[Diagnostics.Process]::Start($start)", "[IO.Directory]::Delete($dir, $true)")]
     assert steps == sorted(steps)                                              # made, copied, hashed, compared, then started; removed after
     assert script.count("$copy") >= 4 and "$start.FileName = $src" not in script and "+ $src" not in script     # only the copy is ever started
@@ -682,3 +754,126 @@ def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_fo
     # an installer's own exit code comes back
     sha = hashlib.sha256(setup.read_bytes()).hexdigest()
     assert w.run_elevated(str(setup), sha, "/d /c exit 3010") == 3010
+
+
+# How it slipped past (pass 2 of the unit's own review): the test above asks that a copy is made
+# before it is hashed, and never how the user's path is opened or how much of it is copied. Round 1
+# bounded what root reads on Linux (P1-2: a link, a device or an endless file at the download's
+# path) and left the same step on Windows as it was: `[IO.File]::Copy`, which follows a link and
+# copies whatever it reaches, whole, into the administrators' folder. The class is one rule kept on
+# one system's road and not the other's: R15.7.5 now says for Windows what R16.8.5 says for Linux.
+def test_the_administrators_side_opens_the_download_once_follows_no_link_and_copies_no_more_than_was_checked(tmp_path, monkeypatch):
+    """On any system, what the script's text must hold to, and what AppKata hands it. On Windows
+    itself it is run (the test VM's session has administrator rights) on a link, on a longer
+    file and on a folder at the download's path, and on a file of more than one read."""
+    import hashlib
+    import shutil
+    setup = tmp_path / "setup one.exe"
+    setup.write_bytes(b"MZ" + b"\0" * 70000)
+    sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+    with monkeypatch.context() as m:
+        asked = []
+        m.setattr(w, "shell_execute", lambda program, args="", **how: asked.append(args) or 0)
+        assert w.run_elevated(str(setup), sha.upper(), "/S") == 0
+        script = _elevated_values(asked[0])["script"]
+        # the user's path is opened once: by Windows' own CreateFileW, to read, an existing file, and with
+        # FILE_FLAG_OPEN_REPARSE_POINT (0x00200000), so a link there is opened itself and not followed
+        assert "[IO.File]::Copy" not in script and script.count("$src") == 2
+        assert "::CreateFileW($src, [int]::MinValue, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)" in script
+        # only a file on a disk, of the length AppKata checked, and no more of it than that length and one byte
+        assert "$len = [long]70002\n" in script
+        steps = [script.index(step) for step in ("::CreateFileW($src,", "if ($k::GetFileType($from) -eq 1) {", "if ($in.Length -eq $len) {",
+                                                 "$left = $len + 1", "while ($left -gt 0) {", "$in.Read($buf, 0, [int][Math]::Min($left, [long]$buf.Length))",
+                                                 "$left -= $n", "[IO.File]::OpenRead($copy)", "if ($got -ne $want) { $code = %d }" % w.CHANGED)]
+        assert steps == sorted(steps)
+        # the length is that of the very bytes whose SHA-256 was checked: a file that already isn't those is
+        # refused before Windows is asked, and so is one that can't be read
+        with open(setup, "ab") as f:
+            f.write(b"\0")
+        assert w.run_elevated(str(setup), sha, "/S") == w.CHANGED and w.run_elevated(str(tmp_path / "gone.exe"), sha, "/S") == w.NOT_STARTED
+        assert len(asked) == 1
+    if os.name != "nt":
+        return
+    real, ran = tmp_path / "real.exe", tmp_path / "ran.txt"
+    shutil.copy(os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "cmd.exe"), real)
+    data = real.read_bytes()
+    sha, args = hashlib.sha256(data).hexdigest(), f'/d /c "cd>{ran}"'
+    # a link at the download's path to a file of the very bytes that were checked: followed, it would pass every check
+    link = tmp_path / "setup two.exe"
+    os.symlink(real, link)
+    assert w.run_script_elevated(w.elevated_script(str(link), sha, len(data), args, False)) == w.CHANGED and not ran.exists()
+    # a longer file, whose first bytes are the checked ones, and a shorter one
+    longer, shorter = tmp_path / "setup three.exe", tmp_path / "setup four.exe"
+    longer.write_bytes(data + b"\0" * (3 << 20))
+    shorter.write_bytes(data[:-1])
+    for other in (longer, shorter):
+        assert w.run_script_elevated(w.elevated_script(str(other), sha, len(data), args, False)) == w.CHANGED and not ran.exists()
+    # a folder at the path can't be opened as a file
+    assert w.run_script_elevated(w.elevated_script(str(tmp_path), sha, len(data), args, False)) == w.NOT_STARTED and not ran.exists()
+    # and the checked file itself is copied whole and started: one of more than one read (cmd.exe with 3 MB after it)
+    assert w.run_elevated(str(longer), hashlib.sha256(longer.read_bytes()).hexdigest(), args) == 0 and ran.exists()
+
+
+# How it slipped past (pass 3 of the unit's own review, P3-4): round 2 gave R15.7.5's step 2 new
+# words for which message a refused download gets, and the tests above ask the code for its message
+# and the script for its exit code, each by a text of the test's own. Nothing read the requirement,
+# so its "no such file" took in a download that can't be opened at all, which the code answers
+# with the other message. The class is a requirement that says which message a failure gets with
+# no test asking it: this one takes each message from the requirement's own words.
+def _gone(path):
+    os.remove(path)
+
+
+def _a_folder(path):
+    os.remove(path)
+    os.mkdir(path)
+
+
+@pytest.mark.parametrize("when", ["before Windows is asked", "once the script runs"])
+@pytest.mark.parametrize("swap, case", [(_gone, "it is gone"), (_a_folder, "a folder is at its path"), (_replaced, "")],
+                         ids=["gone", "a folder", "other bytes"])
+def test_a_download_that_cant_be_opened_as_a_file_fails_with_the_message_r15_7_5_gives_it(installer_road, env, server, tmp_path, monkeypatch,
+                                                                                         swap, case, when):
+    """What R15.7.5's step 2 says of a download that can't be opened as a file, and of one whose
+    bytes are others, is what the install fails with: where AppKata reads the file once more
+    before Windows is asked, and where the script that runs with administrator rights opens it
+    (here its stand-in, which answers an open that fails as the script's text does)."""
+    import re
+    import reqdocs
+    from appkata_core import install
+    r4, r15 = (re.sub(r"\s+", " ", reqdocs.item(rid)) for rid in ("R4.4", "R15.7.5"))
+    step = r15[r15.index(" 2. "):r15.index(" 3. ")]
+    changed = re.search(r"A file that changed after AppKata's check is not installed: \"([^\"]+)\"", r4).group(1)
+    assert re.search(r"When they differ, or what it opened was no such file, it starts nothing, and the install fails with R4\.4's message\.", step)
+    unopened = re.search(r"A download that can't be opened as a file \(([^)]+)\).*?: nothing is started, and the install fails with \"([^\"]+)\"", step)
+    assert unopened, step
+    assert not case or case in re.split(r", or |, ", unopened.group(1))
+    said = unopened.group(2) if case else changed
+    assert {changed, unopened.group(2)} == {_refusal(w.CHANGED), _refusal(w.NOT_STARTED)} and said == _refusal(w.NOT_STARTED if case else w.CHANGED)
+
+    root, base = server
+    (root / "setup.msi").write_bytes(b"MZ, an installer as its release published it")
+    a = Asset("setup.msi", f"{base}/setup.msi", 44)
+    if when == "before Windows is asked":
+        run_elevated = w.run_elevated
+        monkeypatch.setattr(w, "run_elevated", lambda file, *args, **how: (swap(file), run_elevated(file, *args, **how))[1])
+    else:
+        installer_road["swap"] = swap
+    with pytest.raises(install.InstallError) as e:
+        install.install(env, {**APP, "installVersion": "1.0"}, a, "msi", [a],
+                        portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
+    assert str(e.value) == said
+    assert len(installer_road["started"]) == int(when != "before Windows is asked") and not env.one("SELECT 1 FROM installs")
+    # the script itself: it leaves with NOT_STARTED unless it gets as far as comparing, and an open that fails gets no further
+    script = w.elevated_script("C:\\d\\setup.msi", "ab" * 32, 44, "", True)
+    steps = [script.index(part) for part in ("$code = %d\ntry {" % w.NOT_STARTED, "::CreateFileW($src,", "if ($from.IsInvalid) { throw 'open' }",
+                                             "if ($k::GetFileType($from) -eq 1) {", "if ($got -ne $want) { $code = %d }" % w.CHANGED)]
+    assert steps == sorted(steps) and script.count("$code = %d" % w.CHANGED) == 1
+
+
+def _refusal(code: int) -> str:
+    """The message an install fails with for what run_elevated() says of a file it didn't start."""
+    from appkata_core import install
+    with pytest.raises(install.InstallError) as e:
+        install._elevated_refusal(code)
+    return str(e.value)

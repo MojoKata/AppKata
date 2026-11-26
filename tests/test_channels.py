@@ -717,10 +717,11 @@ def apt_says(monkeypatch, tmp_path):
     """The apt of a machine with Ubuntu's archive, a PPA, a vendor's repository that names itself
     nowhere and a local one taken without a key. apt_says(policy) sets what it says of the package.
     apt_says.rows is what `apt-get indextargets` knows of each repository (the first is the local
-    one), and apt_says.local(text, trusted, insecure) gives the local one another sources entry
-    and apt's own answers for it."""
+    one), and apt_says.local(text, trusted, insecure, n) gives the local one another sources file,
+    apt's own answers for it, and its entry's number in that file as apt gives it."""
     def entry(name, text, n=1):
-        (tmp_path / name).write_text(text)
+        with open(tmp_path / name, "w", encoding="utf-8", newline="") as f:     # the file's line ends are the test's own, on any system
+            f.write(text)
         return f"{tmp_path / name}:{n}"
     entry("vendor.list", "deb [arch=amd64 signed-by=/etc/apt/keyrings/vendor.gpg] https://deb.example.org/apt stable main\n"
                          "deb [signed-by=/etc/apt/keyrings/ppa.gpg] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble main\n")
@@ -743,10 +744,10 @@ def apt_says(monkeypatch, tmp_path):
             return _apt_targets(cmd[cmd.index("--format") + 1], rows)
         raise AssertionError(cmd)
 
-    def local(text, trusted, insecure=None):
+    def local(text, trusted, insecure=None, n=1):
         os.remove(tmp_path / "akrepo.list")
         rows[0] = {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": trusted, **({"ALLOW_INSECURE": insecure} if insecure else {}),
-                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n")}
+                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n", n)}
     monkeypatch.setattr(pkgbackend, "_text", text)
     says = lambda policy: said.update(policy=policy)      # noqa: E731
     says.rows, says.local = rows, local
@@ -780,14 +781,13 @@ def test_a_package_is_signed_only_where_a_repository_whose_key_apt_checks_offers
 # own answer is asked now, and scripts/channels_e2e.py asks the real apt for more than one spelling.
 TAKEN_WITHOUT_A_KEY = {
     # the local repository's entry in the sources: apt's own $(TRUSTED) and $(ALLOW_INSECURE) for it
-    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository)
+    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository). $(TRUSTED) is the answer AppKata
+    # reads; the other is what an apt asked for it would say.
     **{f"trusted={word}": (f"deb [trusted={word}] file:/tmp/akrepo ./", "yes", None) for word in ("yes", "true", "1", "on", "enable", "with", "YES", "True")},
     "trusted-among-other-options": ("deb [ arch=amd64 Trusted = on ] file:/tmp/akrepo ./", "yes", None),
     "Trusted-in-a-sources-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nTrusted: true", "yes", None),
-    "trusted-in-another-stanza-of-its-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: 1", "yes", None),
     "allow-insecure=yes": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "no", "true"),
     "allow-insecure=1": ("deb [allow-insecure=1] file:/tmp/akrepo ./", "no", "true"),
-    "allow-insecure-and-a-signature": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "yes", "true"),    # the rule's own case: not run on apt
     "allowed-by-apts-configuration": ("deb file:/tmp/akrepo ./", "no", "true"),         # Acquire::AllowInsecureRepositories
     "trusted=no": ("deb [trusted=no] file:/tmp/akrepo ./", "no", None),                 # apt then takes nothing of it as checked
     "nothing-signed-and-no-option": ("deb file:/tmp/akrepo ./", "no", None),            # lists apt has from before it refused them
@@ -803,6 +803,161 @@ def test_a_package_of_a_repository_apt_takes_without_a_key_is_not_signed_however
     # ...and beside it the distribution's own is still signed
     apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
     assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+# How it slipped past (pass 2 of the unit's own review): round 1 took `allow-insecure` for a second
+# way to go unchecked, and the one case that carried the rule, a signed repository with the option
+# on, was written from that belief and marked "not run on apt". Run, apt checks a signed repository
+# against its key whatever the option says, and says "no" itself of one that came unsigned: the rule
+# only turned checked copies Unverified, every apt package of a machine whose configuration has it
+# on. The class is a rule about another program that no run of that program carries: each case
+# here is apt's own answer (2.4.14, 2.8.3, 3.2.1), and scripts/channels_e2e.py asks the real apt.
+COULD_HAVE_COME_UNSIGNED = {
+    "the-entrys-allow-insecure": ("deb [allow-insecure=yes signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),
+    "a-sources-files-Allow-Insecure": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nAllow-Insecure: yes\n"
+                                       "Signed-By: /usr/share/keyrings/local.gpg", "yes", "true"),
+    "apts-configuration": ("deb [signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),     # Acquire::AllowInsecureRepositories
+}
+
+
+@pytest.mark.parametrize("case", list(COULD_HAVE_COME_UNSIGNED))
+def test_a_repository_apt_checked_against_its_key_is_signed_though_allow_insecure_would_have_let_it_come_unsigned(apt_says, case):
+    apt_says.local(*COULD_HAVE_COME_UNSIGNED[case])
+    if case == "apts-configuration":                # then apt says so of every repository
+        for row in apt_says.rows:
+            row["ALLOW_INSECURE"] = "true"
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "", "repository": "file:/tmp/akrepo"}
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+# How it slipped past (pass 2 of the unit's own review): every sources file of these tests ended
+# its lines with "\n", where Python and apt agree. They differ on nine other characters: the entry
+# apt names by its line's number was looked up among the lines `str.splitlines` and a text-mode
+# open make, so one such character above a `[trusted=yes]` line (in a comment pasted from a web
+# page, say) put another line under that number, and the package read Verified. The class is
+# counting another program's lines with Python's idea of a line: each character Python ends a line
+# at is asked here, apt's answer for each is its own (2.4.14, 2.8.3, 3.2.1: "<file>:2", TRUSTED
+# yes), and scripts/channels_e2e.py asks the real apt for three of them.
+NOT_A_LINE_END_TO_APT = {"a-form-feed": "\x0c", "a-vertical-tab": "\x0b", "a-lone-carriage-return": "\r", "a-file-separator": "\x1c",
+                         "a-group-separator": "\x1d", "a-record-separator": "\x1e", "a-next-line": "\x85", "a-line-separator": "\u2028",
+                         "a-paragraph-separator": "\u2029", "none": " "}
+assert all(len(f"a{c}b".splitlines()) == 2 for name, c in NOT_A_LINE_END_TO_APT.items() if name != "none")
+
+
+@pytest.mark.parametrize("above", ["# a note{c}pasted from a page\n", "# a note{c}\r\n", "# a note\n# and{c}{c}another\n# {c}\n"],
+                         ids=["in-a-comment", "before-a-windows-line-end", "in-three-comments"])
+@pytest.mark.parametrize("character", list(NOT_A_LINE_END_TO_APT))
+def test_the_line_of_a_sources_file_that_apt_names_is_counted_as_apt_counts_it(apt_says, character, above):
+    above = above.format(c=NOT_A_LINE_END_TO_APT[character])
+    apt_says.local(above + "deb [trusted=yes] file:/tmp/akrepo ./\ndeb [signed-by=/usr/share/keyrings/other.gpg] http://other.example.org/ ./",
+                   "yes", n=above.count("\n") + 1)
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
+# How it slipped past (pass 2 of the unit's own review): a `.sources` file was judged whole, one
+# `Trusted:` line counting for each of its stanzas, and the test of a second stanza's line asked
+# for exactly that. apt names the stanza itself ("<file>:2"), so the others of the file, which apt
+# checked against their keys, read Unverified for a line that isn't theirs. The class is the one
+# above, AppKata reading apt's files in its own way: how apt numbers a file's stanzas and which of
+# their lines it takes for the field was asked of apt itself (2.4.14, 2.8.3 and 3.2.1, with
+# unsigned repositories, which apt takes only where the stanza sets `trusted`), and
+# APT_STANZAS holds its answers.
+ONE_FILE = ("# The distribution's own repositories,\n# and a local one.\n\nTypes: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n"
+            "Components: main\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n# The local one:\n\n"
+            "Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n{trusted}")
+
+
+@pytest.mark.parametrize("trusted, apt_trusts_it", [("Trusted: yes\n", "yes"), ("trusted: 1\n", "yes"), ("Trusted: no\n", "no")])
+def test_a_trusted_line_marks_its_own_stanza_of_a_sources_file_and_no_other(apt_says, tmp_path, trusted, apt_trusts_it):
+    with open(tmp_path / "all.sources", "w", encoding="utf-8", newline="") as f:
+        f.write(ONE_FILE.format(trusted=trusted))
+    local, ubuntu = apt_says.rows[:2]
+    local.update(TRUSTED=apt_trusts_it, SOURCESENTRY=f"{tmp_path / 'all.sources'}:2")
+    ubuntu.update(SOURCESENTRY=f"{tmp_path / 'all.sources'}:1")
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
+def _st(k, *more):
+    """A stanza for the repository file:/u-<k>."""
+    return "".join(f"{line}\n" for line in ("Types: deb", f"URIs: file:/u-{k}", "Suites: ./", *more))
+
+
+# A `.sources` file, and what apt says of it: "<the stanza's number in $(SOURCESENTRY)>=<the
+# repository apt gives that number>" for each repository, with "!" where apt took the repository,
+# which is unsigned: it does that only where it reads the stanza as setting `trusted`.
+APT_STANZAS = {
+    "plain": (_st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-first": ("# a note\n# of two lines\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "two-comment-paragraphs-first": ("# a\n\n# b\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-between": (_st(1) + "\n# between\n\n" + _st(2) + "\n# c\n\n# d\n\n" + _st(3), "1=u-1 2=u-2 3=u-3"),
+    "comment-glued-below": (_st(1) + "# glued\n\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-glued-above": (_st(1) + "\n# glued\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-inside": ("Types: deb\n# inside\nURIs: file:/u-1\nSuites: ./\n\n" + _st(2), "1=u-1 2=u-2"),
+    "many-blank-lines": (_st(1) + "\n\n\n\n" + _st(2), "1=u-1 2=u-2"),
+    "two-blank-first": ("\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "crlf": ((_st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "crlf-comment-first": (("# a\n\n" + _st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "cr-cr-lf-blank": (_st(1) + "\r\r\n" + _st(2), "1=u-1 2=u-2"),
+    "space-line-between": (_st(1) + " \n" + _st(2), "1=u-2"),
+    "formfeed-line-between": (_st(1) + "\x0c\n" + _st(2), "1=u-2"),
+    "lone-cr-between": (_st(1) + "\r" + _st(2), "1=u-2"),
+    "u2028-blank": (_st(1) + "\u2028\n" + _st(2), "1=u-2"),
+    "indented-comment-between": (_st(1) + "\n # not a comment\n\n" + _st(2), "1=u-1 2=u-2"),
+    "fieldless-two-then-trusted": (_st(1) + "\n # c\n\n x\n\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "fieldless-first-then-trusted": (" x\n\n" + _st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "trusted-second-disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "2=u-2! 3=u-3"),
+    "trusted-in-disabled": (_st(1, "Enabled: no", "Trusted: yes") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "no-newline-at-end": ((_st(1) + "\n" + _st(2)).rstrip("\n"), "1=u-1 2=u-2"),
+    "comment-at-end": (_st(1) + "\n" + _st(2) + "\n# the end", "1=u-1 2=u-2"),
+    "two-uris": ("Types: deb\nURIs: file:/u-1 file:/u-1b\nSuites: ./ x/\n\n" + _st(2), "1=u-1 1=u-1b 2=u-2"),
+    "trusted-first-only": (_st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-yes-second": (_st(1) + "\n" + _st(2, "Trusted: yes"), "1=u-1 2=u-2!"),
+    "trusted-third-only": (_st(1) + "\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "trusted-second-after-comment-paragraph": ("# c\n\n" + _st(1) + "\n# d\n\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-crlf-second": ((_st(1) + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3)).replace("\n", "\r\n"), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-upper": (_st(1, "TRUSTED: YES") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-spaced": (_st(1, "trusted : yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-tab-colon": (_st(1, "Trusted\t:\tyes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-no-space": (_st(1, "Trusted:yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-colon-next-line": (_st(1, "Trusted\n: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-value-next-line": (_st(1, "Trusted:\n yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-cr-led": (_st(1) + "\n\r\rTrusted: yes\n" + _st(2) + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-cr-led-mid": ("Types: deb\nURIs: file:/u-1\n\rTrusted: yes\nSuites: ./\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-after-ff-line": ("Types: deb\nURIs: file:/u-1\nSuites: ./\n\x0c\nTrusted: yes\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-second-ff-blank-before-3": (_st(1) + "\n" + _st(2, "Trusted: yes") + "\x0c\n" + _st(3), "1=u-1 2=u-3!"),
+    "trusted-third-cr-between-1-2": (_st(1) + "\r" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-2 2=u-3!"),
+    "trusted-space-line-merged": (_st(1) + " \n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-2! 2=u-3"),
+    "trusted-continuation": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\n Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-tab-led": (_st(1, "X-Note: a", "\tTrusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-cr": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\rTrusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-u2028": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\u2028Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-nbsp-colon": (_st(1, "Trusted\u00a0: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "x-trusted": (_st(1, "X-Trusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-extra": (_st(1, "Trusted-Extra: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+}
+
+
+@pytest.mark.parametrize("case", list(APT_STANZAS))
+def test_the_stanzas_of_a_sources_file_are_numbered_and_read_as_apt_numbers_and_reads_them(tmp_path, case):
+    text, apt = APT_STANZAS[case]
+    file = tmp_path / "x.sources"
+    file.write_bytes(text.encode("utf-8"))
+    said = [(int(n), address.rstrip("!"), address.endswith("!")) for n, address in (one.split("=") for one in apt.split())]
+    assert [(n, address, pkgbackend._sets_trusted(f"{file}:{n}")) for n, address, trusted in said] == said
+    for n, address, trusted in said:                # ...and it is that repository's stanza which was read
+        uris = [line for line in pkgbackend._stanza(text.split("\n"), n) if line.lower().startswith("uris")]
+        assert f"file:/{address}" in uris[-1].split()
+    # a stanza apt could name and the file doesn't have: not found, which counts as setting it
+    assert pkgbackend._stanza(text.split("\n"), 4) is None and pkgbackend._sets_trusted(f"{file}:4") and pkgbackend._sets_trusted(f"{file}:0")
 
 
 def _says_nothing(rows, tmp_path):
@@ -858,9 +1013,12 @@ def test_a_sources_entry_that_sets_the_trusted_option(tmp_path):
                    "deb [ arch=amd64 Trusted = yes ] http://c/ ./\ndeb [trusted=no] http://d/ ./\ndeb-src [trusted=1] http://e/ ./\n")
     assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4, 5)] == [False, False, True, True, True]
     assert sets(f"{one}:9") and sets(f"{tmp_path / 'gone.list'}:1") and sets("$(SOURCESENTRY)") and sets("")
+    one.write_bytes(b"deb [signed-by=/k.gpg] http://a/ stable main\r\ndeb [trusted=yes] http://b/ ./\r\n# \xff not UTF-8\ndeb http://c/ ./\n")
+    assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4)] == [False, True, False, False]      # a Windows line end is one line end
     many = tmp_path / "x.sources"
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: YES\n")
-    assert sets(f"{many}:1") and sets(f"{many}:2")
+    assert not sets(f"{many}:1") and sets(f"{many}:2")              # its own stanza, and no other
+    assert sets(f"{many}:3") and sets(f"{many}:0") and sets(f"{many}:x") and sets(f"{many}:")     # no such stanza: not shown to be without it
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n# Trusted: yes\nSigned-By: /etc/apt/trusted.gpg.d/k.gpg\n")
     assert not sets(f"{many}:1")
 

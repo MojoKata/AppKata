@@ -267,8 +267,10 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                 if attempt <= retries:
                     continue
             raise InstallError(f"download failed: HTTP {e.code}") from None
-        except http.client.InvalidURL:          # no connection that broke: trying again asks nothing new, and nothing came to resume
-            raise InstallError(f"download failed: the release's address for this file isn't a valid one ({one_line(url)[:200]})") from None
+        except http.client.InvalidURL as e:     # no connection that broke: trying again asks nothing new, and nothing came to resume
+            # whose address it is, http.client alone says: the file's own, one it was sent on to, or a proxy's from the user's settings
+            raise InstallError(f"download failed: an address on the way to this file isn't a valid one ({one_line(str(e))[:200]}); "
+                               f"the file's own address is {one_line(url)[:200]}") from None
         except _BROKEN as e:
             attempt += 1
             if attempt > retries:
@@ -1658,7 +1660,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         elif keep:
             pass
         elif os.path.exists(file):
-            os.remove(file)                     # complete but bad (checksum, install): don't resume it
+            _drop(file)                         # complete but bad (checksum, install): don't resume it
 
 
 def kept_versions(db: DB, url: str) -> list[str]:
@@ -2092,7 +2094,18 @@ def install_msvcrt() -> str:
         return meaning
     finally:
         if os.path.exists(file):
-            os.remove(file)
+            _drop(file)
+
+
+def _drop(file: str) -> None:
+    """Remove a download that is not to be used again. One that can't be removed (a folder is at
+    its path, or Windows holds the file for another program) stays and is logged: this runs as an
+    install ends, and what the install itself says, its error or that it is done, is what the user
+    is told. A failure here took its place."""
+    try:
+        os.remove(file)
+    except OSError as e:
+        log.warning("couldn't remove the download %s: %s", file, e)
 
 
 def _remove_portable_windows(rec: dict, name: str) -> None:

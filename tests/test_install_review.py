@@ -588,9 +588,12 @@ def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(
 # exceptions, which were all taken as a connection that broke: three retries over 12 seconds, then
 # "the server's answer couldn't be read (InvalidURL); press Update again to resume", of a server
 # that was never asked. A release link is free text on some forges, so a space is enough.
-@pytest.mark.parametrize("address", ["{base}/my file.AppImage", "{base}/file\x7f.AppImage", "{base}x/file.AppImage"],
-                         ids=["a-space", "a-control-character", "a-port-that-is-no-number"])
-def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_names_it(server, tmp_path, monkeypatch, address):
+@pytest.mark.parametrize("address, reason", [          # the reason is http.client's own: what of its words names the fault
+    ("{base}/my file.AppImage", "'/my file.AppImage'"),
+    ("{base}/file\x7f.AppImage", "'/file\\x7f.AppImage'"),
+    ("{base}x/file.AppImage", "nonnumeric port: '{port}x'"),
+], ids=["a-space", "a-control-character", "a-port-that-is-no-number"])
+def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_names_it(server, tmp_path, monkeypatch, address, reason):
     root, base = server
     (root / "my file.AppImage").write_bytes(b"the file")
     waits, dl = [], tmp_path / "dl"
@@ -599,8 +602,35 @@ def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_nam
     url = address.format(base=base)
     with pytest.raises(install.InstallError) as e:
         install.download(url, str(dl / "file.bin"))
-    assert str(e.value) == f"download failed: the release's address for this file isn't a valid one ({install.one_line(url)})"
+    said = re.fullmatch(r"download failed: an address on the way to this file isn't a valid one \((.+)\); the file's own address is (.+)", str(e.value))
+    assert said and reason.format(port=base.rsplit(":", 1)[1]) in said.group(1) and said.group(2) == install.one_line(url)
     assert waits == [] and os.listdir(dl) == []         # not tried again, and nothing kept to resume
+
+
+# How it slipped past (pass 2 of the unit's own review): round 1's test gave download() three
+# addresses of the release's that can't be asked for, and its message was written for those. The
+# same InvalidURL comes of any address on the way: a proxy from the user's own settings, or one
+# the server sends the request on to. So a setting of the user's failed every download with "the
+# release's address for this file isn't a valid one", of an address that was. The class is a
+# message that names a cause the code didn't establish: it now says what http.client itself says.
+@pytest.mark.parametrize("setting", ["http_proxy", "HTTP_PROXY"])
+def test_a_proxy_setting_that_isnt_an_address_fails_the_download_naming_what_is_wrong_and_not_the_release(server, tmp_path, monkeypatch, setting):
+    root, base = server
+    (root / "file.AppImage").write_bytes(b"the file")
+    for name in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY", "REQUEST_METHOD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(setting, "http://127.0.0.1:abc")
+    waits, dl = [], tmp_path / "dl"
+    dl.mkdir()
+    monkeypatch.setattr(install.time, "sleep", waits.append)
+    with pytest.raises(install.InstallError) as e:
+        install.download(f"{base}/file.AppImage", str(dl / "file.bin"))
+    assert str(e.value) == ("download failed: an address on the way to this file isn't a valid one (nonnumeric port: 'abc'); "
+                            f"the file's own address is {base}/file.AppImage")
+    assert "release" not in str(e.value) and waits == [] and os.listdir(dl) == []
+    monkeypatch.delenv(setting)                         # and with the setting gone, the same address downloads
+    install.download(f"{base}/file.AppImage", str(dl / "file.bin"))
+    assert (dl / "file.bin").read_bytes() == b"the file"
 
 
 # ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)

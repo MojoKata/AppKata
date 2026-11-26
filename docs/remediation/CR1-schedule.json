@@ -150,7 +150,8 @@
     739,
     740,
     742,
-    746
+    746,
+    757
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -185,7 +186,7 @@
    "depends_on": [
     "U01"
    ],
-   "oversize": "22 findings: 15 from the review, and seven its own batches found in its own work (#729, #730, #731, #739, #740, #742, #746), which are cheapest fixed while the unit is in them; #740, #742 and #746 are on what #318, #327 and #731 just built."
+   "oversize": "23 findings: 15 from the review, and eight its own batches and rounds found in its own work (#729, #730, #731, #739, #740, #742, #746, #757), which are cheapest fixed while the unit is in them; #740, #742, #746 and #757 are on what #318, #327 and #731 just built."
   },
   {
    "id": "U05",
@@ -523,8 +524,8 @@
     751,
     752,
     753,
-    757,
-    761
+    761,
+    766
    ],
    "files": [
     "docs/build.md",
@@ -793,7 +794,8 @@
     172,
     322,
     330,
-    451
+    451,
+    758
    ],
    "files": [
     "DEVELOP.md",
@@ -1201,7 +1203,10 @@
     431,
     654,
     663,
-    754
+    754,
+    763,
+    764,
+    765
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -11870,13 +11875,30 @@
    "readiness": "ready",
    "files": [
     "src/appkata_core/install.py",
-    "tests/test_install_review.py"
+    "tests/test_windows.py"
    ],
    "depends_on": [],
    "related": [],
    "size": "small",
    "proof": "A test of a failed package install with a folder at the download's path: the install's own error is shown.",
-   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator."
+   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator; fixed in U04's round 3 (7ea064e), beside P3-4."
+  },
+  {
+   "finding": 758,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [
+    754
+   ],
+   "size": "small",
+   "proof": "A test with dnf 4's refusal: the dry run is never rerun through pkexec on the download's path.",
+   "note": "Found by pr-review pass 2 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   },
   {
    "finding": 759,
@@ -11930,6 +11952,75 @@
    "size": "small",
    "proof": "A test where the app leaves a folder it locked in its install folder: the uninstall gives it back and removes it.",
    "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 763,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    764,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt in the channels container: a trusted=yes repository whose address holds U+0085 or U+2028 reads Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 764,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt: a .sources file opening with \\r# and one with a paragraph ending in a line with no colon each read their Trusted: yes stanza Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule; the second shape (a paragraph apt drops) is in its comment."
+  },
+  {
+   "finding": 765,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    764
+   ],
+   "size": "small",
+   "proof": "Real apt with TrustCDROM set: an unsigned cdrom: repository reads Unverified whatever the disc's name.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 766,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    757
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a second download over a folder left at its path: an install error naming it.",
+   "note": "Found by the last check read of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   },
   {
    "finding": 767,
