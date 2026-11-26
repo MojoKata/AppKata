@@ -267,8 +267,10 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                 if attempt <= retries:
                     continue
             raise InstallError(f"download failed: HTTP {e.code}") from None
-        except http.client.InvalidURL:          # no connection that broke: trying again asks nothing new, and nothing came to resume
-            raise InstallError(f"download failed: the release's address for this file isn't a valid one ({one_line(url)[:200]})") from None
+        except http.client.InvalidURL as e:     # no connection that broke: trying again asks nothing new, and nothing came to resume
+            # whose address it is, http.client alone says: the file's own, one it was sent on to, or a proxy's from the user's settings
+            raise InstallError(f"download failed: an address on the way to this file isn't a valid one ({one_line(str(e))[:200]}); "
+                               f"the file's own address is {one_line(url)[:200]}") from None
         except _BROKEN as e:
             attempt += 1
             if attempt > retries:
