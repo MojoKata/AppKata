@@ -633,3 +633,282 @@ Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
     `/var/cache/appkata-install.*` behind, root's.
 - **#223's fact** reads `install.py` and `assets.py` for a verifier's name; a signature check
     added elsewhere would need the fact widened.
+
+## Batch 4
+
+Fable 5.2 at high effort, 2026-11-25. Nothing uncommitted was found in the worktree; nothing was
+taken over. No failure of CI's was written here for batch 3's commits.
+
+**Files touched:** `docs/requirements/R4-installing-updating-and-uninstalling.md`,
+`docs/requirements/R16-package-channels.md`, `scripts/channels_e2e.py`, `src/appkata/backend.py`,
+`src/appkata_core/assets.py`, `src/appkata_core/install.py`, `src/appkata_core/sync.py`,
+`tests/test_backend.py`, `tests/test_channels.py`, `tests/test_install_review.py`,
+`tests/test_sandbox_ui_surfaces.py`, `tests/skips/windows.txt`, `docs/relay/progress.md`.
+
+**Counts:** fixed 7, no defect 0, remedy changed 0, set aside 0, still left 0, new 5 (one fixed
+here, in a commit of its own; four listed only).
+
+### The findings
+
+Each test was shown failing by exporting the commit before the fix (`git archive`) to a scratch
+folder, putting the new test files over it, and running the new tests there in a scratch home. The
+channels container was run from a scratch script that makes `scripts/test-channels.sh`'s own
+`docker run` with a copy of this worktree's `src/` and `scripts/` as the sources and `--memory 3g`,
+one container at a time.
+
+- **#304 (Low), fixed, `a732f5c`.** `assets.checksums_for` gives every file of a release that may
+    hold the file's SHA-256, its own first (`<file>.sha256`, `<file>.sha256sum`), then each list in
+    the release's order; a `.sha512` is none of them. `expected_sha256` reads them until one lists
+    the file. `checksum_for` stays, as the first of them: `backend._has_sums` and
+    `tests/test_core.py` (not this unit's file) call it. SHA-512 is not computed (the alternative,
+    not taken). Tests, in `tests/test_install_review.py`:
+    `test_a_file_is_checked_against_the_first_of_its_releases_checksum_files_that_lists_it` (13
+    releases, each read from a real server, each also with a file that doesn't match),
+    `test_a_release_with_a_sha512_and_sha256sums_is_installed_as_checked` (Linux-only),
+    `test_the_checksum_files_of_a_release_are_the_files_own_then_its_lists_and_never_another_digests`.
+    Before the fix: 9 of 15 fail; the 6 that pass are the releases whose first-picked file was the
+    right one, or that have no SHA-256 at all.
+- **#328 (Low), fixed, `e2c61af`.** `expected_sha256` returns a third value, what became of each
+    checksum file it tried; `install()` logs it and keeps it in the record (`checksum_reason`),
+    and `detail()` gives it as the Unverified chip's tooltip. The install still goes on
+    (stopping it is the alternative, not taken). `AppDetail.qml` is not changed: its Unverified
+    chip reads `verifyTip` since batch 2. **In the same read, with the 1 MB case the finding
+    names:** a list longer than 1 MB was cut wherever the 1 MB fell, and a line cut after
+    `App.AppImage` of `App.AppImage.zsync` was read as this file's, with the other file's digest:
+    a good download refused as not matching. A cut line is not read.
+    Tests: in `tests/test_install_review.py`,
+    `test_a_checksum_file_that_gives_no_checksum_is_said_with_the_reason` (13 releases: a 404, a
+    server that doesn't answer, a list without the file, of another digest, empty, the file after
+    the first 1 MB, the cut line, two files, and five with nothing to say) and
+    `test_an_install_that_couldnt_use_its_releases_checksum_file_keeps_why_in_its_record` (the same
+    13 through an install; Linux-only); three more records in `tests/test_backend.py`'s
+    `test_an_installed_apps_chip_is_what_its_own_install_checked_whatever_the_next_release_publishes`
+    and one in `tests/test_sandbox_ui_surfaces.py`'s chip test, read from the real App Detail.
+    Before the fix: 24 of the 30 new cases fail; the 6 that pass have nothing to say (five
+    installs, and a signed record, whose chip is Verified).
+- **#308 (Low), fixed, `5967f9c`.** The owner's decision: https only. Every request of
+    `install.py` is made by `_request`, which refuses an address that isn't `https:` before
+    anything is asked or touched (`NotFetched`, an install error), and by `_opener`: urllib's
+    default opener without its file:, ftp: and data: handlers, with a redirect handler that
+    follows a redirect only where the same rule allows it after the address that sent it there.
+    Plain `http:` is for this computer itself alone (`localhost`, or a loopback address written
+    out), judged on urllib's own reading of the address, and never where a redirect from `https:`
+    leads, loopback included. The .exe probe reads nothing of a refused address; a checksum file
+    at one "couldn't be read" (#328's reason). Tests, in `tests/test_install_review.py`, with every
+    connection and name lookup that leaves this computer refused and counted:
+    `test_nothing_is_fetched_from_an_address_that_isnt_https` (32 addresses, through the three
+    functions), `test_the_one_host_plain_http_is_used_to_is_this_computer_by_its_own_words` (24
+    hosts), `test_a_redirect_is_followed_to_no_address_that_isnt_https` (8),
+    `test_a_redirect_on_this_computer_itself_is_followed_as_the_tests_servers_need`,
+    `test_a_redirect_from_https_down_to_http_is_not_followed` (4; a stand-in for the https: handler,
+    no TLS server), `test_an_https_address_and_a_redirect_from_it_to_another_are_downloaded_from`,
+    and for the class
+    `test_every_request_install_makes_is_made_by_the_one_function_that_checks_its_address`.
+    Before the fix: 66 of 71 fail. The 5 that pass: the redirects to file:, data: and gopher:,
+    which urllib refuses by itself, and the two that say what still works.
+- **#314 (Low), fixed, `2f5cdd8`.** `http.client.HTTPException` is caught with `OSError`
+    (`_BROKEN`): a chunked answer that breaks is retried, from where it stopped where the server can
+    resume and from the start where it can't, and after the last retry is an `InstallError` with
+    its `.part` kept. **The same class, in the same commit:** the .exe probe and the checksum fetch
+    caught an `OSError` alone too; and a Content-Length that is no number was a raw `ValueError`
+    from `download()`'s own `int()`, now read as no length. Tests, in
+    `tests/test_install_review.py`:
+    `test_a_download_whose_answer_breaks_is_retried_then_kept_and_fails_as_an_install_error` (10
+    ways a server breaks an answer, once, three times or every time) and
+    `test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer` (4). Before the
+    fix: 13 of 14 fail (`IncompleteRead`, `BadStatusLine`, `LineTooLong`, `ValueError`, raw); the
+    one that passes is a chunked answer that comes whole.
+- **#731 (Low), fixed, `14ea077`.** Of the remedy's two ways, the suffix: `_not_anothers` gives a
+    version the place its name gives it, or that name with `_2`, `_3`... (before an AppImage's
+    extension) when that place is another of the app's versions', compared without case on
+    Windows. The one-to-one escape would rename every version with a `_` in it and can't be
+    one-to-one on Windows. **AppImages had the same fault** (one file name for every version:
+    `Tool-x86_64-1.0_beta.AppImage` twice) and are fixed by the same lines. Tests, in
+    `tests/test_install_review.py`:
+    `test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own` (12 sets of
+    versions × archive and AppImage: each kept, run when switched to, and in its place when
+    installed again; Linux-only) and
+    `test_the_place_a_version_gets_when_its_names_is_another_versions` (as Linux and as Windows).
+    Before the fix: 21 of 26 fail; the 5 that pass are AppImages whose two file names differ
+    anyway (`current` and `_current`).
+- **#740 (Med), fixed, `98a27fb` and `ca93a05`.** Where `track_channel_installs` sees the copy
+    changed elsewhere it takes the verdict again; for a Flatpak, of the remote the copy now comes
+    from, so the record's `remote` follows the copy (more than the remedy's one line: a copy from
+    another remote was otherwise judged by the old remote's key). Only where the copy changed.
+    Tests, in `tests/test_channels.py` (see the doubts for why not `tests/test_sync.py`):
+    `test_a_package_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now` (6) and
+    `test_a_flatpak_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now` (7).
+    Before the fix: 9 of 13 fail; the 4 that pass are the copies whose verdict is the same after.
+    **Container, the first run of this finding (it was filed by reading):**
+    `scripts/channels_e2e.py` replaces the distribution's `hello`, installed through AppKata and
+    Verified, with a hand-built 99.0-1 by `dpkg -i`, and syncs. Passes in the ubuntu, ubuntu-pk and
+    mint runs; on the code before (`14ea077`) the ubuntu run fails with the record still
+    `verified: signed, signer: Ubuntu` at 99.0-1.
+- **#742 (Low), fixed, `622695a` and `d54e75a`.** `Refused` goes through `_apply` and
+    `install()`'s package branch as `NeedsConfirmation` does. One caller knew only `InstallError`,
+    Remove Source with its app (`backend.removeSource`, no plan dialog there): it says a refusal as
+    the error line it was. Tests: in `tests/test_channels.py`,
+    `test_a_plan_appkata_refuses_reaches_the_caller_as_a_refusal_and_runs_nothing` (install, update,
+    uninstall × asked first and after an OK) and
+    `test_a_package_error_that_is_no_refusal_is_an_install_error`; in
+    `tests/test_install_review.py`,
+    `test_a_releases_package_whose_plan_is_refused_is_refused_as_such_and_nothing_of_it_stays`
+    (deb, rpm; Linux-only); in `tests/test_backend.py`, through the real Backend to its
+    `planConfirm` signal, `test_a_refused_plan_is_shown_in_the_plan_dialog_as_refused` (3 roads) and
+    `test_removing_a_source_with_its_app_says_a_refused_plan_as_an_error_and_removes_nothing`.
+    Before the fix: 13 of 15 fail; the two that pass are what doesn't change. The release-package
+    road is shown in two halves (install() raises `Refused`; the backend's branch for it is the
+    one line beside the others): no test drives a release's `.deb` through the whole Backend.
+    **Container:** `scripts/channels_e2e.py`'s own refusal step (a package a desktop metapackage
+    depends on, removed with the real apt) expected an `InstallError`; it holds the refusal to
+    `pkgbackend.Refused` now. Passes in the ubuntu, ubuntu-pk and mint runs.
+- `b7297fb`: the new finding 1 below, fixed in a commit of its own.
+
+### Needs your eye
+
+- `a732f5c` (#304): **R4.4's new paragraph** ("The checksum is a SHA-256: …"): which files are
+    read, in which order, and that a `.sha512` or `SHA512SUMS` is not. A release whose only checksum
+    is a `.sha512` now forecasts **No checksum published** (it said Checksum published).
+- `e2c61af` (#328): **R4.4's paragraph** ("When a release has checksum files and none of them
+    gives …") and the Unverified chip's tooltip: "Its release has a checksum file, but this download
+    was checked against none: <reason>". The reasons, joined with "; " when there are several:
+    "couldn't read SHA256SUMS (HTTP 404)", "couldn't read SHA256SUMS", "SHA256SUMS doesn't list
+    this file", "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file",
+    and since #308 "couldn't read SHA256SUMS: it isn't at an https: address".
+- `5967f9c` (#308): **R4.4's paragraph** ("Downloads are made over `https:` only. …") and the two
+    errors: "AppKata downloads over https: only, and this isn't an https: address (<address>)" and
+    "the download was sent on to an address that isn't https: (<address>), where AppKata doesn't
+    follow it". **What the decision means for a forge on plain http:** a Source at
+    `http://git.lan/…` can still be added and synced, and its files can't be installed.
+    `localhost` counts as this computer, beside the loopback addresses.
+- `2f5cdd8` (#314): "download failed: the connection closed before the whole file had come; press
+    Update again to resume" and "download failed: the server's answer couldn't be read
+    (BadStatusLine); …", where the exception's own text was.
+- `14ea077` (#731): **R4.3.1's sentence** ("Two versions whose names come out the same …"): the
+    later one is in `1.0_beta_2/` or `Tool-1.0_beta_2.AppImage`.
+- `98a27fb` (#740): **R16.3.6's last sentences**: asked again when a sync finds the copy changed
+    outside AppKata, of the remote a Flatpak then comes from; a copy that hasn't changed keeps its
+    chip. A Flatpak's label follows its new remote.
+- `622695a` (#742): **R16.3.5's sentence** on what the refusal's dialog shows. The user now gets
+    the dialog "Can't install <app>" with "It would remove ubuntu-desktop, which this computer
+    needs." and Close, where an error toast was.
+- `b7297fb` (new): a version installed again under another file name or folder no longer leaves
+    its earlier copy in the Versions list as a kept version.
+
+### Needs a run
+
+- **The Windows VM** (the coordinator's): `scripts/test-windows-vm.sh --tests`. Of this batch, on
+    real Windows for the first time: #304's and #328's tables through `expected_sha256` (the
+    "server that doesn't answer" is `127.0.0.1:1`, which Windows refuses after about two seconds a
+    request), #308's tests (file: addresses with a drive letter; the fixture that replaces
+    `socket.socket.connect` and `socket.getaddrinfo`), #314's server, `_not_anothers`, and
+    `tests/test_channels.py`'s new tests, which stub every tool. **The one to watch:**
+    `test_a_download_whose_answer_breaks_is_retried_then_kept_and_fails_as_an_install_error` holds
+    the kept `.part` to exactly what `download()` had written (131,072 bytes) and the resuming
+    request to `bytes=131072-`. On Linux the server's `shutdown` sends what it wrote before it
+    closes; if Windows drops any of it, those two lines are too strict, not the fix. The five new
+    Linux-only tests are in `tests/skips/windows.txt`.
+- **The desktop VMs** take `tests/test_channels.py` (`scripts/sandbox/vm-desktop.sh`): its new tests
+    run there with every tool stubbed. Not run here.
+- **CI's tour job**: no screen changes (no demo record has a `checksum_reason`).
+- **dnf**: nothing runs it (R1.1). #740's and #742's `.rpm` halves rest on stand-ins.
+- No Flatpak was changed outside AppKata in a container: the container's one remote is
+  `--no-gpg-verify`, so the verdict would be the same before and after. The Flatpak half of #740
+  rests on `flatpak remotes`' and `flatpak list`'s recorded words.
+- Run here, in a scratch home, all passing: the touched test files whole
+    (`tests/test_install_review.py`, `tests/test_backend.py`, `tests/test_channels.py`,
+    `tests/test_sandbox_ui_surfaces.py`), `tests/test_skip_lists.py`, the document checks, and
+    beside them, from a copy of `b7297fb`, `tests/test_sandbox.py`,
+    `tests/test_sandbox_transitions.py`, `tests/test_sandbox_backend.py`,
+    `tests/test_sandbox_lifecycle.py`, `tests/test_sandbox_adversarial.py`,
+    `tests/test_sandbox_docs_current.py`, `tests/test_selfinstall.py`, `tests/test_core.py`,
+    `tests/test_channel_ui.py`, `tests/test_dialog_contract.py`, `tests/test_demo_promises.py`,
+    `tests/test_qml_slots.py`, `tests/test_launch.py`, `tests/test_appkind.py`,
+    `tests/test_windows.py`, `tests/test_tour_rules.py`, `tests/test_forges.py`,
+    `tests/test_docs_facts.py` (with `tests/test_backend.py`, `tests/test_channels.py` and
+    `tests/test_sandbox_ui_surfaces.py` again: 2529 passed, 6 skipped). The channels container: ubuntu, ubuntu-pk
+    and mint, after the last change to anything they run. Tier 1 whole is CI's.
+
+### Guard
+
+Nothing: every file changed is in U04's files.
+
+### New
+
+1. **Fixed, `b7297fb`. A version installed again at another place stays among the kept versions.**
+    `src/appkata_core/install.py`, `install()`'s versioned branch (`retired = _retain(…)`). Case,
+    run: an AppImage app at 2.0 from `Tool-2.0-x86_64.AppImage`, installed again at 2.0 from
+    `Tool-2.0-amd64.AppImage` (the release renamed its file): current 2.0, kept versions `['2.0']`,
+    both files there. That one was there before this batch; #731's fix adds a second way (a
+    version that had `_2` takes the plain name once the other version is removed). Low. Test:
+    `tests/test_install_review.py::test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one`
+    (3 cases, all fail before; Linux-only, its skip line in the same commit). A file AppKata
+    adopted and didn't place is never taken out this way.
+2. **Not fixed. Remove Source, with its app, does nothing when the package's removal takes another
+    package with it.** `src/appkata/backend.py`, `removeSource` (`install.uninstall(self.db, url)`
+    under `except install.InstallError`). Case, run in a scratch copy with the real Backend and a
+    package manager whose plan removes `demo-plugins` too: `removeSource(url, True)` raises
+    `NeedsConfirmation` out of the slot; no toast, no dialog, and the Source stays. Uninstall from
+    App Detail asks (R16.4.3); this road has no dialog to ask with. Low. Not small: it needs the
+    confirmation, then the Source's removal after it.
+3. **Not fixed. The dialog of a refused update is titled "Can't install <app>".**
+    `src/appkata/qml/ConfirmDialog.qml`, the `plan:` title (`args.action === "uninstall" ?
+    "uninstall " : "install "`): an update's refusal has the install's words. By reading; reachable
+    only since #742. Low. Not this unit's file.
+4. **Not fixed. A file its release names as a path is never found in a checksum list.**
+    `src/appkata_core/install.py`, `_sha256_in` (a line's base name compared with the release's
+    whole name): batch 1's doubt, still so. Such a file (`sub/x.tar.gz`, installed as `x.tar.gz`
+    since #306) installs Unverified, and since #328 its chip says "SHA256SUMS doesn't list this
+    file". By reading. Low.
+5. **Not fixed. A checksum list that holds one digest and no name is taken as every file's.**
+    `src/appkata_core/install.py`, `_sha256_in`'s last lines (the file's one value "when it holds
+    nothing else"), which serve `<file>.sha256` and are applied to a list (`SHA256SUMS`) too: a
+    release with two files and a `SHA256SUMS` of one bare digest refuses the other file as not
+    matching. By reading. Low.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `/home/dev/.local/share/appkata` and
+`/home/dev/.local/share/applications` before and after was empty.
+
+### Doubts
+
+- **#740's test is in `tests/test_channels.py`**, not in the `tests/test_sync.py` its record names:
+    that file doesn't exist, a new test file needs its line in `scripts/areas.py` (not this unit's
+    file), and the fixtures that say what apt and flatpak answer are in `tests/test_channels.py`,
+    beside `test_tracking`. `tests/test_sync.py` can leave U04's files.
+- **#740, the record's `remote` follows the copy.** One line more than the remedy. The
+    `installation` (user or system) is left as the record has it: `flatpak.installed()` lists a
+    user copy before a system one of the same id, so which copy a record follows there is an older
+    question than this finding.
+- **#308 and a forge on plain http:.** Said under needs your eye: it is what the decision says,
+    and it is the one place a user of a LAN forge meets it. Nothing in Sources says so beforehand.
+- **#308, what "loopback" is.** `localhost` and an address `ipaddress` calls loopback, as written:
+    `127.1`, `0x7f.0.0.1` and `localhost.` are refused, though a resolver would take them there.
+- **#308 and a proxy.** The opener keeps urllib's `ProxyHandler` (the environment's proxies), as
+    before, and is now made for each request, where urllib made its own once a process.
+- **#328 keeps the reason whatever the chip.** A file with a valid Authenticode signature and an
+    unreadable checksum file is Verified, with the reason in its record and not in its tooltip.
+- **#328, "longer than 1 MB".** The limit stays; a longer list is read to 1 MB, and says so only
+    when the file isn't in that part.
+- **#314 loses the part of a read that broke.** `download()` reads 64 KiB at a time, and what
+    http.client had of a read when the chunk broke is in the exception, not in the `.part`. The
+    retry asks from what was written, so nothing is wrong, only up to 64 KiB asked for twice.
+- **#731, the suffix can be another version's name too** (`1.0_beta_2` is a version's name): the
+    next free number is taken, and the tests have both orders.
+- **#731 and a sandboxed AppImage's unpacked copy** (`sandbox.extracted_dir`, by the version's
+    name): two versions with one name share it. Its stamp is of the AppImage's own file, so the
+    launcher unpacks again when the other one is current; nothing wrong was found, by reading.
+- **#742's dialog for a release's package** has the action `install-release`, and for an update
+    the title's words (new finding 3). Neither is new; both are reachable now.
+- **Fixes that went beyond their finding's words**, each in its finding's own commit and said
+    there: the cut line at 1 MB (#328), the probe's and the checksum fetch's `HTTPException` and
+    the Content-Length that is no number (#314), AppImages (#731). If any should be a finding of
+    its own, it has a test to point at.
+- **The container ran from a copy** of this worktree's `src/` and `scripts/` (tracked files, as
+    they were then), not from the worktree itself, so work on the next finding couldn't change
+    what a running container read. The wider test run was from a `git archive` of `b7297fb` for
+    the same reason; the touched files were always run whole from the worktree.
+- **`tests/skips/windows.txt`'s order**: its lines are in ASCII order but for batch 3's two
+    `test_a_releases_package_…` lines; this batch's five are placed by ASCII order. Nothing checks
+    the order.
