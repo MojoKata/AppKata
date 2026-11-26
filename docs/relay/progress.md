@@ -860,3 +860,265 @@ before and after: empty.
 10. For #384's run with bash-completion, each distribution's package was fetched from its archive
     (`apt-get download` in a throwaway container) into a scratch folder under /tmp, read there and
     unpacked into throwaway containers; nothing of it is in the repository or in an image.
+
+## Batch 5
+
+Uninstall, and the portal's records: #400, #395, and #736 (added by the coordinator after batch 2).
+Fable 5.2, high effort. Nothing was taken over: the worktree was clean at the start.
+
+**The merge of U04's tip**: 4c7e58e, "Merge U04's branch in at 0c08e3f". Two conflicts outside
+`docs/relay/`, as batch 4 foresaw: `docs/remediation/CR1-schedule.json`, where both sides added
+records at the end of the findings (U04's #746–#750; this branch's #743–#745, #755, #756), both
+kept in the issues' order, the units as each side has them (`triage.py check --offline`: "49 units
+holding 607 findings, 0 set aside: no problems"); and `tests/test_backend.py`, where both sides
+added tests at the file's end, both kept. `docs/relay/` stayed this unit's (U04's branch deleted
+its own). U04's branch had taken master in, so `agents/` moved to b84852f
+(`git submodule update --init`). **U04's tip moved after that** (c8af841 when the batch ended):
+not in this batch, and not looked at. After the merge the 60 test files that name the sandbox, the
+backend, an install or a dialog ran whole in the scratch home: 5554 passed, 56 skipped.
+
+**Counts**: fixed 2 (#395, #736), no defect 0, remedy changed 1 (#400: fixed by the remedy's first
+way, with its list kept another way than the remedy words it), set aside 0, still left 0, new 3
+(one High, two Low; none fixed).
+
+**Files touched**: `src/appkata_core/sandbox.py`, `src/appkata_core/install.py`,
+`src/appkata/backend.py` (a docstring), `tests/test_sandbox.py`, `tests/test_sandbox_run.py`,
+`tests/test_sandbox_two_apps.py`, `docs/requirements/R17-app-sandboxing/R17.14-uninstalling.md`,
+`docs/requirements/R17-app-sandboxing/R17.6-app-identity.md`,
+`docs/architecture/A1-app-sandboxing/A1.11-claims.md`, `docs/requirements-trace.md`. No golden
+changes: the launcher's text is the same (the helper's own file changed, so the startup pass
+writes the helper again, `helpers_current`).
+
+### The findings
+
+**#400, remedy changed (fixed), 6f78c3d (and 4ddc145, its row in the claims table).** First, on the code as it
+was, with the real document portal (a scratch test in the Mint 22.3 container, portal 1.20.0): an
+online-app "notes" is handed `~/Documents/taxes.txt` and `~/proj`, is uninstalled with its home
+removed (`remove_sandbox_home`: no home, no owner record), and a launcher is written again under
+the id: started with no argument, the second app listed both documents, read "TAXES" and appended
+to the real file. The portal's `List("io.appkata.notes")` named both until revoked. **The finding
+stands.** The fix: `sandbox.revoke_documents(app_id)` asks the portal, from the host side, for
+what it lists for the identity and revokes each permission on each document; `install.uninstall()`
+calls it once the app's row is gone (the home kept or not), and the launcher's writer
+(`_sandbox_launcher`) when the launcher it writes is not Standard's, when it removes it (Off), and
+before an install that had no launcher gets one. The file-argument helper makes an empty file
+`.identity/handed/<identity>` beside itself before its first hand-over to an app, and the portal
+is asked only for an identity that file names. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_the_helper_says_beside_itself_that_an_app_was_handed_something_before_it_hands_it_over`
+    (the helper AppKata writes, against the stand-in portal: no file for what is handed nothing,
+    the file where `handed_path` looks, nothing handed where it can't be made),
+    `test_what_an_app_was_handed_is_taken_back_and_the_portal_is_asked_only_for_an_app_the_helper_named`
+    (no process for an app with no file; every permission of every listed document, no other
+    identity's; `-I`; a portal that is gone; the four failures, each logged, the file kept),
+    `test_an_uninstall_a_change_away_from_standard_and_a_first_launcher_take_back_what_the_app_was_handed`
+    (through `install._activate` and `install.uninstall`); `tests/test_sandbox_two_apps.py`:
+    `test_what_one_notes_was_handed_is_never_the_next_notes_with_its_id` (the finding's road
+    through the backend: B uninstalled, C gets its id and nothing B held; A to Strict, to Off).
+    Shown failing: the tree of 4c7e58e (`git archive`) with the new test files over it, in the
+    scratch home: all four, at `handed_path` and `revoke_documents`, which are new; the fault
+    itself by the two-apps test with its note-making lines taken out of a scratch copy: the
+    stand-in portal still held B's two documents after the uninstall.
+- tier 2, `_what_an_app_was_handed_is_taken_back_when_it_goes`, a part of
+    `test_a_file_argument_is_handed_over_to_a_standard_app` (the real portal: a file and a folder
+    handed to "editor"; Standard to Strict and back, to Off and back, through
+    `install.rewrite_launcher`; then `install.uninstall` with the home removed, `new_app_id` giving
+    another Source's "Editor" the id, and that app started), and
+    `_a_session_with_no_document_portal_holds_nothing_and_is_not_made_to_start_one`, a part of
+    `test_file_arguments_pass_through_when_they_cannot_be_handed_over` (a real bus that could
+    start a portal: none is started, nothing is held; no bus: not asked, the file stays). Shown
+    failing on the 4c7e58e tree in both containers (Mint 22.3: portal 1.20.0; LMDE 7: 1.20.3):
+    back from Strict the app read "PICKED", "INSIDE" and listed both documents. With the fix:
+    passed in both.
+
+**#395, fixed, ddf7b1f.** `remove_sandbox_home()` gives every folder of the home its owner's read,
+write and search back where the first removal left something (`_give_folders_back`: each folder
+opened by its name in the folder above, `O_PATH | O_NOFOLLOW`, its mode changed through that
+descriptor), removes again, and returns whether the home is gone; a home that is not keeps its
+owner record. `install.uninstall()` adds such a home to what it returns as left, which the
+backend's notice already says. Tests, tier 1, as an ordinary user (uid 1000):
+- `tests/test_sandbox.py`:
+    `test_a_private_home_with_folders_no_one_may_open_or_change_is_removed_whole_and_nothing_outside_it`
+    (the finding's two cases, a read-only tree like Go's module cache, and links to a file and to
+    a read-only folder outside the home, whose modes and contents stay),
+    `test_a_private_home_that_cannot_be_removed_whole_stays_its_apps_and_the_uninstall_says_so`
+    (the removal of one file refused, injected; through `install.uninstall`: the result, the log,
+    the owner record, `home_belongs_to_another`, `new_app_id` for the same app and for another);
+    `tests/test_sandbox_two_apps.py`:
+    `test_a_home_that_cannot_be_removed_whole_is_said_and_stays_its_apps` (the backend's notice).
+    Shown failing on the 6f78c3d tree: all three (`remove_sandbox_home` gave None, the uninstall's
+    result was `[]`, the notice "Notes uninstalled."); by a scratch script on that tree the home
+    was left holding `a`, `go` and `locked`, its owner record gone, and counted as another app's
+    for its own app.
+
+**#736, fixed, 6cc5a6a (and 00e197d, its row in the claims table with the run that shows it).**
+Shown again first, at the head of the branch with the real portal (Mint 22.3): "editor", handed
+`~/proj`, plants `README.md -> ~/Documents/taxes.txt` there; `editor ~/proj/README.md` was handed
+`…/doc/<id>/taxes.txt` and appended to it. The fix is the remedy: the helper asks the portal's
+`List(<identity>)` once, when an argument lies in no folder the launcher shows, and counts each
+folder in the answer (a folder, there in the portal's own view, and no never-shared one) as a
+folder the app is shown, at `$XDG_RUNTIME_DIR/doc/<id>/<name>`; so #379's rule holds in it, and a
+file in it becomes its path in that folder's document. A folder handed over by one argument
+counts for the arguments after it at the same start. Where the portal doesn't answer the
+question, nothing is handed over at that start. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_a_link_in_a_folder_the_app_was_handed_is_never_followed_out_of_it` (nine arguments
+    through links out of the folder: absolute, relative, to a folder, a link to a link, the
+    user's own link to the planted one, a relative path, a URI, an option's value; six that stay
+    in the folder; a file's document; a folder the portal lists for no one; the same start; a
+    grant first; a never-shared folder in the list; a folder missing from the view; no answer).
+    Shown failing on the ddf7b1f tree: `…/doc/DOC/taxes.txt` handed for `proj/hop`, with the
+    three earlier tests whose expectations the same-start rule changes (see **Needs your eye**).
+- tier 2, `_a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing`, a part of
+    `test_a_file_argument_is_handed_over_to_a_standard_app` (the app plants a link to a file and a
+    link to a folder through the portal; the next start names the link by a path and a URI, a
+    file through the linked folder, and a file of the folder's own; then a folder and a link in
+    it at one start). Shown failing on the ddf7b1f tree in both containers: the app's first
+    argument was `…/doc/<id>/secret.txt`. With the fix: passed in both.
+    `test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through`:
+    its stand-in portal has `List` too, so the test still measures the timeout.
+
+After the last fix (6cc5a6a): the whole launcher tier in the Mint 22.3 container, 147 passed, 5
+skipped, and in the LMDE 7 container, 147 passed, 5 skipped; the whole tier 1 suite in its
+container under a 3 GB cap, 5551 passed, 138 skipped, none failed. Before each commit: the 60 test
+files that name the sandbox, the backend, an install or a dialog, whole, in the scratch home, from
+a copy of the tree as it was committed (#400: 5554 passed, 60 skipped; #395: 5557 passed, 60 skipped; #736: 5558 passed, 60
+skipped), and in the worktree itself the touched files, the three files with tests that skip
+outside a git work tree (`test_public_text.py`, `test_publish.py`, `test_mutate.py`) and the
+document checks, none skipped; the guard.
+
+### Needs your eye
+
+- 6f78c3d (#400): R17.14 gains "What the app was handed through the document portal (R17.6.2) is
+    taken back when it is uninstalled, and when it leaves Standard for Strict or Off …" and
+    "AppKata asks the session's document portal, from the host side, to revoke each one for that
+    id …". **The list is kept another way than the remedy words it** ("each document the helper
+    exported, kept in a list beside the helper"): the portal's own `List(<identity>)` says what to
+    revoke, and what is beside the helper is one empty file an identity, which says only that the
+    helper handed that app something. Why: document ids written down at each launch go stale at
+    every login, the portal's list is the truth, and without the file AppKata would ask the
+    session's portal at every uninstall, a test's on a developer's machine included, and revoke
+    what a really installed app of the same id holds (`tests/conftest.py`, which could keep tests
+    off the session bus, is other units'). Mine, beside the remedy: an uninstall that keeps the
+    home revokes too; an install given its first launcher asks again (so the holder of an id
+    starts with nothing where the uninstall could not ask); AppKata never starts a portal to ask;
+    a failure is in the log only, and the uninstall and the level change go on.
+- ddf7b1f (#395): **the line the user sees** is the uninstall's own: "Notes uninstalled. Not
+    removed: /home/u/.local/share/appkata/sandboxes/notes." (the home among what was left, the
+    choice the brief left to the batch; no new wording). R17.14 gains "A private home is its
+    app's to write, and can hold folders their owner may not open or change …" and "Where
+    something in it still can't be removed, the uninstall's notice names the home among what was
+    not removed (R4.7), and what is left stays that app's as a kept home does …". Its paragraph
+    is wrapped again, so #400's lines move in the diff.
+- 6cc5a6a (#736): R17.6.2 gains "**A folder handed over is the app's from then on, like a granted
+    one** (CR1.5-52): the launcher asks the document portal which folders the app still holds …"
+    and "Where the portal doesn't answer what the app holds, nothing is handed over." What changes
+    for a user: a file named inside a folder the app was handed earlier in the session reaches the
+    app as its path in that folder's document (`…/doc/<id>/proj/sub/deep.txt`), no longer as a
+    document of its own; `tool ./build .git` hands `.git` over as a path in `.`'s document; and a
+    link in such a folder that leads out of it opens nothing. Mine, beside the remedy: the
+    same-start rule, and nothing handed over where the portal doesn't answer `List`. Three
+    expectations of batch 2's tests change with the same-start rule
+    (`test_a_link_to_a_file_outside_every_grant_is_handed_over_under_the_files_own_name`,
+    `test_the_helper_hands_over_nothing_a_grant_could_not_share_but_under_the_systems_places`,
+    `test_a_bare_word_is_a_file_argument_when_it_names_a_file_and_never_a_folder`): fewer
+    hand-overs, and one path.
+- 4ddc145, 00e197d: A1.11 gains two rows (both **run**; #400's also **read**, for "a document
+    added without `persistent` ends with the portal's process", which no test in the repository
+    shows; a scratch run did, by restarting the portal).
+
+### Needs a run
+
+The VMs (the coordinator's): Ubuntu's document portals are 1.18 (24.04) and 1.21 (26.04), and each
+fix rests on what the portal answers to `List` and `RevokePermissions`, on the D-Bus error a
+session with no portal gives a no-auto-start call, and on the system's `python3 -I` finding `gi`:
+
+```
+scripts/test-sandbox.sh launcher-vm -k "file_argument_is_handed_over or pass_through_when_they_cannot or never_answers or arguments_shaped or refused_folder_is_still_given"
+scripts/test-sandbox.sh launcher-vm26 -k "file_argument_is_handed_over or pass_through_when_they_cannot or never_answers or arguments_shaped or refused_folder_is_still_given"
+```
+
+### Guard
+
+The guard (`triage.py guard U05 --on U04 --base origin/cr1-u04-downloads-checksums`, from the main
+checkout's `agents/`, no `__pycache__` left) passes on every commit, with no file outside U05's
+plan (but `docs/relay/`). The tier 2 checks are parts of run tests `tests/skips/tier1.txt`
+already names, as settled. `tests/test_sandbox_two_apps.py`, `tests/test_sandbox.py` and
+`tests/test_sandbox_run.py` are each listed whole in `tests/skips/windows.txt`. `tests/conftest.py`
+is U47's, U21's and U38's: not changed (see #400 under **Needs your eye**).
+
+### New
+
+1. **High. A link an app made in a folder it could write once is followed by the file-argument
+    helper when the app is no longer shown that folder, and its target is handed over,
+    read-write.** #379 and #736 judge a link by the folders the app is shown now (the grants, a
+    tool's shared directory, what the portal lists). The link stays on the disk longer than
+    that. `src/appkata_core/sandbox.py`, `FORWARD_HELPER`'s `hand()`. Two cases, run at 6cc5a6a's
+    code in the Mint 22.3 container with the real portal (scratch tests, not in the repository):
+    (a) a `cli-tool` run once in `~/src/proj` (shared read-write) does `mv README.md README.was;
+    ln -s ~/Documents/taxes.txt README.md`; `tool ~/src/proj/README.md`, run from the home
+    folder, is handed `…/doc/<id>/taxes.txt`, reads it and appends to it. No second session is
+    needed. (b) "editor" is handed `~/work` and plants the link through the portal; the portal
+    is stopped and started (a new login); `editor ~/work/README.md` is handed `taxes.txt`. By
+    reading, the same for (c) a folder grant the user has since taken away. Severity High, as
+    #379 and #736, by the outcome (any file of the user's the never-shared list doesn't hold).
+    Not fixed here: not small. It needs something remembered across launches and logins (which
+    folders each app was ever given read-write: granted, run in, handed over), kept beside the
+    helper until the uninstall, and a rule for a link in one of them that is not shown now (the
+    argument passed unchanged with a line on stderr would be mine), or #736's alternative (no
+    folder is handed over by an argument), which closes (b) alone. #743 (batch 6) is the same
+    class at the launcher's writing.
+2. **Low. A1.2 and A1.12.16 describe the hand-over without what this batch added** (the
+    revocation at an uninstall and on leaving Standard, the file beside the helper, the folders
+    counted as the app's). `docs/architecture/A1-app-sandboxing/A1.2-approach.md` (near lines 149
+    and 229) and `A1.12-decisions.md` (A1.12.16). Not U05's files; with #734 and #744.
+3. **Low. An app's install folder can be made unremovable the way #395's home was**, by an app
+    with the writable grant (`write_app`): `install.uninstall()` removes it with
+    `shutil.rmtree(f, ignore_errors=True)`. Unlike the home it was already said (the uninstall's
+    "Not removed: …", CR1.3-12), so what is missing is only the giving back of the folders.
+    `src/appkata_core/install.py`, `uninstall()`; by reading, not run.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `~/.local/share/appkata` and `~/.local/share/applications`
+before and after: empty. The session's own bus and document portal were never asked: every ask
+in a test went to a stand-in or to a container's bus.
+
+### Doubts for the coordinator
+
+1. **#736 holds for as long as the portal lists the folder for the app, which is the login
+    session** (New 1). Its commit and R17.6.2 say "still holds"; the issue's words ("a later file
+    argument") are met within a session only.
+2. #400: where the portal can't be asked (no session bus where AppKata runs, no python3-gi, a
+    portal that hangs), the next app of that id still finds the documents if the ask before its
+    first launcher fails too. The user is not told; the log is. Giving the id to no one until
+    then is the remedy's second way, which the brief keeps for the owner.
+3. #400: the ask runs where the uninstall and the sandbox change run, which for a portable app
+    is the window's thread: `python3` with `gi` and a few bus calls for an app that was handed
+    something, and up to 30 seconds (the process's bound; 5 a call) where the portal hangs.
+4. #400: every document the portal lists for the identity is revoked, also one something other
+    than the helper granted to `io.appkata.<id>` (nothing of AppKata's does). The helper's file
+    left by an earlier session costs one run of `python3` at the uninstall and is removed.
+5. #395: the giving back holds one descriptor open for each level of the tree, so a tree deeper
+    than the process's open-files limit is not given back whole; it is then left and said (not
+    run: the limit here is 524288, and a tree 1500 deep was removed). It needs `/proc` (a
+    folder's mode is changed through `/proc/self/fd`); without it the home is left and said.
+    Files' own modes are not changed (a removal asks the folder).
+6. #395: Remove Source with its app never asks for the home's removal, so nothing changes on
+    that road; the two take-backs of a failed install that remove a home the attempt made
+    ignore the answer (the log has the line).
+7. #736: one more call to the portal (`List`) at each start with an argument outside the granted
+    folders; a portal that answered `Add` but not `List` would hand nothing over now (none known).
+8. #736: with a folder in the app's hold, `editor ~/proj` again answers the folder's path in its
+    document without a new `AddFull`; if the user's rights on the folder changed in between
+    (read-only then, writable now) the app keeps the permission it was given first.
+9. The two claims-table commits came after the fixes' own: the rule "a new claim gets a row" is
+    A1.11's, and I met it after the three commits; #736's adds a few lines to its tier 2 part (the
+    portal's refusals, which were a scratch run's until then). The whole launcher tier and tier 1
+    ran at 6cc5a6a; after the two commits the touched part ran in both containers and the
+    claims-table and document checks in the scratch home.
+10. The 60-file runs before each commit were made from a copy of the tree (so the worktree could
+    be worked on meanwhile); four tests skip there for want of a git work tree, and their three
+    files ran in the worktree itself before each commit.
+11. For the tier 2 runs the worktree needed a mount point for the main checkout's Python,
+    `build/python-3.14` (ignored by git, empty); it is removed again at the end of the batch.
