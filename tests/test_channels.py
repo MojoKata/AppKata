@@ -780,14 +780,14 @@ def test_a_package_is_signed_only_where_a_repository_whose_key_apt_checks_offers
 # own answer is asked now, and scripts/channels_e2e.py asks the real apt for more than one spelling.
 TAKEN_WITHOUT_A_KEY = {
     # the local repository's entry in the sources: apt's own $(TRUSTED) and $(ALLOW_INSECURE) for it
-    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository)
+    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository). $(TRUSTED) is the answer AppKata
+    # reads; the other is what an apt asked for it would say.
     **{f"trusted={word}": (f"deb [trusted={word}] file:/tmp/akrepo ./", "yes", None) for word in ("yes", "true", "1", "on", "enable", "with", "YES", "True")},
     "trusted-among-other-options": ("deb [ arch=amd64 Trusted = on ] file:/tmp/akrepo ./", "yes", None),
     "Trusted-in-a-sources-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nTrusted: true", "yes", None),
     "trusted-in-another-stanza-of-its-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: 1", "yes", None),
     "allow-insecure=yes": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "no", "true"),
     "allow-insecure=1": ("deb [allow-insecure=1] file:/tmp/akrepo ./", "no", "true"),
-    "allow-insecure-and-a-signature": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "yes", "true"),    # the rule's own case: not run on apt
     "allowed-by-apts-configuration": ("deb file:/tmp/akrepo ./", "no", "true"),         # Acquire::AllowInsecureRepositories
     "trusted=no": ("deb [trusted=no] file:/tmp/akrepo ./", "no", None),                 # apt then takes nothing of it as checked
     "nothing-signed-and-no-option": ("deb file:/tmp/akrepo ./", "no", None),            # lists apt has from before it refused them
@@ -801,6 +801,33 @@ def test_a_package_of_a_repository_apt_takes_without_a_key_is_not_signed_however
     v = pkgbackend.signed_by("pkg", "apt")
     assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
     # ...and beside it the distribution's own is still signed
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+# How it slipped past (pass 2 of the unit's own review): round 1 took `allow-insecure` for a second
+# way to go unchecked, and the one case that carried the rule, a signed repository with the option
+# on, was written from that belief and marked "not run on apt". Run, apt checks a signed repository
+# against its key whatever the option says, and says "no" itself of one that came unsigned: the rule
+# only turned checked copies Unverified, every apt package of a machine whose configuration has it
+# on. The class is a rule about another program that no run of that program carries: each case
+# here is apt's own answer (2.4.14, 2.8.3, 3.2.1), and scripts/channels_e2e.py asks the real apt.
+COULD_HAVE_COME_UNSIGNED = {
+    "the-entrys-allow-insecure": ("deb [allow-insecure=yes signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),
+    "a-sources-files-Allow-Insecure": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nAllow-Insecure: yes\n"
+                                       "Signed-By: /usr/share/keyrings/local.gpg", "yes", "true"),
+    "apts-configuration": ("deb [signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),     # Acquire::AllowInsecureRepositories
+}
+
+
+@pytest.mark.parametrize("case", list(COULD_HAVE_COME_UNSIGNED))
+def test_a_repository_apt_checked_against_its_key_is_signed_though_allow_insecure_would_have_let_it_come_unsigned(apt_says, case):
+    apt_says.local(*COULD_HAVE_COME_UNSIGNED[case])
+    if case == "apts-configuration":                # then apt says so of every repository
+        for row in apt_says.rows:
+            row["ALLOW_INSECURE"] = "true"
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "", "repository": "file:/tmp/akrepo"}
     apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
     assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
 

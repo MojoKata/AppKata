@@ -722,22 +722,23 @@ def apt_checked_repositories() -> dict[tuple[str, str], bool]:
     apt's own answer (`apt-get indextargets`) and never by AppKata's reading of the sources:
 
     - `$(TRUSTED)` must be "yes". apt says so of a repository whose signed Release file it checked,
-      and "no" of one it took unsigned (`allow-insecure`) or is told not to trust. It says "yes" as
-      well of one it is told to trust without a key, however the entry spells that, so:
-    - the entry (`$(SOURCESENTRY)`) must not set `trusted` at all (:func:`_sets_trusted`);
-    - `$(ALLOW_INSECURE)` must be left as its own name, as apt leaves a field it has nothing for:
-      it is "true" where the entry or apt's configuration lets the repository come unsigned.
+      and "no" of one it took unsigned or is told not to trust. It says "yes" as well of one it is
+      told to trust without a key, however the entry spells that, so:
+    - the entry (`$(SOURCESENTRY)`) must not set `trusted` at all (:func:`_sets_trusted`).
+
+    `allow-insecure`, the entry's or apt's configuration's, is no part of this: it lets a
+    repository come unsigned and doesn't stop apt checking one that is signed, and of one that did
+    come unsigned `$(TRUSTED)` is "no" (apt 2.4.14, 2.8.3 and 3.2.1, each run).
 
     Every target of the repository must pass. One that apt doesn't name here (its answer failed or
     was empty, or it knows no such field) is in no way shown to be checked, and counts as not."""
     out: dict[tuple[str, str], bool] = {}
     sets: dict[str, bool] = {}
-    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(TRUSTED)\t$(ALLOW_INSECURE)\t$(SOURCESENTRY)"]).splitlines():
-        site, suite, trusted, insecure, entry = (line.split("\t", 4) + [""] * 4)[:5]
+    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(TRUSTED)\t$(SOURCESENTRY)"]).splitlines():
+        site, suite, trusted, entry = (line.split("\t", 3) + [""] * 3)[:4]
         if entry not in sets:
             sets[entry] = _sets_trusted(entry)
-        checked = trusted == "yes" and insecure == "$(ALLOW_INSECURE)" and not sets[entry]
-        out[site, suite] = checked and out.get((site, suite), True)
+        out[site, suite] = trusted == "yes" and not sets[entry] and out.get((site, suite), True)
     return out
 
 

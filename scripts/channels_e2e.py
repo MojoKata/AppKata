@@ -65,6 +65,21 @@ def apt_repo_refresh(repo: str) -> None:
     sh(f"cd {repo} && apt-ftparchive packages . > Packages && apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/akrepo.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0")
 
 
+def apt_signed_repo(repo: str, name: str, key: str) -> None:
+    """A repository of one package, signed by a key made here and kept at `key`."""
+    home = tempfile.mkdtemp()
+    os.makedirs(repo)
+    deb(repo, name, "1.0-1")
+    sh(f"cd {repo} && apt-ftparchive packages . > Packages && apt-ftparchive release . > {home}/Release && mv {home}/Release .")
+    sh(f"gpg --homedir {home} --batch --quiet --passphrase '' --quick-gen-key 'akrepo <akrepo@localhost>' rsa2048 sign never")
+    sh(f"gpg --homedir {home} --batch --yes --clearsign -o {repo}/InRelease {repo}/Release && gpg --homedir {home} --export > {key}")
+
+
+def apt_update(sources: str, *options: str) -> None:
+    """`apt-get update` of one sources file alone, the lists of the others kept."""
+    sh(f"apt-get update -qq -o Dir::Etc::sourcelist={sources} -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 " + " ".join(options))
+
+
 def rpm(repo: str, name: str, version: str, requires: str = "") -> None:
     top = tempfile.mkdtemp()
     spec = f"{top}/{name}.spec"
@@ -116,6 +131,25 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
                 apt_repo_refresh(repo)
                 v = pkgbackend.signed_by("akdemo", mgr)
                 ok(f"nor one taken with [{option}]", (v["verified"], v["repository"]) == ("unverified", f"file:{repo}"), v)
+            # a repository signed by its own key: apt checks it though allow-insecure would have let it come unsigned
+            signed, key, entry = "/tmp/aksigned", "/usr/share/keyrings/aksigned.gpg", "/etc/apt/sources.list.d/aksigned.list"
+            apt_signed_repo(signed, "aksigned", key)
+            with open(entry, "w") as f:
+                f.write(f"deb [allow-insecure=yes signed-by={key}] file:{signed} ./\n")
+            apt_update(entry)
+            sh("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq aksigned >/dev/null")
+            v = pkgbackend.signed_by("aksigned", mgr)
+            ok("a package of a signed repository is Verified with [allow-insecure=yes] on its entry (R16.3.6)", v["verified"] == "signed", v)
+            with open(entry, "w") as f:
+                f.write(f"deb [signed-by={key}] file:{signed} ./\n")
+            with open("/etc/apt/apt.conf.d/99akinsecure", "w") as f:
+                f.write('Acquire::AllowInsecureRepositories "true";\n')
+            apt_update(entry)
+            v = pkgbackend.signed_by("aksigned", mgr)
+            ok("and with Acquire::AllowInsecureRepositories on in apt's configuration", v["verified"] == "signed", v)
+            v = pkgbackend.signed_by("akdemo", mgr)
+            ok("where the package of the one taken without a key still isn't", (v["verified"], v["repository"]) == ("unverified", f"file:{repo}"), v)
+            os.remove("/etc/apt/apt.conf.d/99akinsecure")
         # a newer version appears in the repository
         if mgr == "apt":
             deb(repo, "akdemo", "2.0-1")

@@ -152,9 +152,11 @@ gives none):
 - A package, when a repository whose key the package manager checks offers the installed version.
   A version no repository offers (one installed from a file, or one its repository has since
   replaced) was checked against nothing AppKata can tell. Nor was a package of a repository that
-  apt is told to take without a key (its `trusted` or `allow-insecure` option, however the entry
-  spells it), or of one apt doesn't itself say it checked: AppKata asks apt
-  (`apt-get indextargets`), and what apt doesn't say counts as not checked.
+  apt is told to trust without a key (its `trusted` option, however the entry spells it), of one
+  apt took unsigned, or of one apt doesn't itself say it checked: AppKata asks apt
+  (`apt-get indextargets`), and what apt doesn't say counts as not checked. A repository apt did
+  check against its key stays Verified where `allow-insecure`, the entry's or apt's own setting,
+  would have let it come unsigned.
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
