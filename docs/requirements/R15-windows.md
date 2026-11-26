@@ -130,7 +130,11 @@ prompt names Windows PowerShell and not the installer. The script:
    its path, takes it only when it is a file on a disk of the length AppKata checked, and copies
    no more than that length.
 2. Compares the copy's SHA-256 with the one AppKata took of the download. When they differ, or
-   the download was no such file, it starts nothing, and the install fails with R4.4's message.
+   what it opened was no such file, it starts nothing, and the install fails with R4.4's message.
+   A download that can't be opened as a file (it is gone, a folder is at its path, or Windows
+   refuses to open it) isn't known to have changed: nothing is started, and the install fails with
+   "Windows couldn't make the administrators' copy of the installer or start it; nothing was
+   installed".
 3. Starts the copy through the shell (R15.2), an `.msi` with Windows' own `msiexec`, waits, and
    hands back its exit code (R15.7.3). Then it removes the folder.
 

@@ -527,7 +527,7 @@ def installer_road(windows_road, monkeypatch):
     """The installers' road on any OS: no signature, no Uninstall entries, and Windows' own start of a
     program replaced by `started`, the calls, each answered with `road["code"]` or, for the script
     that runs with administrator rights, by what that script would find: the file's own SHA-256
-    compared with the one it was given."""
+    compared with the one it was given, or that it couldn't open it."""
     import hashlib
     road = {"started": [], "code": 0, "swap": None}
 
@@ -538,8 +538,11 @@ def installer_road(windows_road, monkeypatch):
         v = _elevated_values(args)
         if road["swap"]:
             road["swap"](v["src"])
-        with open(v["src"], "rb") as f:
-            return road["code"] if hashlib.sha256(f.read()).hexdigest() == v["want"] else w.CHANGED
+        try:
+            with open(v["src"], "rb") as f:
+                return road["code"] if hashlib.sha256(f.read()).hexdigest() == v["want"] else w.CHANGED
+        except OSError:
+            return w.NOT_STARTED                                  # what it can't open as a file, it makes no copy of
     monkeypatch.setattr(w, "shell_execute", shell_execute)
     monkeypatch.setattr(w, "authenticode", lambda path: ("NotSigned", ""))
     monkeypatch.setattr(w, "uninstall_entries", lambda: {})
@@ -809,3 +812,68 @@ def test_the_administrators_side_opens_the_download_once_follows_no_link_and_cop
     assert w.run_script_elevated(w.elevated_script(str(tmp_path), sha, len(data), args, False)) == w.NOT_STARTED and not ran.exists()
     # and the checked file itself is copied whole and started: one of more than one read (cmd.exe with 3 MB after it)
     assert w.run_elevated(str(longer), hashlib.sha256(longer.read_bytes()).hexdigest(), args) == 0 and ran.exists()
+
+
+# How it slipped past (pass 3 of the unit's own review, P3-4): round 2 gave R15.7.5's step 2 new
+# words for which message a refused download gets, and the tests above ask the code for its message
+# and the script for its exit code, each by a text of the test's own. Nothing read the requirement,
+# so its "no such file" took in a download that can't be opened at all, which the code answers
+# with the other message. The class is a requirement that says which message a failure gets with
+# no test asking it: this one takes each message from the requirement's own words.
+def _gone(path):
+    os.remove(path)
+
+
+def _a_folder(path):
+    os.remove(path)
+    os.mkdir(path)
+
+
+@pytest.mark.parametrize("when", ["before Windows is asked", "once the script runs"])
+@pytest.mark.parametrize("swap, case", [(_gone, "it is gone"), (_a_folder, "a folder is at its path"), (_replaced, "")],
+                         ids=["gone", "a folder", "other bytes"])
+def test_a_download_that_cant_be_opened_as_a_file_fails_with_the_message_r15_7_5_gives_it(installer_road, env, server, tmp_path, monkeypatch,
+                                                                                         swap, case, when):
+    """What R15.7.5's step 2 says of a download that can't be opened as a file, and of one whose
+    bytes are others, is what the install fails with: where AppKata reads the file once more
+    before Windows is asked, and where the script that runs with administrator rights opens it
+    (here its stand-in, which answers an open that fails as the script's text does)."""
+    import re
+    import reqdocs
+    from appkata_core import install
+    r4, r15 = (re.sub(r"\s+", " ", reqdocs.item(rid)) for rid in ("R4.4", "R15.7.5"))
+    step = r15[r15.index(" 2. "):r15.index(" 3. ")]
+    changed = re.search(r"A file that changed after AppKata's check is not installed: \"([^\"]+)\"", r4).group(1)
+    assert re.search(r"When they differ, or what it opened was no such file, it starts nothing, and the install fails with R4\.4's message\.", step)
+    unopened = re.search(r"A download that can't be opened as a file \(([^)]+)\).*?: nothing is started, and the install fails with \"([^\"]+)\"", step)
+    assert unopened, step
+    assert not case or case in re.split(r", or |, ", unopened.group(1))
+    said = unopened.group(2) if case else changed
+    assert {changed, unopened.group(2)} == {_refusal(w.CHANGED), _refusal(w.NOT_STARTED)} and said == _refusal(w.NOT_STARTED if case else w.CHANGED)
+
+    root, base = server
+    (root / "setup.msi").write_bytes(b"MZ, an installer as its release published it")
+    a = Asset("setup.msi", f"{base}/setup.msi", 44)
+    if when == "before Windows is asked":
+        run_elevated = w.run_elevated
+        monkeypatch.setattr(w, "run_elevated", lambda file, *args, **how: (swap(file), run_elevated(file, *args, **how))[1])
+    else:
+        installer_road["swap"] = swap
+    with pytest.raises(install.InstallError) as e:
+        install.install(env, {**APP, "installVersion": "1.0"}, a, "msi", [a],
+                        portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
+    assert str(e.value) == said
+    assert len(installer_road["started"]) == int(when != "before Windows is asked") and not env.one("SELECT 1 FROM installs")
+    # the script itself: it leaves with NOT_STARTED unless it gets as far as comparing, and an open that fails gets no further
+    script = w.elevated_script("C:\\d\\setup.msi", "ab" * 32, 44, "", True)
+    steps = [script.index(part) for part in ("$code = %d\ntry {" % w.NOT_STARTED, "::CreateFileW($src,", "if ($from.IsInvalid) { throw 'open' }",
+                                             "if ($k::GetFileType($from) -eq 1) {", "if ($got -ne $want) { $code = %d }" % w.CHANGED)]
+    assert steps == sorted(steps) and script.count("$code = %d" % w.CHANGED) == 1
+
+
+def _refusal(code: int) -> str:
+    """The message an install fails with for what run_elevated() says of a file it didn't start."""
+    from appkata_core import install
+    with pytest.raises(install.InstallError) as e:
+        install._elevated_refusal(code)
+    return str(e.value)
