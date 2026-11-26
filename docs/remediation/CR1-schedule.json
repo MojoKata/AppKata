@@ -1766,7 +1766,8 @@
     "docs/requirements/R17-app-sandboxing/R17.16-the-audit.md",
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
     "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md",
-    "tests/test_docs_facts.py"
+    "tests/test_docs_facts.py",
+    "docs/architecture/A1-app-sandboxing/A1.12-decisions.md"
    ]
   },
   {
