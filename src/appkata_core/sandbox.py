@@ -547,6 +547,23 @@ _CHROMIUM_FAMILY = (("chromium",), ("google-chrome",), ("google-chrome-beta",), 
                     ("BraveSoftware", "Brave-Browser"), ("microsoft-edge",), ("vivaldi",), ("opera",))
 
 
+def _moved(roots: list[tuple[str, str]], home: str) -> list[tuple[str, str]]:
+    """`roots`, and after them each one's place where the environment moves it (R17.3.1): a root
+    under ~/.config or ~/.local/share is under $XDG_CONFIG_HOME or $XDG_DATA_HOME too, where the
+    variable names another folder. Both places, since a desktop reads the default wherever the
+    variable isn't set for it. CR1.5-17: every root was joined to `~`, so for a user who moved them
+    the real autostart folder, systemd user units, app-menu entries or keyring were where no list
+    looked, and a grant of that place was not refused. The variables are AppKata's own, read when a
+    grant is judged and when a launcher is written; one that is no full path is ignored, as the
+    desktop ignores it."""
+    out = list(roots)
+    for var, default in (("XDG_CONFIG_HOME", os.path.join(home, ".config")), ("XDG_DATA_HOME", os.path.join(home, ".local", "share"))):
+        base = os.environ.get(var) or ""
+        if os.path.isabs(base) and os.path.normpath(base) != os.path.normpath(default):
+            out += [(os.path.join(os.path.normpath(base), os.path.relpath(r, default)), what) for r, what in roots if r.startswith(default + os.sep)]
+    return list(dict.fromkeys(out))
+
+
 class Own(NamedTuple):
     """AppKata's own folders beside the install folder of the app a grant is judged for, as Settings
     and the install records name them (this module reads neither): its callers pass one wherever
@@ -584,6 +601,7 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     roots = [(r, "AppKata's installed apps") for r in dict.fromkeys([apps_root or apps_dir(), *others, apps_dir()])]
     commands = sorted({os.path.expanduser(c) for c in (*(own or Own()).commands, command_dir_default()) if c})
     roots += [(c, "the command links folder, which is on your PATH") for c in commands if not above_home(c)]
+    areas = len(roots) + 1             # AppKata's own areas, the data folder the last of them
     roots += [(data_dir(), "AppKata's own data and the apps' private homes"),
              (h(".config", "autostart"), "autostart entries"),
              (h(".config", "autostart-scripts"), "autostart scripts"),
@@ -655,7 +673,16 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     # extension's request; Firefox's folder is above, the Chromium family keeps theirs per profile
     # folder under ~/.config (named one by one: the match is on exact roots, not patterns)
     roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in _CHROMIUM_FAMILY]
-    return roots
+    # ...and where the environment moves them (CR1.5-17): the folders of the XDG variables, the keys
+    # in $GNUPGHOME and zsh's startup files in $ZDOTDIR. AppKata's own areas, first in the list, are
+    # where they are (the data folder follows XDG_DATA_HOME by itself, platform.data_dir). A
+    # $GNUPGHOME that is the home folder or above it adds nothing, as with `own`'s folders.
+    roots = roots[:areas] + _moved(roots[areas:], home)
+    if os.path.isabs(keys := os.environ.get("GNUPGHOME") or "") and not above_home(keys):
+        roots.append((os.path.normpath(keys), "GPG keys"))
+    if os.path.isabs(zsh := os.environ.get("ZDOTDIR") or ""):
+        roots += [(os.path.join(os.path.normpath(zsh), f), "your shell's startup files") for f in (".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout")]
+    return list(dict.fromkeys(roots))
 
 
 def _bus_keys(address: str):
@@ -853,25 +880,26 @@ def _secret_roots() -> list[tuple[str, str]]:
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
     browser = "a browser's profiles and saved logins"
-    return [(h(".mozilla", "firefox"), "Firefox's profiles and saved logins"),
-            (h(".config", "mozilla", "firefox"), "Firefox's profiles and saved logins"),      # where it keeps them by the XDG rule
-            *[(h(fork), browser) for fork in (".librewolf", ".waterfox", ".floorp", ".zen")],
-            (h(".local", "share", "torbrowser"), "Tor Browser and its profile"),
-            *[(h(".config", *parts), browser) for parts in _CHROMIUM_FAMILY],
-            (h(".thunderbird"), "Thunderbird's mail and saved logins"),
-            (h(".config", "evolution"), "Evolution's mail and accounts"),
-            (h(".local", "share", "evolution"), "Evolution's mail and accounts"),
-            (h(".config", "goa-1.0"), "your online accounts' sign-ins"),
-            (h(".var", "app"), "other apps' sandboxed data (Flatpak)"),
-            (h("snap"), "other apps' sandboxed data (Snap)"),
-            (h(".aws"), "cloud credentials"), (h(".azure"), "cloud credentials"), (h(".config", "gcloud"), "cloud credentials"),
-            (h(".kube"), "cluster credentials"), (h(".docker"), "registry credentials"),
-            (h(".config", "gh"), "your GitHub token"), (h(".git-credentials"), "your git passwords"),
-            (h(".netrc"), "saved passwords for servers"), (h(".npmrc"), "registry tokens"), (h(".pypirc"), "registry tokens"),
-            (h(".cargo", "credentials.toml"), "registry tokens"), (h(".cargo", "credentials"), "registry tokens"),
-            (h(".config", "rclone"), "cloud storage tokens"), (h(".vault-token"), "a Vault token"),
-            (h(".password-store"), "your password store"), (h(".local", "share", "keyrings"), "your keyring"),
-            (h(".local", "share", "kwalletd"), "your KDE wallet")]
+    roots = [(h(".mozilla", "firefox"), "Firefox's profiles and saved logins"),
+             (h(".config", "mozilla", "firefox"), "Firefox's profiles and saved logins"),      # where it keeps them by the XDG rule
+             *[(h(fork), browser) for fork in (".librewolf", ".waterfox", ".floorp", ".zen")],
+             (h(".local", "share", "torbrowser"), "Tor Browser and its profile"),
+             *[(h(".config", *parts), browser) for parts in _CHROMIUM_FAMILY],
+             (h(".thunderbird"), "Thunderbird's mail and saved logins"),
+             (h(".config", "evolution"), "Evolution's mail and accounts"),
+             (h(".local", "share", "evolution"), "Evolution's mail and accounts"),
+             (h(".config", "goa-1.0"), "your online accounts' sign-ins"),
+             (h(".var", "app"), "other apps' sandboxed data (Flatpak)"),
+             (h("snap"), "other apps' sandboxed data (Snap)"),
+             (h(".aws"), "cloud credentials"), (h(".azure"), "cloud credentials"), (h(".config", "gcloud"), "cloud credentials"),
+             (h(".kube"), "cluster credentials"), (h(".docker"), "registry credentials"),
+             (h(".config", "gh"), "your GitHub token"), (h(".git-credentials"), "your git passwords"),
+             (h(".netrc"), "saved passwords for servers"), (h(".npmrc"), "registry tokens"), (h(".pypirc"), "registry tokens"),
+             (h(".cargo", "credentials.toml"), "registry tokens"), (h(".cargo", "credentials"), "registry tokens"),
+             (h(".config", "rclone"), "cloud storage tokens"), (h(".vault-token"), "a Vault token"),
+             (h(".password-store"), "your password store"), (h(".local", "share", "keyrings"), "your keyring"),
+             (h(".local", "share", "kwalletd"), "your KDE wallet")]
+    return _moved(roots, home)             # ...and where $XDG_CONFIG_HOME and $XDG_DATA_HOME put them (CR1.5-17)
 
 
 def secret_folder(path: str) -> str:

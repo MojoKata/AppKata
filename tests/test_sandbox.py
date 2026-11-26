@@ -2402,6 +2402,118 @@ def test_the_command_links_folder_and_the_default_install_folder_are_never_share
     assert not {"/", "/home/kata"} & (set(cwd_list) | set(never))
 
 
+# CR1.5-17 (#392): every root of both lists was joined to `~`. A user who moved the XDG folders, the
+# GnuPG home or zsh's has the real autostart folder, systemd units, app-menu entries, keys and keyring
+# where no list looked, and a grant of that place was an ordinary folder. Read only, never run: no
+# test set one of the variables to anything but the default place. Each variable → the moved places
+# refused, and why; the default places stay refused beside them, since a desktop reads the default
+# wherever the variable isn't set for it.
+MOVED = {"XDG_CONFIG_HOME": "/home/kata/cfg", "XDG_DATA_HOME": "/home/kata/data", "GNUPGHOME": "/home/kata/keys/gnupg", "ZDOTDIR": "/home/kata/cfg/zsh"}
+WM = "your window manager's configuration, which starts programs"
+MOVED_PROTECTED = {
+    "~/cfg/autostart": "autostart entries", "~/cfg/autostart/x.desktop": "autostart entries", "~/cfg/systemd/user": "systemd user units",
+    "~/cfg/environment.d": "your login environment", "~/cfg/git": "your git configuration (hooks, aliases)", "~/cfg/fish": "your shell's startup files",
+    "~/cfg/sway": WM, "~/cfg/bash_completion": "your shell's startup files", "~/cfg/google-chrome/NativeMessagingHosts": "programs browser extensions may start",
+    "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
+    "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
+    "~/data/flatpak": "Flatpak's user installation", "~/data/gnome-shell/extensions": "GNOME Shell extensions",
+    "~/data/cinnamon/applets": "Cinnamon's applets, desklets, extensions and panel launchers", "~/data/nemo/actions": "file-manager actions",
+    "~/data/bash-completion": "your shell's completion scripts", "~/data/appkata": "AppKata's own data and the apps' private homes",
+    "~/keys/gnupg": "GPG keys", "~/keys/gnupg/private-keys-v1.d": "GPG keys", "~/keys": "a folder above GPG keys",
+    "~/cfg/zsh/.zshrc": "your shell's startup files", "~/cfg/zsh/.zshenv": "your shell's startup files", "~/cfg/zsh/.zlogin": "your shell's startup files",
+    # the default places, as before
+    "~/.config/autostart": "autostart entries", "~/.config/systemd/user": "systemd user units", "~/.local/share/applications": "app-menu entries",
+    "~/.gnupg": "GPG keys", "~/.zshrc": "your shell's startup files", "~/.config/sway": WM, "~/.config": "a folder above autostart entries"}
+MOVED_SECRET = {
+    "~/data/keyrings": "your keyring", "~/data/kwalletd": "your KDE wallet", "~/data/evolution/mail": "Evolution's mail and accounts",
+    "~/cfg/gh": "your GitHub token", "~/cfg/gcloud": "cloud credentials", "~/cfg/rclone": "cloud storage tokens",
+    "~/cfg/google-chrome/Default": "a browser's profiles and saved logins", "~/cfg/goa-1.0": "your online accounts' sign-ins",
+    "~/cfg/mozilla/firefox": "Firefox's profiles and saved logins",
+    "~/.local/share/keyrings": "your keyring", "~/.config/gh": "your GitHub token", "~/.config/google-chrome/Default": "a browser's profiles and saved logins"}
+MOVED_SHARED = ["~/cfg-old", "~/data2/applications", "~/keys2", "~/Notes", "~/cfg/zsh/plugins", "~/cfg/obsidian", "~/data/fonts", "/media/usb"]
+
+
+def test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_it_and_at_its_default_place(a_users_home, monkeypatch):
+    before = sb._protected_roots(), sb._secret_roots()
+    for p in [*MOVED_PROTECTED, *MOVED_SECRET]:
+        if not p.startswith(("~/.", "~/data/appkata")):
+            assert not sb.protected_folder(p) and not sb.secret_folder(p), p          # an ordinary folder, while nothing is moved
+    for var, where in MOVED.items():
+        monkeypatch.setenv(var, where)
+    for p, why in MOVED_PROTECTED.items():
+        assert sb.protected_folder(p) == why, (p, sb.protected_folder(p))
+    for p, why in MOVED_SECRET.items():
+        assert sb.secret_folder(p) == why and not sb.protected_folder(p), (p, sb.secret_folder(p))
+    for p in MOVED_SHARED:
+        assert not sb.protected_folder(p) and not sb.secret_folder(p), p
+    # a review's line: the never-shared ones refused in the chips, the picker and the launcher, the secrets by strip_secrets
+    asked = [p for p in MOVED_PROTECTED if p.startswith(("~/cfg", "~/data", "~/keys"))]
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": ", ".join(asked + list(MOVED_SECRET)) + ", ~/Notes"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    gs, secret = sb.strip_secrets(gs)
+    assert source == "reviews" and {p for p, _ in secret} >= set(MOVED_SECRET)
+    chips = sb.summary(gs)
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", gs, apps_root="/home/kata/bin/apps")
+    for p in asked:
+        if not sb.secret_folder(p):               # ~/cfg and ~/cfg/google-chrome are above a secret too, which a review is refused first
+            assert f"{p} · refused: {MOVED_PROTECTED[p]}" in chips and f"# Refused folder grant {p}: {MOVED_PROTECTED[p]} (R17.3.1)." in text
+    assert [w for w in shlex.split(text.split("; do guard")[1].split("\nbwrap ")[0], comments=True) if w.startswith("/home/kata/")] == ["/home/kata/Notes"] * 3
+    kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {p: "rw" for p in [*asked, "~/Notes"]}})
+    assert set(kept["folders"]) == {"~/Notes"} and dict(refused) == {p: MOVED_PROTECTED[p] for p in asked}
+    # a command-line tool's launcher holds the moved places in its two lists (R17.3.3, R17.6.2)
+    tool = sb.build_launcher("tool", "Tool", "/home/kata/bin/apps/tool/1", "bin/tool", sb.resolve_template("cli-tool"), apps_root="/home/kata/bin/apps",
+                             forward="/helper.py")
+    for root in ("/home/kata/cfg/autostart", "/home/kata/data/applications", "/home/kata/keys/gnupg", "/home/kata/cfg/zsh/.zshrc",
+                 "/home/kata/.config/autostart", "/home/kata/.gnupg"):
+        assert tool.count(root + " ") == 3, root
+    # the lists are as they were with the variables unset, set to the default place, empty, or no full path
+    for var, where in {"XDG_CONFIG_HOME": "/home/kata/.config", "XDG_DATA_HOME": "/home/kata/.local/share/", "GNUPGHOME": "/home/kata/.gnupg",
+                       "ZDOTDIR": "/home/kata"}.items():
+        monkeypatch.setenv(var, where)
+    assert (sb._protected_roots(), sb._secret_roots()) == before
+    # (but AppKata's own data folder, which is where platform.data_dir() says, whatever it makes of the variable)
+    places = lambda roots: [r for r in roots if r[1] != "AppKata's own data and the apps' private homes"]      # noqa: E731
+    for value in ("", "cfg", "~/cfg", "./x"):
+        for var in MOVED:
+            monkeypatch.setenv(var, value)
+        assert (places(sb._protected_roots()), sb._secret_roots()) == (places(before[0]), before[1]), value
+    # a GnuPG home that is the home folder, or above it, makes no folder of the home the keys'
+    monkeypatch.setenv("GNUPGHOME", "/home/kata")
+    assert places(sb._protected_roots()) == places(before[0]) and not sb.protected_folder("~/Notes")
+
+
+def test_the_startup_pass_writes_a_launcher_again_once_a_variable_moves_a_never_shared_folder(fake_home, tmp_path, monkeypatch):
+    # The lists are in the launcher's text (a tool's working-directory rule, the file-argument
+    # helper's), as AppKata's own environment named the folders when it wrote it. Started with a
+    # variable changed, AppKata's startup pass finds the text stale and writes it again (R17.4).
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "GNUPGHOME", "ZDOTDIR"):
+        monkeypatch.delenv(var, raising=False)
+    home, root = str(fake_home), fake_home / "bin" / "apps"
+    target = root / "demo"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "demo"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/demo"}, "links": [], "files": [], "target": str(target)}
+    app = {"name": "Demo", "sandbox": sb.to_json(sb.resolve_template("cli-tool"))}
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False)
+    install._activate(rec, app, port, str(target))
+    assert install.launcher_is_current(rec, app, port) and f"{home}/cfg/autostart" not in open(target / "run").read()
+    for var, where in (("XDG_CONFIG_HOME", f"{home}/cfg"), ("XDG_DATA_HOME", f"{home}/data"), ("GNUPGHOME", f"{home}/keys"), ("ZDOTDIR", f"{home}/zsh")):
+        monkeypatch.setenv(var, where)
+        assert not install.launcher_is_current(rec, app, port), var
+        install._activate(rec, app, port, str(target))
+        assert install.launcher_is_current(rec, app, port)
+    text = open(target / "run").read()
+    for moved in (f"{home}/cfg/autostart", f"{home}/data/applications", f"{home}/keys", f"{home}/zsh/.zshrc", f"{home}/.config/autostart"):
+        assert moved + " " in text, moved
+
+
 # CR1.5-45 (#701): ...and it held one install folder, the app's own. An app stays where it was
 # installed when the setting changes (R4.3.1), so apps are in two folders, and an app in one could
 # be granted the other read-write: another app's program and launcher. Each app's install folder
