@@ -2400,6 +2400,78 @@ def test_the_command_links_folder_and_the_default_install_folder_are_never_share
     assert not {"/", "/home/kata"} & (set(cwd_list) | set(never))
 
 
+# CR1.5-45 (#701): ...and it held one install folder, the app's own. An app stays where it was
+# installed when the setting changes (R4.3.1), so apps are in two folders, and an app in one could
+# be granted the other read-write: another app's program and launcher. Each app's install folder
+# and the folders the others are in → what it is refused. The two are told apart by where the app
+# asked about is (`apps_root`); `own.roots` is every folder, the same for both.
+TWO_ROOTS = ("/home/kata/Apps", "/home/kata/OldApps")
+
+
+@pytest.mark.parametrize("mine,theirs", [TWO_ROOTS, TWO_ROOTS[::-1]], ids=["an app in the new folder", "an app in the old folder"])
+def test_an_app_in_one_install_folder_is_never_given_another_folder_apps_are_installed_in(mine, theirs, a_users_home):
+    own = sb.Own(roots=TWO_ROOTS)
+    other = "~/" + os.path.basename(theirs)
+    asked = [other, other + "/", other + "/victim", other + "/victim/run", other + "/victim/1.0/bin", "/home/kata/" + os.path.basename(theirs)]
+    named = sorted({sb.folder_path(p) for p in asked})
+    # a review's line, through config_from_review and choose
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": ", ".join(asked) + ", ~/Notes"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    assert source == "reviews" and set(gs["folders"]) == {*named, "~/Notes"}
+    for p in asked:
+        assert sb.protected_folder(p, mine, own) == APPS, p
+        assert sb.protected_folder(p, mine) == ""                      # told of its own folder alone, as it was: shared
+    chips = sb.summary(gs, mine, own=own)
+    text = sb.build_launcher("app", "App", mine + "/app/1", "bin/app", gs, apps_root=mine, own=own)
+    for p in named:
+        assert f"{p} · refused: {APPS}" in chips and f"# Refused folder grant {p}: {APPS} (R17.3.1)." in text
+    assert "bind-try " + theirs not in text and "bind-try /home/kata/Notes /home/kata/Notes " in text
+    # the user's own pick, as the Sandbox dialog saves it
+    kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {p: "rw" for p in [*named, "~/Notes"]}}, mine, own)
+    assert set(kept["folders"]) == {"~/Notes"} and refused == [(p, APPS) for p in named]
+    # a command-line tool installed in one is not given the other to work in, nor a file in it by its name
+    tool = sb.build_launcher("tool", "Tool", mine + "/tool/1", "bin/tool", sb.resolve_template("cli-tool"), apps_root=mine, own=own, forward="/helper.py")
+    cwd_list = shlex.split(next(line for line in tool.splitlines() if line.startswith('for d in "$hm" ')).split('"$hm" ', 1)[1].split(' "$rt"')[0])
+    assert {mine, theirs, "/home/kata/bin/apps"} <= set(cwd_list)
+    assert tool.count(theirs) == 3 and tool.count(mine + " ") >= 3      # the two lists of the tool's rule, and the helper's
+    # an install folder that is the home folder, or above it, adds nothing: every folder would be AppKata's
+    assert sb.protected_folder("~/Notes", mine, sb.Own(roots=("/home/kata", "/", *TWO_ROOTS))) == ""
+    assert sb.protected_folder(other, mine, sb.Own(roots=("/home/kata", "/", *TWO_ROOTS))) == APPS
+
+
+def test_a_launcher_an_install_writes_keeps_out_the_other_folders_apps_are_installed_in(fake_home, tmp_path, monkeypatch):
+    # through the code that tells the sandbox: install.Portable as the backend fills it in (`others`)
+    from appkata_core import install
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    home, root = str(fake_home), fake_home / "Apps"
+    target = root / "demo"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "demo"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/OldApps/victim": "rw", "+~/Projects": "rw"}})
+    rec = {"current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/demo"}, "links": [], "files": [], "target": str(target),
+           "root": str(root)}
+    app = {"name": "Demo", "sandbox": sb.to_json(gs)}
+    both = sb.Own(roots=(str(root), f"{home}/OldApps"))
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False, others=both)
+    assert port.own == both
+    install._activate(rec, app, port, str(target))
+    text = open(target / "run").read()
+    assert f"# Refused folder grant ~/OldApps/victim: {APPS} (R17.3.1)." in text and f"bind-try {home}/OldApps" not in text
+    assert f"bind-try {home}/Projects {home}/Projects " in text
+    monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
+    assert install.launcher_is_current(rec, app, port)
+    # an install into a third folder, or Settings naming one: the startup pass writes this launcher again (R17.4)
+    third = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False, others=both._replace(roots=(*both.roots, f"{home}/Third")))
+    assert not install.launcher_is_current(rec, app, third)
+    # ...and an update keeps the app where it is, told of the same folders (install._where_it_is)
+    moved = install.Portable(folder=f"{home}/Third", command_dir="", others=both)
+    assert install._where_it_is(rec, moved).root == str(root) and install._where_it_is(rec, moved).own == both
+
+
 def test_a_review_cannot_grant_the_command_links_folder_and_a_launcher_an_install_writes_keeps_it_out(fake_home, tmp_path, monkeypatch):
     # the finding's own road, through the code that tells the sandbox where the links are: an install
     # with the install folder and the command links folder set elsewhere (install.Portable, as the

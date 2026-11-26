@@ -498,7 +498,8 @@ class Portable:
         chips and the launcher are told with it. They are `others`, which whoever knows Settings
         and the other installs fills in, and the folder this app's own command link goes in: the
         command links folder was in no never-shared list, so one set elsewhere than ~/bin could be
-        granted, or a tool run in it given it (CR1.5-37)."""
+        granted, or a tool run in it given it (CR1.5-37). The other install folders AppKata has
+        apps in are `others`' to name (CR1.5-45)."""
         return self.others._replace(commands=tuple(dict.fromkeys(c for c in (*self.others.commands, self.command_folder) if c)))
 
 

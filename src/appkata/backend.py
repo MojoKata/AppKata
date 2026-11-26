@@ -1735,13 +1735,19 @@ class Backend(QObject):
         not the app has a link there (the other apps' links are), and each folder an installed app's
         command link is in today, which is an earlier setting's until the app is next updated
         (CR1.5-37: no list had the command links folder, so one set elsewhere than ~/bin could be
-        granted to an app, which then replaces a command the user runs)."""
+        granted to an app, which then replaces a command the user runs). And every install folder
+        AppKata has apps in, with the one Settings name for the next install: an app keeps the
+        folder it was installed in (R4.3.1), so there can be several, and an app in one was told
+        of its own alone and could be granted another's (CR1.5-45)."""
         from appkata_core.platform import command_dir_default
         commands = {install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder}
+        roots = {self.portable().root}
         for row in self.db.all("SELECT record FROM installs"):
             rec = json.loads(row["record"] or "{}")
             commands |= {os.path.dirname(link) for link in rec.get("links", []) if os.path.dirname(link) != rec.get("target")}
-        return sandbox.Own(commands=tuple(sorted(commands)))
+            if rec.get("current") and rec.get("root"):
+                roots.add(rec["root"])
+        return sandbox.Own(commands=tuple(sorted(commands)), roots=tuple(sorted(roots)))
 
     def _recommended(self, url: str) -> dict:
         """Install options recommended in the Trusts' AppKata.md files (R10.3.1): for each

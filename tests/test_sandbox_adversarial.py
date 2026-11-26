@@ -219,6 +219,36 @@ def test_a_place_code_runs_from_later_is_refused_and_never_bound_however_it_is_w
         assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == [named]
 
 
+# CR1.5-45 (#701): another folder AppKata has apps in (the install folder before Settings changed),
+# written the ways a line can write it, with what an app would want of it: the other app's program
+# and launcher. An app was told of its own install folder alone; all refused now, none ever a bind.
+OTHER_ROOT = ["~/OldApps", "~/OldApps/", "~//OldApps", "/home/kata/OldApps", "~/OldApps/victim", "~/OldApps/victim/run", "~/OldApps/victim/1.0/bin/victim",
+              "~/./OldApps/victim/", "~/Notes/../OldApps/victim", "~/OldApps/it's", "~/OldApps/$(id)", "~/OldApps/a b/run"]
+
+
+@pytest.mark.parametrize("path", OTHER_ROOT, ids=[repr(p) for p in OTHER_ROOT])
+def test_another_folder_apps_are_installed_in_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps, own = "/home/kata/Apps", sb.Own(roots=("/home/kata/Apps", "/home/kata/OldApps"))
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+~/Notes": mode}})
+        assert sb.protected_folder(path, apps, own) == "AppKata's installed apps", path
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps, own=own)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        words = _bwrap_words(text)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/home/kata/Notes", "/home/kata/Notes") in grants   # the folder beside it, as asked
+        assert not [g for g in grants if any("/OldApps" in w for w in g)], grants      # and nothing of the other apps'
+        named = sb.folder_path(path)
+        assert any(c.startswith(named + " · refused") for c in sb.summary(gs, apps, own=own))
+        kept, refused = sb.strip_protected(gs, apps, own)
+        assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == [named]
+
+
 def test_parse_folders_keeps_every_hostile_path_whole():
     for path in HOSTILE:
         if "," in path:

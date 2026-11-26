@@ -859,11 +859,11 @@ def test_the_sandbox_is_told_the_command_links_folder_of_settings_and_of_every_i
     source(be, published("1.0"))
     folders = ("~/tools", "~/old-links", "~/bin/mine", "~/Notes")
     # the defaults: the links are in ~/bin
-    assert be._app_options(URL).own == sandbox.Own(commands=(f"{home}/bin",))
+    assert be._app_options(URL).own.commands == (f"{home}/bin",)
     assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", "~/old-links", "~/tools"]
     # Settings name another folder: refused from then on, for this app's chips, its picker and its launcher
     be.setPref("commandDir", "~/tools")
-    assert be._app_options(URL).own == sandbox.Own(commands=(f"{home}/tools",))
+    assert be._app_options(URL).own.commands == (f"{home}/tools",)
     assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", "~/old-links", f"~/tools · refused: {LINKS}"]
     # ...and with the app's own command link turned off, since the other apps' links are there
     be.db.x("INSERT OR REPLACE INTO app_settings(url, install) VALUES(?,?)", (URL, json.dumps({"commandLink": False})))
@@ -873,7 +873,7 @@ def test_the_sandbox_is_told_the_command_links_folder_of_settings_and_of_every_i
     installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
                              "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo",
                              "links": [f"{home}/bin/apps/demo/Demo.AppImage", f"{home}/old-links/demo"]})
-    assert be._app_options(URL).own == sandbox.Own(commands=(f"{home}/old-links", f"{home}/tools"))
+    assert be._app_options(URL).own.commands == (f"{home}/old-links", f"{home}/tools")
     assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", f"~/old-links · refused: {LINKS}", f"~/tools · refused: {LINKS}"]
     # the user's own pick in the Sandbox dialog is dropped the same way, and said (Backend.setSandbox)
     said = []
@@ -881,3 +881,41 @@ def test_the_sandbox_is_told_the_command_links_folder_of_settings_and_of_every_i
     be.setSandbox(URL, {"custom": sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/tools": "rw", "+~/Notes": "rw"}}))})
     assert [t for k, t in said if k == "error"] == [f"Not shared: ~/tools ({LINKS}). AppKata never gives an app these folders."]
     assert set(be.sandboxInfo(URL)["grants"]["folders"]) == {"~/Notes"}
+
+
+# ---------------------------------------------------------------- every install folder (R17.3.1; CR1, #701)
+URL2 = "https://github.com/example/other"
+APPS = "AppKata's installed apps"
+
+
+def test_the_sandbox_is_told_every_install_folder_apps_are_in_and_the_one_settings_name(be):
+    # CR1.5-45: an app stays in the folder it was installed in when the setting changes (R4.3.1), so
+    # apps are in two, and the app in one was told of its own folder alone
+    home = os.path.expanduser("~")
+    source(be, published("1.0"))
+    installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
+                             "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo", "links": []})
+    assert be._app_options(URL).own.roots == (f"{home}/bin/apps",)
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == ["~/Apps/other", "~/Next", "~/Notes"]
+    # Settings name another folder, and an app is installed there: the first app stays where it is,
+    # and each is told of both
+    be.setPref("installDir", "~/Apps")
+    be.db.x("INSERT INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
+            (URL2, "Other", "2.0", "2026-01-01T00:00:00Z", "other.AppImage", "appimage", json.dumps(
+                {"current": {"version": "2.0", "path": f"{home}/Apps/other/other.AppImage", "exec": "other.AppImage"},
+                 "root": f"{home}/Apps", "target": f"{home}/Apps/other", "links": []}), now()))
+    be.reload()
+    assert be._app_options(URL).root == f"{home}/bin/apps" and be._app_options(URL2).root == f"{home}/Apps"
+    assert be._app_options(URL).own.roots == be._app_options(URL2).own.roots == (f"{home}/Apps", f"{home}/bin/apps")
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == [f"~/Apps/other · refused: {APPS}", "~/Next", "~/Notes"]
+    gs = sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/bin/apps/demo": "rw"}}))
+    assert f"~/bin/apps/demo · refused: {APPS}" in [c[0] for c in be.summaryChips(gs, URL2, "")]
+    # the folder Settings name for the next install, before anything is in it
+    be.setPref("installDir", "~/Next")
+    assert be._app_options(URL).own.roots == (f"{home}/Apps", f"{home}/Next", f"{home}/bin/apps")
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == [f"~/Apps/other · refused: {APPS}", f"~/Next · refused: {APPS}", "~/Notes"]
+    # the user's own pick is dropped the same way (Backend.setSandbox)
+    said = []
+    be.toast.connect(lambda kind, text: said.append((kind, text)))
+    be.setSandbox(URL, {"custom": sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/Apps": "rw", "+~/Notes": "rw"}}))})
+    assert [t for k, t in said if k == "error"] == [f"Not shared: ~/Apps ({APPS}). AppKata never gives an app these folders."]

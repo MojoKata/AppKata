@@ -545,6 +545,7 @@ class Own(NamedTuple):
     and the install records name them (this module reads neither): its callers pass one wherever
     they pass `apps_root` (R17.3.1)."""
     commands: tuple[str, ...] = ()     # the command links folder of Settings, and each folder a command link is in
+    roots: tuple[str, ...] = ()        # every install folder AppKata has apps in, and the one Settings name for the next
 
 
 def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> list[tuple[str, str]]:
@@ -562,14 +563,18 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     install folder alone, so ~/bin was refused only as the folder above the default ~/bin/apps; with
     the install folder set elsewhere ~/bin and ~/bin/apps, where the earlier installs' launchers
     still are, could be granted, and a command links folder of the user's own (~/tools) always
-    could."""
+    could. And they are every other install folder AppKata has apps in (`own.roots`): an app stays
+    in the folder it was installed in when the setting changes (R4.3.1), so apps are in two, and
+    an app in one could be granted the other read-write, to replace another app's program or
+    launcher, which then runs in that app's sandbox, or in none (CR1.5-45)."""
     from .platform import apps_dir, command_dir_default
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
-    roots = [(r, "AppKata's installed apps") for r in dict.fromkeys([apps_root or apps_dir(), apps_dir()])]
-    # A command links folder that is the home folder, or above it, adds nothing: that folder is never
-    # shared as it is, and as a root it would make every folder of the home one of the links'.
+    # A folder of `own` that is the home folder, or above it, adds nothing: that folder is never
+    # shared as it is, and as a root it would make every folder of the home AppKata's own.
     above_home = lambda d: (os.path.realpath(home) + os.sep).startswith(os.path.realpath(d).rstrip(os.sep) + os.sep)      # noqa: E731
+    others = sorted({os.path.expanduser(r) for r in (own or Own()).roots if r and not above_home(r)})
+    roots = [(r, "AppKata's installed apps") for r in dict.fromkeys([apps_root or apps_dir(), *others, apps_dir()])]
     commands = sorted({os.path.expanduser(c) for c in (*(own or Own()).commands, command_dir_default()) if c})
     roots += [(c, "the command links folder, which is on your PATH") for c in commands if not above_home(c)]
     roots += [(data_dir(), "AppKata's own data and the apps' private homes"),
