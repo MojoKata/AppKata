@@ -149,7 +149,8 @@
     731,
     739,
     740,
-    742
+    742,
+    746
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -179,13 +180,12 @@
     "tests/skips/windows.txt",
     "src/appkata/qml/AppRow.qml",
     "tests/test_docs_facts.py",
-    "src/appkata_core/sync.py",
-    "tests/test_sync.py"
+    "src/appkata_core/sync.py"
    ],
    "depends_on": [
     "U01"
    ],
-   "oversize": "21 findings: 15 from the review, and six its own batches found in its own work (#729, #730, #731, #739, #740, #742), which are cheapest fixed while the unit is in them; #740 and #742 are on what #318 and #327 just built."
+   "oversize": "22 findings: 15 from the review, and seven its own batches found in its own work (#729, #730, #731, #739, #740, #742, #746), which are cheapest fixed while the unit is in them; #740, #742 and #746 are on what #318, #327 and #731 just built."
   },
   {
    "id": "U05",
@@ -279,8 +279,7 @@
     "tests/test_core.py",
     "tests/test_dialog_contract.py",
     "tests/test_install_review.py",
-    "tests/test_backend.py",
-    "tests/test_sync.py"
+    "tests/test_backend.py"
    ]
   },
   {
@@ -508,7 +507,9 @@
     671,
     486,
     638,
-    658
+    658,
+    749,
+    750
    ],
    "files": [
     "docs/build.md",
@@ -525,7 +526,8 @@
     "tests/test_backend.py",
     "tests/test_docs_facts.py",
     "tests/test_selfinstall.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "tests/test_install_review.py"
    ],
    "depends_on": [
     "U01"
@@ -1356,7 +1358,9 @@
     484,
     503,
     69,
-    706
+    706,
+    747,
+    748
    ],
    "files": [
     "src/appkata/backend.py",
@@ -11505,7 +11509,7 @@
    "readiness": "ready",
    "files": [
     "src/appkata_core/sync.py",
-    "tests/test_sync.py"
+    "tests/test_channels.py"
    ],
    "depends_on": [],
    "related": [
@@ -11535,7 +11539,7 @@
    "readiness": "ready",
    "files": [
     "src/appkata_core/sync.py",
-    "tests/test_sync.py"
+    "tests/test_channels.py"
    ],
    "depends_on": [
     318
@@ -11578,6 +11582,84 @@
    "size": "small",
    "proof": "A test where the package manager refuses a plan: the backend shows the plan dialog with refused: True.",
    "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading; U04's fourth batch takes it."
+  },
+  {
+   "finding": 746,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    731
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator; fixed in U04 (b7297fb)."
+  },
+  {
+   "finding": 747,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    742
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of Remove Source with its app where the package's removal takes another package: the plan dialog shows.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator; run in a scratch copy."
+  },
+  {
+   "finding": 748,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/ConfirmDialog.qml"
+   ],
+   "depends_on": [
+    742
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A QML test of the refused dialog for an update.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 749,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    306
+   ],
+   "related": [
+    750
+   ],
+   "size": "small",
+   "proof": "A test of a release naming its file as a path, with a checksum list that lists it.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 750,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    304
+   ],
+   "related": [
+    749
+   ],
+   "size": "small",
+   "proof": "A test of a SHA256SUMS holding one bare digest in a release of several files.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
   }
  ],
  "shared_files": [
