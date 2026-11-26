@@ -234,7 +234,10 @@
     "tests/test_sandbox_run.py",
     "tests/test_sandbox_two_apps.py",
     "tests/test_sandbox_user_shaped.py",
-    "tests/test_backend.py"
+    "tests/test_backend.py",
+    "tests/test_sandbox_claims_table.py",
+    "tests/test_launcher_golden.py",
+    "tests/test_dialog_contract.py"
    ]
   },
   {
@@ -1064,7 +1067,8 @@
     455,
     458,
     460,
-    657
+    657,
+    755
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -1083,7 +1087,9 @@
     "tests/test_launch.py",
     "tests/test_prefs.py",
     "tests/test_single.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_platform_matrix.py"
    ]
   },
   {
@@ -1220,7 +1226,8 @@
     321,
     446,
     447,
-    448
+    448,
+    756
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -1240,7 +1247,8 @@
     "tests/test_backend.py",
     "tests/test_dialog_contract.py",
     "tests/test_prefs.py",
-    "tests/test_sandbox_ui_surfaces.py"
+    "tests/test_sandbox_ui_surfaces.py",
+    "src/appkata_core/sandbox.py"
    ],
    "depends_on": [
     "U01"
@@ -11667,6 +11675,39 @@
    "size": "small",
    "proof": "A test of the badge and the Audit for a review naming a refused folder.",
    "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; U05's fourth batch takes it, beside its other refused-folder work."
+  },
+  {
+   "finding": 755,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/platform.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_platform_matrix.py"
+   ],
+   "depends_on": [
+    392
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of data_dir() and user_folders() with a relative XDG_DATA_HOME and XDG_CONFIG_HOME: each uses its default.",
+   "note": "Found by U05's fourth batch (2026-11-25) and filed by the coordinator."
+  },
+  {
+   "finding": 756,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    632,
+    701
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test setting the install folder to the home: refused in Settings, or grants of an app there not refused wholesale.",
+   "note": "Found by U05's fourth batch (2026-11-25) and filed by the coordinator; on master as well."
   }
  ],
  "shared_files": [
