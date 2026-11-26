@@ -193,7 +193,10 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.config/sway/it's", "~/.cargo/bin/new\nline", "~/go/bin/$(id)",
          # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
          "~/.config/dconf", "~/.config/dconf/", "~/.config/dconf/user", "/home/kata/.config/dconf", "~//.config/dconf/user",
-         "~/.config/user-dirs.dirs", "/home/kata/.config/user-dirs.dirs", "~/Notes/../.config/user-dirs.dirs", "~/.config/./dconf"]
+         "~/.config/user-dirs.dirs", "/home/kata/.config/user-dirs.dirs", "~/Notes/../.config/user-dirs.dirs", "~/.config/./dconf",
+         # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
+         "~/.config/menus", "~/.config/menus/", "~/.config/menus/applications-merged", "/home/kata/.config/menus/cinnamon-applications-merged/x.menu",
+         "~//.config/menus", "~/Notes/../.config/menus/cinnamon-applications.menu"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])

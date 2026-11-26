@@ -2644,6 +2644,65 @@ def _read(path: str) -> str:
         return ""
 
 
+# pr-review pass 2 of #735: five more places, none of which a reader of the platform's files above
+# would have found: no file of the system names them, the program's own code does. So these are
+# asked of the program itself: it is run by the system's python3 in a home of its own, with a file
+# planted in the place, and says whether it read it. {the place: (the program, what is run)}; what is
+# run is given the place, prints "absent" where the program isn't installed, and "read" or "not read".
+_ASKED = {
+    # cinnamon-menus, which Cinnamon builds its app menu and its app system from: a menu file merged
+    # from the user's folder adds a folder of entries from anywhere (P2-1)
+    "~/.config/menus": ("cinnamon-menus", r"""
+import os, sys
+try:
+    import gi
+    gi.require_version("CMenu", "3.0")
+    from gi.repository import CMenu
+except (ImportError, ValueError):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]; menus = sys.argv[1]
+os.makedirs(menus + "/cinnamon-applications-merged"); os.makedirs(home + "/elsewhere")
+with open(home + "/elsewhere/appkata-probe.desktop", "w") as f:
+    f.write("[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\n")
+with open(menus + "/cinnamon-applications-merged/x.menu", "w") as f:
+    f.write('<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">\n'
+            "<Menu><Name>Applications</Name><AppDir>%s/elsewhere</AppDir>"
+            "<Include><Filename>appkata-probe.desktop</Filename></Include></Menu>\n" % home)
+tree = CMenu.Tree.new("cinnamon-applications.menu", CMenu.TreeFlags.INCLUDE_NODISPLAY)
+tree.load_sync()
+def entries(folder):
+    it = folder.iter()
+    while (kind := it.next()) != CMenu.TreeItemType.INVALID:
+        if kind == CMenu.TreeItemType.DIRECTORY:
+            yield from entries(it.get_directory())
+        elif kind == CMenu.TreeItemType.ENTRY:
+            yield it.get_entry().get_desktop_file_path()
+print("read" if home + "/elsewhere/appkata-probe.desktop" in entries(tree.get_root_directory()) else "not read")
+"""),
+}
+
+
+def _asked_of_the_program(place: str, moved: dict | None = None) -> str:
+    """What the program of `_ASKED[place]` says of a file planted in `place`: "read", "not read", or
+    "absent" where it isn't installed (or there is no system python3 to run it). It runs in a home
+    of its own, with no session bus and no display, and `moved` (a variable → a folder of that
+    home, written `~/...`) in its environment. Anything else it does is this test's failure."""
+    import tempfile
+    if not os.path.exists("/usr/bin/python3"):
+        return "absent"
+    with tempfile.TemporaryDirectory() as tmp:
+        home = os.path.join(tmp, "home")
+        os.makedirs(home)
+        os.mkdir(os.path.join(tmp, "rt"), 0o700)
+        there = lambda p: home + p[1:] if p.startswith("~/") else p      # noqa: E731
+        env = {"PATH": "/usr/bin:/bin", "HOME": home, "XDG_RUNTIME_DIR": os.path.join(tmp, "rt"), "LANG": "C.UTF-8",
+               **{k: there(v) for k, v in (moved or {}).items()}}
+        r = subprocess.run(["/usr/bin/python3", "-c", _ASKED[place][1], there(place)], env=env, cwd=home, capture_output=True, text=True, timeout=60)
+    said = r.stdout.strip()
+    assert r.returncode == 0 and said in ("absent", "read", "not read"), (place, r.returncode, r.stdout, r.stderr[-2000:])
+    return said
+
+
 def _loaded_from_the_home() -> dict[str, str]:
     """{a place in the home: the program here that loads code from it}, by this system's own files."""
     found = {}
@@ -2664,6 +2723,9 @@ def _loaded_from_the_home() -> dict[str, str]:
     import glob
     if _cinnamon_runs_what_its_settings_name(_read(f"{cinnamon}/js/ui/keybindings.js")) and glob.glob("/usr/lib/*/gio/modules/libdconfsettings.so"):
         found["~/.config/dconf"] = f"{cinnamon}/js/ui/keybindings.js"
+    for place, (program, _) in _ASKED.items():                                  # pr-review pass 2 of #735
+        if _asked_of_the_program(place) == "read":
+            found[place] = program
     return found
 
 

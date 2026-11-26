@@ -648,6 +648,12 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
              # program asks it for a folder (pr-review pass 1 of #735, P1-2)
              (h(".config", "dconf"), "your desktop's settings, which name programs to start"),
              (h(".config", "user-dirs.dirs"), "your folders' names, which some programs run as a script"),
+             # the user's own menu files, read before the system's: one can add a folder of entries
+             # (<AppDir>) from anywhere, and an entry there takes the place of the system's of the
+             # same name, in the menu and for the panel's pinned launchers. The whole folder, since
+             # Cinnamon makes `applications-merged` in it at every start and each desktop's menu
+             # has its own file and merge folder there (pr-review pass 2 of #735, P2-1)
+             (h(".config", "menus"), "your app menu's layout, which can add app-menu entries from any folder"),
              (h(".vscode", "extensions"), "your editor's extensions"),
              (h(".vscode-oss", "extensions"), "your editor's extensions"),
              (h(".cargo", "bin"), "programs on your PATH"),

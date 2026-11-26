@@ -241,6 +241,8 @@ def _folders(env: Env) -> dict[str, str]:
         # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
         "the desktop's settings": f"{h}/.config/dconf", "the settings database": f"{h}/.config/dconf/user",
         "the folders' names": f"{h}/.config/user-dirs.dirs",
+        # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
+        "the app menu's layout": f"{h}/.config/menus", "a merged menu folder": f"{h}/.config/menus/applications-merged",
         # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
         # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
         # folder beside that, and ~/tools, which is the links' folder only where Settings say so

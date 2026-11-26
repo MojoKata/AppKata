@@ -2429,6 +2429,10 @@ def fake_home(tmp_path, monkeypatch):
     # runs as a script (pr-review pass 1 of #735, P1-2); the files beside them are no code
     ("~/.config/dconf", True), ("~/.config/dconf/user", True), ("~/.config/user-dirs.dirs", True),
     ("~/.config/dconf-editor", False), ("~/.config/user-dirs.locale", False), ("~/.config/user-dirs.conf", False),
+    # more places of the same kinds, each found by a review of this unit and none by a test (pr-review
+    # pass 2 of #735): the user's own menu files, which add app-menu entries from any folder (P2-1)
+    ("~/.config/menus", True), ("~/.config/menus/applications-merged", True), ("~/.config/menus/cinnamon-applications.menu", True),
+    ("~/.config/menus-old", False), ("~/.config/menulibre", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2548,6 +2552,7 @@ MOVED_PROTECTED = {
     "~/cfg/environment.d": "your login environment", "~/cfg/git": "your git configuration (hooks, aliases)", "~/cfg/fish": "your shell's startup files",
     "~/cfg/sway": WM, "~/cfg/bash_completion": "your shell's startup files",
     "~/cfg/dconf/user": "your desktop's settings, which name programs to start", "~/cfg/user-dirs.dirs": "your folders' names, which some programs run as a script", "~/cfg/google-chrome/NativeMessagingHosts": "programs browser extensions may start",
+    "~/cfg/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
     "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
     "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
     "~/data/flatpak": "Flatpak's user installation", "~/data/gnome-shell/extensions": "GNOME Shell extensions",
@@ -2782,7 +2787,11 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          # pr-review pass 1 of #735, P1-2: Cinnamon runs a custom keybinding's command, and opens the
          # terminal, that the settings database names; xdg-user-dir runs user-dirs.dirs as shell
          "~/.config/dconf": "your desktop's settings, which name programs to start", "~/.config/dconf/user": "your desktop's settings, which name programs to start",
-         "~/.config/user-dirs.dirs": "your folders' names, which some programs run as a script"}
+         "~/.config/user-dirs.dirs": "your folders' names, which some programs run as a script",
+         # pr-review pass 2 of #735, each a place a review could grant read-write. P2-1: a menu file of
+         # the user's adds a folder of app-menu entries from anywhere, over the system's own
+         "~/.config/menus": "your app menu's layout, which can add app-menu entries from any folder",
+         "~/.config/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):
