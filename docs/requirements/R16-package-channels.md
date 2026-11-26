@@ -151,8 +151,10 @@ gives none):
   `--no-gpg-verify`, and the one a bundle installed from a file leaves behind, have it off.
 - A package, when a repository whose key the package manager checks offers the installed version.
   A version no repository offers (one installed from a file, or one its repository has since
-  replaced) and a package of a repository that is trusted without a key (`[trusted=yes]`) were
-  checked against nothing AppKata can tell.
+  replaced) was checked against nothing AppKata can tell. Nor was a package of a repository that
+  apt is told to take without a key (its `trusted` or `allow-insecure` option, however the entry
+  spells it), or of one apt doesn't itself say it checked: AppKata asks apt
+  (`apt-get indextargets`), and what apt doesn't say counts as not checked.
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the

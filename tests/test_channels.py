@@ -4,6 +4,7 @@ manager output, D-Bus messages, and fakes for everything that would need root or
 import io
 import json
 import os
+import re
 import urllib.error
 
 import pytest
@@ -686,29 +687,51 @@ Pinned packages:
 """
 
 
+def _apt_targets(fmt, rows):
+    """`apt-get indextargets --format <fmt>` as apt 2.4.14 and 2.8.3 print it: a line for each
+    target, and a field apt has nothing to say for left as its own name."""
+    return "".join(re.sub(r"\$\((\w+)\)", lambda m, row=row: row.get(m.group(1), m.group(0)), fmt) + "\n" for row in rows)
+
+
 @pytest.fixture
 def apt_says(monkeypatch, tmp_path):
     """The apt of a machine with Ubuntu's archive, a PPA, a vendor's repository that names itself
-    nowhere and a local one taken without a key. apt_says(policy) sets what it says of the package."""
-    (tmp_path / "akrepo.list").write_text("# a local repository\ndeb [trusted=yes] file:/tmp/akrepo ./\n")
-    (tmp_path / "ubuntu.sources").write_text("Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main\n"
-                                             "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n")
-    (tmp_path / "vendor.list").write_text("deb [arch=amd64 signed-by=/etc/apt/keyrings/vendor.gpg] https://deb.example.org/apt stable main\n"
-                                          "deb [signed-by=/etc/apt/keyrings/ppa.gpg] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble main\n")
-    targets = "".join(f"{site}\t{suite}\t{tmp_path / entry}\n" for site, suite, entry in (
-        ("file:/tmp/akrepo", "./", "akrepo.list:2"), ("http://archive.ubuntu.com/ubuntu", "noble", "ubuntu.sources:1"),
-        ("https://deb.example.org/apt", "stable", "vendor.list:1"),
-        ("https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu", "noble", "vendor.list:2")))
+    nowhere and a local one taken without a key. apt_says(policy) sets what it says of the package.
+    apt_says.rows is what `apt-get indextargets` knows of each repository (the first is the local
+    one), and apt_says.local(text, trusted, insecure) gives the local one another sources entry
+    and apt's own answers for it."""
+    def entry(name, text, n=1):
+        (tmp_path / name).write_text(text)
+        return f"{tmp_path / name}:{n}"
+    entry("vendor.list", "deb [arch=amd64 signed-by=/etc/apt/keyrings/vendor.gpg] https://deb.example.org/apt stable main\n"
+                         "deb [signed-by=/etc/apt/keyrings/ppa.gpg] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble main\n")
+    rows = [
+        {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": "yes",
+         "SOURCESENTRY": entry("akrepo.list", "# a local repository\ndeb [trusted=yes] file:/tmp/akrepo ./\n", 2)},
+        {"SITE": "http://archive.ubuntu.com/ubuntu", "RELEASE": "noble", "TRUSTED": "yes",
+         "SOURCESENTRY": entry("ubuntu.sources", "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main\n"
+                                                 "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n")},
+        {"SITE": "https://deb.example.org/apt", "RELEASE": "stable", "TRUSTED": "yes", "SOURCESENTRY": f"{tmp_path / 'vendor.list'}:1"},
+        {"SITE": "https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu", "RELEASE": "noble", "TRUSTED": "yes",
+         "SOURCESENTRY": f"{tmp_path / 'vendor.list'}:2"},
+    ]
     said = {"policy": ""}
 
     def text(cmd):
         if cmd[:2] == ["apt-cache", "policy"]:
             return said["policy"] if len(cmd) == 3 else APT_REPOSITORIES
         if cmd[:2] == ["apt-get", "indextargets"]:
-            return targets
+            return _apt_targets(cmd[cmd.index("--format") + 1], rows)
         raise AssertionError(cmd)
+
+    def local(text, trusted, insecure=None):
+        os.remove(tmp_path / "akrepo.list")
+        rows[0] = {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": trusted, **({"ALLOW_INSECURE": insecure} if insecure else {}),
+                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n")}
     monkeypatch.setattr(pkgbackend, "_text", text)
-    return lambda policy: said.update(policy=policy)
+    says = lambda policy: said.update(policy=policy)      # noqa: E731
+    says.rows, says.local = rows, local
+    return says
 
 
 SIGNED_BY = [
@@ -731,16 +754,96 @@ def test_a_package_is_signed_only_where_a_repository_whose_key_apt_checks_offers
     assert (v["verified"], v["signer"], v["repository"]) == verdict
 
 
-def test_a_sources_entry_that_takes_a_repository_without_a_key(tmp_path):
+# How it slipped past (pass 1 of the unit's own review): the tests gave apt's sources one spelling,
+# `[trusted=yes]`, and the code read that spelling. apt takes six words for yes, in any case, has a
+# second option that takes a repository unsigned, and was believed to check every repository it
+# said nothing of. The class is AppKata reading another program's settings in its own way: apt's
+# own answer is asked now, and scripts/channels_e2e.py asks the real apt for more than one spelling.
+TAKEN_WITHOUT_A_KEY = {
+    # the local repository's entry in the sources: apt's own $(TRUSTED) and $(ALLOW_INSECURE) for it
+    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository)
+    **{f"trusted={word}": (f"deb [trusted={word}] file:/tmp/akrepo ./", "yes", None) for word in ("yes", "true", "1", "on", "enable", "with", "YES", "True")},
+    "trusted-among-other-options": ("deb [ arch=amd64 Trusted = on ] file:/tmp/akrepo ./", "yes", None),
+    "Trusted-in-a-sources-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nTrusted: true", "yes", None),
+    "trusted-in-another-stanza-of-its-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: 1", "yes", None),
+    "allow-insecure=yes": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "no", "true"),
+    "allow-insecure=1": ("deb [allow-insecure=1] file:/tmp/akrepo ./", "no", "true"),
+    "allow-insecure-and-a-signature": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "yes", "true"),    # the rule's own case: not run on apt
+    "allowed-by-apts-configuration": ("deb file:/tmp/akrepo ./", "no", "true"),         # Acquire::AllowInsecureRepositories
+    "trusted=no": ("deb [trusted=no] file:/tmp/akrepo ./", "no", None),                 # apt then takes nothing of it as checked
+    "nothing-signed-and-no-option": ("deb file:/tmp/akrepo ./", "no", None),            # lists apt has from before it refused them
+}
+
+
+@pytest.mark.parametrize("case", list(TAKEN_WITHOUT_A_KEY))
+def test_a_package_of_a_repository_apt_takes_without_a_key_is_not_signed_however_the_entry_says_so(apt_says, case):
+    apt_says.local(*TAKEN_WITHOUT_A_KEY[case])
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+    # ...and beside it the distribution's own is still signed
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+def _says_nothing(rows, tmp_path):
+    rows.clear()                                    # `apt-get indextargets` failed, or apt has no lists
+
+
+def _doesnt_name_it(rows, tmp_path):
+    del rows[1]
+
+
+def _has_no_such_field(rows, tmp_path):
+    for row in rows:                                # an apt that knows no $(TRUSTED) leaves the field's own name there
+        del row["TRUSTED"]
+
+
+def _says_it_isnt_trusted(rows, tmp_path):
+    rows[1]["TRUSTED"] = "no"
+
+
+def _names_no_sources_entry(rows, tmp_path):
+    del rows[1]["SOURCESENTRY"]
+
+
+def _names_an_entry_that_cant_be_read(rows, tmp_path):
+    os.remove(tmp_path / "ubuntu.sources")
+
+
+def _says_otherwise_of_another_entry_for_it(rows, tmp_path):
+    rows.append({**rows[1], "TRUSTED": "no"})
+
+
+def _says_otherwise_of_a_suite_its_line_could_be_of(rows, tmp_path):
+    rows.append({**rows[1], "RELEASE": "noble/main", "TRUSTED": "no"})
+
+
+@pytest.mark.parametrize("apt", [_says_nothing, _doesnt_name_it, _has_no_such_field, _says_it_isnt_trusted, _names_no_sources_entry,
+                                 _names_an_entry_that_cant_be_read, _says_otherwise_of_another_entry_for_it,
+                                 _says_otherwise_of_a_suite_its_line_could_be_of], ids=lambda f: f.__name__.strip("_"))
+def test_a_package_is_not_signed_unless_apt_itself_says_its_repository_was_checked(apt_says, tmp_path, apt):
+    """What apt doesn't say counts as not checked, never as checked: an answer that fails or is
+    empty made every repository a keyed one."""
+    apt(apt_says.rows, tmp_path)
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "http://archive.ubuntu.com/ubuntu")
+
+
+def test_a_sources_entry_that_sets_the_trusted_option(tmp_path):
+    """Whether the entry sets it, never to what: the value's reading is apt's own."""
+    sets = pkgbackend._sets_trusted
     one = tmp_path / "x.list"
-    one.write_text("deb [arch=amd64 signed-by=/k.gpg] http://a/ stable main\n# deb [trusted=yes] http://b/ ./\ndeb [ arch=amd64 Trusted = yes ] http://c/ ./\n")
-    assert [pkgbackend._trusted_without_key(f"{one}:{n}") for n in (1, 2, 3)] == [False, False, True]
-    assert pkgbackend._trusted_without_key(f"{one}:9") and not pkgbackend._trusted_without_key(f"{tmp_path / 'gone.list'}:1")
+    one.write_text("deb [arch=amd64 signed-by=/etc/apt/trusted.gpg.d/k.gpg] http://a/ stable main\n# deb [trusted=yes] http://b/ ./\n"
+                   "deb [ arch=amd64 Trusted = yes ] http://c/ ./\ndeb [trusted=no] http://d/ ./\ndeb-src [trusted=1] http://e/ ./\n")
+    assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4, 5)] == [False, False, True, True, True]
+    assert sets(f"{one}:9") and sets(f"{tmp_path / 'gone.list'}:1") and sets("$(SOURCESENTRY)") and sets("")
     many = tmp_path / "x.sources"
     many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: YES\n")
-    assert pkgbackend._trusted_without_key(f"{many}:1") and pkgbackend._trusted_without_key(f"{many}:2")
-    many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n# Trusted: yes\nTrusted: no\n")
-    assert not pkgbackend._trusted_without_key(f"{many}:1")
+    assert sets(f"{many}:1") and sets(f"{many}:2")
+    many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n# Trusted: yes\nSigned-By: /etc/apt/trusted.gpg.d/k.gpg\n")
+    assert not sets(f"{many}:1")
 
 
 @pytest.mark.parametrize("from_repo, signature, verdict", [

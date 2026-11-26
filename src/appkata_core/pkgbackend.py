@@ -662,32 +662,47 @@ def apt_installed_sources(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _trusted_without_key(entry: str) -> bool:
+def _sets_trusted(entry: str) -> bool:
     """Does a sources entry (`$(SOURCESENTRY)`: "<file>:<n>", the line of a `.list` file or the
-    stanza of a `.sources` file) tell apt to take the repository without checking its key?
-    A `.sources` file is judged whole: one `Trusted: yes` in it counts for each of its stanzas."""
+    stanza of a `.sources` file) set apt's `trusted` option, to anything? To what is never read
+    here: apt takes yes, true, on, enable, with and 1 for yes, in any case, and what it makes of
+    the entry is its own answer (:func:`apt_checked_repositories`). A `.sources` file is judged
+    whole: one `Trusted:` in it counts for each of its stanzas. An entry that can't be read counts
+    as setting it."""
     path, _, n = entry.rpartition(":")
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
     except OSError:
-        return False
+        return True
     if path.endswith(".sources"):
-        return any(re.match(r"^\s*Trusted\s*:\s*yes\s*$", l, re.I) for l in lines)
+        return any(re.match(r"^\s*Trusted\s*:", l, re.I) for l in lines)
     if n.isdigit() and 0 < int(n) <= len(lines):
         lines = [lines[int(n) - 1]]
-    return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=\s*yes\b", l, re.I) for l in lines)
+    return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=", l, re.I) for l in lines)
 
 
-def apt_unkeyed_repositories() -> set[tuple[str, str]]:
-    """The (site, suite) of every repository apt is told to trust without a key (`[trusted=yes]`,
-    `Trusted: yes`): a package from one was checked against nothing."""
-    out = set()
-    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(SOURCESENTRY)"]).splitlines():
-        site, _, rest = line.partition("\t")
-        suite, _, entry = rest.partition("\t")
-        if entry and (site, suite) not in out and _trusted_without_key(entry):
-            out.add((site, suite))
+def apt_checked_repositories() -> dict[tuple[str, str], bool]:
+    """{(site, suite): did apt check it against a key}, for each repository apt has lists of, by
+    apt's own answer (`apt-get indextargets`) and never by AppKata's reading of the sources:
+
+    - `$(TRUSTED)` must be "yes". apt says so of a repository whose signed Release file it checked,
+      and "no" of one it took unsigned (`allow-insecure`) or is told not to trust. It says "yes" as
+      well of one it is told to trust without a key, however the entry spells that, so:
+    - the entry (`$(SOURCESENTRY)`) must not set `trusted` at all (:func:`_sets_trusted`);
+    - `$(ALLOW_INSECURE)` must be left as its own name, as apt leaves a field it has nothing for:
+      it is "true" where the entry or apt's configuration lets the repository come unsigned.
+
+    Every target of the repository must pass. One that apt doesn't name here (its answer failed or
+    was empty, or it knows no such field) is in no way shown to be checked, and counts as not."""
+    out: dict[tuple[str, str], bool] = {}
+    sets: dict[str, bool] = {}
+    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(TRUSTED)\t$(ALLOW_INSECURE)\t$(SOURCESENTRY)"]).splitlines():
+        site, suite, trusted, insecure, entry = (line.split("\t", 4) + [""] * 4)[:5]
+        if entry not in sets:
+            sets[entry] = _sets_trusted(entry)
+        checked = trusted == "yes" and insecure == "$(ALLOW_INSECURE)" and not sets[entry]
+        out[site, suite] = checked and out.get((site, suite), True)
     return out
 
 
@@ -701,16 +716,18 @@ def signed_by(name: str, manager: str | None = None) -> dict:
     {"verified": "signed" or "unverified", "signer", "repository"}. "signed" when a repository whose
     key the package manager checks offers the installed version, with that repository's own name
     as `signer` ("Ubuntu", "LP-PPA-…"; "" when it gives none). Otherwise "unverified":
-    `repository` is then the one that offers it and is trusted without a key, or "" when none does
-    (installed from a file, or a version its repository no longer offers)."""
+    `repository` is then the one that offers it and that apt doesn't say it checked against a key
+    (:func:`apt_checked_repositories`), or "" when none does (installed from a file, or a version
+    its repository no longer offers)."""
     manager = manager or ("apt" if linux_family() == "debian" else "dnf")
     if manager != "apt":
         return _rpm_signed_by(name)
     offered = apt_installed_sources(_text(["apt-cache", "policy", name]))
     if not offered:
         return {"verified": "unverified", "signer": "", "repository": ""}
-    unkeyed = apt_unkeyed_repositories()
-    keyed = [s for s in offered if not any(_offered_by(s, *u) for u in unkeyed)]
+    checked = apt_checked_repositories()
+    said = {s: [ok for repo, ok in checked.items() if _offered_by(s, *repo)] for s in offered}
+    keyed = [s for s in offered if said[s] and all(said[s])]      # apt says so, of every repository the line could be of
     if not keyed:
         return {"verified": "unverified", "signer": "", "repository": offered[0][0]}
     names = {(r["site"], f"{r['suite']}/{r['component']}" if r["component"] else r["suite"]): r.get("o") or r.get("l") or ""
