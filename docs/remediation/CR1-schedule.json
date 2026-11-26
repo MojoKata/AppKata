@@ -181,7 +181,9 @@
     "tests/skips/windows.txt",
     "src/appkata/qml/AppRow.qml",
     "tests/test_docs_facts.py",
-    "src/appkata_core/sync.py"
+    "src/appkata_core/sync.py",
+    "scripts/demo_data.py",
+    "tests/test_demo_promises.py"
    ],
    "depends_on": [
     "U01"
@@ -441,7 +443,8 @@
     365,
     367,
     370,
-    741
+    741,
+    768
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -11832,6 +11835,20 @@
    "size": "small",
    "proof": "A test of a second download over a folder left at its path: an install error naming it.",
    "note": "Found by the last check read of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 768,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/windows.py",
+    "docs/requirements/R15-windows.md",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "medium",
+   "proof": "A Windows VM test: the downloads folder made a junction; the elevated side opens nothing outside it.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; cleared for public text and placed in U10 by the owner's walk thru (2026-11-26)"
   }
  ],
  "shared_files": [
