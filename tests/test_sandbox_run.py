@@ -1872,7 +1872,8 @@ def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e
     docs, work, again = env.home / "Documents", env.home / "work", env.home / "again"
     for d in (work / "sub", again):
         d.mkdir(parents=True)
-    for f, text in ((work / "README.md", "README\n"), (work / "sub" / "deep.txt", "DEEP\n"), (docs / "secret.txt", "SECRET-TAXES\n"), (again / "plain.txt", "PLAIN\n")):
+    for f, text in ((work / "README.md", "README\n"), (work / "sub" / "deep.txt", "DEEP\n"), (docs / "secret.txt", "SECRET-TAXES\n"), (again / "plain.txt", "PLAIN\n"),
+                    (docs / "one.txt", "ONE\n")):
         f.write_text(text)
     (again / "README.md").symlink_to(docs / "secret.txt")
 
@@ -1883,10 +1884,18 @@ def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e
         return [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")], r.stdout + r.stderr
 
     got, out = started(f'cd "$1" && mv README.md README.was && ln -s {shlex.quote(str(docs / "secret.txt"))} README.md && '
-                       f'ln -s {shlex.quote(str(docs))} all && echo PLANTED; true', str(work))
+                       f'ln -s {shlex.quote(str(docs))} all && echo PLANTED; '
+                       # what the fix rests on (A1.11): a file's document takes no link and no folder, and the app can
+                       # neither remove nor rename a folder's document, so it stays in what the portal lists for the app
+                       'one=$(dirname "$2"); ln -s /etc/hostname "$one/planted" 2>/dev/null && echo LINK-IN-A-FILES-DOCUMENT; '
+                       'mkdir "$one/made" 2>/dev/null && echo FOLDER-IN-A-FILES-DOCUMENT; held=$(dirname "$1"); '
+                       'rmdir "$held" 2>/dev/null && echo DOCUMENT-REMOVED; mv "$held" "$held.gone" 2>/dev/null && echo DOCUMENT-RENAMED; '
+                       'mv "$1" "$held/renamed" 2>/dev/null && echo FOLDER-RENAMED; true', str(work), str(docs / "one.txt"))
     view = got[0]
     assert "PLANTED" in out and view.startswith(str(env.rt / "doc") + "/") and view.endswith("/work"), (got, out)
     assert os.readlink(work / "README.md") == str(docs / "secret.txt") and os.readlink(work / "all") == str(docs)       # on the host, as the app meant
+    assert got[1].endswith("/one.txt") and not any(w in out for w in ("LINK-IN", "FOLDER-IN", "DOCUMENT-RE", "FOLDER-RENAMED")), out
+    assert not os.path.lexists(docs / "planted") and not os.path.lexists(docs / "made") and work.is_dir()
     exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
     before = exported()
     got, out = started('cat "$1" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; (echo EDITED >> "$1") 2>/dev/null; cat "$4"; echo MORE >> "$4"; true',
