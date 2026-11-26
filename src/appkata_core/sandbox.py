@@ -642,6 +642,12 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
              (h(".cinnamon"), "Cinnamon's panel launchers"),
              (h(".local", "share", "bash-completion"), "your shell's completion scripts"),
              (h(".config", "pipewire"), "PipeWire's configuration, which can start programs"),
+             # WirePlumber, PipeWire's session manager, reads its own file of the same format before
+             # the system's, and 0.4 (Mint 22, Ubuntu 24.04) runs its list of programs at each start.
+             # The whole folder: which file it reads is its instance's choice (wireplumber.conf,
+             # main.conf, policy.conf, bluetooth.conf), 0.5 adds each one's .conf.d fragments, and
+             # they decide which modules and scripts it loads (pr-review pass 2 of #735, P2C-1)
+             (h(".config", "wireplumber"), "WirePlumber's configuration, which can start programs"),
              # the desktop's settings database (GSettings in dconf): Cinnamon runs the command of each
              # custom keybinding it lists, at the key, and opens the terminal it names; and the file
              # of the user's folder names, which xdg-user-dir runs as a shell script whenever a

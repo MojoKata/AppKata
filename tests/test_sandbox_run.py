@@ -2702,6 +2702,27 @@ except Exception:      # the planted command makes no picture, which the factory
     pass
 print("read" if os.path.exists(home + "/ran") else "not read")
 """),
+    # WirePlumber: the system's own file copied to the user's folder, with a program added to its
+    # list of programs to start. Started with no PipeWire to connect to, it reads its file, runs
+    # the list where its version does (0.4), and ends (P2C-1)
+    "~/.config/wireplumber": ("WirePlumber", r"""
+import os, subprocess, sys, time
+if not (os.path.exists("/usr/bin/wireplumber") and os.path.exists("/usr/share/wireplumber/wireplumber.conf")):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(sys.argv[1])
+with open(home + "/started.sh", "w") as f:
+    f.write("#!/bin/sh\necho ran > %s/ran\n" % home)
+os.chmod(home + "/started.sh", 0o755)
+with open("/usr/share/wireplumber/wireplumber.conf") as f, open(sys.argv[1] + "/wireplumber.conf", "w") as mine:
+    mine.write(f.read() + '\ncontext.exec = [ { path = "%s/started.sh" args = "" } ]\n' % home)
+try:
+    subprocess.run(["/usr/bin/wireplumber"], stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+except subprocess.TimeoutExpired:
+    pass
+time.sleep(0.5)
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
 }
 
 

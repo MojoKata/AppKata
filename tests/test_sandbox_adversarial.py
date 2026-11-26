@@ -201,7 +201,10 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.gnomerc", "/home/kata/.gnomerc", "~/./.gnomerc", "~/Notes/../.gnomerc", "~/.Xsession", "/home/kata//.Xsession",
          # ...the user's thumbnailers, which the file manager runs (P2B-1)
          "~/.local/share/thumbnailers", "~/.local/share/thumbnailers/", "/home/kata/.local/share/thumbnailers/x.thumbnailer",
-         "~/.local/./share/thumbnailers", "~/Notes/../.local/share/thumbnailers"]
+         "~/.local/./share/thumbnailers", "~/Notes/../.local/share/thumbnailers",
+         # ...WirePlumber's configuration, which starts programs as PipeWire's does (P2C-1)
+         "~/.config/wireplumber", "~/.config/wireplumber/", "~/.config/wireplumber/wireplumber.conf", "/home/kata/.config/wireplumber/main.conf",
+         "~/.config//wireplumber/wireplumber.conf.d/x.conf", "~/Notes/../.config/wireplumber"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])
