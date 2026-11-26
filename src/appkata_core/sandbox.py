@@ -1790,6 +1790,84 @@ def home_belongs_to_another(app_id: str, url: str) -> bool:
         return True
 
 
+def handed_path(app_id: str) -> str:
+    """The file that says the app was handed files or folders through the document portal
+    (R17.6.2): the file-argument helper makes it beside itself, named after the app's identity,
+    before it hands the first one over (:data:`FORWARD_HELPER`'s `noted`). Outside every private
+    home, in the folder no sandbox sees. :func:`revoke_documents` reads it and removes it."""
+    return os.path.join(sandboxes_root(), ".identity", "handed", app_identity(app_id))
+
+
+# What the document portal still holds for an app's identity is taken back from the host side, as
+# it was handed over: every document the portal lists for the identity loses each permission the
+# identity has on it. The document itself stays (another app may have been handed the same file).
+# Run by the system's python3, which has python3-gi, as the file-argument helper is; AppKata's own
+# Python has none. The portal is never started for the ask: a document handed over lasts as long
+# as the portal's process (none is added "persistent"), so where no portal runs nothing is held.
+# Exit 0: the identity holds nothing now; anything else: it couldn't be asked, or still holds one.
+_REVOKE = """import sys
+from gi.repository import Gio, GLib
+ident = sys.argv[1]
+GONE = ("org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner")
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+
+def call(method, args, answer=None):
+    return bus.call_sync("org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
+                         method, args, GLib.VariantType(answer) if answer else None, Gio.DBusCallFlags.NO_AUTO_START, 5000, None)
+
+
+def held():
+    return call("List", GLib.Variant("(s)", (ident,)), "(a{say})").unpack()[0]
+
+
+try:
+    docs = held()
+except GLib.Error as e:
+    if Gio.DBusError.is_remote_error(e) and Gio.DBusError.get_remote_error(e) in GONE:
+        sys.exit(0)
+    raise
+for doc in docs:
+    call("RevokePermissions", GLib.Variant("(ssas)", (doc, ident, ["read", "write", "grant-permissions", "delete"])))
+sys.exit(1 if held() else 0)
+"""
+
+
+def revoke_documents(app_id: str) -> bool:
+    """Take back every file and folder the app was handed through the document portal (R17.6.2,
+    R17.14): when it is uninstalled, when it leaves Standard, and before an install is given a
+    launcher under its id. The portal keeps what was handed over, with its permission, for as long
+    as it runs (the login session), under the app's identity alone: an app uninstalled with its
+    home removed frees its id (R17.6), and the next app of that name, from another Source, found
+    every file the user had opened with the first one in its `doc/by-app` view, to read and to
+    write (CR1.5-25; shown with the real portal, tests/test_sandbox_run.py). Nothing revoked a
+    grant, at an uninstall or when the app went to Strict or Off.
+
+    The portal is asked only where :func:`handed_path` says this AppKata's helper handed the app
+    something, so an app that was handed nothing costs no process and no bus is touched for it.
+    Returns whether the identity holds nothing now. False -- no python3 or python3-gi, no session
+    bus, a portal that doesn't answer -- leaves the record in place, so the next call asks again,
+    and is logged; the caller goes on."""
+    record = handed_path(app_id)
+    if OS != "linux" or not os.path.lexists(record):
+        return True
+    from .platform import apps_dir
+    why = "no python3 where the launchers find theirs"
+    try:
+        if python := host_which("python3"):
+            # -I: nothing of the folder AppKata was started in, nor of the user's own site, is loaded
+            r = subprocess.run([python, "-I", "-c", _REVOKE, app_identity(app_id)], env={**os.environ, "PATH": host_path(apps_dir())},
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1] if r.returncode else ""
+    except (OSError, subprocess.SubprocessError) as e:
+        why = str(e) or type(e).__name__
+    if why:
+        log.warning("couldn't take back what %s was handed through the document portal: %s", app_identity(app_id), why)
+        return False
+    os.unlink(record)
+    return True
+
+
 def remove_sandbox_home(app_id: str) -> None:
     """Remove the app's private home on uninstall (R17.14), its identity marker and its owner record."""
     shutil.rmtree(sandbox_home(app_id), ignore_errors=True)
@@ -2087,6 +2165,11 @@ def write_seccomp_filter() -> str | None:
 # it: the portal names a document after the file its descriptor reaches, so a link to a file
 # outside every grant (~/notes.txt -> ~/sync/notes-2024.txt) reached the app under the link's own
 # name, a path that isn't there (CR1.5-41).
+# Before the first file or folder is handed over, a file named after the app's identity is made in
+# `handed/` beside this helper (handed_path): the portal keeps what an app was handed for the
+# session, AppKata takes it back when the app is uninstalled or leaves Standard (revoke_documents),
+# and it asks the portal only for an app this file names (CR1.5-25). Where the file can't be made
+# nothing is handed over.
 # argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
 #       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
@@ -2167,6 +2250,7 @@ def as_file(arg):
 
 
 bus = None
+known = False
 
 
 def portal():
@@ -2177,8 +2261,21 @@ def portal():
     return bus
 
 
+def noted():
+    # the file that says this app was handed something, made before the first hand-over
+    global known
+    if not known:
+        if os.sep in ident or ident in ("", ".", ".."):
+            raise OSError("no name for the record")
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "handed")
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        open(os.path.join(folder, ident), "a").close()
+        known = True
+
+
 def export(path):
     from gi.repository import Gio, GLib
+    noted()
     fdl = Gio.UnixFDList.new()
     i = fdl.append(os.open(path, os.O_RDONLY))
     res, _ = portal().call_with_unix_fd_list_sync(
@@ -2193,6 +2290,7 @@ def export(path):
 
 def export_dir(path):
     from gi.repository import Gio, GLib
+    noted()
     fdl = Gio.UnixFDList.new()
     i = fdl.append(os.open(path, os.O_PATH | os.O_DIRECTORY))
     perms = ["read"] + (["write"] if os.access(path, os.W_OK) else [])

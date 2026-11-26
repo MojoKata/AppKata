@@ -1113,7 +1113,14 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
             os.remove(lp)
         if OS == "linux":
             sandbox.remove_identity(app_id)        # the marker goes with the launcher (R10, round four R4-7)
+            sandbox.revoke_documents(app_id)       # and what it was handed as a Standard app is taken back (R17.14)
         return ""
+    # What the document portal holds for the app's identity is taken back when the app leaves
+    # Standard, and before an install that had no launcher is given one: the holder of an identity
+    # starts with nothing an earlier one was handed, also where the uninstall couldn't ask the
+    # portal (R17.14; CR1.5-25). It costs nothing for an app that was handed nothing.
+    if not rec.get("launcher") or not sandbox.uses_bus(gs):
+        sandbox.revoke_documents(app_id)
     appdir, exec_rel, appimage_path = _launcher_program(rec, target)
     launcher = sandbox.write_launcher(app_id, app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own)
     if app.get("url"):
@@ -2023,6 +2030,7 @@ def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=N
     if OS == "linux":                           # only once the app itself is gone, not before a step can fail
         app_id = app_id_of(rec, {"name": row["name"]})
         sandbox.remove_identity(app_id)          # goes with the launcher; the home may stay (R17.14)
+        sandbox.revoke_documents(app_id)         # what it was handed is no later app's of that id (R17.14; CR1.5-25)
         if remove_sandbox:
             sandbox.remove_sandbox_home(app_id)
         if rec.get("current") and rec.get("target"):     # what a stopped change or write left beside its files (P6-B2)

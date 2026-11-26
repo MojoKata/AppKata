@@ -3181,7 +3181,11 @@ def _forward(tmp_path, cwd, incwd, visible, args):
 
 
 # A stand-in for python3-gi, first on the helper's path: it answers the document portal's calls and
-# writes each down ($PORTAL_LOG), with the file every descriptor it was passed leads to.
+# writes each down ($PORTAL_LOG), with the file every descriptor it was passed leads to. What the
+# portal holds for each app is the file $PORTAL_DOCS names ({identity: {document id: host path}}):
+# List answers from it and is a question, so it is not written down; RevokePermissions takes the
+# document out of it, unless $PORTAL_KEEPS says this portal revokes nothing. $PORTAL_GONE is the
+# D-Bus error every plain call gets, as from a session where no document portal runs.
 _STAND_IN_GI = """import json, os
 
 
@@ -3202,6 +3206,14 @@ class _FDs:
         return len(self.fds) - 1
 
 
+def _held():
+    try:
+        with open(os.environ["PORTAL_DOCS"]) as f:
+            return json.load(f)
+    except (KeyError, OSError):
+        return {}
+
+
 class _Bus:
     def _note(self, method, args, fds=()):
         with open(os.environ["PORTAL_LOG"], "a") as f:
@@ -3212,7 +3224,16 @@ class _Bus:
         return _Answer(("DOC",) if method == "Add" else (["DOC"], {})), None
 
     def call_sync(self, name, path, iface, method, args, answer, flags, timeout, cancel):
+        if os.environ.get("PORTAL_GONE"):
+            raise GLib.Error(os.environ["PORTAL_GONE"])
+        if method == "List":
+            return _Answer(({doc: list(os.fsencode(host)) + [0] for doc, host in _held().get(args.value[0], {}).items()},))
         self._note(method, args.value)
+        if method == "RevokePermissions" and not os.environ.get("PORTAL_KEEPS"):
+            held = _held()
+            held.get(args.value[1], {}).pop(args.value[0], None)
+            with open(os.environ["PORTAL_DOCS"], "w") as f:
+                json.dump(held, f)
 
 
 class Gio:
@@ -3224,11 +3245,19 @@ class Gio:
 
     class DBusCallFlags:
         NONE = 0
+        NO_AUTO_START = 2
+
+    class DBusError:
+        is_remote_error = staticmethod(lambda error: True)
+        get_remote_error = staticmethod(lambda error: error.args[0])
 
     bus_get_sync = staticmethod(lambda kind, cancel: _Bus())
 
 
 class GLib:
+    class Error(Exception):
+        pass
+
     class Variant:
         def __init__(self, signature, value):
             self.value = value
@@ -3237,15 +3266,18 @@ class GLib:
 """
 
 
-def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), home=None):
+def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), home=None, helper=None):
     """The file-argument helper's own text run from `cwd` over `args`, against a stand-in document
     portal: the arguments it answers, the lines it has the launcher say, and the portal's calls,
     each [method, arguments, what the descriptors passed lead to]. `visible`: the folders the app
     is shown; `incwd`: a command-line tool's shared directory; `never` and `sockets`: the
     never-shared folders and the session bus's socket files the launcher gives it; `home`: the
-    user's home folder, the test's own unless given."""
-    helper, gi, log = tmp_path / "forward-files.py", tmp_path / "stand-in" / "gi", tmp_path / "portal.log"
-    helper.write_text(sb.FORWARD_HELPER)
+    user's home folder, the test's own unless given; `helper`: the helper as AppKata wrote it
+    (sandbox.write_forward_helper), a copy of its text in `tmp_path` unless given."""
+    gi, log = tmp_path / "stand-in" / "gi", tmp_path / "portal.log"
+    if helper is None:
+        helper = tmp_path / "forward-files.py"
+        helper.write_text(sb.FORWARD_HELPER)
     gi.mkdir(parents=True, exist_ok=True)
     (gi / "__init__.py").write_text("")
     (gi / "repository.py").write_text(_STAND_IN_GI)
@@ -3584,6 +3616,178 @@ def test_a_tools_relative_path_that_leaves_its_shared_folder_is_handed_over(tmp_
     assert [c[2] for c in calls if c[2]] == [[str(home / "src" / "notes.txt")]] * 2, calls
     # from the folder's own sub-folder the tool is not in place: every relative path is made whole
     assert _forward(tmp_path, proj / "sub", str(proj), [proj], ["b.txt", "../a.txt"]) == [str(proj / "sub" / "b.txt"), str(proj / "a.txt")]
+
+
+# CR1.5-25 (#400): what an app is handed through the document portal is the portal's to keep, under
+# the app's identity, for as long as the portal runs. Nothing took it back, so an app uninstalled
+# with its home removed left every file the user had opened with it to the next app of that name:
+# the id is free again (R17.6), and the launcher binds `doc/by-app/io.appkata.<id>`. The same for
+# an app sent to Strict or Off and back. How it slipped past: every hand-over test stopped at the
+# hand-over, and every test of an uninstall or a level change was of an app handed nothing; the
+# review itself could not run a portal. Shown with the real one in tests/test_sandbox_run.py.
+ALL_PERMISSIONS = ["read", "write", "grant-permissions", "delete"]
+
+
+def a_portal_holding(tmp_path, monkeypatch, held):
+    """The stand-in document portal holding `held` ({identity: {document id: host path}}) for
+    AppKata's own asks of it (sandbox.revoke_documents): a python3 where the launchers find theirs
+    whose gi is the stand-in. Returns the file the documents are in, the file the portal's calls
+    are written to, and the file each run of that python3 is written to (its first two arguments)."""
+    gi, docs, log, runs = tmp_path / "stand-in" / "gi", tmp_path / "portal-docs.json", tmp_path / "portal.log", tmp_path / "python3.runs"
+    gi.mkdir(parents=True, exist_ok=True)
+    (gi / "__init__.py").write_text("")
+    (gi / "repository.py").write_text(_STAND_IN_GI)
+    docs.write_text(json.dumps(held))
+    python = tmp_path / "host-bin" / "python3"
+    python.parent.mkdir(exist_ok=True)
+    # AppKata passes -I, which keeps PYTHONPATH out; the stand-in is found by it, so the flag is
+    # written down and then dropped
+    python.write_text(f'#!/bin/sh\nprintf "%s %s\\n" "$1" "$2" >> {shlex.quote(str(runs))}\n[ "$1" = -I ] && shift\n'
+                      f'PYTHONPATH={shlex.quote(str(gi.parent))} exec {shlex.quote(sys.executable)} "$@"\n')
+    python.chmod(0o755)
+    monkeypatch.setattr(sb, "host_which", lambda name, apps_root=None: str(python) if name == "python3" else None)
+    monkeypatch.setenv("PORTAL_DOCS", str(docs))
+    monkeypatch.setenv("PORTAL_LOG", str(log))
+    for v in ("PORTAL_GONE", "PORTAL_KEEPS"):
+        monkeypatch.delenv(v, raising=False)
+    return docs, log, runs
+
+
+def _portal_calls(log) -> list:
+    return [json.loads(line)[:2] for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def test_the_helper_says_beside_itself_that_an_app_was_handed_something_before_it_hands_it_over(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    docs, proj = home / "Documents", home / "proj"
+    for d in (docs, proj):
+        d.mkdir(parents=True)
+    (docs / "taxes.txt").write_text("x")
+    (proj / "in.txt").write_text("x")
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(home / ".local/share/appkata/sandboxes"))
+    helper = type(tmp_path)(sb.write_forward_helper())
+    record = sb.handed_path("t")
+    # where AppKata looks is where the helper it wrote writes: beside the helper, named after the identity
+    assert record == str(helper.parent / "handed" / "io.appkata.t") and os.path.basename(sb.handed_path("7zip")) == sb.app_identity("7zip")
+    # nothing is handed over by a file the app is shown, one that isn't there, or a program's own word
+    words, said, calls = _handed(tmp_path, home, [str(proj / "in.txt"), "nothing.txt", "proj", "https://example.org/x"], visible=[proj], home=home, helper=helper)
+    assert calls == [] and not os.path.lexists(record) and not os.path.lexists(helper.parent / "handed")
+    # ...and a file or a folder that is, is noted first
+    for arg in (str(docs / "taxes.txt"), str(docs)):
+        words, said, calls = _handed(tmp_path, home, [arg], visible=[proj], home=home, helper=helper)
+        assert words[0].startswith(str(tmp_path / "run" / "doc")) and calls and os.path.isfile(record), (words, calls)
+        assert os.stat(helper.parent / "handed").st_mode & 0o777 == 0o700 and os.path.getsize(record) == 0
+        os.unlink(record)
+    # where it can't be noted, nothing is handed over: the argument passes as it was
+    os.rmdir(helper.parent / "handed")
+    (helper.parent / "handed").write_text("in the way")
+    words, said, calls = _handed(tmp_path, home, [str(docs / "taxes.txt"), str(docs), str(proj / "in.txt")], visible=[proj], home=home, helper=helper)
+    assert words == [str(docs / "taxes.txt"), str(docs), str(proj / "in.txt")] and calls == [], (words, calls)
+
+
+def test_what_an_app_was_handed_is_taken_back_and_the_portal_is_asked_only_for_an_app_the_helper_named(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(sb, "sandboxes_root", lambda: str(tmp_path / "sandboxes"))
+    held = {"io.appkata.notes": {"d1": "/home/u/Documents/taxes.txt", "d2": "/home/u/proj"},
+            "io.appkata.notes-2": {"d1": "/home/u/Documents/taxes.txt"}, "io.appkata._7zip": {"d3": "/home/u/a.7z"}}
+    docs, log, runs = a_portal_holding(tmp_path, monkeypatch, held)
+
+    def note(app_id):
+        os.makedirs(os.path.dirname(sb.handed_path(app_id)), exist_ok=True)
+        open(sb.handed_path(app_id), "w").close()
+
+    # an app the helper handed nothing: no process, no bus, nothing changed
+    assert sb.revoke_documents("notes") is True
+    assert not runs.exists() and _portal_calls(log) == [] and json.loads(docs.read_text()) == held
+    # one it did: every document the portal lists for its identity loses every permission, and no
+    # other identity's does (the second "Notes" was handed the same file)
+    note("notes")
+    assert sb.revoke_documents("notes") is True
+    assert _portal_calls(log) == [["RevokePermissions", [d, "io.appkata.notes", ALL_PERMISSIONS]] for d in ("d1", "d2")]
+    assert json.loads(docs.read_text()) == {**held, "io.appkata.notes": {}}
+    assert runs.read_text() == "-I -c\n" and not os.path.lexists(sb.handed_path("notes"))
+    assert sb.revoke_documents("notes") is True and runs.read_text() == "-I -c\n"     # taken back once
+    # an identity that isn't the id as it is
+    note("7zip")
+    assert sb.revoke_documents("7zip") is True and _portal_calls(log)[-1] == ["RevokePermissions", ["d3", "io.appkata._7zip", ALL_PERMISSIONS]]
+    # no document portal on the session's bus: nothing is held, since a document lasts as long as the portal
+    for gone in ("org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner"):
+        note("notes-2")
+        monkeypatch.setenv("PORTAL_GONE", gone)
+        assert sb.revoke_documents("notes-2") is True and not os.path.lexists(sb.handed_path("notes-2"))
+    # where the portal can't be asked, or still holds one afterwards: said, and asked again next time
+    note("notes-2")
+    before = len(_portal_calls(log))
+    monkeypatch.setenv("PORTAL_GONE", "org.freedesktop.DBus.Error.NoReply")
+    assert sb.revoke_documents("notes-2") is False
+    monkeypatch.delenv("PORTAL_GONE")
+    monkeypatch.setenv("PORTAL_KEEPS", "1")
+    assert sb.revoke_documents("notes-2") is False
+    monkeypatch.delenv("PORTAL_KEEPS")
+    python = sb.host_which("python3")
+    monkeypatch.setattr(sb, "host_which", lambda name, apps_root=None: None)
+    assert sb.revoke_documents("notes-2") is False
+    nogi = tmp_path / "host-bin" / "python3-without-gi"
+    nogi.write_text("#!/bin/sh\necho \"ModuleNotFoundError: No module named 'gi'\" >&2; exit 1\n")
+    nogi.chmod(0o755)
+    monkeypatch.setattr(sb, "host_which", lambda name, apps_root=None: str(nogi))
+    assert sb.revoke_documents("notes-2") is False
+    said = [r.getMessage() for r in caplog.records if r.name == "appkata.sandbox"]
+    assert len(said) == 4 and all(m.startswith("couldn't take back what io.appkata.notes-2 was handed through the document portal: ") for m in said), said
+    assert "NoReply" in said[0] and "No module named 'gi'" in said[3] and "no python3" in said[2], said
+    assert os.path.isfile(sb.handed_path("notes-2")) and json.loads(docs.read_text())["io.appkata.notes-2"] == held["io.appkata.notes-2"]
+    assert len(_portal_calls(log)) == before + 1                           # the portal that revokes nothing was asked to
+    monkeypatch.setattr(sb, "host_which", lambda name, apps_root=None: python)
+    assert sb.revoke_documents("notes-2") is True and json.loads(docs.read_text())["io.appkata.notes-2"] == {}
+
+
+def test_an_uninstall_a_change_away_from_standard_and_a_first_launcher_take_back_what_the_app_was_handed(fake_home, tmp_path, monkeypatch):
+    # the three moments (R17.14), through the code that writes and removes launchers: asked[] is
+    # each ask, with whether the app's row was still there
+    import json as _json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    root = fake_home / "Apps"
+    target = root / "notes"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "notes"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    db = DB(str(tmp_path / "a.db"))
+    url = "https://example.org/alice/notes"
+    rec = {"id": "notes", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/notes"}, "links": [], "files": [], "target": str(target)}
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False)
+    asked, real = [], sb.revoke_documents
+    monkeypatch.setattr(sb, "revoke_documents", lambda app_id: asked.append((app_id, bool(db.one("SELECT 1 FROM installs WHERE url=?", (url,))))) or real(app_id))
+    level = lambda template: {"name": "Notes", "url": url, "sandbox": template and sb.to_json(sb.resolve_template(template))}   # noqa: E731
+
+    def becomes(template):
+        asked.clear()
+        install._activate(rec, level(template), port, str(target))
+        return [a for a, _ in asked]
+
+    assert becomes("online-app") == ["notes"]           # its first launcher: the holder of an id starts with nothing
+    assert becomes("online-app") == [] and becomes("messenger") == []         # Standard to Standard: what it holds is its own
+    assert becomes("strict") == ["notes"]               # it leaves Standard
+    assert becomes("offline-editor") == []              # and comes back: nothing was left to take
+    assert becomes(None) == ["notes"] and "launcher" not in rec               # Off
+    assert becomes("standard") == ["notes"]             # sandboxed again, a first launcher
+    # ...and the uninstall, once the app's row is gone, whether its home is kept or not
+    for remove in (False, True):
+        db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Notes", "1.0", "tarball", _json.dumps(rec), now()))
+        asked.clear()
+        install.uninstall(db, url, remove_sandbox=remove)
+        assert asked == [("notes", False)], asked
+    # with the portal behind it: the app was handed a file while Standard, and is uninstalled
+    held = {"io.appkata.notes": {"d1": str(fake_home / "Documents" / "taxes.txt")}}
+    docs, log, runs = a_portal_holding(tmp_path, monkeypatch, held)
+    os.makedirs(os.path.dirname(sb.handed_path("notes")), exist_ok=True)
+    open(sb.handed_path("notes"), "w").close()
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Notes", "1.0", "tarball", _json.dumps(rec), now()))
+    install.uninstall(db, url, remove_sandbox=True)
+    assert json.loads(docs.read_text()) == {"io.appkata.notes": {}} and _portal_calls(log) == [["RevokePermissions", ["d1", "io.appkata.notes", ALL_PERMISSIONS]]]
 
 
 def test_the_field_test_runs_each_check_under_the_template_it_names(tmp_path):

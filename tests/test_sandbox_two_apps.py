@@ -121,6 +121,38 @@ def test_a_home_removed_with_its_app_frees_the_name(be, two):
     assert install.new_app_id(be.db, C, "Notes") == "notes"                  # nothing of A's is left to inherit
 
 
+def test_what_one_notes_was_handed_is_never_the_next_notes_with_its_id(be, two, tmp_path, monkeypatch):
+    # CR1.5-25 (#400): a file handed to an app through the document portal stays the portal's, under
+    # the app's identity, for the session. B's home was removed with it, so the next "Notes", from
+    # another Source, got B's id (the test above) and, in its doc/by-app view, every file the user
+    # had opened with B. The class is the one R6-1 and F19 are of: something keyed on the id that
+    # outlives the install. The portal's records were the one such thing AppKata does not keep.
+    from test_sandbox import ALL_PERMISSIONS, _portal_calls, a_portal_holding
+    taxes = str(tmp_path / "Documents" / "taxes.txt")
+    held = {"io.appkata.notes": {"d0": taxes}, "io.appkata.notes-2": {"d1": taxes, "d2": str(tmp_path / "proj")}}
+    docs, log, runs = a_portal_holding(tmp_path, monkeypatch, held)
+
+    def handed(app_id):                 # what the file-argument helper leaves when it hands the app something
+        os.makedirs(os.path.dirname(sb.handed_path(app_id)), exist_ok=True)
+        open(sb.handed_path(app_id), "w").close()
+
+    handed("notes-2")
+    be._uninstall(B, False, remove_home=True)
+    assert install.new_app_id(be.db, C, "Notes") == "notes-2"                # C gets B's id...
+    assert json.loads(docs.read_text()) == {**held, "io.appkata.notes-2": {}}       # ...and nothing B was handed; A's is A's
+    assert _portal_calls(log) == [["RevokePermissions", [d, "io.appkata.notes-2", ALL_PERMISSIONS]] for d in ("d1", "d2")]
+    # ...and an app that leaves Standard keeps nothing for when it comes back: to Strict, and to Off
+    for away in ("strict", "off"):
+        be.setSandbox(A, {"template": "online-app", "overrides": {}})
+        docs.write_text(json.dumps(held))
+        handed("notes")
+        be.setSandbox(A, {"template": "online-app", "overrides": {"network": False}})        # still Standard: it keeps them
+        assert json.loads(docs.read_text())["io.appkata.notes"] == held["io.appkata.notes"]
+        be.setSandbox(A, {"template": away, "overrides": {}} if away != "off" else {"template": "off"})
+        assert json.loads(docs.read_text())["io.appkata.notes"] == {}, away
+        assert not os.path.lexists(sb.handed_path("notes"))
+
+
 def test_an_install_record_without_an_id_still_keys_on_the_slug(be, tmp_path):
     # a record written before round six: the slug is the id, so nothing moves on upgrade
     assert install.app_id_of({}, {"name": "My Notes"}) == "my-notes"

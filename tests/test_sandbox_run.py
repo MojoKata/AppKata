@@ -1852,10 +1852,87 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
             _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()
     finally:
         bus.close()
+
+
+def _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, e):
+    """CR1.5-25 (#400), with the real document portal, which the review could not run: a file and a
+    folder handed to an app are still its own at its next start, which is the hand-over working
+    (the portal keeps them for the session). They stayed its own when it went to Strict or Off and
+    came back, and they were the next app's of that id: the app uninstalled with its home removed,
+    another Source's "Editor" installed under the freed id read the file and wrote to it. A part
+    of the test above, which tests/skips/tier1.txt names (that file is another unit's)."""
+    import json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    picked, folder = env.home / "Documents" / "picked.txt", env.home / "Handed"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("INSIDE\n")
+    was = picked.read_text()
+    look = ('cat "$XDG_RUNTIME_DIR"/doc/*/picked.txt "$XDG_RUNTIME_DIR"/doc/*/Handed/inside.txt 2>/dev/null; '
+            'for d in "$XDG_RUNTIME_DIR"/doc/*; do [ -e "$d" ] && echo "DOCUMENT $d"; done; true')
+    write = 'for f in "$XDG_RUNTIME_DIR"/doc/*/picked.txt "$XDG_RUNTIME_DIR"/doc/*/Handed/inside.txt; do (echo LATER >> "$f") 2>/dev/null; done; true'
+
+    def run(launcher, snippet, *args):
+        r = subprocess.run([launcher, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return r.stdout + r.stderr
+
+    def hand():                         # the user opens the file and the folder with the app
+        assert "PICKED" in run(lp, 'cat "$2" "$3"/inside.txt', str(picked), str(folder))
+        held = run(lp, look)            # ...and at its next start they are still its own, by no argument
+        assert "PICKED" in held and "INSIDE" in held and "DOCUMENT " in held, held
+
+    def holds_nothing(launcher, when):
+        held = run(launcher, look + "; " + write)
+        assert "PICKED" not in held and "INSIDE" not in held and "DOCUMENT " not in held, (when, held)
+        assert picked.read_text() == was and (folder / "inside.txt").read_text() == "INSIDE\n", when
+
+    target, url = env.home / "apps" / "editor", "https://example.org/alice/editor"
+    rec = {"id": "editor", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/app"}, "target": str(target),
+           "root": str(env.home / "apps"), "links": [], "files": [str(target)], "launcher": lp, "sandbox": sb.to_json(gs)}
+    db = DB(str(env.home / ".local" / "share" / "appkata" / "handed.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Editor", "1.0", "tarball", json.dumps(rec), now()))
+    portable = install.Portable(folder=str(env.home / "apps"), command_dir="", app_menu=False, stable_name=False)
+    app = lambda level: {"url": url, "name": "Editor", "sandbox": level and sb.to_json(level)}      # noqa: E731
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", e["DBUS_SESSION_BUS_ADDRESS"])          # AppKata runs in the same session
+        for away in (sb.resolve_template("strict"), None):                              # to Strict and back, to Off and back
+            hand()
+            install.rewrite_launcher(db, app(away), portable)
+            install.rewrite_launcher(db, app(gs), portable)
+            holds_nothing(lp, "back from Strict" if away else "back from Off")
+        hand()
+        install.uninstall(db, url, remove_sandbox=True)
+        assert not os.path.exists(sb.sandbox_home("editor")) and not os.path.exists(lp)
+        assert install.new_app_id(db, "https://example.org/bob/editor", "Editor") == "editor"       # the id is free (R17.6)
+        holds_nothing(env.app("editor", gs), "another Source's app under the freed id")
+        assert not os.path.lexists(sb.handed_path("editor"))
+        hand()                          # and what this one is handed is its own
+        assert os.path.isfile(sb.handed_path("editor"))
+
+
+def _a_session_with_no_document_portal_holds_nothing_and_is_not_made_to_start_one(env, addr):
+    """CR1.5-25 (#400): AppKata's ask of the portal on a real session bus where none runs. The bus
+    could start one (_bus_conf); the ask must not, and its answer is that nothing is held. With
+    no bus to ask at all it couldn't be asked, and the note that the app was handed something
+    stays for the next ask. A part of the test below, which tests/skips/tier1.txt names."""
+    def note():
+        os.makedirs(os.path.dirname(sb.handed_path("plain")), exist_ok=True)
+        open(sb.handed_path("plain"), "w").close()
+
+    with pytest.MonkeyPatch.context() as mp:
+        note()
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+        assert sb.revoke_documents("plain") is True and not os.path.lexists(sb.handed_path("plain"))
+        assert not os.path.isdir(env.rt / "doc" / "by-app")             # no portal was started for it
+        note()
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env.rt}/nonexistent")
+        assert sb.revoke_documents("plain") is False and os.path.isfile(sb.handed_path("plain"))
 
 
 @needs_proxy
@@ -1878,6 +1955,7 @@ def test_file_arguments_pass_through_when_they_cannot_be_handed_over(env):
         r = subprocess.run([env.on_a_machine_with(lp, f"{fake}:{os.environ['PATH']}"), 'echo "ARG $2"', str(docs / "a.txt")],
                            cwd=str(env.home), env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
                            capture_output=True, text=True, timeout=60)
+        _a_session_with_no_document_portal_holds_nothing_and_is_not_made_to_start_one(env, bus.addr)
     finally:
         bus.close()
     assert r.returncode == 0 and f"ARG {docs}/a.txt" in r.stdout, (r.stdout, r.stderr)
