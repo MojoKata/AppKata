@@ -244,6 +244,7 @@ def _folders(env: Env) -> dict[str, str]:
         # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
         "the app menu's layout": f"{h}/.config/menus", "a merged menu folder": f"{h}/.config/menus/applications-merged",
         "what Cinnamon's session sources at login": f"{h}/.gnomerc", "Xsession's other session script": f"{h}/.Xsession",
+        "the user's thumbnailers": f"{h}/.local/share/thumbnailers",
         # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
         # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
         # folder beside that, and ~/tools, which is the links' folder only where Settings say so

@@ -2679,6 +2679,29 @@ def entries(folder):
             yield it.get_entry().get_desktop_file_path()
 print("read" if home + "/elsewhere/appkata-probe.desktop" in entries(tree.get_root_directory()) else "not read")
 """),
+    # cinnamon-desktop's thumbnail factory, the one Nemo makes its thumbnails with: a .thumbnailer
+    # file of the user's names the command for a kind of file, and the factory runs it (P2B-1)
+    "~/.local/share/thumbnailers": ("cinnamon-desktop's thumbnail factory", r"""
+import os, sys
+try:
+    import gi
+    gi.require_version("CinnamonDesktop", "3.0")
+    from gi.repository import CinnamonDesktop
+except (ImportError, ValueError):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(sys.argv[1]); os.makedirs(home + "/shown")
+with open(sys.argv[1] + "/x.thumbnailer", "w") as f:
+    f.write('[Thumbnailer Entry]\nTryExec=sh\nExec=sh -c "echo ran > %s/ran" x %%i %%o\nMimeType=text/plain;\n' % home)
+with open(home + "/shown/a.txt", "w") as f:
+    f.write("hello\n")
+factory = CinnamonDesktop.DesktopThumbnailFactory.new(CinnamonDesktop.DesktopThumbnailSize.NORMAL)
+try:
+    factory.generate_thumbnail("file://" + home + "/shown/a.txt", "text/plain")
+except Exception:      # the planted command makes no picture, which the factory may say
+    pass
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
 }
 
 

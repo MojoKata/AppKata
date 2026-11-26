@@ -654,6 +654,10 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
              # Cinnamon makes `applications-merged` in it at every start and each desktop's menu
              # has its own file and merge folder there (pr-review pass 2 of #735, P2-1)
              (h(".config", "menus"), "your app menu's layout, which can add app-menu entries from any folder"),
+             # a .thumbnailer file names a command for a kind of file, and the user's are read before
+             # the system's: Nemo, Mint's file manager, runs it with no sandbox of its own as it
+             # shows a folder that holds such a file (pr-review pass 2 of #735, P2B-1)
+             (h(".local", "share", "thumbnailers"), "thumbnailers, which your file manager runs as it shows a folder"),
              (h(".vscode", "extensions"), "your editor's extensions"),
              (h(".vscode-oss", "extensions"), "your editor's extensions"),
              (h(".cargo", "bin"), "programs on your PATH"),

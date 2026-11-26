@@ -2436,6 +2436,9 @@ def fake_home(tmp_path, monkeypatch):
     # what cinnamon-session's Xsession hook sources, and Xsession's other name for ~/.xsession (P2-2)
     ("~/.gnomerc", True), ("~/.Xsession", True), ("~/.xsession", True), ("~/.gnomerc.bak", False), ("~/.gnome", False),
     ("~/.xsession-errors", False),
+    # the user's thumbnailers, whose commands the file manager runs (P2B-1); the pictures they make are no code
+    ("~/.local/share/thumbnailers", True), ("~/.local/share/thumbnailers/x.thumbnailer", True), ("~/.cache/thumbnails", False),
+    ("~/.local/share/thumbnailers-old", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2556,6 +2559,7 @@ MOVED_PROTECTED = {
     "~/cfg/sway": WM, "~/cfg/bash_completion": "your shell's startup files",
     "~/cfg/dconf/user": "your desktop's settings, which name programs to start", "~/cfg/user-dirs.dirs": "your folders' names, which some programs run as a script", "~/cfg/google-chrome/NativeMessagingHosts": "programs browser extensions may start",
     "~/cfg/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
+    "~/data/thumbnailers": "thumbnailers, which your file manager runs as it shows a folder",
     "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
     "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
     "~/data/flatpak": "Flatpak's user installation", "~/data/gnome-shell/extensions": "GNOME Shell extensions",
@@ -2796,7 +2800,9 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          "~/.config/menus": "your app menu's layout, which can add app-menu entries from any folder",
          "~/.config/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
          # P2-2: sourced at every Cinnamon X11 login; run as the session where no other is named
-         "~/.gnomerc": "your session's startup files", "~/.Xsession": "your session's startup files"}
+         "~/.gnomerc": "your session's startup files", "~/.Xsession": "your session's startup files",
+         # P2B-1: a .thumbnailer file's command, which Nemo runs for a file of its kind in a folder it shows
+         "~/.local/share/thumbnailers": "thumbnailers, which your file manager runs as it shows a folder"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):
