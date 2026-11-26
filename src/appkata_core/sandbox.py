@@ -2222,6 +2222,17 @@ def write_seccomp_filter() -> str | None:
 # it: the portal names a document after the file its descriptor reaches, so a link to a file
 # outside every grant (~/notes.txt -> ~/sync/notes-2024.txt) reached the app under the link's own
 # name, a path that isn't there (CR1.5-41).
+# A folder handed over is the app's from then on, as a granted one is: the portal's file system
+# lets the app make a link in it. An argument was judged by the folders the launcher shows alone,
+# so an app handed ~/proj (`editor ~/proj`) put a link to another file of the user's where
+# README.md was, and `editor ~/proj/README.md` at a later start handed it that file, read-write
+# (CR1.5-52: the road CR1.5-4 shut for a granted folder, open through a folder argument). Now the
+# portal is asked what the app holds (List, for its identity), each folder in that answer counts
+# as one the app is shown, at the path its document has, and so does a folder handed over by an
+# earlier argument of the same start: a file in one becomes its path in that folder's document
+# (no second document is made for it), and a link in one is never followed out. A file handed
+# over can't be made a link: the portal refuses a link, and a folder, in a file's document. Where
+# the portal doesn't answer that question nothing is handed over.
 # Before the first file or folder is handed over, a file named after the app's identity is made in
 # `handed/` beside this helper (handed_path): the portal keeps what an app was handed for the
 # session, AppKata takes it back when the app is uninstalled or leaves Standard (revoke_documents),
@@ -2294,6 +2305,9 @@ def inside(real):
     for seen, host in pairs:
         if real == host or real.startswith(host + os.sep):
             return seen + real[len(host):]
+    for seen, host in earlier():
+        if real == host or real.startswith(host + os.sep):
+            return seen + real[len(host):]
     return None
 
 
@@ -2308,6 +2322,7 @@ def as_file(arg):
 
 bus = None
 known = False
+held = None
 
 
 def portal():
@@ -2316,6 +2331,30 @@ def portal():
     if bus is None:
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     return bus
+
+
+def earlier():
+    # the folders the app was handed whole and still holds, as the portal lists them for its
+    # identity: (where the app sees it, where the host has it), like `pairs`. Asked once, when an
+    # argument lies in no folder the launcher shows. False until the portal has answered.
+    global held
+    if held is None:
+        held = False
+        try:
+            from gi.repository import Gio, GLib
+            docs = portal().call_sync(
+                "org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
+                "List", GLib.Variant("(s)", (ident,)), GLib.VariantType("(a{say})"), Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
+            found = []
+            for doc in sorted(docs):
+                host = os.fsdecode(bytes(docs[doc]).split(bytes(1))[0])
+                seen = os.path.join(rt, "doc", doc, os.path.basename(host))
+                if os.path.isdir(host) and os.path.isdir(seen) and not never_shared(os.path.realpath(host), []):
+                    found.append((seen, os.path.realpath(host)))
+            held = found
+        except Exception:
+            pass
+    return held or []
 
 
 def noted():
@@ -2355,7 +2394,9 @@ def export_dir(path):
         "org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
         "AddFull", GLib.Variant("(ahusas)", ([i], 1 | 8, ident, perms)), GLib.VariantType("(asa{sv})"),
         Gio.DBusCallFlags.NONE, 5000, fdl, None)
-    return os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(path))
+    seen = os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(path))
+    held.append((seen, path))           # the app's own from here on, for the arguments after this one too
+    return seen
 
 
 def hand(path, uri):
@@ -2383,6 +2424,8 @@ def hand(path, uri):
                 line = "runs sandboxed and isn't handed " + path + ": " + why + "."
                 if line not in said:
                     said.append(line)
+                return None
+            if held is False:           # the portal didn't say what the app holds: nothing more is handed to it
                 return None
             new = export(real) if os.path.isfile(real) else export_dir(real) if os.path.isdir(real) else None
         except Exception:

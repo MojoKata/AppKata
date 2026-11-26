@@ -1852,11 +1852,53 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
             _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()
     finally:
         bus.close()
+
+
+def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e):
+    """CR1.5-52 (#736), with the real document portal, by the finding's own road: the user hands
+    the app a folder (`editor ~/work`), and in it, through the portal's file system, the app puts a
+    link to another file of the user's where README.md was, and a link to a folder beside it. At a
+    later start the user opens README.md, by a path and by a URI, and a file through the linked
+    folder: each was handed over, read-write, by where it leads. Now each reaches the app as its
+    own path in the folder's document, where the link dangles; a file that is the folder's own is
+    its path there too, and nothing new is under $XDG_RUNTIME_DIR/doc. The same for a folder and
+    a link in it named at one start. A part of the test above, which tests/skips/tier1.txt names."""
+    docs, work, again = env.home / "Documents", env.home / "work", env.home / "again"
+    for d in (work / "sub", again):
+        d.mkdir(parents=True)
+    for f, text in ((work / "README.md", "README\n"), (work / "sub" / "deep.txt", "DEEP\n"), (docs / "secret.txt", "SECRET-TAXES\n"), (again / "plain.txt", "PLAIN\n")):
+        f.write_text(text)
+    (again / "README.md").symlink_to(docs / "secret.txt")
+
+    def started(snippet, *args):
+        r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; ' + snippet, *args], cwd=str(env.home), env=e,
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")], r.stdout + r.stderr
+
+    got, out = started(f'cd "$1" && mv README.md README.was && ln -s {shlex.quote(str(docs / "secret.txt"))} README.md && '
+                       f'ln -s {shlex.quote(str(docs))} all && echo PLANTED; true', str(work))
+    view = got[0]
+    assert "PLANTED" in out and view.startswith(str(env.rt / "doc") + "/") and view.endswith("/work"), (got, out)
+    assert os.readlink(work / "README.md") == str(docs / "secret.txt") and os.readlink(work / "all") == str(docs)       # on the host, as the app meant
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    got, out = started('cat "$1" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; (echo EDITED >> "$1") 2>/dev/null; cat "$4"; echo MORE >> "$4"; true',
+                       str(work / "README.md"), "file://" + str(work / "README.md"), str(work / "all" / "secret.txt"), str(work / "sub" / "deep.txt"))
+    assert got == [f"{view}/README.md", f"file://{view}/README.md", f"{view}/all/secret.txt", f"{view}/sub/deep.txt"], (got, out)
+    assert exported() == before, (exported() - before, out)
+    assert "SECRET-TAXES" not in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
+    assert "DEEP" in out and (work / "sub" / "deep.txt").read_text() == "DEEP\nMORE\n", out                # the folder's own file, read and written
+    # a folder, and a link in it, at one start: the folder is the app's by the time the link is judged
+    got, out = started('cat "$2" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; true', str(again), str(again / "README.md"), str(again / "plain.txt"))
+    assert got[0].endswith("/again") and got[1:] == [got[0] + "/README.md", got[0] + "/plain.txt"], (got, out)
+    assert "SECRET-TAXES" not in out and "PLAIN" in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
 
 
 def _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, e):
@@ -2468,9 +2510,10 @@ def test_a_missing_runtime_dir_refuses_the_launch_with_a_message(env):
 
 @needs_proxy
 def test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through(env, tmp_path):
-    # The forward helper calls Documents.Add with a timeout; a document portal that hangs (a stuck
-    # FUSE mount) must cost that timeout and nothing more -- the launch goes on with the arguments as
-    # they were (R17.6.2), the app runs, the status comes out.
+    # The forward helper calls the document portal with a timeout (List, what the app holds, before
+    # the first Add: CR1.5-52); a document portal that hangs (a stuck FUSE mount) must cost that
+    # timeout and nothing more -- the launch goes on with the arguments as they were (R17.6.2), the
+    # app runs, the status comes out.
     import time
     (env.home / "Documents").mkdir()
     (env.home / "Documents" / "n.txt").write_text("x\n")
@@ -2504,6 +2547,7 @@ from gi.repository import Gio, GLib
 XML = '''<node><interface name="org.freedesktop.portal.Documents">
 <method name="Add"><arg type="h" direction="in"/><arg type="b" direction="in"/><arg type="b" direction="in"/><arg type="s" direction="out"/></method>
 <method name="GetMountPoint"><arg type="ay" direction="out"/></method>
+<method name="List"><arg type="s" direction="in"/><arg type="a{say}" direction="out"/></method>
 </interface></node>'''
 def call(conn, sender, path, iface, method, params, inv):
     pass                                                        # never answers: the caller's timeout is all it gets

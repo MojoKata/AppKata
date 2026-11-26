@@ -3266,15 +3266,23 @@ class GLib:
 """
 
 
-def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), home=None, helper=None):
+def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), home=None, helper=None, held=None, gone=""):
     """The file-argument helper's own text run from `cwd` over `args`, against a stand-in document
     portal: the arguments it answers, the lines it has the launcher say, and the portal's calls,
     each [method, arguments, what the descriptors passed lead to]. `visible`: the folders the app
     is shown; `incwd`: a command-line tool's shared directory; `never` and `sockets`: the
     never-shared folders and the session bus's socket files the launcher gives it; `home`: the
     user's home folder, the test's own unless given; `helper`: the helper as AppKata wrote it
-    (sandbox.write_forward_helper), a copy of its text in `tmp_path` unless given."""
-    gi, log = tmp_path / "stand-in" / "gi", tmp_path / "portal.log"
+    (sandbox.write_forward_helper), a copy of its text in `tmp_path` unless given; `held`: what
+    the portal holds for the app from before, {document id: host path}, each also at its place in
+    the portal's own view ($XDG_RUNTIME_DIR/doc/<id>/<name>); `gone`: the D-Bus error the portal's
+    plain calls get, the question what the app holds among them."""
+    gi, log, docs = tmp_path / "stand-in" / "gi", tmp_path / "portal.log", tmp_path / "portal-held.json"
+    docs.write_text(json.dumps({"io.appkata.t": held or {}}))
+    for doc, host in (held or {}).items():
+        (tmp_path / "run" / "doc" / doc).mkdir(parents=True, exist_ok=True)
+        if not os.path.lexists(tmp_path / "run" / "doc" / doc / os.path.basename(host)):
+            (tmp_path / "run" / "doc" / doc / os.path.basename(host)).symlink_to(host)
     if helper is None:
         helper = tmp_path / "forward-files.py"
         helper.write_text(sb.FORWARD_HELPER)
@@ -3285,7 +3293,8 @@ def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), hom
         log.unlink()
     r = subprocess.run([sys.executable, str(helper), "io.appkata.t", str(tmp_path / "run"), incwd, *map(str, visible), "--",
                         "".join(f"{s}\n" for s in sockets), *map(str, never), "--", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30,
-                       env={**os.environ, "PYTHONPATH": str(gi.parent), "PORTAL_LOG": str(log), **({"HOME": str(home)} if home else {})})
+                       env={**os.environ, "PYTHONPATH": str(gi.parent), "PORTAL_LOG": str(log), "PORTAL_DOCS": str(docs), "PORTAL_GONE": gone,
+                            "PORTAL_KEEPS": "", **({"HOME": str(home)} if home else {})})
     assert r.returncode == 0, r.stderr
     lines = r.stdout.split("\n")
     assert lines.pop() == "" and all(l[:1] in ("=", "!") for l in lines), r.stdout
@@ -3395,7 +3404,8 @@ def test_a_link_to_a_file_outside_every_grant_is_handed_over_under_the_files_own
     words, said, calls = _handed(tmp_path, home, args, home=home)
     assert words == [f"{doc}/notes-2024.txt", f"{doc}/notes-2024.txt", f"file://{doc}/notes-2024.txt", f"--file={doc}/notes-2024.txt",
                      f"{doc}/plain.txt", f"{doc}/project", f"{doc}/project/"], words
-    assert [c[2] for c in calls if c[2]] == [[str(sync / "notes-2024.txt")]] * 4 + [[str(sync / "plain.txt")]] + [[str(sync / "project")]] * 2, calls
+    # (the folder named a second time is the app's by then, CR1.5-52: the same path, and no second hand-over)
+    assert [c[2] for c in calls if c[2]] == [[str(sync / "notes-2024.txt")]] * 4 + [[str(sync / "plain.txt")]] + [[str(sync / "project")]], calls
 
 
 def test_a_grant_reached_through_a_linked_home_maps_to_where_the_launcher_mounts_it(tmp_path):
@@ -3532,7 +3542,8 @@ def test_the_helper_hands_over_nothing_a_grant_could_not_share_but_under_the_sys
         if why.startswith(("the system's own ", "a folder above the system's own ")):
             system, why = system + 1, ""
         assert (p in kept) == bool(why), (p, why, said)
-    assert len(kept) == len(said) > 3 * len(never) and system == 2 and len(calls) >= 8, (len(kept), len(said), system, calls)
+    # what is handed over is a document of its own, or a path in a folder handed over just before it (CR1.5-52)
+    assert len(kept) == len(said) > 3 * len(never) and system == 2 and len(places) - len(kept) == 7 and len(calls) == 5, (len(kept), len(said), system, calls)
 
 
 def _a_python3_with_the_stand_in_portal(tmp_path) -> str:
@@ -3591,8 +3602,9 @@ def test_a_bare_word_is_a_file_argument_when_it_names_a_file_and_never_a_folder(
     # the folder is named by a path: ./build, build/, its full path, a URI, . itself, or a dot folder
     named = ["./build", "build/", str(proj / "build"), "file://" + str(proj / "build"), ".", ".git", "--dir=./build"]
     words, said, calls = _handed(tmp_path, proj, named, home=home)
-    assert words == [f"{doc}/build", f"{doc}/build/", f"{doc}/build", f"file://{doc}/build", f"{doc}/proj", f"{doc}/.git", f"--dir={doc}/build"], words
-    assert [c[0] for c in calls] == ["AddFull"] * 7, calls
+    # (handed over once, the folder is the app's for the arguments after it, CR1.5-52: `.git` is then a path in `.`'s document)
+    assert words == [f"{doc}/build", f"{doc}/build/", f"{doc}/build", f"file://{doc}/build", f"{doc}/proj", f"{doc}/proj/.git", f"--dir={doc}/build"], words
+    assert [c[0] for c in calls] == ["AddFull"] * 2 and [c[2] for c in calls] == [[str(proj / "build")], [str(proj)]], calls
     # in a granted folder the same: the word stays the program's own, and a file becomes its path there
     assert _forward(tmp_path, docs, "", [docs], ["sub", "in.txt", "./sub", "sub/"]) == ["sub", str(docs / "in.txt"), str(docs / "sub"), str(docs / "sub") + "/"]
 
@@ -3616,6 +3628,78 @@ def test_a_tools_relative_path_that_leaves_its_shared_folder_is_handed_over(tmp_
     assert [c[2] for c in calls if c[2]] == [[str(home / "src" / "notes.txt")]] * 2, calls
     # from the folder's own sub-folder the tool is not in place: every relative path is made whole
     assert _forward(tmp_path, proj / "sub", str(proj), [proj], ["b.txt", "../a.txt"]) == [str(proj / "sub" / "b.txt"), str(proj / "a.txt")]
+
+
+def test_a_link_in_a_folder_the_app_was_handed_is_never_followed_out_of_it(tmp_path):
+    # CR1.5-52 (#736): CR1.5-4's road, by a folder argument where that one had a grant. A folder
+    # handed over (`editor ~/proj`) is the app's to write through the portal, links too; a later
+    # `editor ~/proj/README.md` was judged by the launcher's folders alone, the app's link was
+    # followed, and its target handed over, read-write. How it slipped past: #379's test made the
+    # helper's rule for the folders it is told of, and the folders the portal knows of were never
+    # among them; nothing ran two starts of one app. The helper asks the portal what the app holds.
+    home, rt = tmp_path / "home", tmp_path / "run"
+    proj, docs, other, new = home / "proj", home / "Documents", home / "other", home / "new"
+    for d in (proj / "sub", docs, other, new, home / ".ssh"):
+        d.mkdir(parents=True)
+    for f in (docs / "taxes.txt", docs / "single.txt", proj / "notes.md", proj / "sub" / "deep.txt", other / "in.txt", new / "plain.md", home / ".ssh" / "id"):
+        f.write_text("x")
+    # what the app left in the folder it was handed, and the user's own links beside it
+    (proj / "README.md").symlink_to(docs / "taxes.txt")
+    (proj / "rel.md").symlink_to("../Documents/taxes.txt")
+    (proj / "sub" / "all").symlink_to(docs)
+    (proj / "hop").symlink_to("README.md")
+    (proj / "back.md").symlink_to("sub/deep.txt")
+    (home / "mine.md").symlink_to(proj / "notes.md")
+    (home / "via").symlink_to(proj / "README.md")
+    (new / "README.md").symlink_to(docs / "taxes.txt")
+    held = {"D1": str(proj), "D2": str(docs / "single.txt")}
+    view, doc = str(rt / "doc" / "D1" / "proj"), str(rt / "doc" / "DOC")
+    led_out = {str(proj / "README.md"): f"{view}/README.md",               # each becomes its own path in the folder's document,
+               str(proj / "rel.md"): f"{view}/rel.md",                     # the link included, where the app finds it dangling
+               str(proj / "sub" / "all" / "taxes.txt"): f"{view}/sub/all/taxes.txt",
+               str(proj / "sub" / "all"): f"{view}/sub/all",
+               str(proj / "hop"): f"{view}/hop",
+               str(home / "via"): f"{view}/README.md",                     # the user's own link to the app's
+               "proj/README.md": f"{view}/README.md",
+               "file://" + str(proj / "README.md"): f"file://{view}/README.md",
+               "--file=" + str(proj / "README.md"): f"--file={view}/README.md"}
+    stays = {str(proj / "notes.md"): f"{view}/notes.md",                   # a file of the folder: its path there, and no
+             str(proj / "sub" / "deep.txt"): f"{view}/sub/deep.txt",       # document of its own
+             str(proj / "back.md"): f"{view}/sub/deep.txt",                # a link that stays in the folder leads there
+             str(home / "mine.md"): f"{view}/notes.md",                    # the user's link into it (R3-17's direction)
+             str(proj): view, str(proj) + "/": view + "/"}
+    words, said, calls = _handed(tmp_path, home, list(led_out) + list(stays), home=home, held=held, never=[home / ".ssh"])
+    assert dict(zip(list(led_out) + list(stays), words)) == {**led_out, **stays} and calls == [] and said == [], (words, calls, said)
+    # what the app holds no folder of is handed over as before: a file handed over before is a file
+    # (the portal lets no link be made in its document), and a link in a folder the portal lists
+    # for no one is the user's own, as far as the launcher can tell
+    words, said, calls = _handed(tmp_path, home, [str(docs / "single.txt"), str(other / "in.txt"), str(new / "README.md")], home=home, held=held)
+    assert words == [f"{doc}/single.txt", f"{doc}/in.txt", f"{doc}/taxes.txt"], words
+    assert [c[2] for c in calls if c[2]] == [[str(docs / "single.txt")], [str(other / "in.txt")], [str(docs / "taxes.txt")]], calls
+    words, said, calls = _handed(tmp_path, home, [str(proj / "README.md")], home=home)                  # held by no one: the fault's own run
+    assert words == [f"{doc}/taxes.txt"] and [c[0] for c in calls] == ["Add", "GrantPermissions"], (words, calls)
+    # a folder handed over by one argument is the app's for the arguments after it, at the same start
+    words, said, calls = _handed(tmp_path, home, [str(new), str(new / "README.md"), str(new / "plain.md"), str(other / "in.txt")], home=home)
+    assert words == [f"{doc}/new", f"{doc}/new/README.md", f"{doc}/new/plain.md", f"{doc}/in.txt"], words
+    assert [c[0] for c in calls] == ["AddFull", "Add", "GrantPermissions"] and calls[1][2] == [str(other / "in.txt")], calls
+    # a granted folder comes first: a file in both is where the grant is mounted
+    assert _handed(tmp_path, home, [str(proj / "notes.md"), str(proj / "README.md")], visible=[proj], home=home, held=held)[0] == [
+        str(proj / "notes.md"), str(proj / "README.md")]
+    # what the portal lists counts only where it is a folder that is there in the portal's own
+    # view, and no never-shared one (the helper hands none over; the list is asked all the same)
+    ssh = home / ".ssh"
+    words, said, calls = _handed(tmp_path, home, [str(ssh / "id")], home=home, held={"D3": str(ssh)}, never=[ssh])
+    assert words == [str(ssh / "id")] and calls == [], (words, calls)
+    assert said == [f"runs sandboxed and isn't handed {ssh}/id: {ssh} is never shared with a sandboxed app."], said
+    os.unlink(rt / "doc" / "D1" / "proj")
+    (rt / "doc" / "D1" / "proj").write_text("no folder")                  # listed, and the view has no folder of that name
+    words, said, calls = _handed(tmp_path, home, [str(proj / "notes.md")], home=home, held=held)
+    assert words == [f"{doc}/notes.md"] and [c[0] for c in calls] == ["Add", "GrantPermissions"], (words, calls)
+    # where the portal doesn't say what the app holds, nothing is handed over; a granted folder's
+    # files are still the paths the app sees
+    words, said, calls = _handed(tmp_path, home, [str(other / "in.txt"), str(new), str(proj / "notes.md"), str(proj / "README.md")],
+                                 visible=[proj], home=home, gone="org.freedesktop.DBus.Error.NoReply")
+    assert words == [str(other / "in.txt"), str(new), str(proj / "notes.md"), str(proj / "README.md")] and calls == [] and said == [], (words, calls)
 
 
 # CR1.5-25 (#400): what an app is handed through the document portal is the portal's to keep, under
