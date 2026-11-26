@@ -178,6 +178,7 @@
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
     "tests/test_windows.py",
+    "tests/skips/tier1.txt",
     "tests/skips/windows.txt",
     "src/appkata/qml/AppRow.qml",
     "tests/test_docs_facts.py",
@@ -12193,6 +12194,7 @@
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
   "tests/test_windows.py",
+  "tests/skips/tier1.txt",
   "tests/skips/windows.txt"
  ],
  "set_aside": []
