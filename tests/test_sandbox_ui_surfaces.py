@@ -160,7 +160,10 @@ def _file(name, digest=""):
 
 @pytest.mark.parametrize("record, newer, chips", [
     ({"verified": "unverified"}, _file("demo-2.0-linux-x86_64.tar.gz", "sha256:" + "ab" * 32),
-     {"Unverified": "", "Checksum published": "2.0 publishes a checksum for the file Update would take: the download is checked against it."}),
+     {"Unverified": "", "Checksum published": "2.0 has a digest for the file Update would take: the download will be checked against it."}),
+    # a checksum file in the release, which nothing has read yet: the chip says no more than that (pass 1 of #732, U04r2-7)
+    ({"verified": "unverified"}, [_file("demo-2.0-linux-x86_64.tar.gz"), _file("SHA256SUMS")],
+     {"Unverified": "", "Checksum published": "2.0 has a checksum file: the download of the file Update would take will be checked against it."}),
     ({"verified": "checksum", "checksum_source": "SHA256SUMS"}, _file("demo-2.0-linux-x86_64.tar.gz"),
      {"Checksum": "Checked against SHA256SUMS",
       "No checksum published": "2.0 publishes no checksum for the file Update would take: there is nothing to check the download against."}),
@@ -177,13 +180,13 @@ def _file(name, digest=""):
      {"Unverified": "No key checked this copy: flatpak doesn't check its remote, aktest, against one"}),
     (None, None, {"No checksum published": "1.0 publishes no checksum for the file Install would take: "
                                            "there is nothing to check the download against."}),
-], ids=["unverified-and-an-update-with-a-digest", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest",
+], ids=["unverified-and-an-update-with-a-digest", "unverified-and-an-update-with-a-checksum-file", "checksum-and-an-update-with-none", "signed", "no-file-in-the-newest",
         "a-checksum-file-without-the-file",
         "a-vendors-flatpak", "a-ppas-package", "a-flatpak-no-key-checked", "not-installed"])
 def test_app_detail_shows_what_the_installed_file_was_checked_against_and_a_forecast_for_the_next_one(ui, be, app, record, newer, chips):
     rels = json.loads(be.db.one("SELECT releases FROM apps WHERE url=?", (URL,))["releases"])
     if newer:
-        be.db.x("UPDATE apps SET releases=? WHERE url=?", (json.dumps([{**NEWER, "assets": [newer]}] + rels), URL))
+        be.db.x("UPDATE apps SET releases=? WHERE url=?", (json.dumps([{**NEWER, "assets": newer if isinstance(newer, list) else [newer]}] + rels), URL))
     if record is None:
         be.db.x("DELETE FROM installs WHERE url=?", (URL,))
     else:

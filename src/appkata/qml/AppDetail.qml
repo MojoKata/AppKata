@@ -236,10 +236,14 @@ Rectangle {
                 Pill { visible: root.d.verify === "checksum"; text: "Checksum"; tip: root.d.verifyTip || ""; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
                 Pill { visible: root.d.verify === "unverified"; text: "Unverified"; tip: root.d.verifyTip || ""; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
                 Pill {      // the file Install or Update would take: not checked yet, so a forecast (R4.4)
+                    // "published" says R4.4's words and no more: the release has a digest for the file or a checksum file.
+                    // Nothing has read that checksum file yet, so not that it lists the file, nor that anything is checked.
+                    readonly property string taken: "the file " + (root.installed ? "Update" : "Install") + " would take"
                     visible: !!root.d.forecast; text: root.d.forecast === "published" ? "Checksum published" : "No checksum published"
-                    tip: (root.d.forecastVersion || "Its release") + (root.d.forecast === "published" ? " publishes a checksum" : " publishes no checksum")
-                         + " for the file " + (root.installed ? "Update" : "Install") + " would take: "
-                         + (root.d.forecast === "published" ? "the download is checked against it." : "there is nothing to check the download against.")
+                    tip: (root.d.forecastVersion || "Its release")
+                         + (root.d.forecast !== "published" ? " publishes no checksum for " + taken + ": there is nothing to check the download against."
+                            : root.d.asset && root.d.asset.digest ? " has a digest for " + taken + ": the download will be checked against it."
+                            : " has a checksum file: the download of " + taken + " will be checked against it.")
                     icon: root.d.forecast === "published" ? "check" : "warn"; color: root.d.forecast === "published" ? Theme.accentSoft : Theme.warnSoft
                     fg: root.d.forecast === "published" ? Theme.accent : Theme.warn; u: 0.92 }
                 Pill { visible: !!root.d.foreign; text: "Installed outside AppKata"; icon: "info"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
