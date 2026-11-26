@@ -512,7 +512,8 @@
     750,
     751,
     752,
-    753
+    753,
+    757
    ],
    "files": [
     "docs/build.md",
@@ -11727,6 +11728,19 @@
    "size": "small",
    "proof": "A test where the download is swapped after the check: the record names the package of the copy root installs.",
    "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 757,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a failed package install with a folder at the download's path: the install's own error is shown.",
+   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator."
   }
  ],
  "shared_files": [
