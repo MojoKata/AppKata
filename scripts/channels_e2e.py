@@ -108,6 +108,14 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         # this repository is taken without a key ([trusted=yes], gpgcheck=0): no key checked the package
         ok("a package of a repository trusted without a key isn't Verified (R16.3.6)",
            rec["verified"] == "unverified" and rec["repository"] == (f"file:{repo}" if mgr == "apt" else "akrepo"), rec)
+        if mgr == "apt":
+            # ...however its entry says so: the answer is this apt's own, not AppKata's reading of the entry
+            for option in ("trusted=true", "trusted=1", "trusted=on", "allow-insecure=yes", "trusted=yes"):
+                with open("/etc/apt/sources.list.d/akrepo.list", "w") as f:
+                    f.write(f"deb [{option}] file:{repo} ./\n")
+                apt_repo_refresh(repo)
+                v = pkgbackend.signed_by("akdemo", mgr)
+                ok(f"nor one taken with [{option}]", (v["verified"], v["repository"]) == ("unverified", f"file:{repo}"), v)
         # a newer version appears in the repository
         if mgr == "apt":
             deb(repo, "akdemo", "2.0-1")

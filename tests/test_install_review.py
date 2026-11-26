@@ -126,7 +126,7 @@ def _release_with(server, others, data=_FILE):
     (root / "App.AppImage").write_bytes(data)
     for name, text in others:
         if text is not None:
-            (root / name).write_text(text)
+            (root / name).write_text(text, newline="\n")      # as the release has it: Windows would write each line end as two bytes
     a = Asset("App.AppImage", base + "/App.AppImage")
     return a, [a] + [Asset(name, f"{base}/{name}") for name, _ in others]
 
@@ -580,6 +580,27 @@ def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(
     assert install.head_bytes(bad_answers, 200_000) == b""
     a = Asset("App.AppImage", bad_answers + "?the-file")
     assert install.expected_sha256(a, [a, Asset("SHA256SUMS", bad_answers)]) == ("", "", "couldn't read SHA256SUMS")
+
+
+# ---------------------------------------------------------------- an address that can't be asked for (R4.8.2)
+# How it slipped past (pass 1 of the unit's own review): the tests above break answers, and none
+# gave download() an address http.client won't send. Its InvalidURL is one of http.client's own
+# exceptions, which were all taken as a connection that broke: three retries over 12 seconds, then
+# "the server's answer couldn't be read (InvalidURL); press Update again to resume", of a server
+# that was never asked. A release link is free text on some forges, so a space is enough.
+@pytest.mark.parametrize("address", ["{base}/my file.AppImage", "{base}/file\x7f.AppImage", "{base}x/file.AppImage"],
+                         ids=["a-space", "a-control-character", "a-port-that-is-no-number"])
+def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_names_it(server, tmp_path, monkeypatch, address):
+    root, base = server
+    (root / "my file.AppImage").write_bytes(b"the file")
+    waits, dl = [], tmp_path / "dl"
+    dl.mkdir()
+    monkeypatch.setattr(install.time, "sleep", waits.append)
+    url = address.format(base=base)
+    with pytest.raises(install.InstallError) as e:
+        install.download(url, str(dl / "file.bin"))
+    assert str(e.value) == f"download failed: the release's address for this file isn't a valid one ({install.one_line(url)})"
+    assert waits == [] and os.listdir(dl) == []         # not tried again, and nothing kept to resume
 
 
 # ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
@@ -3425,7 +3446,9 @@ def package_tools(tmp_path, monkeypatch):
     """Stand-ins for the package tools, first on the PATH: dpkg-deb and rpm name the package; apt-get
     and dnf plan an install of it and, told to install, keep the file they were handed and say where
     it was. The command that would run as root runs here as the test's user, with the folder only
-    root can write under the test's own. No PackageKit of this machine's is ever asked."""
+    root can write under the test's own, and held to 20 seconds and to files of 10 MB: a copy that
+    never ends, or waits for ever, fails its test and fills no disk. No PackageKit of this
+    machine's is ever asked."""
     from appkata_core import pkgbackend
     tools, out, staging = tmp_path / "tools", tmp_path / "installed", tmp_path / "root-only"
     for d in (tools, out, staging):
@@ -3448,11 +3471,14 @@ ls "$(dirname "$last")" > {shlex.quote(str(out))}/beside
         (tools / name).chmod(0o755)
     monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setattr(pkgbackend, "STAGING", str(staging), raising=False)
-    monkeypatch.setattr(pkgbackend, "_priv", lambda cmd, env=None: cmd)
+    monkeypatch.setattr(pkgbackend, "_priv", lambda cmd, env=None: [*_HELD, *cmd])
     monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
     monkeypatch.setattr(pkgbackend, "linux_family", lambda: "debian")
     monkeypatch.setattr(pkgbackend.PkTransport, "available", lambda self: False)
     return out, staging
+
+
+_HELD = ["timeout", "20", "sh", "-c", 'ulimit -f 20480; exec "$@"', "held"]      # 20480 blocks of 512 bytes
 
 
 def _package_file(server, kind, data=b"a package, as its release published it"):
@@ -3510,9 +3536,29 @@ def _a_link_to_another(path):
     os.symlink(other, path)
 
 
+# How the next three slipped past (pass 1 of the unit's own review): the swaps above each leave a
+# small regular file to read, so `cp` of the path looked right. It follows a link and reads
+# whatever is there for as long as there is more: a link to /dev/zero had root write zeros under
+# /var/cache until the file system was full, and a FIFO had it wait for ever. What runs as root
+# now opens no path of the user's and reads no more than the length that was checked.
+def _a_link_to_a_device(path):
+    os.remove(path)
+    os.symlink("/dev/zero", path)
+
+
+def _a_fifo(path):
+    os.remove(path)
+    os.mkfifo(path)
+
+
+def _the_file_and_more(path):
+    with open(path, "ab") as f:
+        f.write(b"and more after the bytes that were checked")
+
+
 @linux_only
 @pytest.mark.parametrize("kind", ["deb", "rpm"])
-@pytest.mark.parametrize("swap", [_other_bytes, _same_size, _a_link_to_another])
+@pytest.mark.parametrize("swap", [_other_bytes, _same_size, _a_link_to_another, _a_link_to_a_device, _a_fifo, _the_file_and_more])
 def test_a_package_swapped_after_its_check_is_refused_on_the_administrators_side(env, server, package_tools, monkeypatch, kind, swap):
     """The finding's case: the download is hashed and compared, and a program of the user's then
     puts another file at its path before the package manager opens it as root."""
@@ -3524,6 +3570,57 @@ def test_a_package_swapped_after_its_check_is_refused_on_the_administrators_side
     assert os.listdir(out) == []                                                 # the package manager was handed nothing
     assert os.listdir(staging) == [] and not env.one("SELECT 1 FROM installs")
     assert [p for p in _downloads() if not p.endswith(".other")] == []          # nor is the swapped file kept to "resume"
+
+
+_PACKAGE = b"a package, as its release published it"
+
+
+def _the_file(path):
+    return open(path, "rb")
+
+
+def _the_file_made_longer(path):
+    with open(path, "ab") as f:
+        f.write(b"x" * (1 << 20))
+    return open(path, "rb")
+
+
+def _the_file_cut_short(path):
+    with open(path, "r+b") as f:
+        f.truncate(len(_PACKAGE) - 1)
+    return open(path, "rb")
+
+
+def _a_device_with_no_end(path):
+    return open("/dev/zero", "rb")
+
+
+def _nothing(path):
+    return open(os.devnull, "rb")
+
+
+@linux_only
+@pytest.mark.parametrize("given", [_the_file, _the_file_made_longer, _the_file_cut_short, _a_device_with_no_end, _nothing],
+                         ids=lambda f: f.__name__.strip("_"))
+def test_the_command_that_runs_as_root_reads_its_input_alone_and_no_more_than_the_length_that_was_checked(tmp_path, monkeypatch, given):
+    """The script by itself, whatever AppKata did before it: its file is its standard input, it
+    copies the checked length and one byte at most, and the package manager gets none of the
+    input."""
+    from appkata_core import pkgbackend
+    staging, download, handed = tmp_path / "root-only", tmp_path / "demo_1.0_all.deb", tmp_path / "handed"
+    staging.mkdir()
+    download.write_bytes(_PACKAGE)
+    monkeypatch.setattr(pkgbackend, "STAGING", str(staging), raising=False)
+    manager = ["sh", "-c", 'cp "$1" "$0" && cat > "$0.input"', str(handed)]      # $1: the copy
+    with given(str(download)) as f:
+        p = subprocess.run([*_HELD, "/bin/sh", "-c", pkgbackend.file_install_script(), "appkata-install", str(len(_PACKAGE)),
+                            hashlib.sha256(_PACKAGE).hexdigest(), download.name, *manager], stdin=f, capture_output=True, text=True)
+    assert os.listdir(staging) == []
+    if given is _the_file:
+        assert (p.returncode, p.stderr) == (0, "") and handed.read_bytes() == _PACKAGE
+        assert (tmp_path / "handed.input").read_bytes() == b""
+    else:
+        assert (p.returncode, p.stderr.strip()) == (pkgbackend.CHANGED, pkgbackend.CHANGED_TEXT) and not handed.exists()
 
 
 @linux_only

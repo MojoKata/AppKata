@@ -5,9 +5,11 @@ pkexec (R16.8.2). Every change is dry-run first, and the plan is reviewed before
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -293,8 +295,13 @@ APT_OPTS = ["-y", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options:
 # would read it again as root after the password prompt. So the command that runs as root takes
 # a copy to a folder only root can change, compares the copy's SHA-256 with the one AppKata
 # checked, and installs that copy: what is installed is what was checked, or nothing is.
-# $1 is the file, $2 its SHA-256, $3 the copy's name; the rest is the package manager's command,
-# which gets the copy's path as its last word.
+# It opens nothing by a path of the user's. The file is its standard input, opened by AppKata
+# (:func:`_open_checked`), and it reads no more of it than the checked file's length and one byte:
+# a link, a device or a FIFO put at the download's path is never opened as root, and a file made
+# longer can't fill root's folder (it had `cp` the path, which follows a link, and copied
+# /dev/zero until the file system was full).
+# $1 is the file's length in bytes, $2 its SHA-256, $3 the copy's name; the rest is the package
+# manager's command, which gets the copy's path as its last word and none of the file as its input.
 STAGING = "/var/cache"          # where the copy's folder is made: only root can write here
 CHANGED = 65                    # the command's exit code when the copy isn't the file AppKata checked
 CHANGED_TEXT = "the downloaded file changed after AppKata checked it; nothing was installed"
@@ -304,7 +311,7 @@ dir=$(mktemp -d @STAGING@/appkata-install.XXXXXX)
 trap 'rm -rf "$dir"' EXIT
 trap 'exit 130' HUP INT TERM
 copy=$dir/$3
-cp -- "$1" "$copy"
+head -c "$(($1 + 1))" > "$copy"
 sum=$(sha256sum < "$copy")
 if [ "${sum%% *}" != "$2" ]; then
     echo "@CHANGED_TEXT@" >&2
@@ -313,7 +320,7 @@ fi
 chmod 755 "$dir"
 chmod 644 "$copy"
 shift 3
-"$@" "$copy"
+"$@" "$copy" < /dev/null
 """
 
 
@@ -321,6 +328,31 @@ def file_install_script() -> str:
     """The shell script that installs a checked package file from root's own copy of it."""
     return (_FILE_INSTALL.replace("@STAGING@", _q(STAGING)).replace("@CHANGED_TEXT@", CHANGED_TEXT)
             .replace("@CHANGED@", str(CHANGED)))
+
+
+def _open_checked(file: str, sha256: str):
+    """(the downloaded file open for reading, its length), for the command that runs as root to
+    read as its standard input: a regular file, opened without following a link and without
+    waiting on a FIFO, whose bytes as read through this very handle have the SHA-256 AppKata
+    checked. PackageError(CHANGED_TEXT) for anything else, before anything runs as root."""
+    try:        # the two flags are Linux's, as this road is; elsewhere only the tests come by. No buffer: the handle's own place is what root reads from
+        f = os.fdopen(os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)), "rb", buffering=0)
+    except OSError:
+        raise PackageError(CHANGED_TEXT) from None
+    try:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise PackageError(CHANGED_TEXT)
+        h, size = hashlib.sha256(), 0
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            size += len(chunk)
+        if h.hexdigest() != sha256.lower():
+            raise PackageError(CHANGED_TEXT)
+        f.seek(0)
+    except BaseException:
+        f.close()
+        raise
+    return f, size
 
 
 def _apt_progress(line: str):
@@ -380,7 +412,8 @@ class Cli(Backend):
                      package: str = "") -> Plan:
         """Install a package file a release published, whose SHA-256 AppKata checked (R16.8.5): the
         dry run and its review as for any install (R16.3.5), then the administrator's side installs
-        its own copy of the file, and only when that copy is the file that was checked. `package`
+        its own copy of the file, read from the handle AppKata opened and never by its path, and
+        only when that copy is the file that was checked. `package`
         is the name of the package in the file: upgrading it is what an update of the app is, and
         needs no confirmation (the file's own name is no package's)."""
         file = os.path.abspath(file)
@@ -396,8 +429,10 @@ class Cli(Backend):
         else:
             wait_for_lock(RPM_LOCKS, on_wait, cancel)
             inner, env = ["dnf", "-y", "install"], None
-        cmd = _priv(["/bin/sh", "-c", file_install_script(), "appkata-install", file, sha256.lower(), os.path.basename(file), *inner], env)
-        _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None)
+        checked, size = _open_checked(file, sha256)
+        with checked:
+            cmd = _priv(["/bin/sh", "-c", file_install_script(), "appkata-install", str(size), sha256.lower(), os.path.basename(file), *inner], env)
+            _stream(cmd, progress, cancel, _apt_progress if self.manager == "apt" else None, stdin=checked)
         return plan
 
 
@@ -410,11 +445,11 @@ def _last(text: str) -> str:
     return lines[-1].strip() if lines else ""
 
 
-def _stream(cmd: list[str], progress=None, cancel=None, parse=None) -> None:
+def _stream(cmd: list[str], progress=None, cancel=None, parse=None, stdin=None) -> None:
     import logging
     lg = logging.getLogger("appkata.cmd")
     lg.info("$ %s", " ".join(cmd))
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    p = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     for line in iter(p.stdout.readline, ""):
         lg.info("  out| %s", line.rstrip())
         if parse and progress:
@@ -662,32 +697,47 @@ def apt_installed_sources(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _trusted_without_key(entry: str) -> bool:
+def _sets_trusted(entry: str) -> bool:
     """Does a sources entry (`$(SOURCESENTRY)`: "<file>:<n>", the line of a `.list` file or the
-    stanza of a `.sources` file) tell apt to take the repository without checking its key?
-    A `.sources` file is judged whole: one `Trusted: yes` in it counts for each of its stanzas."""
+    stanza of a `.sources` file) set apt's `trusted` option, to anything? To what is never read
+    here: apt takes yes, true, on, enable, with and 1 for yes, in any case, and what it makes of
+    the entry is its own answer (:func:`apt_checked_repositories`). A `.sources` file is judged
+    whole: one `Trusted:` in it counts for each of its stanzas. An entry that can't be read counts
+    as setting it."""
     path, _, n = entry.rpartition(":")
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
     except OSError:
-        return False
+        return True
     if path.endswith(".sources"):
-        return any(re.match(r"^\s*Trusted\s*:\s*yes\s*$", l, re.I) for l in lines)
+        return any(re.match(r"^\s*Trusted\s*:", l, re.I) for l in lines)
     if n.isdigit() and 0 < int(n) <= len(lines):
         lines = [lines[int(n) - 1]]
-    return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=\s*yes\b", l, re.I) for l in lines)
+    return any(re.match(r"^\s*deb\S*\s+\[[^\]]*\btrusted\s*=", l, re.I) for l in lines)
 
 
-def apt_unkeyed_repositories() -> set[tuple[str, str]]:
-    """The (site, suite) of every repository apt is told to trust without a key (`[trusted=yes]`,
-    `Trusted: yes`): a package from one was checked against nothing."""
-    out = set()
-    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(SOURCESENTRY)"]).splitlines():
-        site, _, rest = line.partition("\t")
-        suite, _, entry = rest.partition("\t")
-        if entry and (site, suite) not in out and _trusted_without_key(entry):
-            out.add((site, suite))
+def apt_checked_repositories() -> dict[tuple[str, str], bool]:
+    """{(site, suite): did apt check it against a key}, for each repository apt has lists of, by
+    apt's own answer (`apt-get indextargets`) and never by AppKata's reading of the sources:
+
+    - `$(TRUSTED)` must be "yes". apt says so of a repository whose signed Release file it checked,
+      and "no" of one it took unsigned (`allow-insecure`) or is told not to trust. It says "yes" as
+      well of one it is told to trust without a key, however the entry spells that, so:
+    - the entry (`$(SOURCESENTRY)`) must not set `trusted` at all (:func:`_sets_trusted`);
+    - `$(ALLOW_INSECURE)` must be left as its own name, as apt leaves a field it has nothing for:
+      it is "true" where the entry or apt's configuration lets the repository come unsigned.
+
+    Every target of the repository must pass. One that apt doesn't name here (its answer failed or
+    was empty, or it knows no such field) is in no way shown to be checked, and counts as not."""
+    out: dict[tuple[str, str], bool] = {}
+    sets: dict[str, bool] = {}
+    for line in _text(["apt-get", "indextargets", "--format", "$(SITE)\t$(RELEASE)\t$(TRUSTED)\t$(ALLOW_INSECURE)\t$(SOURCESENTRY)"]).splitlines():
+        site, suite, trusted, insecure, entry = (line.split("\t", 4) + [""] * 4)[:5]
+        if entry not in sets:
+            sets[entry] = _sets_trusted(entry)
+        checked = trusted == "yes" and insecure == "$(ALLOW_INSECURE)" and not sets[entry]
+        out[site, suite] = checked and out.get((site, suite), True)
     return out
 
 
@@ -701,16 +751,18 @@ def signed_by(name: str, manager: str | None = None) -> dict:
     {"verified": "signed" or "unverified", "signer", "repository"}. "signed" when a repository whose
     key the package manager checks offers the installed version, with that repository's own name
     as `signer` ("Ubuntu", "LP-PPA-…"; "" when it gives none). Otherwise "unverified":
-    `repository` is then the one that offers it and is trusted without a key, or "" when none does
-    (installed from a file, or a version its repository no longer offers)."""
+    `repository` is then the one that offers it and that apt doesn't say it checked against a key
+    (:func:`apt_checked_repositories`), or "" when none does (installed from a file, or a version
+    its repository no longer offers)."""
     manager = manager or ("apt" if linux_family() == "debian" else "dnf")
     if manager != "apt":
         return _rpm_signed_by(name)
     offered = apt_installed_sources(_text(["apt-cache", "policy", name]))
     if not offered:
         return {"verified": "unverified", "signer": "", "repository": ""}
-    unkeyed = apt_unkeyed_repositories()
-    keyed = [s for s in offered if not any(_offered_by(s, *u) for u in unkeyed)]
+    checked = apt_checked_repositories()
+    said = {s: [ok for repo, ok in checked.items() if _offered_by(s, *repo)] for s in offered}
+    keyed = [s for s in offered if said[s] and all(said[s])]      # apt says so, of every repository the line could be of
     if not keyed:
         return {"verified": "unverified", "signer": "", "repository": offered[0][0]}
     names = {(r["site"], f"{r['suite']}/{r['component']}" if r["component"] else r["suite"]): r.get("o") or r.get("l") or ""

@@ -151,8 +151,10 @@ gives none):
   `--no-gpg-verify`, and the one a bundle installed from a file leaves behind, have it off.
 - A package, when a repository whose key the package manager checks offers the installed version.
   A version no repository offers (one installed from a file, or one its repository has since
-  replaced) and a package of a repository that is trusted without a key (`[trusted=yes]`) were
-  checked against nothing AppKata can tell.
+  replaced) was checked against nothing AppKata can tell. Nor was a package of a repository that
+  apt is told to take without a key (its `trusted` or `allow-insecure` option, however the entry
+  spells it), or of one apt doesn't itself say it checked: AppKata asks apt
+  (`apt-get indextargets`), and what apt doesn't say counts as not checked.
 
 Every other copy shows **Unverified**, with where it is from in the tooltip, and its channel is
 named **Package** where no repository's name is known (R16.6.1). AppKata asks flatpak and the
@@ -313,7 +315,9 @@ needs administrator rights for `--user`).
 R16.8.5. **A package file from a release** (`.deb`, `.rpm`; R4.3.3) is always installed through
 the command line (R16.8.2), also where PackageKit is running: PackageKit takes a file by its
 path, reads it as root later, and can't be held to the file AppKata checked. After the dry run
-(R16.3.5) one command runs through `pkexec`. It copies the file to a new folder under `/var/cache`
+(R16.3.5) one command runs through `pkexec`. AppKata hands it the file already open, and it opens
+nothing by the download's path: a link, a device or a FIFO put there is never read as root. It
+copies the file, and no more than the length AppKata checked, to a new folder under `/var/cache`
 that only root can change, compares the copy's SHA-256 with the download's (R4.4), hands the copy
 to `apt-get install` or `dnf install`, and removes the folder. When the two differ, nothing is
 installed.
