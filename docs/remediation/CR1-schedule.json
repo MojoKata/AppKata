@@ -211,7 +211,8 @@
     736,
     743,
     745,
-    759
+    759,
+    767
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -240,7 +241,7 @@
     "tests/test_launcher_golden.py",
     "tests/test_dialog_contract.py"
    ],
-   "oversize": "21 findings: 17 from the review, and four High or Low ones its own batches found where its fixes stopped short (#736, #743, #745, #759), which close before the review's own findings they follow from can."
+   "oversize": "22 findings: 17 from the review, and five its own batches found where its fixes stopped short (#736, #743, #745, #759, #767), which close before the review's own findings they follow from can."
   },
   {
    "id": "U06",
@@ -11929,6 +11930,21 @@
    "size": "small",
    "proof": "A test where the app leaves a folder it locked in its install folder: the uninstall gives it back and removes it.",
    "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 767,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    400
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of an update of a sandboxed app: the portal is asked to revoke nothing.",
+   "note": "Found by U05's sixth batch (2026-11-25) on what #400 just built, and filed by the coordinator; fixed in U05's first review round."
   }
  ],
  "shared_files": [
