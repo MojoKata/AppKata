@@ -210,7 +210,8 @@
     701,
     736,
     743,
-    745
+    745,
+    759
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -238,7 +239,8 @@
     "tests/test_sandbox_claims_table.py",
     "tests/test_launcher_golden.py",
     "tests/test_dialog_contract.py"
-   ]
+   ],
+   "oversize": "21 findings: 17 from the review, and four High or Low ones its own batches found where its fixes stopped short (#736, #743, #745, #759), which close before the review's own findings they follow from can."
   },
   {
    "id": "U06",
@@ -516,7 +518,8 @@
     638,
     658,
     749,
-    750
+    750,
+    761
    ],
    "files": [
     "docs/build.md",
@@ -1749,7 +1752,8 @@
     204,
     619,
     744,
-    734
+    734,
+    760
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -11790,6 +11794,59 @@
    "size": "small",
    "proof": "A test setting the install folder to the home: refused in Settings, or grants of an app there not refused wholesale.",
    "note": "Found by U05's fourth batch (2026-11-25) and filed by the coordinator; on master as well."
+  },
+  {
+   "finding": 759,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md"
+   ],
+   "depends_on": [
+    736
+   ],
+   "related": [
+    743,
+    379
+   ],
+   "size": "medium",
+   "proof": "A tool run once in a folder plants a link there; a later file argument through the link is not handed its target (tier 1, and tier 2 with the real portal in both containers).",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator; its remedy is the owner's choice (asked 2026-11-25), taken in U05's sixth batch with #743."
+  },
+  {
+   "finding": 760,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
+    "docs/architecture/A1-app-sandboxing/A1.12-decisions.md"
+   ],
+   "depends_on": [
+    400,
+    736
+   ],
+   "related": [
+    734,
+    744
+   ],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator; with #734 and #744 in U42."
+  },
+  {
+   "finding": 761,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    395
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the app leaves a folder it locked in its install folder: the uninstall gives it back and removes it.",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator, by reading."
   }
  ],
  "shared_files": [
