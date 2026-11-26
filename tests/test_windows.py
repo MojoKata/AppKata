@@ -529,9 +529,11 @@ SYSTEM_FOLDER = w.system_folder
 def windows_system_folder(monkeypatch):
     """Off Windows there is no Windows to name its system folder (windows.system_folder asks it, and
     reads no environment value in its place), so the tests that go as far as starting a program get
-    a stand-in for it. On Windows it is Windows' own answer."""
+    a stand-in for it. On Windows it is Windows' own answer. The stand-in is spelled as Windows spells
+    its answer, `system32` in small letters: with `System32` here, a test that compared the letters'
+    case passed off Windows and failed on it (the Windows run of 7f353c1)."""
     if os.name != "nt":
-        monkeypatch.setattr(w, "system_folder", lambda: "C:\\Windows\\System32")
+        monkeypatch.setattr(w, "system_folder", lambda: "C:\\Windows\\system32")
 
 
 @pytest.fixture
@@ -582,7 +584,8 @@ def test_an_installer_for_everyone_is_started_by_the_script_that_copies_and_chec
                           portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
     (started,) = installer_road["started"]                    # one start, and it is not of the downloaded file
     assert started["elevate"] and started["show"] == 0
-    assert started["program"].replace("\\", "/").endswith("/System32/WindowsPowerShell/v1.0/powershell.exe")
+    # the PowerShell in the folder Windows names, as Windows spells it (`system32` there): never by the letters' case
+    assert started["program"] == w.system_folder() + "\\WindowsPowerShell\\v1.0\\powershell.exe"
     assert started["args"].startswith("-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ")
     v = _elevated_values(started["args"])
     folder = os.path.join(install.downloads_dir(), rec["id"])
