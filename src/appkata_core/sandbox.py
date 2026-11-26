@@ -674,9 +674,12 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
         # default: its user file, and the one its profile script reads first (CR1.5-9)
         ".bash_completion", ".config/bash_completion",
         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".config/fish", ".kshrc", ".cshrc", ".tcshrc")]
-    # ~/.xinputrc: im-config's Xsession hook sources it as the session starts, on the Debian family
+    # ~/.xinputrc: im-config's Xsession hook sources it as the session starts, on the Debian family;
+    # ~/.gnomerc: cinnamon-session's own hook sources it at every Cinnamon X11 login, in the same
+    # run of Xsession that sources ~/.xsessionrc; ~/.Xsession: Xsession's other name for the user's
+    # own session script, run where ~/.xsession is (pr-review pass 2 of #735, P2-2)
     roots += [(h(f), "your session's startup files") for f in (".xsessionrc", ".xprofile", ".xinitrc", ".Xresources", ".xsession",
-                                                               ".xinputrc")]
+                                                               ".xinputrc", ".gnomerc", ".Xsession")]
     # a compositor's or a window manager's own configuration starts programs (`exec` lines, an
     # autostart script): the ones R17.9 names, and i3 and Openbox (CR1.5-9)
     roots += [(h(*parts), "your window manager's configuration, which starts programs") for parts in (

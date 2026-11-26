@@ -2433,6 +2433,9 @@ def fake_home(tmp_path, monkeypatch):
     # pass 2 of #735): the user's own menu files, which add app-menu entries from any folder (P2-1)
     ("~/.config/menus", True), ("~/.config/menus/applications-merged", True), ("~/.config/menus/cinnamon-applications.menu", True),
     ("~/.config/menus-old", False), ("~/.config/menulibre", False),
+    # what cinnamon-session's Xsession hook sources, and Xsession's other name for ~/.xsession (P2-2)
+    ("~/.gnomerc", True), ("~/.Xsession", True), ("~/.xsession", True), ("~/.gnomerc.bak", False), ("~/.gnome", False),
+    ("~/.xsession-errors", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2791,7 +2794,9 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          # pr-review pass 2 of #735, each a place a review could grant read-write. P2-1: a menu file of
          # the user's adds a folder of app-menu entries from anywhere, over the system's own
          "~/.config/menus": "your app menu's layout, which can add app-menu entries from any folder",
-         "~/.config/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder"}
+         "~/.config/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
+         # P2-2: sourced at every Cinnamon X11 login; run as the session where no other is named
+         "~/.gnomerc": "your session's startup files", "~/.Xsession": "your session's startup files"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):

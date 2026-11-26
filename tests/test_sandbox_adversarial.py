@@ -196,7 +196,9 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.config/user-dirs.dirs", "/home/kata/.config/user-dirs.dirs", "~/Notes/../.config/user-dirs.dirs", "~/.config/./dconf",
          # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
          "~/.config/menus", "~/.config/menus/", "~/.config/menus/applications-merged", "/home/kata/.config/menus/cinnamon-applications-merged/x.menu",
-         "~//.config/menus", "~/Notes/../.config/menus/cinnamon-applications.menu"]
+         "~//.config/menus", "~/Notes/../.config/menus/cinnamon-applications.menu",
+         # ...the file cinnamon-session's Xsession hook sources, and Xsession's other name for ~/.xsession (P2-2)
+         "~/.gnomerc", "/home/kata/.gnomerc", "~/./.gnomerc", "~/Notes/../.gnomerc", "~/.Xsession", "/home/kata//.Xsession"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])
