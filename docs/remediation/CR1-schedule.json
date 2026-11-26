@@ -509,7 +509,10 @@
     638,
     658,
     749,
-    750
+    750,
+    751,
+    752,
+    753
    ],
    "files": [
     "docs/build.md",
@@ -1182,7 +1185,8 @@
     429,
     431,
     654,
-    663
+    663,
+    754
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -11660,6 +11664,69 @@
    "size": "small",
    "proof": "A test of a SHA256SUMS holding one bare digest in a release of several files.",
    "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 751,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    314
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a download, a probe and a checksum fetch at a host name that can't be encoded: each fails as an install error naming the address.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 752,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    308
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of http://127.0.0.1:80@host/: refused as plain http, proxy or not.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 753,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    304
+   ],
+   "related": [
+    749,
+    750
+   ],
+   "size": "small",
+   "proof": "A test reading a 1 MB checksum list of one line with a long run of spaces in well under a second.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 754,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the download is swapped after the check: the record names the package of the copy root installs.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   }
  ],
  "shared_files": [
