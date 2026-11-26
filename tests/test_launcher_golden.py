@@ -54,7 +54,7 @@ def fixed_host(monkeypatch):
     for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
         monkeypatch.delenv(v, raising=False)
     # nor a variable that moves a never-shared folder, which is in every launcher's list then (CR1.5-17)
-    for v in ("XDG_CONFIG_HOME", "GNUPGHOME", "ZDOTDIR"):
+    for v in ("XDG_CONFIG_HOME", "GNUPGHOME", "ZDOTDIR", "INPUTRC"):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr(sb, "sandboxes_root", lambda: f"{HOME}/.local/share/appkata/sandboxes")
     monkeypatch.setattr(sb, "seccomp_filter", lambda machine=None: b"\0")
