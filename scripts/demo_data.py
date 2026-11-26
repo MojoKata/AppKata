@@ -824,13 +824,17 @@ def finish(d: str) -> None:
     def rels(repo):
         r = db.one("SELECT releases FROM apps WHERE url=?", (GH + repo,))
         return [x for x in json.loads(r["releases"] if r and r["releases"] else "[]") if not x.get("prerelease")]
+    # What checked each file install, as AppKata's own install records it: App Detail's chip is the
+    # record's (CR1, #465), so an empty one read Unverified. The AppImages' records come with their
+    # files (portable_records).
+    checked = json.dumps({"verified": "checksum", "checksum_source": "forge digest"})
     def inst(repo, which, kind):
         rs = rels(repo)
         if len(rs) <= which:
             print("  skip", repo); return None
         r = rs[which]
         db.x("INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
-             (GH + repo, repo.split("/")[1], r["version"], r["date"], "", kind, "{}", now()))
+             (GH + repo, repo.split("/")[1], r["version"], r["date"], "", kind, "{}" if kind == "appimage" else checked, now()))
         return r
     inst("localsend/localsend", 1, "appimage")          # update available
     inst("signalapp/Signal-Desktop", 1, "deb")
@@ -840,7 +844,7 @@ def finish(d: str) -> None:
     inst("VSCodium/vscodium", 1, "rpm")
     # a version the Desk Collective says to avoid (R10.6.5): xz 5.6.1, the backdoored release
     db.x("INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
-         (GH + "tukaani-project/xz", "XZ Utils", "5.6.1", "2024-03-09T08:00:00Z", "xz-5.6.1.tar.gz", "tarball", "{}", now()))
+         (GH + "tukaani-project/xz", "XZ Utils", "5.6.1", "2024-03-09T08:00:00Z", "xz-5.6.1.tar.gz", "tarball", checked, now()))
     # per-app sandbox choices (R17): KeePassXC customized off the reviewer's Offline editor;
     # Zettlr kept at the user's grants while a review suggests more access (the review badge, R17.11).
     def set_sandbox(repo, cfg):

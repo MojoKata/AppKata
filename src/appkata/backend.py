@@ -501,14 +501,42 @@ class Backend(QObject):
                          "othersLabel": ("Other reviews" if any(o["newer"] for o in others) else "Earlier reviews") + f" ({len(others)})",
                          "score": catalog.trust_score(r)})
         asset = a.get("asset") or {}
-        verify = "checksum" if (asset.get("digest") or self._has_sums(latest, asset)) else "unverified"
-        signer = ""
         irow = self.db.one("SELECT record FROM installs WHERE url=?", (url,)) if a["installed"] else None
         irec = json.loads(irow["record"] or "{}") if irow else {}
-        if irec.get("verified") == "signed":
-            verify, signer = "signed", irec.get("signer", "")
-        if a.get("ch"):            # checked by flatpak, apt or dnf against the repository's keys (R16.3.6)
-            verify, signer = "signed", ""
+        # An installed app's chip is what its own install checked, as its record keeps it, whatever
+        # a later release publishes (R4.4; CR1, #465). A copy AppKata adopted was never downloaded,
+        # so nothing of it was checked. A channel's copy is Verified where its record says flatpak
+        # or the package manager checked it against a repository's key, and not for being from a
+        # channel (R16.3.6; CR1, #318).
+        verify = signer = verify_tip = ""
+        if irec.get("channel"):
+            verify, verify_tip = _channel_check(irec)
+        elif irow:
+            verify = irec["verified"] if irec.get("verified") in ("signed", "checksum") else "unverified"
+            how = irec.get("checksum_source", "")
+            if verify == "signed":
+                signer = irec.get("signer", "")
+            elif verify == "checksum" and how:
+                verify_tip = "Checked against " + ("the forge's digest" if how == "forge digest" else how)
+            elif irec.get("verified") == "adopted":
+                verify_tip = "AppKata adopted this copy as it found it and didn't download it, so it checked nothing"
+            elif verify == "unverified" and irec.get("checksum_reason"):
+                # its release has a checksum file that gave no checksum: said, not passed over (CR1, #328)
+                verify_tip = "Its release has a checksum file, but this download was checked against none: " + irec["checksum_reason"]
+        # The file Install or Update would take hasn't been checked: a forecast, worded as one, of
+        # what its own release publishes for it. That release isn't always the newest one (a
+        # pre-release, a minimum age), so it is found by the file. Nothing is forecast where
+        # neither is offered: a copy installed outside AppKata, a Track only app, a channel's
+        # update, an AppKata that only tells of its releases.
+        forecast = forecast_of = ""
+        if a["installed"]:
+            offered = a["updateTo"] and not a.get("ch") and not (a.get("self") and (not a.get("selfManaged") or a.get("trackOnly")))
+        else:
+            offered = not a["foreign"] and not a.get("trackOnly")
+        if asset and offered:
+            rel = _release_of(releases, asset)
+            forecast = "published" if (asset.get("digest") or self._has_sums(rel, asset)) else "none"
+            forecast_of = rel.get("version", "")
         size = asset.get("size") or 0
         # versions (R5.7.5): stable releases, plus the installed one if it's a prerelease
         include_pre = bool(self.db.get("prereleases", False))
@@ -528,10 +556,9 @@ class Backend(QObject):
         # the file or Flatpak commit a reviewer had is the one here (R10.3.4)
         mine_sha = mine_commit = ""
         if a["installed"] and a["state"] != "foreign":
-            irow2 = self.db.one("SELECT asset FROM installs WHERE url=?", (url,)) or {}
-            rel_i = next((r for r in releases if r["version"] == a["installed"]), None) or {}
-            ast = next((x for x in rel_i.get("assets") or [] if x.get("name") == irow2.get("asset")), None) or {}
-            mine_sha, mine_commit = (ast.get("digest") or "").removeprefix("sha256:"), irec.get("commit", "")
+            # the installed file's own digest, from its install record: the release's file of that
+            # name can have been replaced since (CR1, #467)
+            mine_sha, mine_commit = install.installed_sha256(irec, a["installed"]), irec.get("commit", "")
         else:
             mine_sha = (asset.get("digest") or "").removeprefix("sha256:")
         same_as = [t for t, sha, com, _ in same if (sha and _same_digest(sha, mine_sha)) or (com and _same_digest(com, mine_commit))]
@@ -548,7 +575,8 @@ class Backend(QObject):
                 "sameFileAs": same_as, "notes": _plain_readme(latest.get("notes") or ""),
                 "versions": versions, "versionsShown": max(inst_i, new_i) + 1 + 5,
                 "reviews": revs, "releases": [{"version": r["version"], "date": r["date"], "prerelease": r["prerelease"]} for r in releases[:15]],
-                "verify": verify, "signer": signer, "scope": irec.get("scope", ""),
+                "verify": verify, "signer": signer, "verifyTip": verify_tip, "forecast": forecast, "forecastVersion": forecast_of,
+                "scope": irec.get("scope", ""),
                 "reportedVersion": irec.get("reported", "") if irec.get("reported") and irec.get("reported") != a["installed"] else "",
                 "assetLabel": (asset.get("kind") or "").replace("appimage", "AppImage").replace("tarball", "tar.gz"),
                 "size": f"{size / 1e6:.0f} MB" if size else "", "archived": bool(meta.get("archived")),
@@ -1438,7 +1466,7 @@ class Backend(QObject):
         if and_uninstall:
             try:
                 left = install.uninstall(self.db, url)
-            except install.InstallError as e:
+            except (install.InstallError, PackageRefused) as e:     # a refused plan is said here as it was: no dialog on this road
                 self.toast.emit("error", str(e))
                 return
         a = self._app(url)
@@ -1638,14 +1666,13 @@ class Backend(QObject):
         details = []
         irow = self.db.one("SELECT * FROM installs WHERE url=?", (url,)) if inst else None
         if irow:
-            rel = next((r for r in releases if r["version"] == irow["version"]), {})
-            asset = next((x for x in rel.get("assets") or [] if x.get("name") == irow["asset"]), {})
             forge = {"github": "GitHub", "gitlab": "GitLab", "forgejo": "Forgejo", "gitea": "Gitea"}.get(a.get("forge", ""), "")
             details = [["Date", now()[:10]], ["Platform", f"{OS} {arch()}"], ["Channel", f"{forge} release".strip()]]
             if irow["asset"]:
                 details.append(["File", irow["asset"]])
-            if (asset.get("digest") or "").startswith("sha256:"):
-                details.append(["SHA-256", asset["digest"].split(":", 1)[1]])
+            sha = install.installed_sha256(json.loads(irow["record"] or "{}"), irow["version"])     # the file that was installed (CR1, #467)
+            if sha:
+                details.append(["SHA-256", sha])
         pref = self._prefs.get("includeDetails")
         return {"versionChoices": choices, "versionReviews": load, "defaultVersion": default, "installedVersion": inst,
                 "details": details, "includeDetails": bool(irow) if pref is None else bool(pref)}
@@ -2830,16 +2857,34 @@ class Backend(QObject):
         self.busyChanged.emit()
 
 
+def _channel_check(rec: dict) -> tuple[str, str]:
+    """(chip, tooltip) for a copy from a package channel, from its install record (R16.3.6):
+    Verified with who signed it, or Unverified with where the copy is from."""
+    if rec.get("verified") == "signed":
+        return "signed", "Signed by " + (rec.get("signer") or "its repository")
+    if rec.get("channel") == "flatpak":
+        if rec.get("remote"):
+            return "unverified", f"No key checked this copy: flatpak doesn't check its remote, {rec['remote']}, against one"
+        return "unverified", "Its remote isn't known, so AppKata can't tell that a key checked this copy"
+    if rec.get("repository"):
+        return "unverified", f"No key checked this package: it is from {rec['repository']}, which isn't checked against one"
+    version = f" ({rec['pkgVersion']})" if rec.get("pkgVersion") else ""
+    return "unverified", f"No repository offers the installed version{version}, so AppKata can't tell that a repository's key checked it"
+
+
+def _release_of(releases: list[dict], asset: dict) -> dict:
+    """The release that `asset`, a file as the catalog offers it, is a file of; {} when none is."""
+    return next((r for r in releases if any(x.get("name") == asset.get("name") and x.get("url") == asset.get("url")
+                                            for x in r.get("assets") or [])), {})
+
+
 def _same_digest(theirs: str, mine: str) -> bool:
-    """A digest from a review's Details, possibly shortened as "3c1f…9e07", is this one (R10.3.4)."""
-    theirs, mine = (theirs or "").strip().lower().removeprefix("sha256:"), (mine or "").strip().lower()
-    if not theirs or not mine:
-        return False
-    for sep in ("…", "..."):
-        if sep in theirs:
-            pre, _, suf = theirs.partition(sep)
-            return len(pre) + len(suf) >= 6 and mine.startswith(pre) and mine.endswith(suf)
-    return mine.startswith(theirs) if len(theirs) >= 7 else False
+    """A SHA-256 or a Flatpak commit from a review's Details is this one (R10.3.4): the same 64
+    hexadecimal digits, all of them. A shortened one ("3c1f…9e07", a digest's first digits) is no
+    match, whatever it starts and ends with: a file that shares that much of a digest is made in
+    minutes, and the pill says a reviewer had this very file (CR1, #466)."""
+    theirs, mine = (theirs or "").strip().lower().removeprefix("sha256:"), (mine or "").strip().lower().removeprefix("sha256:")
+    return bool(re.fullmatch(r"[0-9a-f]{64}", theirs)) and theirs == mine
 
 
 def _clean_source_settings(st: dict, track_default: bool = False) -> dict:

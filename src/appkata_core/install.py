@@ -7,6 +7,8 @@ from __future__ import annotations
 import configparser
 import glob
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -25,8 +27,8 @@ import logging
 import threading
 
 from . import applog, appkind, flatpak, pkgbackend, sandbox
-from .pkgbackend import NeedsConfirmation, PackageError
-from .assets import checksum_for
+from .pkgbackend import NeedsConfirmation, PackageError, Refused
+from .assets import checksums_for
 from .db import DB, now
 from .forges import Asset
 from .http import UA
@@ -104,6 +106,97 @@ def check_not_running(folder: str, name: str) -> None:
         raise InUse(name, procs)
 
 
+class NotFetched(InstallError):
+    """An address AppKata doesn't download from (R4.4): any that isn't https:."""
+
+
+def _loopback(host: str) -> bool:
+    """Whether a request's host, as urllib has it (`name`, `name:port`, `[address]:port`), is this
+    computer itself by its own words: `localhost`, or a loopback address written out."""
+    colon, bracket = host.rfind(":"), host.rfind("]")
+    name = (host[:colon] if colon > bracket else host).strip("[]").lower()
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _refusal(req: urllib.request.Request, sent_on_by: urllib.request.Request | None = None) -> str:
+    """Why a request isn't made, or "" (R4.4): AppKata downloads over https: only. Plain http: is
+    used to this computer itself and nowhere else (the tests' own servers), and never as where a
+    redirect from https: leads. What is judged is urllib's own reading of the address, `req.type`
+    and `req.host`, which is what it connects by."""
+    host = req.host or ""
+    if req.type == "https" and host:
+        return ""
+    if req.type == "http" and _loopback(host) and (sent_on_by is None or sent_on_by.type == "http"):
+        return ""
+    shown = one_line(req.full_url)[:200]
+    if sent_on_by is not None:
+        return f"the download was sent on to an address that isn't https: ({shown}), where AppKata doesn't follow it"
+    return f"AppKata downloads over https: only, and this isn't an https: address ({shown})"
+
+
+def _request(url: str, headers: dict | None = None) -> urllib.request.Request:
+    """The request for an address a release gave, refused when AppKata doesn't download from it
+    (:func:`_refusal`). A release's file, the first bytes of an .exe and a checksum file were each
+    opened as they came, by urllib's default opener: `file:///proc/self/cwd/<path>` copied a file
+    of the user's into the app's folder as "the download", `ftp:` and `data:` worked as well, and
+    a file at a plain `http:` address, or at an `https:` one that redirected to `http:`, was
+    fetched without a word, for whoever sat on the network to replace (CR1.3-10)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    except ValueError:              # no scheme at all
+        raise NotFetched(f"AppKata downloads over https: only, and this isn't an https: address "
+                         f"({one_line(url)[:200]})") from None
+    if why := _refusal(req):
+        raise NotFetched(why)
+    return req
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """A redirect is followed only to an address :func:`_refusal` allows after the one that sent it
+    there: from https: to https:, never down to http:."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (why := _refusal(new, sent_on_by=req)):
+            fp.close()
+            raise NotFetched(why)
+        return new
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """What every request of this module is made with: urllib's default opener without its file:,
+    ftp: and data: handlers, so nothing but http(s) is opened even past :func:`_request`, and with
+    :class:`_Redirects` for urllib's own redirect rule. Made for each request, as the environment's
+    proxies are then."""
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(), urllib.request.HTTPHandler(),
+                    urllib.request.HTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(), _Redirects(),
+                    urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
+# What a connection that breaks raises, while a request is made or its answer read: an OSError, or
+# one of http.client's own, which are no OSErrors. An answer sent in chunks has no length to fall
+# short of, so its break is only ever an `IncompleteRead`, and one caught nowhere: no retry, no
+# resume, and "IncompleteRead(65536 bytes read)" shown as a crash (CR1.3-16). One of them is no
+# break: `InvalidURL`, of an address http.client won't send at all, which download() says as that.
+_BROKEN = (OSError, http.client.HTTPException)
+
+
+def _how_it_broke(e: BaseException) -> str:
+    if isinstance(e, http.client.IncompleteRead):
+        return "the connection closed before the whole file had come"
+    if isinstance(e, http.client.HTTPException):
+        return f"the server's answer couldn't be read ({type(e).__name__})"
+    return str(e)
+
+
 def downloads_dir() -> str:
     """Where partial downloads wait to be resumed (R4.8.2)."""
     from .platform import data_dir
@@ -113,7 +206,10 @@ def downloads_dir() -> str:
 def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 60, retries: int = 3) -> str:
     """Download to dest through dest + ".part", resuming a broken or earlier download with a Range
     request when the server still has the same file (R4.8.2). Returns the SHA-256 hex
-    digest of the whole file. Cancelling deletes the partial file; other failures keep it."""
+    digest of the whole file. Cancelling deletes the partial file; other failures keep it. Only
+    from an https: address, through every redirect (:func:`_request`, R4.4): :class:`NotFetched`
+    otherwise, before anything here is touched."""
+    _request(url)
     part, meta_path = dest + ".part", dest + ".part.json"
     try:
         meta = json.load(open(meta_path)) if os.path.exists(part) else {}
@@ -127,11 +223,11 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
     attempt = 0
     while True:
         got = os.path.getsize(part) if os.path.exists(part) else 0
-        headers = {"User-Agent": UA}
+        headers = {}
         if got and meta.get("validator"):
             headers.update({"Range": f"bytes={got}-", "If-Range": meta["validator"]})
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+            with _opener().open(_request(url, headers), timeout=timeout) as r:
                 resumed = r.status == 206
                 if not resumed:
                     got = 0
@@ -140,7 +236,10 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                     meta["validator"] = validator
                     with open(meta_path, "w") as mf:
                         json.dump(meta, mf)
-                length = int(r.headers.get("Content-Length") or 0)
+                try:
+                    length = max(0, int(r.headers.get("Content-Length") or 0))
+                except ValueError:              # no number: no length, as http.client reads it
+                    length = 0
                 total = got + length if length else 0
                 with open(part, "ab" if resumed else "wb") as f:
                     while True:
@@ -168,11 +267,15 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                 if attempt <= retries:
                     continue
             raise InstallError(f"download failed: HTTP {e.code}") from None
-        except OSError as e:
+        except http.client.InvalidURL as e:     # no connection that broke: trying again asks nothing new, and nothing came to resume
+            # whose address it is, http.client alone says: the file's own, one it was sent on to, or a proxy's from the user's settings
+            raise InstallError(f"download failed: an address on the way to this file isn't a valid one ({one_line(str(e))[:200]}); "
+                               f"the file's own address is {one_line(url)[:200]}") from None
+        except _BROKEN as e:
             attempt += 1
             if attempt > retries:
-                raise InstallError(f"download failed: {e}; press Update again to resume") from None
-            log.warning("download of %s broke at %d bytes (%s); resuming", url, got, e)
+                raise InstallError(f"download failed: {_how_it_broke(e)}; press Update again to resume") from None
+            log.warning("download of %s broke at %d bytes (%s); resuming", url, got, _how_it_broke(e))
             time.sleep(min(10, 2 * attempt))
     h = hashlib.sha256()
     with open(part, "rb") as f:
@@ -185,34 +288,67 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
 
 
 def head_bytes(url: str, n: int = 1 << 20, timeout: float = 30) -> bytes:
-    """The first n bytes of a download (a Range request), to see what a .exe is (R4.2.1)."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Range": f"bytes=0-{n - 1}"})
+    """The first n bytes of a download (a Range request), to see what a .exe is (R4.2.1). None of
+    an address AppKata doesn't download from (:func:`_request`)."""
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener().open(_request(url, {"Range": f"bytes=0-{n - 1}"}), timeout=timeout) as r:
             return r.read(n)
-    except OSError:
+    except (*_BROKEN, NotFetched):
         return b""
 
 
-def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str]:
-    """(hex, source) of the checksum to compare with: the forge digest, or a checksum file (R4.4)."""
+_SUMS_MAX = 1 << 20        # how much of a checksum file is read
+
+
+def expected_sha256(asset: Asset, assets: list[Asset]) -> tuple[str, str, str]:
+    """(hex, source, why not) of the checksum to compare with: the forge digest, or the first of
+    the release's checksum files that lists this file (R4.4). Each one is tried
+    (assets.checksums_for): the first found was the only one read, so a list for another
+    platform's files, or one of another kind of digest, left a file Unverified that the next list
+    covered (CR1.3-6).
+
+    With no checksum to give, `why not` says what became of each checksum file the release has:
+    one that couldn't be read, doesn't list the file, or is longer than what is read of it. The
+    install goes on Unverified as R4.4 allows, and it went on saying nothing, as if the release
+    published none (CR1.3-29). "" when the release has none. A checksum file at an address AppKata
+    doesn't download from (:func:`_request`) is one that couldn't be read."""
     if asset.digest.startswith("sha256:"):
-        return asset.digest.split(":", 1)[1].lower(), "forge digest"
-    sums = checksum_for(asset, assets)
-    if not sums:
-        return "", ""
-    try:
-        req = urllib.request.Request(sums.url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            text = r.read(1 << 20).decode("utf-8", "replace")
-    except OSError:
-        return "", ""
+        return asset.digest.split(":", 1)[1].lower(), "forge digest", ""
+    why = []
+    for sums in checksums_for(asset, assets):
+        name = one_line(sums.name)[:80]         # the release's own text, on its way to a tooltip
+        try:
+            with _opener().open(_request(sums.url), timeout=30) as r:
+                data = r.read(_SUMS_MAX + 1)
+        except NotFetched:
+            why.append(f"couldn't read {name}: it isn't at an https: address")
+            continue
+        except urllib.error.HTTPError as e:
+            why.append(f"couldn't read {name} (HTTP {e.code})")
+            continue
+        except _BROKEN:
+            why.append(f"couldn't read {name}")
+            continue
+        cut = len(data) > _SUMS_MAX
+        text = data[:_SUMS_MAX].decode("utf-8", "replace")
+        if cut:                                 # never a line that was cut: its name may be another file's start
+            text = text[:text.rfind("\n") + 1]
+        if found := _sha256_in(text, asset.name):
+            return found, sums.name, ""
+        why.append(f"{name} is longer than 1 MB, and the part AppKata reads doesn't list this file" if cut
+                   else f"{name} doesn't list this file")
+    return "", "", "; ".join(why)
+
+
+def _sha256_in(text: str, name: str) -> str:
+    """The SHA-256 a checksum file's text gives for the file `name`: its line's, or the file's one
+    value when it holds nothing else (a `<file>.sha256` of the digest alone). "" when it has none."""
     for line in text.splitlines():
         m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$", line.strip())
-        if m and os.path.basename(m.group(2)) == asset.name:
-            return m.group(1).lower(), sums.name
+        if m and os.path.basename(m.group(2)) == name:
+            return m.group(1).lower()
     m = re.fullmatch(r"\s*([0-9a-fA-F]{64})\s*", text)
-    return (m.group(1).lower(), sums.name) if m else ("", "")
+    return m.group(1).lower() if m else ""
 
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
@@ -594,11 +730,82 @@ def command_link_refusal(name: str, link: str) -> str:
 
 
 def _safe(v: str) -> str:
+    """A version as one name, or a part of one, in an app's folder (R4.3.1): a version's own
+    folder, the version in an AppImage's file name, the folder an AppImage is extracted to
+    (sandbox.extracted_dir). Never empty, and never starting with a dot: the dots were kept, so
+    a release whose version was `..` had the install folder itself for its version's folder, and
+    :func:`_place` emptied it, every app AppKata installed; `.` was the app's own folder, with its
+    kept versions (CR1.3-9). A version is what the host that answers as the forge says it is."""
     s = re.sub(r"[^A-Za-z0-9._+-]+", "_", v or "unknown")
+    if s.startswith("."):
+        s = "_" + s
     if OS == "windows":
         from .windows import safe_name
         s = safe_name(s)
     return s
+
+
+# What AppKata keeps in an app's folder beside its versions' folders: the link to the current
+# version (R4.3.1.2; a junction on Windows, R15.5) and a sandboxed app's launcher (R17.4).
+_KEPT_NAMES = ("current", "run")
+# How the folders AppKata makes beside a version's own end, while it places one (:func:`_place`):
+# the version being unpacked, and the one whose place it takes, set aside (:func:`_aside`).
+_KEPT_ENDS = (".new", ".old")
+
+
+def _version_folder(version: str) -> str:
+    """The name of the folder one version of an archive is unpacked into (R4.3.1): the version as a
+    name (:func:`_safe`), with `_` before one that is a name AppKata keeps in the app's folder
+    itself (:data:`_KEPT_NAMES`), in any case, as Windows compares names (R15.16). A release whose
+    version was the word "current" asked for its folder at the link's own place, and one named
+    "run" at the launcher's: the first couldn't be installed, the second couldn't be installed
+    sandboxed, or sandboxed after (CR1.3-47). And with `_` after one that ends as the folders made
+    while a version is placed do (:data:`_KEPT_ENDS`): installing 2.0 began by removing what was at
+    `2.0.new`, and what was at `2.0.old` next, so a version named 2.0.new or 2.0.old was deleted
+    there, kept or in use, whether or not the install then succeeded. An AppImage's version is in
+    its file's name, which is none of these."""
+    name = _safe(version)
+    if name.lower() in _KEPT_NAMES:
+        name = "_" + name
+    if name.lower().endswith(_KEPT_ENDS):
+        name += "_"
+    return name
+
+
+def _file_name(name: str) -> str:
+    """The name a release's file is downloaded and kept under: its own, as one file name. The name
+    is the release author's text (a GitLab release link's is free text, a Gitea or Forgejo
+    attachment's is its uploader's, and a host that answers as a forge sends what it likes), and it
+    was used as a path as it came: `../../../x.tar.gz` was downloaded over a file three folders
+    above the app's download folder, moved to a place outside the app's folder with the executable
+    bit set, and deleted there when the install failed; a name starting with `/` dropped
+    AppKata's folder altogether (CR1.3-8).
+
+    So every path is made from what this returns: the part after the last `/` or `\\` (both, on
+    every system: a release is made for all of them). What is left is refused when it is no file's
+    name: empty, `.` or `..`; one starting with a dot (a hidden file, and never an installable
+    one); one holding a control character; on Windows one it reserves or can't hold (R15.16; a
+    `:` among them, which names a drive or a stream of another file)."""
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    bad = not base or base.startswith(".") or bool(_CONTROL.search(base))
+    if OS == "windows" and not bad:
+        from .windows import safe_name
+        bad = safe_name(base) != base
+    if bad:
+        raise InstallError(f"the release's file has a name that can't be used ({one_line(name or '')[:120]!r}); "
+                           "nothing was installed")
+    return base
+
+
+def _in_folder(folder: str, name: str) -> str:
+    """`name` as a path directly in `folder`, refused when the two joined are anywhere else. Every
+    name that reaches a path here is cleaned where it comes in (:func:`_file_name`, :func:`_safe`);
+    this is the check at the place of use, before anything is written, moved or deleted there, so
+    a name that got past them some day stops here."""
+    path = os.path.join(folder, name)
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(folder):
+        raise InstallError(f"{name!r} isn't a name in {folder}; nothing was installed")
+    return path
 
 
 def _extract(kind: str, file: str, dest: str) -> None:
@@ -635,6 +842,40 @@ def _appimage_name(asset_name: str, version: str, versioned: bool = False) -> st
         return asset_name
     stem, ext = os.path.splitext(asset_name)
     return f"{stem}-{_safe(version)}{ext}"
+
+
+def _file_stem(app: dict, target: str) -> str:
+    """The app's name in the name of a file AppKata names after it: `LocalSend.AppImage`, the stable
+    name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2), and a portable Windows
+    program's `.exe`. It is the name's ASCII letters and digits. An app whose name has none
+    (日本語アプリ) got a file named just `.AppImage` or `.exe`: hidden on Linux, and no name at all.
+    It gets the app's id (:func:`app_id_of`), which is the name of its folder, `target`
+    (CR1.3-39). On Windows it is never a device's name (R15.16), as the app's folder and its
+    Start-menu shortcut aren't: an app named Con, Aux or COM 1 had its portable program kept as
+    `Con.exe`, which Windows reads as the console."""
+    stem = re.sub(r"[^A-Za-z0-9]+", "", app["name"]) or os.path.basename(target)
+    if OS == "windows":
+        from .windows import safe_name
+        stem = safe_name(stem)
+    return stem
+
+
+def _not_anothers(path: str, others: tuple[str, ...]) -> str:
+    """`path`, the place a version's name gives it, or the first of that name with `_2`, `_3`...
+    after it (before an AppImage's extension) that is the place of none of the app's other
+    versions, `others`. A version's name in a path isn't the version (:func:`_safe`): 1.0 beta and
+    1.0_beta are both `1.0_beta`, `current` and `_current` both `_current`, and on Windows 1.0-RC
+    and 1.0-rc are one folder. The later one was unpacked over the earlier, which was then no
+    longer there to go back to, and its entry among the kept versions named the later one's files
+    (CR1.3-52). The record keeps each version's path, so nothing reads a version back from a name."""
+    same = (lambda x: os.path.normcase(x).lower()) if OS == "windows" else (lambda x: x)
+    taken = {same(o) for o in others}
+    stem, ext = os.path.splitext(path) if path.lower().endswith(".appimage") else (path, "")
+    n, free = 1, path
+    while same(free) in taken:
+        n += 1
+        free = f"{stem}_{n}{ext}"
+    return free
 
 
 def _aside(path: str) -> str:
@@ -674,10 +915,9 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
     os.makedirs(target, exist_ok=True)
     names = [app["name"], app.get("repo", "").rsplit("/", 1)[-1]]
     if kind == "appimage":
-        dest = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if fixed
-                            else _appimage_name(asset_name, version))
+        dest = _in_folder(target, _file_stem(app, target) + ".AppImage" if fixed else _appimage_name(asset_name, version))
         if not fixed and dest in others:        # another version's own file, whatever the name seems to hold
-            dest = os.path.join(target, _appimage_name(asset_name, version, versioned=True))
+            dest = _not_anothers(_in_folder(target, _appimage_name(asset_name, version, versioned=True)), others)
         staging = dest + ".new"
         _remove_path(staging)
         try:
@@ -688,14 +928,14 @@ def _place(kind: str, file: str, app: dict, target: str, version: str, asset_nam
             _remove_path(staging)
             raise
         return {"version": version, "path": dest, "exec": os.path.basename(dest)}
-    vdir = os.path.join(target, "app" if fixed else _safe(version))
+    vdir = _in_folder(target, "app") if fixed else _not_anothers(_in_folder(target, _version_folder(version)), others)
     staging = vdir + ".new"
     shutil.rmtree(staging, ignore_errors=True)
     try:
         if kind == "exe":                      # a portable Windows program
             os.makedirs(staging)
-            shutil.move(file, os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe"))
-            exe = os.path.join(staging, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".exe")
+            exe = os.path.join(staging, _file_stem(app, target) + ".exe")
+            shutil.move(file, exe)
         else:
             _extract(kind, file, staging)
             exe = _find_exe(staging, names) if OS == "windows" else _find_executable(staging, names)
@@ -760,7 +1000,7 @@ def _enter_fixed_layout(rec: dict, app: dict, portable: "Portable", target: str)
     fixed name: neither a link AppKata made nor one of the app's own versions."""
     cur, kept, own = rec["current"], rec.get("kept", []), (portable.root, os.path.dirname(target))
     appimage = cur["path"].lower().endswith(".appimage") and not os.path.isdir(cur["path"])
-    fixed = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage" if appimage else "app")
+    fixed = os.path.join(target, _file_stem(app, target) + ".AppImage" if appimage else "app")
     aside = ""
     if fixed != cur["path"]:
         if os.path.lexists(fixed) and not _points_into(fixed, own) and fixed not in [k["path"] for k in kept]:
@@ -803,7 +1043,7 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
     run = os.path.join(target, cur["exec"])
     if portable.stable_name and OS != "windows":       # symlinks need extra rights on Windows
         if cur["path"].lower().endswith(".appimage"):      # LocalSend.AppImage → LocalSend-1.18.2-x86_64.AppImage
-            stable = os.path.join(target, re.sub(r"[^A-Za-z0-9]+", "", app["name"]) + ".AppImage")
+            stable = os.path.join(target, _file_stem(app, target) + ".AppImage")
             if stable != cur["path"]:
                 run = _link(cur["path"], stable)
                 rec["links"].append(stable)
@@ -969,17 +1209,23 @@ def _secure_target(portable: "Portable", target: str) -> None:
         raise InstallError(str(e)) from None
 
 
-def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
-    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8)."""
+def _run_installer(app: dict, file: str, sha256: str, kind: str, exe_kind: str, portable: "Portable", prev: dict, tmpdir: str) -> dict:
+    """Run a Windows installer for the app's scope, and find the Uninstall entry it made (R15.7, R15.8).
+    `sha256` is the downloaded file's, as AppKata checked it: an installer started with administrator
+    rights is started from a copy that is held to it (R15.7.5)."""
     from . import windows
     scope = portable.scope if portable.scope in windows.scopes(kind, exe_kind) else "me"
     msi_log = os.path.join(tmpdir, "msi.log") if kind == "msi" else ""
     prog, args, elevate = windows.installer_command(kind, exe_kind, file, scope, msi_log)
     before = windows.uninstall_entries()
     try:
-        code = windows.shell_execute(prog, args, elevate=elevate, cwd=os.path.dirname(file))
+        if elevate:
+            code = windows.run_elevated(file, sha256, windows.msi_arguments(scope, msi_log) if kind == "msi" else args, msi=kind == "msi")
+        else:
+            code = windows.shell_execute(prog, args, cwd=os.path.dirname(file))
     except (OSError, TimeoutError) as e:
         raise InstallError(f"couldn't run the installer: {e}") from None
+    _elevated_refusal(code)
     meaning = windows.exit_meaning(code)
     if meaning == "cancelled":
         raise Cancelled()
@@ -999,6 +1245,15 @@ def _run_installer(app: dict, file: str, kind: str, exe_kind: str, portable: "Po
     else:
         log.warning("%s: no Uninstall entry appeared; AppKata can't uninstall it", app["name"])
     return rec
+
+def _elevated_refusal(code: int) -> None:
+    """Raise for what windows.run_elevated() says of a file it didn't start (R15.7.5)."""
+    from . import windows
+    if code == windows.CHANGED:
+        raise InstallError("the downloaded file changed after AppKata checked it; nothing was installed")
+    if code == windows.NOT_STARTED:
+        raise InstallError("Windows couldn't make the administrators' copy of the installer or start it; nothing was installed")
+
 
 def _retain(rec: dict, keep: int) -> list[dict]:
     """Keep up to `keep` older versions in the record (R4.3.1.5), and return the rest: the caller
@@ -1182,6 +1437,10 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     portable = portable or Portable()
     if app.get("foreign"):
         raise InstallError("installed outside AppKata; uninstall that copy first")   # R4.5.3
+    # The file's name on this computer (R4.8.2): the release's own, as one file name, for the
+    # download, the place it is installed to and what is deleted when it fails. `asset.name`, the
+    # release's, is what the record keeps: it is what the release's checksums and the next sync name.
+    name = _file_name(asset.name)
     rel_version = app.get("installVersion") or app.get("updateTo") or app.get("version", "")
     prev_row = db.one("SELECT record FROM installs WHERE url=?", (app["url"],))
     prev = json.loads(prev_row["record"] or "{}") if prev_row else {}
@@ -1193,6 +1452,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         check_not_running(moving_from.get("target", ""), app["name"])
     portable = _where_it_is(prev, portable)        # an update: the app stays in the folder it is in (R4.3.1)
     tmpdir = os.path.join(downloads_dir(), app_id)          # kept when a download breaks, to resume it
+    file = _in_folder(tmpdir, name)
     os.makedirs(tmpdir, exist_ok=True)
     check_not_running(prev.get("target", ""), app["name"])
     ok = keep = False
@@ -1200,16 +1460,17 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
     undo = None             # takes a portable install back, from its first change until its record is stored
     retired: list[dict] = []        # the versions the new record no longer names: removed once it is stored (R4.6)
     try:
-        file = os.path.join(tmpdir, asset.name)
         log.info("downloading %s", asset.url)
         got = download(asset.url, file, progress, cancel)
-        log.info("downloaded %s (%d bytes, sha256 %s)", asset.name, os.path.getsize(file), got)
+        log.info("downloaded %s (%d bytes, sha256 %s)", name, os.path.getsize(file), got)
         if phase:
             phase("Verifying")
-        want, how = expected_sha256(asset, assets)
+        want, how, why_not = expected_sha256(asset, assets)
         if want and got != want:
             raise InstallError(f"the download doesn't match its checksum ({how}); nothing was installed")
         verified = "checksum" if want else "unverified"
+        if why_not:
+            log.warning("%s was checked against no checksum: %s", name, why_not)
         if OS == "windows":
             from . import windows
             if portable.motw:            # R15.11.1
@@ -1231,7 +1492,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             os.makedirs(updates, exist_ok=True)
             for old in os.listdir(updates):
                 os.remove(os.path.join(updates, old))
-            pending = os.path.join(updates, asset.name)
+            pending = _in_folder(updates, name)
             shutil.move(file, pending)
             rec = {**prev, "pendingSetup": pending, "verified": verified, "signer": signer}
             db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
@@ -1243,7 +1504,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             phase("Installing")
         if moving_from.get("installer") and kind in ("exe", "msi"):
             _uninstall_windows(app["name"], moving_from)
-        rec: dict = {"id": app_id, "files": [], "links": [], "verified": verified, "checksum_source": how, "root": portable.root,
+        rec: dict = {"id": app_id, "files": [], "links": [], "verified": verified, "checksum_source": how,
+                     **({"checksum_reason": why_not} if why_not else {}), "root": portable.root,
                      **({"selfInstalled": True} if prev.get("selfInstalled") else {}),
                      "signer": signer, "motw": portable.motw}
         if OS == "windows":
@@ -1258,7 +1520,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             undo = partial(_undo_portable, db, app, rec, prev, portable, target, was)
             _secure_target(portable, target)
             rec.update(target=target, files=prev.get("files", []), links=prev.get("links", []), kept=[], selfUpdating=True)
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name, fixed=True)
+            rec["current"] = _place(kind, file, app, target, rel_version, name, fixed=True)
             was["aside"] = _set_aside(rec["current"])
             # the versions it had go once this one is installed, not before it is placed (R4.6)
             retired = [old for old in ([prev["current"]] + prev.get("kept", []) if prev.get("current") else [])
@@ -1284,7 +1546,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             rec.update(target=target, links=prev.get("links", []), files=prev.get("files", []),
                        shortcuts=prev.get("shortcuts", []), shims=prev.get("shims", []),
                        kept=([prev["current"]] if prev.get("current") else []) + prev.get("kept", []))
-            rec["current"] = _place(kind, file, app, target, rel_version, asset.name,
+            rec["current"] = _place(kind, file, app, target, rel_version, name,
                                     others=tuple(k["path"] for k in rec["kept"] if k.get("version") != rel_version))
             was["aside"] = _set_aside(rec["current"])
             if OS == "windows" and portable.motw:
@@ -1293,9 +1555,16 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
                 rec["msvcrt"] = windows.needs_msvcrt(rec["current"]["path"])
             portable = _apply_kind(rec, app, portable, kind, target, prev)
             _activate(rec, app, portable, target)
-            retired = _retain(rec, portable.keep)
+            # This very version's earlier copy, where it is at another place than the new one (the
+            # release renamed its file, or the place its name gives was another version's then,
+            # :func:`_not_anothers`), is no previous version to keep: it stayed among the kept ones,
+            # so the Versions list offered the installed version as one to go back to.
+            again = [k for k in rec["kept"] if k.get("version") == rel_version and k["path"] != rec["current"]["path"]
+                     and not k.get("external")]
+            rec["kept"] = [k for k in rec["kept"] if k not in again]
+            retired = _retain(rec, portable.keep) + again
         elif kind in ("exe", "msi") and OS == "windows":     # an installer (R15.7)
-            rec.update(_run_installer(app, file, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
+            rec.update(_run_installer(app, file, got, kind, app.get("exeKind") or "unknown", portable, prev, tmpdir))
         elif kind == "msix" and OS == "windows":            # R15.7.4
             from . import windows
             try:
@@ -1311,19 +1580,28 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             m = re.search(r"Installing\s+\d+/\d+…?\s+(\S+)|(\w+(?:\.\w+){2,})", p.stdout + p.stderr)
             rec["flatpak"] = m.group(1) or m.group(2) if m else ""
         elif kind in ("deb", "rpm"):
-            # through the package backend, dry run first (R16.3.5, R16.8)
+            # Through the package manager's command line, dry run first (R16.3.5), and never
+            # PackageKit: the command that runs as root installs its own copy of this file, and
+            # only when the copy is the file whose SHA-256 was just taken (R4.4, R16.8.5).
             if kind == "deb":
                 pkg = subprocess.run(["dpkg-deb", "-f", file, "Package"], capture_output=True, text=True).stdout.strip()
             else:
                 pkg = subprocess.run(["rpm", "-qp", "--qf", "%{NAME}", file], capture_output=True, text=True).stdout.strip()
-            be = pkgbackend.backend()
-            _apply(be, "install", [os.path.abspath(file)], app.get("confirmed", False), progress, cancel,
-                   app.get("onWait"))
+            be = pkgbackend.Cli("apt" if kind == "deb" else "dnf")
+            try:
+                be.install_file(file, got, app.get("confirmed", False), progress, cancel, app.get("onWait"), package=pkg)
+            except (NeedsConfirmation, Refused):        # each has its dialog (:func:`_apply`)
+                raise
+            except PackageError as e:
+                raise InstallError(str(e)) from None
             rec["package"], rec["manager"] = pkg, be.manager
         else:
             raise InstallError(f"installing {kind} files isn't supported on {OS} yet")
         if moving_from and not moving_from.get("installer"):
             _remove_portable_windows(moving_from, app["name"])
+        # the downloaded file's own SHA-256, under its version, beside those of the versions that are kept
+        sums = prev.get("sha256") or {}
+        rec["sha256"] = {**{k["version"]: sums[k["version"]] for k in rec.get("kept", []) if k.get("version") in sums}, rel_version: got}
         log.info("installed %s %s as %s", app["name"], rel_version, kind)
         db.x("""INSERT OR REPLACE INTO installs(url, name, version, date, asset, kind, record, installed_at)
                 VALUES(?,?,?,?,?,?,?,?)""",
@@ -1345,14 +1623,24 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
             shutil.rmtree(tmpdir, ignore_errors=True)
         elif keep:
             pass
-        elif os.path.exists(os.path.join(tmpdir, asset.name)):
-            os.remove(os.path.join(tmpdir, asset.name))      # complete but bad (checksum, install): don't resume it
+        elif os.path.exists(file):
+            _drop(file)                         # complete but bad (checksum, install): don't resume it
 
 
 def kept_versions(db: DB, url: str) -> list[str]:
     row = db.one("SELECT record FROM installs WHERE url=?", (url,))
     rec = json.loads(row["record"] or "{}") if row else {}
     return [k["version"] for k in rec.get("kept", []) if os.path.lexists(k["path"])]
+
+
+def installed_sha256(rec: dict, version: str) -> str:
+    """The SHA-256 of the file this version of an installed app was installed from, as AppKata
+    computed it over the download (R10.3.4, R8.4.5.1; CR1, #467): what a reviewer's digest is
+    compared with and what a review's Details say, never what the forge reports now for a file of
+    that name, which the project can have replaced since. The record keeps one for each version it
+    has, so a kept version made current again (:func:`switch_to`) has that of its own file. ""
+    for a copy AppKata didn't download: one it adopted, or one from a package channel."""
+    return (rec.get("sha256") or {}).get(version, "")
 
 
 def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str = "") -> dict:
@@ -1679,7 +1967,8 @@ def remove_version(db: DB, url: str, version: str) -> None:
 def uninstall(db: DB, url: str, confirmed: bool = False, progress=None, cancel=None, on_wait=None,
               remove_sandbox: bool = False) -> list[str]:
     """Reverse what install recorded (R4.7). User data in the home folder is kept. A
-    package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`.
+    package whose removal takes other packages with it raises NeedsConfirmation unless `confirmed`,
+    and one whose removal would take what the computer needs raises Refused (:func:`_apply`).
     `remove_sandbox`: also delete the app's private sandbox home (R17.14).
 
     Returns what the record names and is still there afterwards, for the caller to say: only what
@@ -1744,14 +2033,15 @@ def install_msvcrt() -> str:
     os.makedirs(folder, exist_ok=True)
     file = os.path.join(folder, "vc_redist.x64.exe")
     try:
-        download(windows.VC_REDIST_URL, file)
+        got = download(windows.VC_REDIST_URL, file)
         status, signer = windows.authenticode(file)
         if status != "Valid" or signer != "Microsoft Corporation":
             raise InstallError("the Visual C++ run-time download isn't signed by Microsoft; nothing was installed")
-        try:
-            code = windows.shell_execute(file, "/install /quiet /norestart", elevate=True)
+        try:        # with administrator rights: from a copy held to the file whose signature was just read (R15.7.5)
+            code = windows.run_elevated(file, got, "/install /quiet /norestart")
         except (OSError, TimeoutError) as e:
             raise InstallError(f"couldn't run the Visual C++ run-time installer: {e}") from None
+        _elevated_refusal(code)
         meaning = windows.exit_meaning(code)
         if meaning == "cancelled":
             raise Cancelled()
@@ -1763,7 +2053,18 @@ def install_msvcrt() -> str:
         return meaning
     finally:
         if os.path.exists(file):
-            os.remove(file)
+            _drop(file)
+
+
+def _drop(file: str) -> None:
+    """Remove a download that is not to be used again. One that can't be removed (a folder is at
+    its path, or Windows holds the file for another program) stays and is logged: this runs as an
+    install ends, and what the install itself says, its error or that it is done, is what the user
+    is told. A failure here took its place."""
+    try:
+        os.remove(file)
+    except OSError as e:
+        log.warning("couldn't remove the download %s: %s", file, e)
 
 
 def _remove_portable_windows(rec: dict, name: str) -> None:
@@ -2166,9 +2467,15 @@ class NeedsFlathub(InstallError):
 
 
 def _apply(be, action: str, names: list[str], confirmed: bool, progress, cancel, on_wait) -> None:
+    """Have the package backend install, upgrade or remove, after its dry run (R16.3.5, R16.4.3).
+    Two of its answers go to the caller as they are, for the plan dialog: a plan that needs the
+    user's OK (`NeedsConfirmation`), and one AppKata refuses because it would remove what the
+    computer needs (`Refused`). Every other failure is an install error. `Refused` was made one
+    too, so the dialog that shows a refused plan, in red and with Close alone, was never reached:
+    the refusal was a line in a toast (CR1.3-53)."""
     try:
         be.apply(action, names, confirmed=confirmed, progress=progress, cancel=cancel, on_wait=on_wait)
-    except NeedsConfirmation:
+    except (NeedsConfirmation, Refused):
         raise
     except PackageError as e:
         raise InstallError(str(e)) from None
@@ -2187,9 +2494,19 @@ def uninstall_blocker(rec: dict) -> str:
     return ""
 
 
-def _distro() -> str:
-    from .channels import distro_name
-    return distro_name()
+def channel_verdict(rec: dict) -> dict:
+    """What checked the copy a channel's record is of, as the record keeps it (R16.3.6): asked of
+    flatpak and the package manager each time the copy is installed, adopted or updated, never
+    taken as given. A Flatpak is "signed" when its remote is one flatpak checks against the
+    remote's key, a package when a repository whose key is checked offers the installed version;
+    `signer` is that remote or repository. Otherwise "unverified", and `repository` is the
+    package's unkeyed repository, if it has one."""
+    if rec.get("channel") == "flatpak":
+        remote = rec.get("remote", "")
+        if flatpak.checks_signatures(remote, rec.get("installation") == "system"):
+            return {"verified": "signed", "signer": "Flathub" if remote == flatpak.FLATHUB else remote}
+        return {"verified": "unverified", "signer": ""}
+    return pkgbackend.signed_by(rec["package"], rec.get("manager"))
 
 
 def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None, phase=None, on_wait=None,
@@ -2213,8 +2530,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         except flatpak.FlatpakError as e:
             raise InstallError(str(e)) from None
         rec = {"channel": "flatpak", "flatpak": got.app_id, "remote": remote, "commit": got.commit,
-               "installation": "user", "branch": got.branch, "verified": "signed", "signer": remote.capitalize(),
+               "installation": "user", "branch": got.branch,
                "perms": flatpak.permissions(meta), "extraData": flatpak.extra_data_host(meta)}
+        rec.update(channel_verdict(rec))
         raw, kind, asset = got.version, "flatpak", f"{remote} {got.app_id}"
         version = channels.project_version("flatpak", got.version) or got.version
     elif option["channel"] == "package":
@@ -2222,8 +2540,9 @@ def install_channel(db: DB, app: dict, option: dict, progress=None, cancel=None,
         name = option["value"]
         _apply(be, "install", [name], confirmed, progress, cancel, on_wait)
         raw = pkgbackend.installed_version(name, be.manager)
-        rec = {"channel": "package", "package": name, "manager": be.manager, "verified": "signed",
-               "signer": _distro(), "pkgVersion": raw, "origin": option.get("origin", "")}
+        rec = {"channel": "package", "package": name, "manager": be.manager, "pkgVersion": raw,
+               "origin": option.get("origin", "")}
+        rec.update(channel_verdict(rec))
         kind, asset = be.manager, name
         version = channels.project_version(be.manager, raw)
     else:
@@ -2265,6 +2584,7 @@ def update_channel(db: DB, url: str, progress=None, cancel=None, on_wait=None, c
     else:
         raise InstallError("not installed from a channel")
     rec.pop("pending", None)
+    rec.update(channel_verdict(rec))        # of the copy that is installed now
     db.x("UPDATE installs SET version=?, record=?, installed_at=? WHERE url=?", (version, json.dumps(rec), now(), url))
     return rec
 

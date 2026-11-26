@@ -206,6 +206,17 @@ def _facts() -> dict:
     f["R17.10.1: the bwrap the profile names"] = ("a fixed path" if fixed else "the one installed",
                                                  "the one installed" if "/opt/x/bwrap" in sb.profile_text("/opt/x/bwrap") else "a fixed path")
     f["R4.3.1.2: what a sandboxed app's entries point at"] = (bool(re.search(r"17\.4|/run\b", _req("R4.3.1.2"))), True)
+    # CR1.11-105: R4.4's list of what is checked before installing named a minisign or GPG signature
+    # and a sigstore bundle, and its Verified chip "a signature checked", while nothing reads a
+    # publisher's signature (docs/gpg.md). So the list names a check only where the code makes it.
+    checks = _req("R4.4").split("The App Detail panel")[0]
+    code = _read("src/appkata_core/install.py") + _read("src/appkata_core/assets.py")
+    f["R4.4: the checks made before installing"] = (
+        {"a checksum": bool(re.search(r"^\d+\. .*(?:SHA256SUMS|digest)", checks, re.M)),
+         "Authenticode": bool(re.search(r"^\d+\. .*Authenticode", checks, re.M)),
+         "a publisher's signature": bool(re.search(r"^\d+\. .*\b(?:minisign|GPG|PGP|sigstore)\b", checks, re.M | re.I))},
+        {"a checksum": "expected_sha256(asset, assets)" in code, "Authenticode": "windows.authenticode(file)" in code,
+         "a publisher's signature": bool(re.search(r"gpg\W+--verify|\bgpgv\b|minisign|sigstore|cosign|signify|gitsig\.|sshsig\.", code, re.I))})
 
     audit = _req("R13.3")
     actions = _audit_actions()

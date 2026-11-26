@@ -41,7 +41,7 @@ Rectangle {
     Text {
         x: root.width * 0.42; y: 35
         width: Math.min(implicitWidth, Math.max(0, statusRow.x - x - 12)); elide: Text.ElideRight
-        text: root.app.ch ? (root.app.host || "") + " · " + (root.app.ch.kind === "flatpak" ? "Flatpak" : "." + (root.app.ch.manager === "dnf" ? "rpm" : "deb") + " · " + (root.app.ch.distro || ""))
+        text: root.app.ch ? (root.app.host || "") + " · " + (root.app.ch.kind === "flatpak" ? "Flatpak" : "." + (root.app.ch.manager === "dnf" ? "rpm" : "deb") + (root.app.ch.distro ? " · " + root.app.ch.distro : ""))
                           : (root.app.host || "") + " · " + (root.app.installKind || "").replace("appimage", "AppImage").replace("tarball", "tar.gz")
         color: Theme.faint; font.pixelSize: 12
     }

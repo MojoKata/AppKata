@@ -169,13 +169,21 @@ def pretty(os_name: str) -> str:
     return {"linux": "Linux", "windows": "Windows", "macos": "macOS"}.get(os_name, os_name)
 
 
-def checksum_for(asset: Asset, assets: list[Asset]) -> Asset | None:
-    """A checksum file that covers this asset, if the release has one (R4.4)."""
+def checksums_for(asset: Asset, assets: list[Asset]) -> list[Asset]:
+    """Every file of the release that may hold this asset's SHA-256 (R4.4), in the order they are
+    tried: the file's own (`<file>.sha256`, `<file>.sha256sum`), then each list of the release
+    (`SHA256SUMS`, `checksums.txt`), as the release orders them. Only SHA-256 is read
+    (install.expected_sha256), so a `<file>.sha512` is none of them: it was taken as the checksum
+    file, never held 64 digits, and the release's `SHA256SUMS` beside it was not looked at
+    (CR1.3-6). A release can have a list for each platform, so all of them are given, not the
+    first."""
     names = {a.name.lower(): a for a in assets}
-    for cand in (asset.name + ".sha256", asset.name + ".sha256sum", asset.name + ".sha512"):
-        if cand.lower() in names:
-            return names[cand.lower()]
-    for a in assets:
-        if re.match(r"^(sha256sums?|sha256sums\.txt|checksums?(\.txt)?|.*sha256sums?\.txt)$", a.name, re.I):
-            return a
-    return None
+    own = [names[c.lower()] for c in (asset.name + ".sha256", asset.name + ".sha256sum") if c.lower() in names]
+    lists = [a for a in assets if a not in own
+             and re.match(r"^(sha256sums?|sha256sums\.txt|checksums?(\.txt)?|.*sha256sums?\.txt)$", a.name, re.I)]
+    return own + lists
+
+
+def checksum_for(asset: Asset, assets: list[Asset]) -> Asset | None:
+    """The first checksum file that may cover this asset, if the release has one (R4.4)."""
+    return next(iter(checksums_for(asset, assets)), None)

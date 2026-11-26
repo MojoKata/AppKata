@@ -1,5 +1,6 @@
 """Installing from a local web server (R4), and writing reviews with git (R8)."""
 
+import email
 import hashlib
 import http.server
 import io
@@ -8,14 +9,17 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
 import threading
+import urllib.request
+import urllib.response
 
 import pytest
 
-from appkata_core import devtools, forges, install, review
+from appkata_core import assets, devtools, forges, install, review
 from appkata_core.db import DB
 from appkata_core.forges import Asset
 
@@ -80,6 +84,147 @@ def test_checksum_mismatch_installs_nothing(env, server, tmp_path):
         install.install(env, APP, a, "appimage", [a, sums])
     assert not (tmp_path / "apps").exists() or not os.listdir(tmp_path / "apps")
     assert _downloads() == []                   # R4.8.2: the complete file that failed its checksum is deleted
+
+
+_FILE = b"\x7fELF the program"
+_SHA = hashlib.sha256(_FILE).hexdigest()
+_OTHER = hashlib.sha256(b"another file").hexdigest()
+_SHA512 = hashlib.sha512(_FILE).hexdigest()
+# A release's other files, in the release's order, each with what it holds -> the one whose SHA-256 is used
+_CHECKSUM_FILES = {
+    "a .sha512 beside the file, and SHA256SUMS":                    # the finding's case
+        ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a .sha512 beside the file, of the digest alone, and SHA256SUMS":
+        ([("App.AppImage.sha512", _SHA512 + "\n"), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n{_SHA} *App.AppImage\n")], "SHA256SUMS"),
+    "a list for another platform's files first":
+        ([("arm64-SHA256SUMS.txt", f"{_OTHER}  App-arm64.AppImage\n"), ("x86_64-SHA256SUMS.txt", f"{_SHA}  App.AppImage\n")],
+         "x86_64-SHA256SUMS.txt"),
+    "a list of SHA-512 digests first":
+        ([("checksums.txt", f"{_SHA512}  App.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list of MD5 digests first":
+        ([("checksums", f"{hashlib.md5(_FILE).hexdigest()}  App.AppImage\n"), ("checksums.txt", f"{_SHA}  ./dist/App.AppImage\n")],
+         "checksums.txt"),
+    "the file's own .sha256 before any list":
+        ([("SHA256SUMS", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256", _SHA + "\n")], "App.AppImage.sha256"),
+    "the file's own .sha256sum before any list":
+        ([("sha256sums.txt", f"{_SHA}  App.AppImage\n"), ("App.AppImage.sha256sum", f"{_SHA}  App.AppImage\n")], "App.AppImage.sha256sum"),
+    "the file's own .sha256 names another file":
+        ([("App.AppImage.sha256", f"{_OTHER}  Other.AppImage\n"), ("SHA256SUMS", f"{_SHA}  App.AppImage\n")], "SHA256SUMS"),
+    "a list that is missing, then one that is there":
+        ([("SHA256SUMS", None), ("checksums.txt", f"{_SHA}  App.AppImage\n")], "checksums.txt"),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], ""),
+    "only a .sha512 and a signature": ([("App.AppImage.sha512", _SHA512), ("App.AppImage.asc", "-----BEGIN PGP SIGNATURE-----")], ""),
+    "no list names the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n"), ("checksums.txt", f"{_SHA512}  App.AppImage\n")], ""),
+    "nothing else in the release": ([], ""),
+}
+
+
+def _release_with(server, others, data=_FILE):
+    """A release on the test's server: App.AppImage and its other files (a file whose text is None
+    is listed and isn't there). -> (the file, the release's files)."""
+    root, base = server
+    (root / "App.AppImage").write_bytes(data)
+    for name, text in others:
+        if text is not None:
+            (root / name).write_text(text, newline="\n")      # as the release has it: Windows would write each line end as two bytes
+    a = Asset("App.AppImage", base + "/App.AppImage")
+    return a, [a] + [Asset(name, f"{base}/{name}") for name, _ in others]
+
+
+@pytest.mark.parametrize("release", list(_CHECKSUM_FILES))
+def test_a_file_is_checked_against_the_first_of_its_releases_checksum_files_that_lists_it(env, server, release):
+    """R4.4 (CR1.3-6): "Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest,
+    when one exists". One checksum file was picked by its name, a `<file>.sha512` before any
+    `SHA256SUMS`, and only that one was read, for 64 digits: a release with both was installed
+    Unverified, and a file that didn't match its `SHA256SUMS` wasn't stopped. No test had a release
+    with two such files. Here each of them, in each order, as a release publishes them."""
+    others, used = _CHECKSUM_FILES[release]
+    a, files = _release_with(server, others)
+    assert install.expected_sha256(a, files)[:2] == ((_SHA, used) if used else ("", ""))
+    # the same release with another file under that name: stopped wherever a SHA-256 of it is published
+    a, files = _release_with(server, others, data=b"tampered")
+    if used:
+        with pytest.raises(install.InstallError, match=re.escape(f"doesn't match its checksum ({used})")):
+            install.install(env, APP, a, "appimage", files)
+        assert _downloads() == [] and env.one("SELECT * FROM installs") is None
+
+
+@linux_only
+def test_a_release_with_a_sha512_and_sha256sums_is_installed_as_checked(env, server, tmp_path):
+    a, files = _release_with(server, _CHECKSUM_FILES["a .sha512 beside the file, and SHA256SUMS"][0])
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert (rec["verified"], rec["checksum_source"]) == ("checksum", "SHA256SUMS")
+
+
+def _long_list(end, at=1 << 20):
+    """A checksum list of other files that is `at` bytes long and ends with the text `end`."""
+    line = _OTHER + "  filler-{:08d}.bin\n"
+    n, rest = divmod(at - len(end), len(line.format(0)))
+    return "".join(line.format(i) for i in range(n - 1)) + f"{_OTHER}  {'x' * (len(line.format(0)) - 67 + rest)}\n" + end
+
+
+_MINE = f"{_SHA}  App.AppImage\n"
+_NO_ANSWER = "http://127.0.0.1:1/"          # nothing listens there: the connection is refused
+# A release's checksum files, as _CHECKSUM_FILES has them (a text that starts "http" is where the file
+# is said to be) -> what the install is checked against, and the reason kept when that is nothing
+_NO_CHECKSUM = {
+    "a list that answers 404": ([("SHA256SUMS", None)], "", "couldn't read SHA256SUMS (HTTP 404)"),
+    "a list on a server that doesn't answer": ([("SHA256SUMS", _NO_ANSWER)], "", "couldn't read SHA256SUMS"),
+    "a list without the file": ([("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "", "SHA256SUMS doesn't list this file"),
+    "a list of another kind of digest": ([("checksums.txt", f"{_SHA512}  App.AppImage\n")], "", "checksums.txt doesn't list this file"),
+    "an empty list": ([("SHA256SUMS", "")], "", "SHA256SUMS doesn't list this file"),
+    "the file listed after the first 1 MB":
+        ([("SHA256SUMS", _long_list("") + _MINE)], "", "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the first 1 MB ends inside the line of a file whose name starts as this one's":
+        ([("SHA256SUMS", _long_list(f"{_OTHER}  App.AppImage") + ".zsync\n" + _MINE)], "",
+         "SHA256SUMS is longer than 1 MB, and the part AppKata reads doesn't list this file"),
+    "the file's own .sha256 answers 404 and the list is without it":
+        ([("App.AppImage.sha256", None), ("SHA256SUMS", f"{_OTHER}  Other.AppImage\n")], "",
+         "couldn't read App.AppImage.sha256 (HTTP 404); SHA256SUMS doesn't list this file"),
+    # ...and where there is a checksum, or no checksum file at all, there is nothing to say
+    "a list that answers 404, then one with the file": ([("SHA256SUMS", None), ("checksums.txt", _MINE)], "checksums.txt", ""),
+    "the file listed at the end of the first 1 MB": ([("SHA256SUMS", _long_list(_MINE) + f"{_OTHER}  later.bin\n")], "SHA256SUMS", ""),
+    "a list of just 1 MB, the file on its last line": ([("SHA256SUMS", _long_list(_MINE.rstrip()))], "SHA256SUMS", ""),
+    "no checksum file": ([], "", ""),
+    "only a .sha512": ([("App.AppImage.sha512", f"{_SHA512}  App.AppImage\n")], "", ""),
+}
+
+
+def _release_of(server, others):
+    a, files = _release_with(server, [(n, None if str(t).startswith("http") else t) for n, t in others])
+    return a, [Asset(f.name, t + f.name) if str(t := dict(others).get(f.name)).startswith("http") else f for f in files]
+
+
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_a_checksum_file_that_gives_no_checksum_is_said_with_the_reason(server, release):
+    """R4.4 (CR1.3-29): a checksum file that is there and can't be used is not "none exists". The
+    install went on as Unverified with no word of it, as if the release published nothing."""
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    assert install.expected_sha256(a, files) == (_SHA if used else "", used, why)
+
+
+@linux_only
+@pytest.mark.parametrize("release", list(_NO_CHECKSUM))
+def test_an_install_that_couldnt_use_its_releases_checksum_file_keeps_why_in_its_record(env, server, tmp_path, caplog, release):
+    others, used, why = _NO_CHECKSUM[release]
+    a, files = _release_of(server, others)
+    rec = install.install(env, APP, a, "appimage", files, portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False))
+    assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    assert (rec["verified"], rec["checksum_source"], rec.get("checksum_reason")) == ("checksum" if used else "unverified", used, why or None)
+    assert ("checked against no checksum: " + why in caplog.text) == bool(why)
+
+
+def test_the_checksum_files_of_a_release_are_the_files_own_then_its_lists_and_never_another_digests():
+    A = lambda *names: [Asset(n, "https://example.org/" + n) for n in names]      # noqa: E731
+    rel = A("App.AppImage", "SHA256SUMS", "App.AppImage.sha512", "App.AppImage.SHA256", "checksums.txt", "App.AppImage.sha256sum",
+            "App.AppImage.md5", "Other.AppImage.sha256", "linux-sha256sums.txt", "App.AppImage.asc", "SHA512SUMS", "notes.txt")
+    assert [x.name for x in assets.checksums_for(rel[0], rel)] == ["App.AppImage.SHA256", "App.AppImage.sha256sum", "SHA256SUMS",
+                                                                   "checksums.txt", "linux-sha256sums.txt"]
+    assert assets.checksum_for(rel[0], rel).name == "App.AppImage.SHA256"
+    for only in ("App.AppImage.sha512", "SHA512SUMS", "Other.AppImage.sha256", "App.AppImage.asc"):
+        rel = A("App.AppImage", only)
+        assert assets.checksums_for(rel[0], rel) == [] and assets.checksum_for(rel[0], rel) is None
 
 
 @linux_only
@@ -207,6 +352,39 @@ def test_versions_kept_side_by_side(env, server, tmp_path):
 
 
 @linux_only
+def test_the_record_keeps_the_sha256_of_each_versions_own_download(env, server, tmp_path):
+    """R10.3.4, R8.4.5.1 (CR1, #467): the install hashed the download, logged the digest and kept it
+    nowhere, so "the installed file's SHA-256" was whatever the forge said later of a file of that
+    name. It is in the record, under its version: a kept version made current again has its own,
+    and a version that is no longer kept has none."""
+    root, base = server
+    p = install.Portable(folder=str(tmp_path / "apps"), app_menu=False, keep=1)
+    digest = {}
+
+    def stored():
+        return json.loads(env.one("SELECT record FROM installs")["record"])
+
+    for v, has in (("1.0", ["1.0"]), ("1.1", ["1.0", "1.1"]), ("1.2", ["1.1", "1.2"])):
+        data = f"the program, {v}".encode()
+        (root / f"Tool-{v}-x86_64.AppImage").write_bytes(data)
+        a = Asset(f"Tool-{v}-x86_64.AppImage", f"{base}/Tool-{v}-x86_64.AppImage")       # the forge gives no digest
+        rec = install.install(env, {**APP, "installVersion": v}, a, "appimage", [a], portable=p)
+        digest[v] = hashlib.sha256(data).hexdigest()
+        assert rec["verified"] == "unverified" and rec == stored() and rec.get("sha256") == {x: digest[x] for x in has}
+        assert install.installed_sha256(stored(), v) == digest[v]
+    install.switch_to(env, {**APP}, "1.1", p)                                             # no download: 1.1's own file again
+    assert stored()["current"]["version"] == "1.1" and install.installed_sha256(stored(), "1.1") == digest["1.1"]
+    assert install.installed_sha256(stored(), "1.0") == ""
+
+
+def test_a_record_has_no_sha256_for_a_copy_appkata_didnt_download():
+    assert install.installed_sha256({"sha256": {"1.0": "aa", "1.1": "bb"}}, "1.1") == "bb"
+    assert install.installed_sha256({"sha256": {"1.0": "aa"}}, "1.1") == ""
+    assert install.installed_sha256({"current": {"version": "1.0", "path": "p", "exec": "e", "external": True}, "verified": "adopted"}, "1.0") == ""
+    assert install.installed_sha256({"channel": "flatpak", "commit": "c0ffee"}, "1.0") == ""
+
+
+@linux_only
 def test_tarball_versions_and_current_link(env, server, tmp_path):
     root, base = server
     p = install.Portable(folder=str(tmp_path / "apps"), app_menu=False, keep=1)
@@ -289,6 +467,366 @@ def test_cancelled_download_leaves_nothing(range_server, tmp_path):
     with pytest.raises(install.Cancelled):
         install.download(range_server, str(dest), cancel=lambda: True)
     assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------- what a server can do to a download (R4.8.2; CR1.3-16)
+# How it slipped past: the one test of a break (above) cut an answer that has a Content-Length, and
+# a cut is then a short read. An answer sent in chunks has no length: its cut is http.client's
+# IncompleteRead, which is no OSError, so it was retried by nothing and reached the user raw.
+class _BadAnswers(http.server.BaseHTTPRequestHandler):
+    """One file, answered as `how` says: whole, or broken in one of the ways a server or a proxy
+    breaks an answer, `times` times (None: every time)."""
+    protocol_version = "HTTP/1.1"
+    data, how, times = b"", "", None
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def chunk(self, data, said=None):
+        self.wfile.write(b"%x\r\n" % (len(data) if said is None else said) + data + (b"\r\n" if said is None else b""))
+
+    def do_GET(self):
+        self.close_connection = True
+        self.asked.append(self.headers.get("Range"))
+        d, how, half = self.data, self.how, len(self.data) // 2
+        breaks = self.times is None or len(self.asked) <= self.times
+        if breaks and how == "a status line that isn't one":
+            self.wfile.write(b"\x00\x01 what is this\r\n\r\n")
+            return
+        if breaks and how == "a header line with no end":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Long: " + b"x" * 70000 + b"\r\n\r\n")
+            return
+        rng = self.headers.get("Range")
+        if rng and self.headers.get("If-Range") == '"v1"':            # the rest, to a request that resumes
+            start = int(rng.split("=")[1].split("-")[0])
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{len(d) - 1}/{len(d)}")
+            self.send_header("Content-Length", str(len(d) - start))
+            self.end_headers()
+            self.wfile.write(d[start:])
+            return
+        self.send_response(200)
+        if "resume" in how:
+            self.send_header("ETag", '"v1"')
+        if how == "a Content-Length that is no number":
+            self.send_header("Content-Length", "a lot")
+            self.end_headers()
+            self.wfile.write(d)
+            return
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        self.chunk(d[:half])
+        if breaks and how == "a chunk size that is no number":
+            self.wfile.write(b"zz\r\n" + d[half:] + b"\r\n0\r\n\r\n")
+        elif breaks:                                                  # the connection closes inside the second chunk
+            self.chunk(d[half:half + 10], said=len(d) - half)
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_RDWR)
+        else:
+            self.chunk(d[half:])
+            self.chunk(b"")
+
+
+@pytest.fixture
+def bad_answers(monkeypatch):
+    _BadAnswers.data, _BadAnswers.asked = os.urandom(300_000), []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BadAnswers)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/file.bin"
+    httpd.shutdown()
+
+
+_HALF = 150_000
+_CAME = _HALF - _HALF % (1 << 16)        # what download() had written when the second chunk broke: it reads 64 KiB at a time
+# how the answer breaks, how many times -> the Range of each request made, and whether the file comes whole
+_BREAKS = {
+    "an answer in chunks, cut inside a chunk, every time": ("cut in a chunk", None, [None] * 4, False),      # the finding's case
+    "an answer in chunks, cut inside a chunk, once": ("cut in a chunk", 1, [None, None], True),              # no validator: it starts over
+    "an answer in chunks, cut once, from a server that can resume": ("cut in a chunk, resume", 1, [None, f"bytes={_CAME}-"], True),
+    "an answer in chunks, cut three times": ("cut in a chunk", 3, [None] * 4, True),
+    "a chunk size that is no number, every time": ("a chunk size that is no number", None, [None] * 4, False),
+    "a status line that isn't one, every time": ("a status line that isn't one", None, [None] * 4, False),
+    "a status line that isn't one, once": ("a status line that isn't one", 1, [None, None], True),
+    "a header line with no end, every time": ("a header line with no end", None, [None] * 4, False),
+    "a Content-Length that is no number": ("a Content-Length that is no number", 0, [None], True),
+    "an answer in chunks, whole": ("cut in a chunk", 0, [None], True),
+}
+
+
+@pytest.mark.parametrize("breaks", list(_BREAKS))
+def test_a_download_whose_answer_breaks_is_retried_then_kept_and_fails_as_an_install_error(bad_answers, tmp_path, breaks):
+    """R4.8.2: "If the connection breaks, AppKata retries up to three times, continuing from where it
+    stopped ... Otherwise it starts over. A download that still fails ... is kept and resumed"."""
+    _BadAnswers.how, _BadAnswers.times, ranges, whole = _BREAKS[breaks]
+    dest = tmp_path / "file.bin"
+    if whole:
+        assert install.download(bad_answers, str(dest)) == hashlib.sha256(_BadAnswers.data).hexdigest()
+        assert dest.read_bytes() == _BadAnswers.data and sorted(os.listdir(tmp_path)) == ["file.bin"]
+    else:
+        with pytest.raises(install.InstallError, match="^download failed: .*; press Update again to resume$") as e:
+            install.download(bad_answers, str(dest))
+        assert "IncompleteRead(" not in str(e.value) and not dest.exists()
+        if "chunk" in breaks:           # what had come is kept, for the next try (a server that can resume takes it from there)
+            assert (tmp_path / "file.bin.part").read_bytes() == _BadAnswers.data[:_CAME]
+    assert _BadAnswers.asked == ranges
+
+
+@pytest.mark.parametrize("breaks", [b for b in _BREAKS if b.endswith("every time")])
+def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(bad_answers, breaks):
+    """The same break in the two other requests of an install: each caught an OSError alone."""
+    _BadAnswers.how, _BadAnswers.times = _BREAKS[breaks][:2]
+    assert install.head_bytes(bad_answers, 200_000) == b""
+    a = Asset("App.AppImage", bad_answers + "?the-file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", bad_answers)]) == ("", "", "couldn't read SHA256SUMS")
+
+
+# ---------------------------------------------------------------- an address that can't be asked for (R4.8.2)
+# How it slipped past (pass 1 of the unit's own review): the tests above break answers, and none
+# gave download() an address http.client won't send. Its InvalidURL is one of http.client's own
+# exceptions, which were all taken as a connection that broke: three retries over 12 seconds, then
+# "the server's answer couldn't be read (InvalidURL); press Update again to resume", of a server
+# that was never asked. A release link is free text on some forges, so a space is enough.
+@pytest.mark.parametrize("address, reason", [          # the reason is http.client's own: what of its words names the fault
+    ("{base}/my file.AppImage", "'/my file.AppImage'"),
+    ("{base}/file\x7f.AppImage", "'/file\\x7f.AppImage'"),
+    ("{base}x/file.AppImage", "nonnumeric port: '{port}x'"),
+], ids=["a-space", "a-control-character", "a-port-that-is-no-number"])
+def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_names_it(server, tmp_path, monkeypatch, address, reason):
+    root, base = server
+    (root / "my file.AppImage").write_bytes(b"the file")
+    waits, dl = [], tmp_path / "dl"
+    dl.mkdir()
+    monkeypatch.setattr(install.time, "sleep", waits.append)
+    url = address.format(base=base)
+    with pytest.raises(install.InstallError) as e:
+        install.download(url, str(dl / "file.bin"))
+    said = re.fullmatch(r"download failed: an address on the way to this file isn't a valid one \((.+)\); the file's own address is (.+)", str(e.value))
+    assert said and reason.format(port=base.rsplit(":", 1)[1]) in said.group(1) and said.group(2) == install.one_line(url)
+    assert waits == [] and os.listdir(dl) == []         # not tried again, and nothing kept to resume
+
+
+# How it slipped past (pass 2 of the unit's own review): round 1's test gave download() three
+# addresses of the release's that can't be asked for, and its message was written for those. The
+# same InvalidURL comes of any address on the way: a proxy from the user's own settings, or one
+# the server sends the request on to. So a setting of the user's failed every download with "the
+# release's address for this file isn't a valid one", of an address that was. The class is a
+# message that names a cause the code didn't establish: it now says what http.client itself says.
+@pytest.mark.parametrize("setting", ["http_proxy", "HTTP_PROXY"])
+def test_a_proxy_setting_that_isnt_an_address_fails_the_download_naming_what_is_wrong_and_not_the_release(server, tmp_path, monkeypatch, setting):
+    root, base = server
+    (root / "file.AppImage").write_bytes(b"the file")
+    for name in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY", "REQUEST_METHOD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(setting, "http://127.0.0.1:abc")
+    waits, dl = [], tmp_path / "dl"
+    dl.mkdir()
+    monkeypatch.setattr(install.time, "sleep", waits.append)
+    with pytest.raises(install.InstallError) as e:
+        install.download(f"{base}/file.AppImage", str(dl / "file.bin"))
+    assert str(e.value) == ("download failed: an address on the way to this file isn't a valid one (nonnumeric port: 'abc'); "
+                            f"the file's own address is {base}/file.AppImage")
+    assert "release" not in str(e.value) and waits == [] and os.listdir(dl) == []
+    monkeypatch.delenv(setting)                         # and with the setting gone, the same address downloads
+    install.download(f"{base}/file.AppImage", str(dl / "file.bin"))
+    assert (dl / "file.bin").read_bytes() == b"the file"
+
+
+# ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
+# How it slipped past: every test's file was on the test's own http server, so nothing asked what
+# else an address could be. download(), head_bytes() and expected_sha256() each opened whatever the
+# release gave, with urllib's default opener: file:, ftp: and data: as well, and any redirect.
+_NOT_HTTPS = [
+    "{file}", "file://localhost{path}", "FILE://{path}", "\tfile://{path}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage",
+    "data:application/octet-stream;base64,f0VMRg==", "http://example.org/x.AppImage", "HTTP://example.org/x.AppImage",
+    "http://192.0.2.7/x.AppImage", "http://192.168.1.9:8000/x.AppImage", "http://[2001:db8::7]/x.AppImage",
+    "http://127.0.0.1.example.org/x.AppImage", "http://localhost.example.org/x.AppImage", "http://127.0.0.1@example.org/x.AppImage",
+    "http://example.org@127.0.0.1/x.AppImage", "http://example.org:80@localhost/x.AppImage", "http://127.1/x.AppImage",
+    "http://0x7f.0.0.1/x.AppImage", "http://2130706433/x.AppImage", "http://0.0.0.0/x.AppImage", "http:///x.AppImage",
+    "https:///x.AppImage", "https:x.AppImage", "//example.org/x.AppImage", "example.org/x.AppImage", "/x.AppImage", "x.AppImage", "",
+    "gopher://example.org/x", "jar:file://{path}!/x", "ws://127.0.0.1/x",
+]
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Every connection and name lookup that isn't to this computer itself is refused, and kept."""
+    reached = []
+    real_connect, real_lookup = socket.socket.connect, socket.getaddrinfo
+
+    def connect(sock, address):
+        if isinstance(address, tuple) and address[0] not in ("127.0.0.1", "::1"):
+            reached.append(address)
+            raise OSError("the test reaches no network")
+        return real_connect(sock, address)
+
+    def lookup(host, *a, **k):
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            reached.append(host)
+            raise OSError("the test reaches no network")
+        return real_lookup(host, *a, **k)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(install.time, "sleep", lambda s: None)
+    return reached
+
+
+def _refused_everywhere(url, folder, at_once=False):
+    """download(), the .exe probe and the checksum fetch each refuse `url`. `at_once`: for its own
+    address, before anything is asked, so download() leaves an unfinished download of another
+    address as it was."""
+    dest = folder / "x.AppImage"
+    folder.mkdir(exist_ok=True)
+    (folder / "x.AppImage.part").write_bytes(b"half of it")
+    (folder / "x.AppImage.part.json").write_text(json.dumps({"url": "https://example.org/earlier.AppImage", "validator": '"v1"'}))
+    with pytest.raises(install.InstallError, match=r"isn't https:|isn't an https: address|HTTP 30[0-9]"):
+        install.download(url, str(dest))
+    left = sorted(os.listdir(folder))
+    assert "x.AppImage" not in left and (not at_once or (left == ["x.AppImage.part", "x.AppImage.part.json"]
+                                                        and (folder / "x.AppImage.part").read_bytes() == b"half of it")), left
+    assert install.head_bytes(url) == b""
+    a = Asset("App.AppImage", "https://example.org/App.AppImage")
+    hex_, source, why = install.expected_sha256(a, [a, Asset("SHA256SUMS", url)])
+    assert (hex_, source) == ("", "") and why.startswith("couldn't read SHA256SUMS"), why
+    return why
+
+
+@pytest.mark.parametrize("address", _NOT_HTTPS, ids=[repr(a) for a in _NOT_HTTPS])
+def test_nothing_is_fetched_from_an_address_that_isnt_https(tmp_path, no_network, address):
+    """R4.4, the owner's decision on CR1.3-10: https: only. `file:///proc/self/cwd/<path>` as a
+    release link's address copied a file of the user's into the app's folder as "the download"."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_SHA + "  App.AppImage\n")                     # readable, and a checksum file if it were read
+    url = address.format(file=secret.as_uri(), path=secret.as_uri()[len("file://"):])
+    with pytest.raises(install.NotFetched, match="AppKata downloads over https: only"):
+        install.download(url, str(tmp_path / "y.AppImage"))
+    assert _refused_everywhere(url, tmp_path / "dl", at_once=True) == "couldn't read SHA256SUMS: it isn't at an https: address"
+    assert no_network == [] and sorted(os.listdir(tmp_path)) == ["dl", "secret.txt"]
+
+
+@pytest.mark.parametrize("host,itself", [
+    ("127.0.0.1", True), ("127.0.0.1:8000", True), ("localhost", True), ("LocalHost:80", True), ("[::1]", True), ("[::1]:8080", True),
+    ("127.8.9.1", True), ("example.org", False), ("example.org:443", False), ("127.0.0.1.example.org", False),
+    ("localhost.example.org", False), ("example.org@127.0.0.1", False), ("127.0.0.1@example.org", False), ("192.168.1.5", False),
+    ("10.0.0.1:80", False), ("0.0.0.0", False), ("[::]", False), ("[2001:db8::7]:80", False), ("127.1", False), ("0x7f.0.0.1", False),
+    ("2130706433", False), ("localhost.", False), ("", False), (":80", False),
+])
+def test_the_one_host_plain_http_is_used_to_is_this_computer_by_its_own_words(host, itself):
+    assert install._loopback(host) is itself
+
+
+class _SendsOn(http.server.BaseHTTPRequestHandler):
+    """Sends a request for /go on to `to`; anything else gets the file."""
+    to = ""
+    asked = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        self.asked.append(self.path)
+        body = b"" if self.path == "/go" else _MINE.encode() if self.path == "/sums" else _FILE
+        self.send_response(302 if self.path == "/go" else 200)
+        if self.path == "/go":
+            self.send_header("Location", self.to)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def sends_on():
+    _SendsOn.to, _SendsOn.asked = "", []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SendsOn)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+@pytest.mark.parametrize("to", ["{file}", "ftp://127.0.0.1/x.AppImage", "ftp://example.org/x.AppImage", "http://example.org/x.AppImage",
+                                "http://192.0.2.7/x.AppImage", "//example.org/x.AppImage", "data:,x", "gopher://example.org/x"])
+def test_a_redirect_is_followed_to_no_address_that_isnt_https(tmp_path, no_network, sends_on, to):
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_MINE)
+    _SendsOn.to = to.format(file=secret.as_uri())
+    why = _refused_everywhere(sends_on + "/go", tmp_path / "dl")
+    assert why in ("couldn't read SHA256SUMS: it isn't at an https: address", "couldn't read SHA256SUMS (HTTP 302)")    # the second: urllib's own no
+    assert no_network == [] and set(_SendsOn.asked) == {"/go"}
+
+
+def test_a_redirect_on_this_computer_itself_is_followed_as_the_tests_servers_need(tmp_path, no_network, sends_on):
+    _SendsOn.to = sends_on + "/file"
+    assert install.download(sends_on + "/go", str(tmp_path / "x.AppImage")) == _SHA and (tmp_path / "x.AppImage").read_bytes() == _FILE
+    assert install.head_bytes(sends_on + "/go", 4) == _FILE[:4]
+    _SendsOn.to = sends_on + "/sums"
+    a = Asset("App.AppImage", sends_on + "/file")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", sends_on + "/go")]) == (_SHA, "SHA256SUMS", "")
+
+
+class _NoTLS(urllib.request.HTTPSHandler):
+    """Stands in for https: with no TLS server: answers each address from a table of
+    {address: where it sends the request on, or the bytes it gives}."""
+    answers = {}
+    asked = []
+
+    def https_open(self, req):
+        self.asked.append(req.full_url)
+        answer = self.answers[req.full_url]
+        to = answer if isinstance(answer, str) else ""
+        headers = email.message_from_string(f"Location: {to}\n" if to else "Content-Length: %d\n" % len(answer))
+        r = urllib.response.addinfourl(io.BytesIO(b"" if to else answer), headers, req.full_url, 302 if to else 200)
+        r.msg = "Found" if to else "OK"
+        return r
+
+
+@pytest.fixture
+def no_tls(monkeypatch):
+    _NoTLS.answers, _NoTLS.asked = {}, []
+    monkeypatch.setattr(urllib.request, "HTTPSHandler", _NoTLS)
+    monkeypatch.setattr(urllib.request, "_opener", None)          # urllib's own default opener, made again with it
+    return _NoTLS
+
+
+@pytest.mark.parametrize("to", ["http://dl.example.org/x.AppImage", "{loopback}/file", "ftp://dl.example.org/x.AppImage",
+                                "http://localhost/x.AppImage"])
+def test_a_redirect_from_https_down_to_http_is_not_followed(tmp_path, no_network, no_tls, sends_on, to):
+    """R4.4: with no checksum published a download is Unverified and installed all the same, so a
+    file an https: address hands on to plain http: is whoever's sits on the network. Not even to
+    this computer itself: plain http: is for the tests' own servers, asked for as such."""
+    no_tls.answers = {"https://example.org/x.AppImage": to.format(loopback=sends_on)}
+    why = _refused_everywhere("https://example.org/x.AppImage", tmp_path / "dl")
+    assert why == "couldn't read SHA256SUMS: it isn't at an https: address"
+    with pytest.raises(install.NotFetched, match=r"sent on to an address that isn't https: \(" + re.escape(no_tls.answers["https://example.org/x.AppImage"])):
+        install.download("https://example.org/x.AppImage", str(tmp_path / "y.AppImage"))
+    assert no_network == [] and _SendsOn.asked == [] and set(no_tls.asked) == {"https://example.org/x.AppImage"}
+
+
+def test_an_https_address_and_a_redirect_from_it_to_another_are_downloaded_from(tmp_path, no_network, no_tls):
+    no_tls.answers = {"https://example.org/x.AppImage": "https://cdn.example.net/files/1", "https://cdn.example.net/files/1": _FILE,
+                      "https://example.org/SHA256SUMS": "https://cdn.example.net/files/2", "https://cdn.example.net/files/2": _MINE.encode()}
+    assert install.download("https://example.org/x.AppImage", str(tmp_path / "x.AppImage")) == _SHA
+    assert (tmp_path / "x.AppImage").read_bytes() == _FILE and install.head_bytes("https://example.org/x.AppImage", 4) == _FILE[:4]
+    a = Asset("App.AppImage", "https://example.org/x.AppImage")
+    assert install.expected_sha256(a, [a, Asset("SHA256SUMS", "https://example.org/SHA256SUMS")]) == (_SHA, "SHA256SUMS", "")
+    assert no_network == []
+
+
+def test_every_request_install_makes_is_made_by_the_one_function_that_checks_its_address():
+    """The class: three functions each opened an address of their own. A fourth that does is found
+    here, whatever it downloads."""
+    import ast
+    import inspect
+    made = {}
+    for fn in ast.walk(ast.parse(inspect.getsource(install))):
+        if isinstance(fn, (ast.FunctionDef, ast.ClassDef)):
+            for node in ast.walk(fn):
+                name = isinstance(node, ast.Call) and (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", ""))
+                if name in ("urlopen", "urlretrieve", "build_opener", "install_opener", "Request", "OpenerDirector", "HTTPConnection",
+                            "HTTPSConnection", "create_connection"):
+                    made.setdefault(name, set()).add(fn.name)
+    assert made == {"Request": {"_request"}, "OpenerDirector": {"_opener"}}
 
 
 def test_app_that_updates_itself_has_no_version_folders(env, server, tmp_path):
@@ -2456,3 +2994,714 @@ def test_install_options_on_windows_show_the_folder_an_installed_app_is_in(tmp_p
     assert plan["folderMe" if other == "me" else "folderEveryone"] == settings[other]          # where a move goes
     assert be._app_options(APP["url"]).root == was
     assert be._app_options(APP["url"], {"scope": other}).root == settings[other]               # what the move installs into
+
+
+# ---------------------------------------------------------------- a release's own text as a part of a path (CR1.3-8)
+
+def _own(tmp_path, env, app_id="demo-tool"):
+    """What an install changed that isn't the app's own: every difference `_left` sees from before
+    it, but the app's folder, its downloads, its command link (in the tests' `cmd`), its menu
+    entry with its script, and its row. Returns a function to call after it."""
+    before = _left(tmp_path, env)
+    own = tuple(os.path.join(*p, "") for p in (("apps", app_id), ("data", "downloads", app_id), ("cmd", app_id),
+                                               ("data", "menu", app_id), ("xdg", "applications", f"appkata-{app_id}.desktop")))
+
+    def others():
+        return {k: v for k, v in _changed(before, _left(tmp_path, env)).items()
+                if k != "<installs>" and not (k + os.sep).startswith(own)}
+    return others
+
+
+# where each name leads from the download folder (<data>/downloads/<app>/) and from the app's
+# folder (<apps>/<app>/), which are at different depths: {how the release names its file: the name}
+_PATH_NAMES = {"three folders up": "../../../{}", "two folders up": "../../{}", "another app's folder": "../other-app/{}",
+               "an absolute path": "{abs}", "a path that comes back": "x/../{}", "in a folder": "sub/{}"}
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["appimage", "tarball", "a self-updating appimage"])
+@pytest.mark.parametrize("named", list(_PATH_NAMES))
+def test_a_release_file_named_as_a_path_is_kept_under_its_last_part_in_the_apps_own_folders(env, server, tmp_path, named, kind):
+    # CR1.3-8: the release's name for its file was joined to the download folder and to the app's
+    # folder as it came. `../../../victim.tar.gz` was downloaded over the user's file three folders
+    # up; as an AppImage it was then moved to another depth, where a missing folder made the
+    # install fail and the failure deleted what the download had just replaced, and an existing one
+    # got the program, executable, outside the app's folder; `/...` dropped AppKata's folder.
+    file = "Victim-1.2.0-x86_64.AppImage" if "appimage" in kind else "victim-1.2.0-linux-x86_64.tar.gz"
+    theirs = [tmp_path / file, tmp_path / "apps" / file, tmp_path / "apps" / "other-app" / file,
+              tmp_path / "data" / "downloads" / "other-app" / file, tmp_path / "data" / file]
+    for f in theirs:                    # the user's, and another app's, wherever such a name leads
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    if "appimage" in kind:
+        a = _appimage(server, "served.AppImage", b"\x7fELF the release's")
+    else:
+        a = _tarball(server, "served.tar.gz", {"tool-1.2.0/tool": 0o755})
+    a = Asset(_PATH_NAMES[named].format(file, abs=str(theirs[0])), a.url)
+    others = _own(tmp_path, env)
+    app = {**APP, "autoUpdate": True} if kind.startswith("a self-updating") else APP
+    rec = install.install(env, app, a, kind.split()[-1], [a],
+                          portable=install.Portable(folder=str(tmp_path / "apps"), app_menu=False, command_dir=""))
+    assert others() == {} and [f.read_text() for f in theirs] == ["theirs"] * len(theirs)
+    folder = tmp_path / "apps" / "demo-tool"
+    assert os.path.dirname(rec["current"]["path"]) == str(folder) and _inside(rec["exec"], folder)
+    if kind == "appimage":                                      # under the name's last part (R4.3.1)
+        assert os.path.basename(rec["current"]["path"]) == file
+    assert _downloads() == [str(theirs[3])]                     # nothing of this app's, and the other app's as it was
+    assert env.one("SELECT asset FROM installs")["asset"] == a.name        # the release's own name, as its checksums name it
+
+
+@pytest.mark.parametrize("named", list(_PATH_NAMES) + ["three folders up, by backslashes"])
+def test_a_download_named_as_a_path_that_fails_its_checksum_is_deleted_where_it_was_downloaded(env, server, tmp_path, named):
+    # CR1.3-8, the failure's side (R4.8.2: "A complete file that fails its checksum or its install
+    # is deleted"): the file deleted was the one the release's name led to. On every system, so
+    # Windows' run shows it with its own separator; the backslashes are one file's name on Linux.
+    root, base = server
+    (root / "served.AppImage").write_bytes(b"tampered")
+    file = "Victim-1.2.0-x86_64.AppImage"
+    theirs = [tmp_path / file, tmp_path / "apps" / file, tmp_path / "apps" / "other-app" / file, tmp_path / "data" / file]
+    for f in theirs:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    form = _PATH_NAMES.get(named) or "..\\..\\..\\{}"
+    a = Asset(form.format(file, abs=str(theirs[0])), base + "/served.AppImage", digest="sha256:" + hashlib.sha256(b"original").hexdigest())
+    with pytest.raises(install.InstallError, match="doesn't match its checksum"):
+        install.install(env, APP, a, "appimage", [a])
+    assert [f.read_text() for f in theirs] == ["theirs"] * len(theirs)
+    assert _downloads() == [] and not (tmp_path / "apps" / "demo-tool").exists()
+
+
+def test_appkatas_own_setup_named_as_a_path_waits_in_the_updates_folder(env, server, tmp_path, monkeypatch):
+    # CR1.3-8, AppKata's own update on Windows (R2.11.5): the setup that waits for the restart was
+    # moved to the updates folder joined with the release's name, and run from there with the
+    # user's rights or an administrator's. Windows' road, on any system.
+    from appkata_core import windows
+    monkeypatch.setattr(install, "OS", "windows")
+    monkeypatch.setattr(windows, "authenticode", lambda path: ("NotSigned", ""))
+    root, base = server
+    (root / "served.exe").write_bytes(b"MZ the new setup")
+    theirs = [tmp_path / "AppKata-Setup.exe", tmp_path / "data" / "AppKata-Setup.exe"]     # two up from the updates folder,
+    for f in theirs:                                                                    # and from the download's
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("theirs")
+    a = Asset("../../AppKata-Setup.exe", base + "/served.exe")
+    rec = install.install(env, {**APP, "selfSetup": True}, a, "exe", [a])
+    assert rec["pendingSetup"] == str(tmp_path / "data" / "updates" / "AppKata-Setup.exe")
+    assert open(rec["pendingSetup"], "rb").read() == b"MZ the new setup" and [f.read_text() for f in theirs] == ["theirs"] * 2
+    assert os.listdir(tmp_path / "data" / "updates") == ["AppKata-Setup.exe"] and _downloads() == []
+
+
+_FILE_NAMES = [     # (the release's name for its file, the name it is kept under: None = refused), on (which systems)
+    ("Tool-1.2.0-x86_64.AppImage", "Tool-1.2.0-x86_64.AppImage", "both"),
+    ("My Tool (1.2).tar.gz", "My Tool (1.2).tar.gz", "both"),
+    ("日本語アプリ-1.0.AppImage", "日本語アプリ-1.0.AppImage", "both"),
+    ("../../../victim.tar.gz", "victim.tar.gz", "both"),
+    ("/etc/victim.tar.gz", "victim.tar.gz", "both"),
+    ("..\\..\\..\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x.exe", "x.exe", "both"),
+    ("C:\\Users\\Public\\x.exe", "x.exe", "both"),
+    ("\\\\server\\share\\x.exe", "x.exe", "both"),
+    ("a/b\\c/..\\x.zip", "x.zip", "both"),
+    ("", None, "both"), (".", None, "both"), ("..", None, "both"), ("../..", None, "both"), ("tool/", None, "both"),
+    ("tool\\", None, "both"), ("/", None, "both"),
+    (".AppImage", None, "both"), ("../.hidden.tar.gz", None, "both"), ("...", None, "both"),
+    ("tool\n.AppImage", None, "both"), ("tool\x00.AppImage", None, "both"), ("tool\x7f.zip", None, "both"),
+    ("C:x.exe", None, "windows"), ("x.exe:stream", None, "windows"), ("con.exe", None, "windows"), ("NUL", None, "windows"),
+    ("x/COM1.zip", None, "windows"), ("tool.exe.", None, "windows"), ("tool.exe ", None, "windows"), ("a<b>.zip", None, "windows"),
+    ('a"b.zip', None, "windows"), ("a|b.zip", None, "windows"), ("a?.zip", None, "windows"), ("a*.zip", None, "windows"),
+]
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+@pytest.mark.parametrize("name,kept,on", _FILE_NAMES, ids=[repr(n) for n, _, _ in _FILE_NAMES])
+def test_the_one_file_name_a_release_file_is_kept_under(monkeypatch, name, kept, on, system):
+    # R4.8.2: the part after the last / or \ (on every system), refused when that is no file's name
+    # here. What Windows alone refuses is a name on Linux, where a release's Linux file may hold it.
+    monkeypatch.setattr(install, "OS", system)
+    if kept is None and on in ("both", system):
+        with pytest.raises(install.InstallError, match="has a name that can't be used .*nothing was installed"):
+            install._file_name(name)
+    else:
+        got = install._file_name(name)
+        assert got == (kept or name.rsplit("/", 1)[-1]) and "/" not in got and "\\" not in got
+
+
+def test_a_release_whose_file_has_no_usable_name_is_refused_before_anything_is_downloaded(env, server, tmp_path):
+    a = _appimage(server, "served.AppImage")
+    others = _own(tmp_path, env)
+    with pytest.raises(install.InstallError, match="has a name that can't be used"):
+        install.install(env, APP, Asset("../..", a.url), "appimage", [a])
+    assert others() == {} and _downloads() == [] and not (tmp_path / "apps").exists()
+    assert not (tmp_path / "data" / "downloads").exists() and env.one("SELECT * FROM installs") is None
+
+
+@pytest.mark.parametrize("name", ["../x-1.0.AppImage", "/x-1.0.AppImage", "sub/x-1.0.AppImage", "..", ".", ""])
+def test_no_name_is_joined_to_a_folder_unless_it_names_a_file_in_it(tmp_path, name):
+    # the check at the place of use: whatever cleans a name where it comes in, a path that isn't
+    # directly in its folder is refused before anything is written, moved or deleted there
+    folder = tmp_path / "apps" / "demo-tool"
+    with pytest.raises(install.InstallError, match="isn't a name in"):
+        install._in_folder(str(folder), name)
+    assert install._in_folder(str(folder), "x-1.0.AppImage") == str(folder / "x-1.0.AppImage")
+    if "x-1.0" in name:                 # and _place, given a path for the release's file name
+        file = tmp_path / "downloaded"
+        file.write_bytes(b"\x7fELF")
+        with pytest.raises(install.InstallError, match="isn't a name in"):
+            install._place("appimage", str(file), APP, str(folder), "1.0", name)
+        assert file.read_bytes() == b"\x7fELF" and os.listdir(folder) == [] and os.listdir(tmp_path / "apps") == ["demo-tool"]
+
+
+# ---------------------------------------------------------------- a release's version as a part of a path (CR1.3-9)
+
+def _other_app(env, server, p):
+    """Another app in the same install folder, installed and running."""
+    b = _tarball(server, "other-1.0.tar.gz", {"other-1.0/other": 0o755})
+    rec = install.install(env, {**APP, "url": APP["url"] + "-other", "name": "Other", "repo": "demo/other", "installVersion": "1.0"},
+                          b, "tarball", [b], portable=p)
+    assert _runs(rec["exec"]) == "other-1.0/other"
+    return rec
+
+
+@linux_only
+@pytest.mark.parametrize("version", ["..", ".", "...", ".hidden", "../.."])
+def test_a_release_whose_version_is_dots_gets_a_folder_in_the_apps_own_and_takes_no_other_apps(env, server, tmp_path, version):
+    # CR1.3-9: R4.3.1 unpacks an archive "into a folder named after its version", and the name kept
+    # the version's dots: for `..` that folder was the install folder itself, with every app in it,
+    # and for `.` the app's own, with its kept versions. A version is whatever the host that
+    # answers as the forge sends. The app is installed all the same, in a folder of its own.
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=2)
+    other = _other_app(env, server, p)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    others = _own(tmp_path, env)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**APP, "installVersion": version}, a, "tarball", [a], portable=p)
+    home = tmp_path / "apps" / "demo-tool"
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+    assert os.path.dirname(rec["current"]["path"]) == str(home) and not os.path.basename(rec["current"]["path"]).startswith(".")
+    assert rec["current"]["version"] == version and _runs(rec["exec"]) == "tool-next/tool" == _runs(tmp_path / "cmd" / "demo-tool")
+    assert [k["version"] for k in rec["kept"]] == ["1.0"] and os.path.isdir(rec["kept"][0]["path"])      # its kept version too
+    back = install.switch_to(env, dict(APP), "1.0", p)                      # which it goes back to, and returns from
+    assert _runs(back["exec"]) == "tool-1.0/tool" and [k["version"] for k in back["kept"]] == [version]
+    assert _runs(install.switch_to(env, dict(APP), version, p)["exec"]) == "tool-next/tool"
+    assert install.uninstall(env, APP["url"]) == [] and not os.path.lexists(home)
+    assert others() == {} and _runs(other["exec"]) == "other-1.0/other"
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_a_version_is_always_one_plain_name_in_the_apps_folder(monkeypatch, system):
+    # the class, for whatever a version holds: never empty, `.` or `..`, never a hidden name, never
+    # a path; and the versions people release are named as they were
+    import itertools
+    from appkata_core import sandbox
+    monkeypatch.setattr(install, "OS", system)
+    for v, name in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), ("v2", "v2"), ("nightly/2026 11", "nightly_2026_11"),
+                    ("", "unknown"), ("..", "_.."), (".", "_."), ("...", "_..."), (".5", "_.5"), ("../..", "_.._.."),
+                    ("/", "_"), ("\\", "_"), ("日本", "_")):
+        assert install._safe(v) == (name if system == "linux" or not name.endswith(".") else name.rstrip(".") + "_"), v
+    folder = os.path.join(os.path.abspath(os.sep), "apps", "demo-tool")
+    for v in ("".join(c) for n in range(6) for c in itertools.product("./\\ a_", repeat=n)):
+        s = install._safe(v)
+        assert s and s not in (".", "..") and not s.startswith(".") and "/" not in s and "\\" not in s, (v, s)
+        assert os.path.dirname(install._in_folder(folder, s)) == folder, (v, s)
+        assert system != "windows" or s[-1] not in ". ", (v, s)
+        assert os.path.dirname(sandbox.extracted_dir(folder, v)) == folder                # an extracted AppImage's folder
+        name = install._appimage_name("Tool.AppImage", v)                       # and an AppImage's own file
+        assert os.path.dirname(install._in_folder(folder, name)) == folder and name.startswith("Tool"), (v, name)
+
+
+def test_no_version_is_placed_in_a_folder_that_isnt_in_the_apps_own(tmp_path, monkeypatch):
+    # the check at the place of use (_in_folder), should a version's name ever come out as a path
+    folder, file = tmp_path / "apps" / "demo-tool", tmp_path / "downloaded.tar.gz"
+    (tmp_path / "apps" / "other-app" / "1.0").mkdir(parents=True)
+    file.write_bytes(b"an archive")
+    for name in ("..", ".", "../other-app", "/x", "a/b"):
+        monkeypatch.setattr(install, "_safe", lambda v, name=name: name)
+        with pytest.raises(install.InstallError, match="isn't a name in"):
+            install._place("tarball", str(file), APP, str(folder), "1.0", "tool.tar.gz")
+        assert os.listdir(folder) == [] and os.listdir(tmp_path / "apps" / "other-app") == ["1.0"] and file.exists()
+
+
+# ---------------------------------------------------------------- the file AppKata names after an app (CR1.3-39)
+
+@linux_only
+@pytest.mark.parametrize("name", ["日本語アプリ", "Приложение", "Εφαρμογή", "…", "!!!", ""])
+def test_an_app_whose_name_has_no_ascii_letter_or_digit_gets_its_id_in_the_file_named_after_it(env, server, tmp_path, name):
+    # CR1.3-39: the stable name (R4.3.1.2) and the one file of an app that updates itself (R4.10.2)
+    # are the app's name without what isn't an ASCII letter or digit, which for such a name is
+    # nothing: the file was `.AppImage`, hidden and nameless. The whole road of that name: the
+    # fixed layout, AppKata's own update into versions with the stable link, and back.
+    from appkata_core import sandbox
+    app, gs = {**APP, "name": name}, sandbox.resolve_template("standard")
+    home, cmd = tmp_path / "apps" / "app", tmp_path / "cmd"
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd))
+    a = _version(server, "appimage", "1.0")
+    rec = install.install(env, {**app, "installVersion": "1.0", "autoUpdate": True}, a, "appimage", [a], portable=p)
+    assert rec["id"] == "app" and os.listdir(home) == ["app.AppImage"]                    # it updates itself: one file
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"1.0"
+    install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": gs}, p)        # sandboxed, so AppKata updates it
+    a = _version(server, "appimage", "2.0")
+    rec = install.install(env, {**app, "installVersion": "2.0", "sandbox": gs}, a, "appimage", [a], portable=p)
+    assert os.readlink(home / "app.AppImage") == "Tool-2.0-x86_64.AppImage" and str(home / "app.AppImage") in rec["links"]
+    assert [os.path.basename(k["path"]) for k in rec["kept"]] == ["app-1.0.AppImage"]
+    assert not [n for n in os.listdir(home) if n.startswith(".")]
+    rec = install.rewrite_launcher(env, {**app, "autoUpdate": True, "sandbox": None}, p)       # Off: it updates itself again
+    assert os.listdir(home) == ["app.AppImage"] and not os.path.islink(home / "app.AppImage")
+    assert rec["current"]["path"] == rec["exec"] == str(home / "app.AppImage") and open(rec["exec"], "rb").read() == b"2.0"
+    # a second such app has its own id, and its own name
+    b = _appimage(server, "Other-1.0-x86_64.AppImage", b"other")
+    other = install.install(env, {**app, "url": APP["url"] + "-other", "name": "別のアプリ"}, b, "appimage", [b], portable=p)
+    assert other["id"] == "app-2" and other["exec"] == str(tmp_path / "apps" / "app-2" / "app-2.AppImage")
+    assert os.readlink(other["exec"]) == "Other-1.0-x86_64.AppImage"
+    assert install.uninstall(env, APP["url"]) == [] and install.uninstall(env, APP["url"] + "-other") == []
+    assert not os.path.lexists(home) and not os.path.lexists(tmp_path / "apps" / "app-2")
+
+
+def test_the_file_named_after_an_app_has_its_names_ascii_letters_and_digits_or_its_id():
+    folder = os.path.join("apps", "app-2")
+    for name, stem in (("LocalSend", "LocalSend"), ("Demo Tool", "DemoTool"), ("日本 App 2", "App2"), ("7-Zip", "7Zip"),
+                       ("日本語アプリ", "app-2"), ("", "app-2"), ("..", "app-2"), ("/", "app-2")):
+        assert install._file_stem({"name": name}, folder) == stem
+
+
+# ---------------------------------------------------------------- a version named as what AppKata keeps in the app's folder (CR1.3-47)
+
+@linux_only
+@pytest.mark.parametrize("sandboxed", [False, True], ids=["unsandboxed", "sandboxed"])
+@pytest.mark.parametrize("version", ["current", "run", "Current", "RUN"])
+def test_a_release_whose_version_is_a_name_appkata_keeps_in_the_apps_folder_is_installed_beside_it(env, server, tmp_path, version, sandboxed):
+    # CR1.3-47: an archive's version gets a folder named after it (R4.3.1), beside the `current`
+    # link (R4.3.1.2) and a sandboxed app's launcher, `run` (R17.4). A release whose version was
+    # the word "current" asked for its folder at the link's own place, and one named "run" at the
+    # launcher's: neither could be installed, and "run" installed unsandboxed couldn't be
+    # sandboxed after. It gets `_` before it, as a version of dots does (CR1.3-9), and is a
+    # version like any other from there: kept, gone back to, removed.
+    from appkata_core import sandbox
+    app = {**APP, **({"sandbox": sandbox.resolve_template("standard")} if sandboxed else {})}
+    home, cmd, folder = tmp_path / "apps" / "demo-tool", tmp_path / "cmd", "_" + version
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(cmd), keep=2)
+    a = _version(server, "tarball", "1.0")
+    install.install(env, {**app, "installVersion": "1.0"}, a, "tarball", [a], portable=p)
+    a = _tarball(server, "tool-next.tar.gz", {"tool-next/tool": 0o755})
+    rec = install.install(env, {**app, "installVersion": version}, a, "tarball", [a], portable=p)
+
+    def whole(rec):
+        assert (rec["current"]["version"], rec["current"]["path"]) == (version, str(home / folder))
+        assert os.readlink(home / "current") == folder and _runs(home / "current" / "tool-next" / "tool") == "tool-next/tool"
+        assert (rec.get("launcher") == str(home / "run")) is sandboxed and os.path.isfile(home / "run") is sandboxed
+        if sandboxed:
+            assert rec["exec"] == rec["launcher"] and install.launcher_is_current(rec, app, p)
+        else:
+            assert _runs(rec["exec"]) == "tool-next/tool" == _runs(cmd / "demo-tool")
+        assert rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    whole(rec)
+    assert [k["version"] for k in rec["kept"]] == ["1.0"]
+    a = _version(server, "tarball", "2.0")                      # kept through the next update, and gone back to
+    rec = install.install(env, {**app, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+    assert [(k["version"], k["path"]) for k in rec["kept"]] == [(version, str(home / folder)), ("1.0", str(home / "1.0"))]
+    assert os.readlink(home / "current") == "2.0" and os.path.isdir(home / folder)
+    whole(install.switch_to(env, dict(app), version, p))
+    if not sandboxed:                                           # and an app installed unsandboxed can be sandboxed after
+        gs = sandbox.resolve_template("standard")
+        rec = install.rewrite_launcher(env, {**APP, "sandbox": gs}, p)
+        assert rec["launcher"] == str(home / "run") and os.path.isfile(home / "run") and os.path.isdir(home / folder)
+    assert install.uninstall(env, APP["url"], remove_sandbox=True) == [] and not os.path.lexists(home)
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_folder_a_version_is_unpacked_into(monkeypatch, system):
+    # the version as a name (CR1.3-9), and never one AppKata keeps there itself, in any case
+    # (Windows compares names without it, R15.16)
+    monkeypatch.setattr(install, "OS", system)
+    for version, folder in (("2.1", "2.1"), ("1.0-beta+3", "1.0-beta+3"), (".5", "_.5"), ("", "unknown"),
+                            ("current", "_current"), ("run", "_run"), ("Current", "_Current"), ("RUN", "_RUN"),
+                            ("currents", "currents"), ("current.1", "current.1"), ("rerun", "rerun"), ("app", "app"),
+                            ("2.0.new", "2.0.new_"), ("2.0.old", "2.0.old_"), ("2.0.OLD", "2.0.OLD_"), ("run.new", "run.new_"),
+                            ("new", "new"), ("2.0.newer", "2.0.newer"), ("2.0-old", "2.0-old"), ("current.old", "current.old_")):
+        assert install._version_folder(version) == folder
+        made = [folder + end for end in install._KEPT_ENDS]                 # what placing it makes beside it
+        assert not [v for v in ("2.0", "2.0.new", "2.0.old", "run", "current", version) if install._version_folder(v) in made]
+    kept = [n.lower() for n in install._KEPT_NAMES]
+    assert all(install._version_folder(v).lower() not in kept for v in install._KEPT_NAMES + ("CURRENT", "Run", "current ", " run"))
+
+
+# ---------------------------------------------------------------- a version named as a folder AppKata makes while placing one
+
+@linux_only
+@pytest.mark.parametrize("fails", [False, True], ids=["the install succeeds", "the install fails"])
+@pytest.mark.parametrize("state", ["in use", "kept"])
+@pytest.mark.parametrize("end", [".new", ".old", ".NEW"])
+def test_installing_a_version_never_removes_one_named_as_its_staging_or_set_aside_folder(env, server, tmp_path, end, state, fails):
+    # Found beside CR1.3-47, in the same family: a version's folder at a name AppKata uses itself.
+    # Placing 2.0 unpacks it in `2.0.new`, after removing what is there, and sets what is at `2.0`
+    # aside in `2.0.old`, after removing what is there: a version named 2.0.new or 2.0.old was
+    # deleted by an install of 2.0, the one in use too, and whether or not the install succeeded
+    # (R4.6 keeps the installed version until the new one is in place).
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    home, odd = tmp_path / "apps" / "demo-tool", "2.0" + end
+    for v in (odd, "3.0")[:2 if state == "kept" else 1]:
+        a = _tarball(server, f"tool-{v}.tar.gz", {f"tool-{v}/tool": 0o755})
+        was = install.install(env, {**APP, "installVersion": v}, a, "tarball", [a], portable=p)
+    its = next(k["path"] for k in [was["current"]] + was["kept"] if k["version"] == odd)
+    before = _left(tmp_path, env)
+    if fails:
+        (server[0] / "tool-2.0.tar.gz").write_bytes(b"not an archive")
+        a = Asset("tool-2.0.tar.gz", server[1] + "/tool-2.0.tar.gz")
+        with pytest.raises(tarfile.ReadError):
+            install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _changed(before, _left(tmp_path, env)) == {}
+        assert _runs(was["exec"]) == f"tool-{was['current']['version']}/tool"
+    else:
+        a = _tarball(server, "tool-2.0.tar.gz", {"tool-2.0/tool": 0o755})
+        rec = install.install(env, {**APP, "installVersion": "2.0"}, a, "tarball", [a], portable=p)
+        assert _runs(rec["exec"]) == "tool-2.0/tool" and odd in [k["version"] for k in rec["kept"]]
+        back = install.switch_to(env, dict(APP), odd, p)
+        assert back["current"]["path"] == its and _runs(back["exec"]) == f"tool-{odd}/tool"
+    assert os.path.isfile(os.path.join(its, f"tool-{odd}", "tool"))
+
+
+# ---------------------------------------------------------------- two versions whose names in a path are one (R4.3.1; CR1.3-52)
+# How it slipped past: every test's versions were numbers, which are their own names. A version is
+# the release author's text, and its name in a path isn't the version: the characters a path can't
+# hold become `_`, and a name AppKata keeps for itself gets a `_` of its own (CR1.3-9, CR1.3-47).
+_ONE_FOLDER = [("1.0 beta", "1.0_beta"), ("1.0_beta", "1.0 beta"), ("1.0 beta", "1.0_beta", "1.0/beta"), ("2.0~rc1", "2.0_rc1", "2.0 rc1"),
+               ("current", "_current"), ("_current", "Current", "current"), ("run", "_run"), ("..", "_.."), ("2.0.old", "2.0.old_"),
+               ("2.0.new_", "2.0.new"), ("1.0_beta", "1.0 beta", "1.0_beta_2"), ("1.0_beta_2", "1.0 beta", "1.0_beta")]
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["tarball", "appimage"])
+@pytest.mark.parametrize("versions", _ONE_FOLDER, ids=[" then ".join(v) for v in _ONE_FOLDER])
+def test_versions_whose_names_in_a_path_are_one_each_keep_a_place_of_their_own(env, server, tmp_path, versions, kind):
+    """R4.3.1.5: "AppKata keeps up to *N* previous versions ... A kept version reinstalls instantly".
+    The later of two such versions was placed where the earlier was, which was then gone, and no
+    longer kept: installing 1.0_beta over 1.0 beta left nothing to go back to."""
+    nothing = _left(tmp_path, env)
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    cmd, says = tmp_path / "cmd" / "demo-tool", {}
+
+    def release(v, again=""):
+        """Version `v` as its release has it: under one file name for every version, as many projects do."""
+        i = f"{versions.index(v)}{again}"
+        (server[0] / i).mkdir(exist_ok=True)
+        if kind == "appimage":
+            a = _appimage(server, f"{i}/Tool-x86_64.AppImage", f"#!/bin/sh\necho {i}\n".encode())
+            says[v] = i
+        else:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+            says[v] = f"tool-{i}/tool"
+        return Asset(a.name.split("/")[1], a.url)
+
+    for n, v in enumerate(versions):
+        a = release(v)
+        rec = install.install(env, {**APP, "installVersion": v}, a, kind, [a], portable=p)
+        assert _runs(cmd) == says[v] and rec["current"]["version"] == v
+        assert [k["version"] for k in rec["kept"]] == list(reversed(versions[:n])) == install.kept_versions(env, APP["url"])
+    places = {k["version"]: k["path"] for k in [rec["current"]] + rec["kept"]}
+    assert len(set(places.values())) == len(versions) and all(os.path.dirname(x) == str(tmp_path / "apps" / "demo-tool") for x in places.values())
+    for v in versions:                                  # each one is there to go back to, and is itself
+        if v != rec["current"]["version"]:
+            rec = install.switch_to(env, dict(APP), v, p)
+        assert _runs(cmd) == says[v] and rec["current"] == {"version": v, "path": places[v], "exec": rec["current"]["exec"]}
+    # the same version again takes its own place, and no other version's
+    a = release(versions[-1], again="-again")
+    rec = install.install(env, {**APP, "installVersion": versions[-1]}, a, kind, [a], portable=p)
+    assert _runs(cmd) == says[versions[-1]] and rec["current"]["path"] == places[versions[-1]]
+    assert sorted(k["version"] for k in rec["kept"]) == sorted(versions[:-1])
+    for v in versions[:-1]:
+        assert _runs(install.switch_to(env, dict(APP), v, p)["exec"]) == says[v]
+    assert install.uninstall(env, APP["url"]) == [] and _changed(nothing, _left(tmp_path, env)) == {}
+
+
+@linux_only
+@pytest.mark.parametrize("case", ["an archive whose name's place was another version's", "an AppImage whose name's place was another version's",
+                                  "an AppImage whose release renamed its file"])
+def test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one(env, server, tmp_path, case):
+    """R4.3.1.5 keeps *previous* versions. Found beside CR1.3-52: a version installed again where
+    its file's name, or the place its name gives, had changed left its earlier copy among the kept
+    versions, so the Versions list offered the installed version as one to go back to."""
+    p = install.Portable(folder=str(tmp_path / "apps"), command_dir=str(tmp_path / "cmd"), keep=3)
+    folder, n = tmp_path / "apps" / "demo-tool", iter(range(9))
+
+    def put(v, name=""):
+        i = str(next(n))
+        (server[0] / i).mkdir()
+        if "archive" in case:
+            a = _tarball(server, f"{i}/tool-linux-x86_64.tar.gz", {f"tool-{i}/tool": 0o755})
+        else:
+            a = _appimage(server, f"{i}/{name or 'Tool-x86_64.AppImage'}", f"#!/bin/sh\necho {i}\n".encode())
+        a = Asset(a.name.split("/")[1], a.url)
+        return install.install(env, {**APP, "installVersion": v}, a, "tarball" if "archive" in case else "appimage", [a], portable=p), i
+
+    if "renamed" in case:
+        rec, _ = put("2.0", "Tool-2.0-x86_64.AppImage")
+        was = rec["current"]["path"]
+        rec, says = put("2.0", "Tool-2.0-amd64.AppImage")
+    else:
+        put("1.0 beta")
+        rec, _ = put("1.0_beta")                                     # beside it, under the name with _2
+        was = rec["current"]["path"]
+        install.remove_version(env, APP["url"], "1.0 beta")          # the user removes the kept one: its place is free again
+        rec, says = put("1.0_beta")
+    assert rec["current"]["path"] != was and not os.path.lexists(was)
+    assert rec["kept"] == [] == install.kept_versions(env, APP["url"]) and rec == json.loads(env.one("SELECT record FROM installs")["record"])
+    mine = "tool-" + says + "/tool" if "archive" in case else says
+    assert _runs(tmp_path / "cmd" / "demo-tool") == mine
+    assert sorted(f.name for f in folder.iterdir() if not f.is_symlink()) == [os.path.basename(rec["current"]["path"])]
+
+
+@pytest.mark.parametrize("system", ["linux", "windows"])
+def test_the_place_a_version_gets_when_its_names_is_another_versions(monkeypatch, system):
+    monkeypatch.setattr(install, "OS", system)
+    free = install._not_anothers
+    at = lambda *names: tuple(os.path.join("apps", "tool", n) for n in names)      # noqa: E731
+    (one,) = at("1.0_beta")
+    assert free(one, ()) == one and free(one, at("1.0", "1.0_beta_2", "2.0")) == one
+    assert free(one, at("1.0_beta")) == at("1.0_beta_2")[0]
+    assert free(one, at("1.0_beta_2", "1.0_beta", "1.0_beta_3")) == at("1.0_beta_4")[0]
+    assert free(at("1.0")[0], at("1.0")) == at("1.0_2")[0]                           # a folder's name ends where it ends: no extension
+    assert free(at("Tool-1.0_beta.AppImage")[0], at("Tool-1.0_beta.AppImage")) == at("Tool-1.0_beta_2.AppImage")[0]
+    assert free(at("nvim-0.9.appimage")[0], at("nvim-0.9.appimage", "nvim-0.9_2.appimage")) == at("nvim-0.9_3.appimage")[0]
+    # Windows keeps one folder for 1.0-RC and 1.0-rc; elsewhere they are two
+    assert free(at("1.0-RC")[0], at("1.0-rc")) == at("1.0-RC_2" if system == "windows" else "1.0-RC")[0]
+    for name in ("1.0_beta_2", "_current_2", "2.0.old__2"):                         # never a name AppKata keeps or makes for itself
+        assert install._version_folder(name) == name
+
+
+# ---------------------------------------------------------------- a release's .deb or .rpm (R4.4, R16.8.5; CR1, #327)
+# How it slipped past: no test installed a release's package file at all, so none saw which file the
+# package manager is handed. It was the downloaded one, in a folder any program of the user's can
+# write, read again as root after the dry run and the password prompt.
+@pytest.fixture
+def package_tools(tmp_path, monkeypatch):
+    """Stand-ins for the package tools, first on the PATH: dpkg-deb and rpm name the package; apt-get
+    and dnf plan an install of it and, told to install, keep the file they were handed and say where
+    it was. The command that would run as root runs here as the test's user, with the folder only
+    root can write under the test's own, and held to 20 seconds and to files of 10 MB: a copy that
+    never ends, or waits for ever, fails its test and fills no disk. No PackageKit of this
+    machine's is ever asked."""
+    from appkata_core import pkgbackend
+    tools, out, staging = tmp_path / "tools", tmp_path / "installed", tmp_path / "root-only"
+    for d in (tools, out, staging):
+        d.mkdir()
+    manager = f"""#!/bin/sh
+for a in "$@"; do last=$a; done
+case " $* " in
+    *" -s "*) echo "Inst demo (1.0 local [all])"; exit 0 ;;
+    *" --assumeno "*) printf 'Installing:\\n demo  noarch  1.0  @commandline  1 k\\nTransaction Summary\\n'; exit 0 ;;
+    *" install "*) ;;
+    *) exit 0 ;;                # a question about the system's packages: nothing to say
+esac
+cp "$last" {shlex.quote(str(out))}/file
+echo "$last" > {shlex.quote(str(out))}/path
+stat -c %a "$(dirname "$last")" "$last" > {shlex.quote(str(out))}/modes
+ls "$(dirname "$last")" > {shlex.quote(str(out))}/beside
+"""
+    for name, text in (("apt-get", manager), ("dnf", manager), ("dpkg-deb", "#!/bin/sh\necho demo\n"), ("rpm", "#!/bin/sh\nprintf demo\n")):
+        (tools / name).write_text(text)
+        (tools / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(pkgbackend, "STAGING", str(staging), raising=False)
+    monkeypatch.setattr(pkgbackend, "_priv", lambda cmd, env=None: [*_HELD, *cmd])
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "linux_family", lambda: "debian")
+    monkeypatch.setattr(pkgbackend.PkTransport, "available", lambda self: False)
+    return out, staging
+
+
+_HELD = ["timeout", "20", "sh", "-c", 'ulimit -f 20480; exec "$@"', "held"]      # 20480 blocks of 512 bytes
+
+
+def _package_file(server, kind, data=b"a package, as its release published it"):
+    root, base = server
+    name = "demo_1.0_all.deb" if kind == "deb" else "demo-1.0-1.noarch.rpm"
+    (root / name).write_bytes(data)
+    return Asset(name, f"{base}/{name}", len(data), "sha256:" + hashlib.sha256(data).hexdigest()), data
+
+
+def _swap_after_the_dry_run(monkeypatch, swap):
+    """The dry run is the first of what lies between AppKata's check and the package manager's read:
+    then come a confirmation, perhaps, and the password prompt."""
+    from appkata_core import pkgbackend
+    real = pkgbackend.Cli.simulate
+
+    def simulate(self, action, names):
+        plan = real(self, action, names)
+        swap(names[0])
+        return plan
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", simulate)
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+def test_a_releases_package_is_installed_from_roots_own_copy_of_the_file_that_was_checked(env, server, package_tools, kind):
+    out, staging = package_tools
+    a, data = _package_file(server, kind)
+    rec = install.install(env, {**APP, "installVersion": "1.0"}, a, kind, [a])
+    handed = (out / "path").read_text().strip()
+    assert os.path.dirname(os.path.dirname(handed)) == str(staging) and os.path.basename(handed) == a.name
+    assert not handed.startswith(install.downloads_dir())                       # never the file a program of the user's can write
+    assert (out / "file").read_bytes() == data and (out / "beside").read_text().split() == [a.name]
+    assert (out / "modes").read_text().split() == ["755", "644"]                # read by all, written by its owner alone
+    assert os.listdir(staging) == [] and _downloads() == []                     # the copy and the download are gone
+    assert (rec["package"], rec["manager"], rec["verified"]) == ("demo", "apt" if kind == "deb" else "dnf", "checksum")
+    assert rec["sha256"] == {"1.0": hashlib.sha256(data).hexdigest()}
+
+
+def _other_bytes(path):
+    with open(path, "wb") as f:
+        f.write(b"a package of someone else's, with scripts that run as root")
+
+
+def _same_size(path):
+    size = os.path.getsize(path)
+    with open(path, "r+b") as f:                # changed in place: the same file, the same size
+        f.write(b"X" * size)
+
+
+def _a_link_to_another(path):
+    other = path + ".other"
+    with open(other, "wb") as f:
+        f.write(b"another file, behind the same name")
+    os.remove(path)
+    os.symlink(other, path)
+
+
+# How the next three slipped past (pass 1 of the unit's own review): the swaps above each leave a
+# small regular file to read, so `cp` of the path looked right. It follows a link and reads
+# whatever is there for as long as there is more: a link to /dev/zero had root write zeros under
+# /var/cache until the file system was full, and a FIFO had it wait for ever. What runs as root
+# now opens no path of the user's and reads no more than the length that was checked.
+def _a_link_to_a_device(path):
+    os.remove(path)
+    os.symlink("/dev/zero", path)
+
+
+def _a_fifo(path):
+    os.remove(path)
+    os.mkfifo(path)
+
+
+def _the_file_and_more(path):
+    with open(path, "ab") as f:
+        f.write(b"and more after the bytes that were checked")
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+@pytest.mark.parametrize("swap", [_other_bytes, _same_size, _a_link_to_another, _a_link_to_a_device, _a_fifo, _the_file_and_more])
+def test_a_package_swapped_after_its_check_is_refused_on_the_administrators_side(env, server, package_tools, monkeypatch, kind, swap):
+    """The finding's case: the download is hashed and compared, and a program of the user's then
+    puts another file at its path before the package manager opens it as root."""
+    out, staging = package_tools
+    a, _ = _package_file(server, kind)
+    _swap_after_the_dry_run(monkeypatch, swap)
+    with pytest.raises(install.InstallError, match="^the downloaded file changed after AppKata checked it; nothing was installed$"):
+        install.install(env, {**APP, "installVersion": "1.0"}, a, kind, [a])
+    assert os.listdir(out) == []                                                 # the package manager was handed nothing
+    assert os.listdir(staging) == [] and not env.one("SELECT 1 FROM installs")
+    assert [p for p in _downloads() if not p.endswith(".other")] == []          # nor is the swapped file kept to "resume"
+
+
+_PACKAGE = b"a package, as its release published it"
+
+
+def _the_file(path):
+    return open(path, "rb")
+
+
+def _the_file_made_longer(path):
+    with open(path, "ab") as f:
+        f.write(b"x" * (1 << 20))
+    return open(path, "rb")
+
+
+def _the_file_cut_short(path):
+    with open(path, "r+b") as f:
+        f.truncate(len(_PACKAGE) - 1)
+    return open(path, "rb")
+
+
+def _a_device_with_no_end(path):
+    return open("/dev/zero", "rb")
+
+
+def _nothing(path):
+    return open(os.devnull, "rb")
+
+
+@linux_only
+@pytest.mark.parametrize("given", [_the_file, _the_file_made_longer, _the_file_cut_short, _a_device_with_no_end, _nothing],
+                         ids=lambda f: f.__name__.strip("_"))
+def test_the_command_that_runs_as_root_reads_its_input_alone_and_no_more_than_the_length_that_was_checked(tmp_path, monkeypatch, given):
+    """The script by itself, whatever AppKata did before it: its file is its standard input, it
+    copies the checked length and one byte at most, and the package manager gets none of the
+    input."""
+    from appkata_core import pkgbackend
+    staging, download, handed = tmp_path / "root-only", tmp_path / "demo_1.0_all.deb", tmp_path / "handed"
+    staging.mkdir()
+    download.write_bytes(_PACKAGE)
+    monkeypatch.setattr(pkgbackend, "STAGING", str(staging), raising=False)
+    manager = ["sh", "-c", 'cp "$1" "$0" && cat > "$0.input"', str(handed)]      # $1: the copy
+    with given(str(download)) as f:
+        p = subprocess.run([*_HELD, "/bin/sh", "-c", pkgbackend.file_install_script(), "appkata-install", str(len(_PACKAGE)),
+                            hashlib.sha256(_PACKAGE).hexdigest(), download.name, *manager], stdin=f, capture_output=True, text=True)
+    assert os.listdir(staging) == []
+    if given is _the_file:
+        assert (p.returncode, p.stderr) == (0, "") and handed.read_bytes() == _PACKAGE
+        assert (tmp_path / "handed.input").read_bytes() == b""
+    else:
+        assert (p.returncode, p.stderr.strip()) == (pkgbackend.CHANGED, pkgbackend.CHANGED_TEXT) and not handed.exists()
+
+
+@linux_only
+def test_a_releases_package_never_goes_to_packagekit_which_takes_a_path_and_no_checksum(env, server, package_tools, monkeypatch):
+    from appkata_core import pkgbackend
+    out, _ = package_tools
+    asked = []
+    monkeypatch.setattr(pkgbackend.PkTransport, "available", lambda self: True)          # a desktop, where PackageKit runs
+    monkeypatch.setattr(pkgbackend.PkTransport, "transaction", lambda self, method, *a, **k: asked.append(method) or [("finished", 1)])
+    a, data = _package_file(server, "deb")
+    install.install(env, {**APP, "installVersion": "1.0"}, a, "deb", [a])
+    assert asked == [] and (out / "file").read_bytes() == data
+
+
+@linux_only
+def test_an_update_from_a_releases_package_file_upgrades_the_apps_own_package_without_asking(env, server, package_tools, monkeypatch):
+    # A new finding beside #327: the dry run's review took the file's name for the package's
+    from appkata_core import pkgbackend
+    out, _ = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(upgrade=["demo"]))     # "Inst demo [1.0] (2.0 …)"
+    a, data = _package_file(server, "deb")
+    install.install(env, {**APP, "installVersion": "2.0"}, a, "deb", [a])
+    assert (out / "file").read_bytes() == data
+
+
+@linux_only
+@pytest.mark.parametrize("kind", ["deb", "rpm"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK"])
+def test_a_releases_package_whose_plan_is_refused_is_refused_as_such_and_nothing_of_it_stays(env, server, package_tools, monkeypatch, kind,
+                                                                                               confirmed):
+    """R16.3.5 (CR1.3-53): "A plan that removes a package marked essential or protected, or a
+    metapackage of the desktop ... is refused." install() made a plain install error of it, so the
+    backend's dialog for a refused plan was never shown."""
+    from appkata_core import pkgbackend
+    out, staging = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["ubuntu-desktop"]))
+    monkeypatch.setattr(pkgbackend.Cli, "facts", lambda self, names: pkgbackend.Facts())
+    a, _ = _package_file(server, kind)
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$"):
+        install.install(env, {**APP, "installVersion": "1.0", "confirmed": confirmed}, a, kind, [a])
+    assert os.listdir(out) == [] and os.listdir(staging) == [] and _downloads() == [] and env.one("SELECT * FROM installs") is None
+
+
+@linux_only
+def test_a_package_whose_plan_needs_the_users_ok_is_copied_nowhere_before_it_is_given(env, server, package_tools, monkeypatch):
+    from appkata_core import pkgbackend
+    out, staging = package_tools
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["other"]))
+    a, data = _package_file(server, "deb")
+    with pytest.raises(pkgbackend.NeedsConfirmation):
+        install.install(env, {**APP, "installVersion": "1.0"}, a, "deb", [a])
+    assert os.listdir(out) == [] and os.listdir(staging) == [] and len(_downloads()) == 1       # kept for Install again
+    install.install(env, {**APP, "installVersion": "1.0", "confirmed": True}, a, "deb", [a])
+    assert (out / "file").read_bytes() == data and os.listdir(staging) == []

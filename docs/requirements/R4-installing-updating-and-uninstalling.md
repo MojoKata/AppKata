@@ -3,7 +3,7 @@
 R4.1. AppKata manages only the apps it installed. Each install is recorded with:
 
 - Its Source and version.
-- The asset it came from.
+- The asset it came from, and the SHA-256 of that file as it was downloaded.
 - Its install type (R4.3).
 - Everything needed to uninstall it.
 
@@ -47,6 +47,15 @@ folder, `<install folder>/<app>/`, holding its versions side by side: an AppImag
 versioned file (`LocalSend-1.18.2-x86_64.AppImage`: the release's own file name, with the version
 added when the name holds none or is another version's, so `Tool-x86_64.AppImage` is kept as
 `Tool-x86_64-2.0.AppImage`), an archive unpacked into a folder named after its version (`2.1/`).
+A version is written in these names with `_` for each run of characters other than ASCII letters,
+digits, `.`, `_`, `+` and `-`, and with `_` before one that starts with a dot (`_..`), so no
+version's folder is the app's folder itself, the install folder above it, or hidden. A version that
+is a name AppKata keeps in the app's folder itself, in any case (`current`, the link of R4.3.1.2;
+`run`, a sandboxed app's launcher, 17.4), gets `_` before it too (`_current/`), and one that ends
+as the folders AppKata makes while it places a version do (`.new`, `.old`) gets `_` after it
+(`2.0.old_/`). Two versions whose names come out the same this way (`1.0 beta` and `1.0_beta`)
+each keep a place of their own: the one installed later gets `_2` after its name
+(`1.0_beta_2/`, `Tool-1.0_beta_2.AppImage`), a third `_3`.
 
 An archive's program, the one its links and its launcher start and its kind is read from (R17.3.3),
 is on Linux the executable file the archive's own `.desktop` file starts; else the one named after
@@ -88,7 +97,10 @@ goes with the entry.
 
 R4.3.1.2. **Stable name.** When on (the default), the current version also gets a link with a
 stable name next to it: `LocalSend.AppImage` → `LocalSend-1.18.2-x86_64.AppImage`, or
-`current` → `2.1/` for an unpacked archive. Launchers and command links point at the stable
+`current` → `2.1/` for an unpacked archive. A file AppKata names after an app (this one, the one
+file of an app that updates itself, R4.10.2, and a portable Windows program's `.exe`) has the
+ASCII letters and digits of the app's name; an app whose name has none has its folder's name
+there (`app.AppImage`). Launchers and command links point at the stable
 name, so they keep working across updates; for a sandboxed app they point at its launcher,
 `~/bin/apps/<app>/run`, which runs the current version (17.4). (On Windows, `current` is a directory junction,
 which needs no extra rights, R15.5.)
@@ -146,12 +158,52 @@ R4.4. **Verifying downloads.** Before installing, AppKata:
 
 1. Checks the file against `SHA256SUMS`, `*.sha256` or a forge-provided digest, when one
    exists.
-2. Checks a minisign or GPG signature, or a sigstore bundle, when one exists.
-3. Reads Windows' code-signing status, Authenticode (R15.11).
+2. On Windows, reads the file's code-signing status, Authenticode (R15.11).
 
-The App Detail panel shows the result as a chip: **Verified** (a signature checked),
-**Checksum** (a checksum only), or **Unverified**. Unverified downloads can still be
-installed. A failed check blocks the install and explains why.
+The checksum is a SHA-256: the forge's own digest of the file when it gives one, else the one a
+checksum file of the release lists for it. A release can have several, and each is read until one
+lists the file: the file's own first (`<file>.sha256`, `<file>.sha256sum`), then the release's
+lists (`SHA256SUMS`, `checksums.txt`) in the release's order. A checksum of another kind
+(`<file>.sha512`, `SHA512SUMS`) is not read.
+
+When a release has checksum files and none of them gives the file's SHA-256, the file is installed
+as Unverified, as one whose release publishes none is, and the Unverified chip's tooltip says what
+became of each: it couldn't be read, it doesn't list the file, or it is longer than the 1 MB AppKata
+reads of it and that part doesn't list the file ("Its release has a checksum file, but this download
+was checked against none: couldn't read SHA256SUMS (HTTP 404)").
+
+Downloads are made over `https:` only. A release's file, the first bytes AppKata reads of a
+Windows `.exe` to tell its kind (R4.2.1) and a checksum file are fetched from no other kind of
+address (`http:`, `file:`, `ftp:`, `data:`), and a redirect is followed only to another `https:`
+address. An install whose file is at another kind of address, or is sent on to one, stops and says
+so ("AppKata downloads over https: only, and this isn't an https: address (…)"); a checksum file
+there is one that couldn't be read. The one exception is plain `http:` to this computer itself
+(`localhost` or a loopback address, as AppKata's own tests use), never as where a redirect from
+`https:` leads.
+
+A signature a publisher puts beside a release's file (a GPG `.asc` or `.sig`, a minisign
+`.minisig`, a sigstore bundle) is not checked.
+
+The App Detail panel shows the result as a chip: **Verified**, **Checksum** (a checksum only),
+or **Unverified**. **Verified** means a signature was checked, by one of three: Windows, for a
+file with a valid Authenticode signature (R15.11); flatpak, against the key of the remote a
+Flatpak came from; or the package manager, against the keys of the repository a package came
+from (R16.3.6). Unverified downloads can still be installed. A failed check blocks the install
+and explains why.
+
+A file that is installed with administrator rights (a `.deb` or `.rpm`, R16.8.5; a Windows
+installer AppKata elevates, R15.7.5) is in a folder the user's other programs can change, and is
+read again after the dry run and the password or UAC prompt. So the command that runs with those
+rights takes its own copy of the file, in a folder only administrators can change, compares the
+copy's SHA-256 with the one AppKata took of the download, and installs that copy. A file that
+changed after AppKata's check is not installed: "the downloaded file changed after AppKata checked
+it; nothing was installed".
+
+The chip of an installed app is the result of its own install, kept in its install record: a
+later release changes nothing in it. A file that isn't installed yet, the one Install or Update
+would take, has not been checked, so its chip is a forecast and is worded as one: **Checksum
+published** when that file's own release has a digest for it or a checksum file, **No checksum
+published** when it has neither. For an update it shows beside the installed version's chip.
 
 R4.5. **Foreign installs.** An app is **foreign-installed** when AppKata finds it on the system
 but didn't install it. AppKata looks for it in:
@@ -204,7 +256,12 @@ R4.8.1. **Phases**: Waiting, Downloading, Verifying, Installing. One install run
 - **Catalog tile**: the state mark becomes "Installing 45%".
 - **Header bar**: a turning sync icon in the Apps segment while anything installs.
 
-R4.8.2. **Resuming.** Downloads go to `<data folder>/downloads/<app>/<file>.part`. If the
+R4.8.2. **Resuming.** Downloads go to `<data folder>/downloads/<app>/<file>.part`. `<file>` is
+the release's own name for its file, as one file name: what follows its last `/` or `\`, so a
+release that names its file as a path (`../../x.tar.gz`) reaches no folder but the app's own, here
+and where the file is installed (R4.3.1). A file whose name is then empty, starts with a dot or
+holds a control character, or on Windows is one Windows reserves or can't hold (R15.16), isn't
+installed, and the install says so. If the
 connection breaks, AppKata retries up to three times, continuing from where it stopped with a
 Range request, as long as the server still has the same file (`If-Range` with its ETag or
 Last-Modified date). Otherwise it starts over. A download that still fails, or that was

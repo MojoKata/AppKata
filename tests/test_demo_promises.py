@@ -213,3 +213,32 @@ def test_the_audit_groups_by_day_the_same_at_any_hour_of_the_tour(tmp_path):
             assert sorted(days(tz, hh, mm)) == sorted(at_one), (tz, hh, mm)
         with pytest.raises(SystemExit, match="has only begun"):
             demo.history(DB(str(tmp_path / "early.db")), tz, datetime(2026, 10, 30, 0, 20, tzinfo=tz))
+
+
+def test_finish_records_the_check_of_every_file_install_as_its_screen_shows_it(tmp_path, monkeypatch):
+    """The walk thru of 2026-11-26, item 2: App Detail's chip is what the install's own record says
+    checked the file (CR1, #465), and finish wrote the .deb, .rpm and tarball installs with an
+    empty record, so their screens went from Checksum to Unverified, though the tour shows them as
+    AppKata's own installs from a release. finish, on releases made up here: each install that
+    isn't an AppImage (those get theirs with their files, portable_records) names its check, a
+    checksum from the forge's digest."""
+    import json
+
+    from appkata_core.db import DB
+
+    demo = _demo()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))      # finish sets it; back as it was after the test
+    d = tmp_path / "d"
+    d.mkdir()
+    (d / "gui.json").write_text("{}")
+    db = DB(str(d / "appkata.db"))
+    rels = [{"version": f"1.{n}.0", "date": f"2026-0{n + 1}-01T00:00:00Z", "assets": [{"name": "a"}]} for n in (2, 1, 0)]
+    for repo in ("signalapp/Signal-Desktop", "syncthing/syncthing", "VSCodium/vscodium", "ventoy/Ventoy",
+                 demo.HELD):                                    # stage, which finish ends with, reads HELD's releases
+        db.x("INSERT INTO apps(url, name, releases) VALUES(?,?,?)", (demo.GH + repo, repo.split("/")[1], json.dumps(rels)))
+    demo.finish(str(d))
+    records = {(r["name"], r["kind"]): json.loads(r["record"])
+               for r in db.all("SELECT name, kind, record FROM installs WHERE kind != 'appimage'")}
+    assert sorted(records) == [("Signal-Desktop", "deb"), ("Ventoy", "tarball"), ("XZ Utils", "tarball"), ("syncthing", "tarball"),
+                               ("vscodium", "rpm")]
+    assert {k: (r.get("verified"), r.get("checksum_source")) for k, r in records.items()} == dict.fromkeys(records, ("checksum", "forge digest"))

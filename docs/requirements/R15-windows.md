@@ -8,7 +8,8 @@ it is [G#59](https://github.com/MojoKata/AppKata/issues/59)). It starts every in
 uninstaller through the shell (`ShellExecuteEx`), as Explorer does, and waits for its exit code:
 an installer whose manifest needs administrator rights then gets the UAC prompt, and with the
 Mark of the Web (R15.11.1) SmartScreen checks it. When AppKata itself asks for administrator rights
-(R15.4, R15.7, R15.8), it uses the `runas` verb. Declining the prompt cancels the action.
+(R15.4, R15.7, R15.8), it uses the `runas` verb; for a downloaded installer, on the script of
+R15.7.5 and not on the download. Declining the prompt cancels the action.
 AppKata never starts a per-machine installer through `CreateProcess`, where it would fail (error
 740), or for a silent `.msi`, fail without asking.
 
@@ -118,6 +119,30 @@ R15.7.3. **Exit codes.**
 R15.7.4. **`.msix`** installs with `Add-AppxPackage` for the current user, with no UAC prompt. A
 package whose signer Windows doesn't trust can't be installed, and AppKata says so. The
 package's full name is recorded for uninstalling.
+
+R15.7.5. **An installer AppKata elevates** (the "elevated" cells of R15.7.2, and the Visual C++
+run-time, R15.18.3) is never started from the downloads folder, which the user's other programs
+can change (R4.4). AppKata asks Windows to elevate Windows PowerShell with a script, so the UAC
+prompt names Windows PowerShell and not the installer. That PowerShell is the one in the system
+folder Windows itself names, never in a folder the environment names. The script:
+
+1. Makes a new folder in Windows' own `Temp` folder that only Administrators and SYSTEM can
+   change, and copies the download there. It opens the download once and never follows a link
+   at the download's own name; the folders above it are not yet covered
+   ([#768](https://github.com/MojoKata/AppKata/issues/768)). It takes the download only when it
+   is a file on a disk of the length AppKata checked, and copies no more than that length.
+2. Compares the copy's SHA-256 with the one AppKata took of the download. When they differ, or
+   what it opened was no such file, it starts nothing, and the install fails with R4.4's message.
+   A download that can't be opened as a file (it is gone, a folder is at its path, or Windows
+   refuses to open it) isn't known to have changed: nothing is started, and the install fails with
+   "Windows couldn't make the administrators' copy of the installer or start it; nothing was
+   installed".
+3. Starts the copy through the shell (R15.2), an `.msi` with Windows' own `msiexec`, waits, and
+   hands back its exit code (R15.7.3). Then it removes the folder.
+
+An installer that AppKata starts without administrator rights and that asks Windows for them
+itself (R15.2; "The installer decides" in R15.7.2) is started from the downloads folder: the UAC
+prompt is then Windows' own for that file, and names its publisher.
 
 R15.8. **Uninstalling installer apps** (R4.9.6).
 
@@ -248,7 +273,8 @@ R15.18.3. **Installing it.** When an app that needs the run-time is installed an
 missing, AppKata offers **Install the Visual C++ run-time**. It downloads Microsoft's
 `vc_redist.x64.exe` (`https://aka.ms/vs/17/release/vc_redist.x64.exe`), checks its Authenticode
 signature (R15.11; the signer must be Microsoft Corporation), and runs it with
-`/install /quiet /norestart`, elevated; exit code 1638 (a newer copy is already installed) counts
+`/install /quiet /norestart`, elevated as R15.7.5 says, from a copy held to the file whose
+signature was read; exit code 1638 (a newer copy is already installed) counts
 as done. Installing it is recorded in the Audit (R13.3). The run-time installs only for everyone, so this one step
 asks for administrator rights even for an app that is Just me (R15.4). The dialog says why. Exit
 codes are read as for other installers (R15.7.3). This normally happens once per computer.

@@ -231,10 +231,21 @@ Rectangle {
             Flow {      // chips
                 width: parent.width; spacing: 6
                 Pill { visible: root.d.verify === "signed"; text: "Verified" + (root.d.signer ? " · " + root.d.signer : "")       // Authenticode (R15.11)
-                       tip: root.ch ? "Signed by " + (root.ch.kind === "flatpak" ? "Flathub" : root.ch.distro || "the distribution") : ""    // R16.3.6
+                       tip: root.d.verifyTip || ""      // a channel's copy: "Signed by <its remote or repository>" (R16.3.6)
                        icon: "shieldCheck"; color: Theme.okSoft; fg: Theme.ok; u: 0.92 }
-                Pill { visible: root.d.verify === "checksum"; text: "Checksum"; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
-                Pill { visible: root.d.verify === "unverified" && !!root.d.asset; text: "Unverified"; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
+                Pill { visible: root.d.verify === "checksum"; text: "Checksum"; tip: root.d.verifyTip || ""; icon: "check"; color: Theme.accentSoft; fg: Theme.accent; u: 0.92 }
+                Pill { visible: root.d.verify === "unverified"; text: "Unverified"; tip: root.d.verifyTip || ""; icon: "warn"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
+                Pill {      // the file Install or Update would take: not checked yet, so a forecast (R4.4)
+                    // "published" says R4.4's words and no more: the release has a digest for the file or a checksum file.
+                    // Nothing has read that checksum file yet, so not that it lists the file, nor that anything is checked.
+                    readonly property string taken: "the file " + (root.installed ? "Update" : "Install") + " would take"
+                    visible: !!root.d.forecast; text: root.d.forecast === "published" ? "Checksum published" : "No checksum published"
+                    tip: (root.d.forecastVersion || "Its release")
+                         + (root.d.forecast !== "published" ? " publishes no checksum for " + taken + ": there is nothing to check the download against."
+                            : root.d.asset && root.d.asset.digest ? " has a digest for " + taken + ": the download will be checked against it."
+                            : " has a checksum file: the download of " + taken + " will be checked against it.")
+                    icon: root.d.forecast === "published" ? "check" : "warn"; color: root.d.forecast === "published" ? Theme.accentSoft : Theme.warnSoft
+                    fg: root.d.forecast === "published" ? Theme.accent : Theme.warn; u: 0.92 }
                 Pill { visible: !!root.d.foreign; text: "Installed outside AppKata"; icon: "info"; color: Theme.warnSoft; fg: Theme.warn; u: 0.92 }
                 Pill {      // the channel and who publishes it (R16.6.1)
                     visible: !!root.ch; text: root.ch ? root.ch.label : ""; icon: root.ch && root.ch.verified ? "shieldCheck" : ""

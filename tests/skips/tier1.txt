@@ -132,6 +132,7 @@ tests/test_sandbox_run.py::test_x11_display_reaches_the_app  # needs a working b
 tests/test_sandbox_state.py::test_freeze_todays_state_when_asked  # set UPDATE_STATE=<label> to freeze today's state as tests/data/state/<label>.json
 tests/test_sandbox_user_shaped.py::test_arguments_shaped_as_users_shape_them_reach_what_they_meant_but_the_listed  # needs xdg-dbus-proxy and dbus-daemon
 tests/test_sandbox_user_shaped.py::test_the_harness_catches_round_twos_arguments_never_handed_over  # needs xdg-dbus-proxy and dbus-daemon
+tests/test_windows.py::test_on_windows_the_elevated_program_is_windows_own_whatever_the_environment_says  # needs Windows
 tests/test_windows.py::test_portable_zip_for_everyone  # needs Windows
 tests/test_windows.py::test_portable_zip_for_me  # needs Windows
 tests/test_windows.py::test_registering_with_windows  # needs Windows

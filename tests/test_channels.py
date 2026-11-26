@@ -1,9 +1,11 @@
 """Package channels (R16) against recorded data: AppStream catalogs, flatpak and package
 manager output, D-Bus messages, and fakes for everything that would need root or the network."""
 
+import hashlib
 import io
 import json
 import os
+import re
 import urllib.error
 
 import pytest
@@ -187,6 +189,90 @@ def test_packagekit_backend():
     with pytest.raises(pkgbackend.NeedsConfirmation) as e:
         be.apply("install", ["hello"])
     assert e.value.lines == ["Removes oldlib"]
+
+
+# ---------------------------------------------------------------- a release's own package file (R16.8.5; CR1, #327)
+@pytest.mark.parametrize("manager, command", [
+    ("apt", ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "/bin/sh", "-c", "<script>", "appkata-install", "<length>", "<sha256>",
+             "demo_1.0_all.deb", "apt-get", *pkgbackend.APT_OPTS, "install"]),
+    ("dnf", ["pkexec", "env", "/bin/sh", "-c", "<script>", "appkata-install", "<length>", "<sha256>", "demo_1.0_all.deb", "dnf", "-y", "install"]),
+])
+def test_a_package_file_is_installed_by_one_command_as_root_that_copies_checks_and_installs(monkeypatch, tmp_path, manager, command):
+    """What pkexec is asked to run is the script, with the length and the SHA-256 AppKata checked as
+    its words and the file itself, open, as its standard input: never the package manager on the
+    downloaded file, and no path of the user's for root to open. tests/test_install_review.py runs
+    the script; here are its words and its text."""
+    ran = []
+    data = b"a package, as its release published it"
+    monkeypatch.chdir(tmp_path)
+    file = os.path.join("downloads", "demo", "demo_1.0_all.deb")
+    os.makedirs(os.path.dirname(file))
+    with open(file, "wb") as f:
+        f.write(data)
+    sha = hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(pkgbackend.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None, stdin=None: ran.append((cmd, stdin.read())))
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"]))
+    script = pkgbackend.file_install_script()
+    pkgbackend.Cli(manager).install_file(file, sha.upper())
+    words = {"<script>": script, "<length>": str(len(data)), "<sha256>": sha}
+    assert ran == [([words.get(word, word) for word in command], data)]         # the whole file is there to read, from its start
+    assert not any(os.path.sep in word for word in ran[0][0][ran[0][0].index("appkata-install"):])      # and no path among the words
+    assert "demo" not in script and "mktemp -d '/var/cache'/appkata-install.XXXXXX" in script      # the same text for every file
+    steps = [script.index(step) for step in ('head -c "$(($1 + 1))" > "$copy"', 'sha256sum < "$copy"', '!= "$2"', 'exit 65', '"$@" "$copy" < /dev/null')]
+    assert steps == sorted(steps)                       # copied, hashed, compared, and only then handed on
+    assert "cp " not in script and '"$1"' not in script.replace('"$(($1 + 1))"', "")     # nothing is opened by a name it was given
+    # a plan that needs the user's OK runs nothing as root
+    ran.clear()
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"], remove=["other"]))
+    with pytest.raises(pkgbackend.NeedsConfirmation):
+        pkgbackend.Cli(manager).install_file(file, sha)
+    assert ran == []
+    # nor does a file that is no longer the one that was checked: it isn't handed to root at all
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: pkgbackend.Plan(install=["demo"]))
+    for sha_now, file_now in ((hashlib.sha256(b"another").hexdigest(), file), (sha, os.path.dirname(file)), (sha, file + ".gone")):
+        with pytest.raises(pkgbackend.PackageError, match=f"^{pkgbackend.CHANGED_TEXT}$"):
+            pkgbackend.Cli(manager).install_file(file_now, sha_now)
+    assert ran == []
+
+
+@pytest.mark.parametrize("plan, asks", [
+    (pkgbackend.Plan(upgrade=["demo"]), []),                                    # an update of the app: its own package
+    (pkgbackend.Plan(upgrade=["demo", "libother"]), ["Upgrades libother"]),
+    (pkgbackend.Plan(install=["demo"], remove=["other"]), ["Removes other"]),
+    (pkgbackend.Plan(downgrade=["demo"]), ["Downgrades demo"]),
+])
+def test_updating_an_app_from_its_releases_package_file_asks_only_about_other_packages(monkeypatch, tmp_path, plan, asks):
+    """A new finding beside #327: the review took the file's name for the package's, so every update
+    of an app installed from a release's .deb asked to confirm "Upgrades <the app's own package>"."""
+    ran = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(pkgbackend, "wait_for_lock", lambda *a, **k: None)
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")
+    monkeypatch.setattr(pkgbackend, "_stream", lambda cmd, progress=None, cancel=None, parse=None, stdin=None: ran.append(cmd))
+    monkeypatch.setattr(pkgbackend.Cli, "simulate", lambda self, action, names: plan)
+    file = tmp_path / "demo_2.0_all.deb"
+    file.write_bytes(b"the next version's package")
+    sha = hashlib.sha256(file.read_bytes()).hexdigest()
+    if asks:
+        with pytest.raises(pkgbackend.NeedsConfirmation) as e:
+            pkgbackend.Cli("apt").install_file(str(file), sha, package="demo")
+        assert e.value.lines == asks and ran == []
+    else:
+        pkgbackend.Cli("apt").install_file(str(file), sha, package="demo")
+        assert len(ran) == 1
+
+
+def test_packagekit_is_never_handed_a_file():
+    """InstallFiles takes a path, which PackageKit reads as root later, and no checksum: a release's
+    package file goes through the command line (above), and PackageKit is asked for names alone."""
+    pk = FakePk()
+    with pytest.raises(pkgbackend.PackageError, match="no package called"):
+        pkgbackend.PackageKit(pk, manager="apt").apply("install", [os.path.join(os.sep, "downloads", "hello_2.10_amd64.deb")])
+    assert [method for method, _ in pk.calls] == ["Resolve"]
 
 
 # ---------------------------------------------------------------- Flatpak (R16.6)
@@ -504,11 +590,13 @@ def fake_pkgs(monkeypatch):
     monkeypatch.setattr(pkgbackend, "backend", lambda: be)
     monkeypatch.setattr(pkgbackend, "installed_version", lambda name, manager=None: be.installed.get(name, ""))
     monkeypatch.setattr(channels, "distro_name", lambda: "Ubuntu")
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: "")          # this machine's apt is never asked
     return be
 
 
-def test_package_install_and_uninstall(db, fake_pkgs):
+def test_package_install_and_uninstall(db, fake_pkgs, apt_says):
     app = {"url": KEEPASSXC, "name": "KeePassXC"}
+    apt_says(_policy("2.7.6+dfsg.1-1", ("2.7.6+dfsg.1-1", [NOBLE, STATUS])))
     fake_pkgs.plan_ = pkgbackend.Plan(install=["keepassxc", "libbotan"])
     rec = install.install_channel(db, app, {"channel": "package", "value": "keepassxc"})
     row = db.one("SELECT * FROM installs WHERE url=?", (KEEPASSXC,))
@@ -553,7 +641,481 @@ def test_adopt(db, monkeypatch, fake_pkgs):
     assert db.one("SELECT action FROM audit ORDER BY id DESC")["action"] == "adopted"
 
 
-def test_tracking(db, monkeypatch, fake_pkgs):
+# ---------------------------------------------------------------- what checked a channel's copy (R16.3.6; CR1, #318)
+# R16.3.5, R16.4.3 (CR1.3-53): a plan that would remove what the computer needs is refused, and the
+# refusal reaches the caller as one. How it slipped past: the tests of a refusal stopped at
+# pkgbackend's own `apply`, and the backend's dialog for one was reached by no test, so nothing saw
+# that install.py turned every refusal into a plain install error on the way.
+@pytest.mark.parametrize("road", ["install", "update", "uninstall"])
+@pytest.mark.parametrize("confirmed", [False, True], ids=["first asked", "after the user's OK to another plan"])
+def test_a_plan_appkata_refuses_reaches_the_caller_as_a_refusal_and_runs_nothing(db, fake_pkgs, road, confirmed):
+    app, rec = {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "package": "keepassxc", "manager": "apt", "pkgVersion": "2.7.6-1"}
+    if road != "install":
+        fake_pkgs.installed["keepassxc"] = "2.7.6-1"
+        db.x("INSERT INTO installs(url, name, version, kind, record) VALUES(?,?,?,?,?)", (KEEPASSXC, "KeePassXC", "2.7.6", "apt", json.dumps(rec)))
+    before = db.all("SELECT * FROM installs")
+    fake_pkgs.plan_ = {"install": pkgbackend.Plan(install=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "update": pkgbackend.Plan(upgrade=["keepassxc"], remove=["ubuntu-desktop"]),
+                       "uninstall": pkgbackend.Plan(remove=["keepassxc", "ubuntu-desktop"])}[road]
+    with pytest.raises(pkgbackend.Refused, match="^It would remove ubuntu-desktop, which this computer needs\\.$") as e:
+        if road == "install":
+            install.install_channel(db, app, {"channel": "package", "value": "keepassxc"}, confirmed=confirmed)
+        elif road == "update":
+            install.update_channel(db, KEEPASSXC, confirmed=confirmed)
+        else:
+            install.uninstall(db, KEEPASSXC, confirmed=confirmed)
+    assert not isinstance(e.value, install.InstallError) and fake_pkgs.ran == [] and db.all("SELECT * FROM installs") == before
+
+
+def test_a_package_error_that_is_no_refusal_is_an_install_error(db, fake_pkgs, monkeypatch):
+    monkeypatch.setattr(FakeBackend, "run", lambda self, *a, **k: (_ for _ in ()).throw(pkgbackend.PackageError("apt-get failed: no space left")))
+    with pytest.raises(install.InstallError, match="no space left"):
+        install.install_channel(db, {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "value": "keepassxc"})
+
+
+# How it slipped past: every record of a channel's copy was written "signed" by a fixed name, and
+# no test asked what the tools say of the copy. These hold the record to apt's and flatpak's own
+# words (recorded from Ubuntu 24.04, apt 2.7.14 and Flatpak 1.14.6; scripts/channels_e2e.py asks
+# the real tools), for a copy AppKata installs, adopts or updates.
+def _policy(installed, *versions):
+    """`apt-cache policy <pkg>`: each version with the lines of what offers it."""
+    table = "".join(f" {'***' if v == installed else '   '} {v} 500\n" + "".join(f"        {l}\n" for l in lines) for v, lines in versions)
+    return f"pkg:\n  Installed: {installed}\n  Candidate: {versions[0][0]}\n  Version table:\n{table}"
+
+
+STATUS = "100 /var/lib/dpkg/status"
+NOBLE = "500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages"
+PPA = "500 https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble/main amd64 Packages"
+LOCAL = "500 file:/tmp/akrepo ./ Packages"                # a flat repository: no architecture on its line
+UNNAMED = "500 https://deb.example.org/apt stable/main amd64 Packages"
+APT_REPOSITORIES = """Package files:
+ 100 /var/lib/dpkg/status
+     release a=now
+ 500 file:/tmp/akrepo ./ Packages
+     release c=
+ 500 https://deb.example.org/apt stable/main amd64 Packages
+     release a=stable,n=stable,c=main,b=amd64
+     origin deb.example.org
+ 500 https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble/main amd64 Packages
+     release v=24.04,o=LP-PPA-mozillateam,a=noble,n=noble,l=Mozilla Team,c=main,b=amd64
+     origin ppa.launchpadcontent.net
+ 500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages
+     release v=24.04,o=Ubuntu,a=noble,n=noble,l=Ubuntu,c=main,b=amd64
+     origin archive.ubuntu.com
+Pinned packages:
+"""
+
+
+def _apt_targets(fmt, rows):
+    """`apt-get indextargets --format <fmt>` as apt 2.4.14 and 2.8.3 print it: a line for each
+    target, and a field apt has nothing to say for left as its own name."""
+    return "".join(re.sub(r"\$\((\w+)\)", lambda m, row=row: row.get(m.group(1), m.group(0)), fmt) + "\n" for row in rows)
+
+
+@pytest.fixture
+def apt_says(monkeypatch, tmp_path):
+    """The apt of a machine with Ubuntu's archive, a PPA, a vendor's repository that names itself
+    nowhere and a local one taken without a key. apt_says(policy) sets what it says of the package.
+    apt_says.rows is what `apt-get indextargets` knows of each repository (the first is the local
+    one), and apt_says.local(text, trusted, insecure, n) gives the local one another sources file,
+    apt's own answers for it, and its entry's number in that file as apt gives it."""
+    def entry(name, text, n=1):
+        with open(tmp_path / name, "w", encoding="utf-8", newline="") as f:     # the file's line ends are the test's own, on any system
+            f.write(text)
+        return f"{tmp_path / name}:{n}"
+    entry("vendor.list", "deb [arch=amd64 signed-by=/etc/apt/keyrings/vendor.gpg] https://deb.example.org/apt stable main\n"
+                         "deb [signed-by=/etc/apt/keyrings/ppa.gpg] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu noble main\n")
+    rows = [
+        {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": "yes",
+         "SOURCESENTRY": entry("akrepo.list", "# a local repository\ndeb [trusted=yes] file:/tmp/akrepo ./\n", 2)},
+        {"SITE": "http://archive.ubuntu.com/ubuntu", "RELEASE": "noble", "TRUSTED": "yes",
+         "SOURCESENTRY": entry("ubuntu.sources", "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main\n"
+                                                 "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n")},
+        {"SITE": "https://deb.example.org/apt", "RELEASE": "stable", "TRUSTED": "yes", "SOURCESENTRY": f"{tmp_path / 'vendor.list'}:1"},
+        {"SITE": "https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu", "RELEASE": "noble", "TRUSTED": "yes",
+         "SOURCESENTRY": f"{tmp_path / 'vendor.list'}:2"},
+    ]
+    said = {"policy": ""}
+
+    def text(cmd):
+        if cmd[:2] == ["apt-cache", "policy"]:
+            return said["policy"] if len(cmd) == 3 else APT_REPOSITORIES
+        if cmd[:2] == ["apt-get", "indextargets"]:
+            return _apt_targets(cmd[cmd.index("--format") + 1], rows)
+        raise AssertionError(cmd)
+
+    def local(text, trusted, insecure=None, n=1):
+        os.remove(tmp_path / "akrepo.list")
+        rows[0] = {"SITE": "file:/tmp/akrepo", "RELEASE": "./", "TRUSTED": trusted, **({"ALLOW_INSECURE": insecure} if insecure else {}),
+                   "SOURCESENTRY": entry("akrepo.sources" if text.startswith("Types:") else "akrepo.list", text + "\n", n)}
+    monkeypatch.setattr(pkgbackend, "_text", text)
+    says = lambda policy: said.update(policy=policy)      # noqa: E731
+    says.rows, says.local = rows, local
+    return says
+
+
+SIGNED_BY = [
+    ("the-distribution", _policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])), ("signed", "Ubuntu", "Ubuntu")),
+    ("a-ppa", _policy("130.0", ("130.0", [PPA, STATUS]), ("125.0", [NOBLE])), ("signed", "LP-PPA-mozillateam", "LP-PPA-mozillateam")),
+    ("a-repository-with-no-name", _policy("1.0", ("1.0", [UNNAMED, STATUS])), ("signed", "", "https://deb.example.org/apt")),
+    ("put-in-by-hand", _policy("3.0", ("3.0", [STATUS])), ("unverified", "", "")),
+    ("put-in-by-hand-over-the-distributions", _policy("9.9", ("9.9", [STATUS]), ("2.10-3build1", [NOBLE])), ("unverified", "", "")),
+    ("a-version-no-longer-offered", _policy("2.10-2", ("2.10-3build1", [NOBLE]), ("2.10-2", [STATUS])), ("unverified", "", "")),
+    ("a-repository-trusted-without-a-key", _policy("1.0-1", ("1.0-1", [LOCAL, STATUS])), ("unverified", "", "file:/tmp/akrepo")),
+    ("in-both-a-keyed-and-an-unkeyed-one", _policy("1.0-1", ("1.0-1", [LOCAL, NOBLE, STATUS])), ("signed", "Ubuntu", "Ubuntu")),
+    ("not-installed", "", ("unverified", "", "")),
+]
+
+
+@pytest.mark.parametrize("policy, verdict", [c[1:] for c in SIGNED_BY], ids=[c[0] for c in SIGNED_BY])
+def test_a_package_is_signed_only_where_a_repository_whose_key_apt_checks_offers_the_installed_version(apt_says, policy, verdict):
+    apt_says(policy)
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == verdict
+
+
+# How it slipped past (pass 1 of the unit's own review): the tests gave apt's sources one spelling,
+# `[trusted=yes]`, and the code read that spelling. apt takes six words for yes, in any case, has a
+# second option that takes a repository unsigned, and was believed to check every repository it
+# said nothing of. The class is AppKata reading another program's settings in its own way: apt's
+# own answer is asked now, and scripts/channels_e2e.py asks the real apt for more than one spelling.
+TAKEN_WITHOUT_A_KEY = {
+    # the local repository's entry in the sources: apt's own $(TRUSTED) and $(ALLOW_INSECURE) for it
+    # (apt 2.4.14 and 2.8.3, each run with an unsigned repository). $(TRUSTED) is the answer AppKata
+    # reads; the other is what an apt asked for it would say.
+    **{f"trusted={word}": (f"deb [trusted={word}] file:/tmp/akrepo ./", "yes", None) for word in ("yes", "true", "1", "on", "enable", "with", "YES", "True")},
+    "trusted-among-other-options": ("deb [ arch=amd64 Trusted = on ] file:/tmp/akrepo ./", "yes", None),
+    "Trusted-in-a-sources-file": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nTrusted: true", "yes", None),
+    "allow-insecure=yes": ("deb [allow-insecure=yes] file:/tmp/akrepo ./", "no", "true"),
+    "allow-insecure=1": ("deb [allow-insecure=1] file:/tmp/akrepo ./", "no", "true"),
+    "allowed-by-apts-configuration": ("deb file:/tmp/akrepo ./", "no", "true"),         # Acquire::AllowInsecureRepositories
+    "trusted=no": ("deb [trusted=no] file:/tmp/akrepo ./", "no", None),                 # apt then takes nothing of it as checked
+    "nothing-signed-and-no-option": ("deb file:/tmp/akrepo ./", "no", None),            # lists apt has from before it refused them
+}
+
+
+@pytest.mark.parametrize("case", list(TAKEN_WITHOUT_A_KEY))
+def test_a_package_of_a_repository_apt_takes_without_a_key_is_not_signed_however_the_entry_says_so(apt_says, case):
+    apt_says.local(*TAKEN_WITHOUT_A_KEY[case])
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+    # ...and beside it the distribution's own is still signed
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+# How it slipped past (pass 2 of the unit's own review): round 1 took `allow-insecure` for a second
+# way to go unchecked, and the one case that carried the rule, a signed repository with the option
+# on, was written from that belief and marked "not run on apt". Run, apt checks a signed repository
+# against its key whatever the option says, and says "no" itself of one that came unsigned: the rule
+# only turned checked copies Unverified, every apt package of a machine whose configuration has it
+# on. The class is a rule about another program that no run of that program carries: each case
+# here is apt's own answer (2.4.14, 2.8.3, 3.2.1), and scripts/channels_e2e.py asks the real apt.
+COULD_HAVE_COME_UNSIGNED = {
+    "the-entrys-allow-insecure": ("deb [allow-insecure=yes signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),
+    "a-sources-files-Allow-Insecure": ("Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\nAllow-Insecure: yes\n"
+                                       "Signed-By: /usr/share/keyrings/local.gpg", "yes", "true"),
+    "apts-configuration": ("deb [signed-by=/usr/share/keyrings/local.gpg] file:/tmp/akrepo ./", "yes", "true"),     # Acquire::AllowInsecureRepositories
+}
+
+
+@pytest.mark.parametrize("case", list(COULD_HAVE_COME_UNSIGNED))
+def test_a_repository_apt_checked_against_its_key_is_signed_though_allow_insecure_would_have_let_it_come_unsigned(apt_says, case):
+    apt_says.local(*COULD_HAVE_COME_UNSIGNED[case])
+    if case == "apts-configuration":                # then apt says so of every repository
+        for row in apt_says.rows:
+            row["ALLOW_INSECURE"] = "true"
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "", "repository": "file:/tmp/akrepo"}
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+
+
+# How it slipped past (pass 2 of the unit's own review): every sources file of these tests ended
+# its lines with "\n", where Python and apt agree. They differ on nine other characters: the entry
+# apt names by its line's number was looked up among the lines `str.splitlines` and a text-mode
+# open make, so one such character above a `[trusted=yes]` line (in a comment pasted from a web
+# page, say) put another line under that number, and the package read Verified. The class is
+# counting another program's lines with Python's idea of a line: each character Python ends a line
+# at is asked here, apt's answer for each is its own (2.4.14, 2.8.3, 3.2.1: "<file>:2", TRUSTED
+# yes), and scripts/channels_e2e.py asks the real apt for three of them.
+NOT_A_LINE_END_TO_APT = {"a-form-feed": "\x0c", "a-vertical-tab": "\x0b", "a-lone-carriage-return": "\r", "a-file-separator": "\x1c",
+                         "a-group-separator": "\x1d", "a-record-separator": "\x1e", "a-next-line": "\x85", "a-line-separator": "\u2028",
+                         "a-paragraph-separator": "\u2029", "none": " "}
+assert all(len(f"a{c}b".splitlines()) == 2 for name, c in NOT_A_LINE_END_TO_APT.items() if name != "none")
+
+
+@pytest.mark.parametrize("above", ["# a note{c}pasted from a page\n", "# a note{c}\r\n", "# a note\n# and{c}{c}another\n# {c}\n"],
+                         ids=["in-a-comment", "before-a-windows-line-end", "in-three-comments"])
+@pytest.mark.parametrize("character", list(NOT_A_LINE_END_TO_APT))
+def test_the_line_of_a_sources_file_that_apt_names_is_counted_as_apt_counts_it(apt_says, character, above):
+    above = above.format(c=NOT_A_LINE_END_TO_APT[character])
+    apt_says.local(above + "deb [trusted=yes] file:/tmp/akrepo ./\ndeb [signed-by=/usr/share/keyrings/other.gpg] http://other.example.org/ ./",
+                   "yes", n=above.count("\n") + 1)
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
+# How it slipped past (pass 2 of the unit's own review): a `.sources` file was judged whole, one
+# `Trusted:` line counting for each of its stanzas, and the test of a second stanza's line asked
+# for exactly that. apt names the stanza itself ("<file>:2"), so the others of the file, which apt
+# checked against their keys, read Unverified for a line that isn't theirs. The class is the one
+# above, AppKata reading apt's files in its own way: how apt numbers a file's stanzas and which of
+# their lines it takes for the field was asked of apt itself (2.4.14, 2.8.3 and 3.2.1, with
+# unsigned repositories, which apt takes only where the stanza sets `trusted`), and
+# APT_STANZAS holds its answers.
+ONE_FILE = ("# The distribution's own repositories,\n# and a local one.\n\nTypes: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n"
+            "Components: main\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n# The local one:\n\n"
+            "Types: deb\nURIs: file:/tmp/akrepo\nSuites: ./\n{trusted}")
+
+
+@pytest.mark.parametrize("trusted, apt_trusts_it", [("Trusted: yes\n", "yes"), ("trusted: 1\n", "yes"), ("Trusted: no\n", "no")])
+def test_a_trusted_line_marks_its_own_stanza_of_a_sources_file_and_no_other(apt_says, tmp_path, trusted, apt_trusts_it):
+    with open(tmp_path / "all.sources", "w", encoding="utf-8", newline="") as f:
+        f.write(ONE_FILE.format(trusted=trusted))
+    local, ubuntu = apt_says.rows[:2]
+    local.update(TRUSTED=apt_trusts_it, SOURCESENTRY=f"{tmp_path / 'all.sources'}:2")
+    ubuntu.update(SOURCESENTRY=f"{tmp_path / 'all.sources'}:1")
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    assert pkgbackend.signed_by("pkg", "apt") == {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+    apt_says(_policy("1.0-1", ("1.0-1", [LOCAL, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "file:/tmp/akrepo")
+
+
+def _st(k, *more):
+    """A stanza for the repository file:/u-<k>."""
+    return "".join(f"{line}\n" for line in ("Types: deb", f"URIs: file:/u-{k}", "Suites: ./", *more))
+
+
+# A `.sources` file, and what apt says of it: "<the stanza's number in $(SOURCESENTRY)>=<the
+# repository apt gives that number>" for each repository, with "!" where apt took the repository,
+# which is unsigned: it does that only where it reads the stanza as setting `trusted`.
+APT_STANZAS = {
+    "plain": (_st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-first": ("# a note\n# of two lines\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "two-comment-paragraphs-first": ("# a\n\n# b\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-paragraph-between": (_st(1) + "\n# between\n\n" + _st(2) + "\n# c\n\n# d\n\n" + _st(3), "1=u-1 2=u-2 3=u-3"),
+    "comment-glued-below": (_st(1) + "# glued\n\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-glued-above": (_st(1) + "\n# glued\n" + _st(2), "1=u-1 2=u-2"),
+    "comment-inside": ("Types: deb\n# inside\nURIs: file:/u-1\nSuites: ./\n\n" + _st(2), "1=u-1 2=u-2"),
+    "many-blank-lines": (_st(1) + "\n\n\n\n" + _st(2), "1=u-1 2=u-2"),
+    "two-blank-first": ("\n\n" + _st(1) + "\n" + _st(2), "1=u-1 2=u-2"),
+    "crlf": ((_st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "crlf-comment-first": (("# a\n\n" + _st(1) + "\n" + _st(2)).replace("\n", "\r\n"), "1=u-1 2=u-2"),
+    "cr-cr-lf-blank": (_st(1) + "\r\r\n" + _st(2), "1=u-1 2=u-2"),
+    "space-line-between": (_st(1) + " \n" + _st(2), "1=u-2"),
+    "formfeed-line-between": (_st(1) + "\x0c\n" + _st(2), "1=u-2"),
+    "lone-cr-between": (_st(1) + "\r" + _st(2), "1=u-2"),
+    "u2028-blank": (_st(1) + "\u2028\n" + _st(2), "1=u-2"),
+    "indented-comment-between": (_st(1) + "\n # not a comment\n\n" + _st(2), "1=u-1 2=u-2"),
+    "fieldless-two-then-trusted": (_st(1) + "\n # c\n\n x\n\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "fieldless-first-then-trusted": (" x\n\n" + _st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "trusted-second-disabled-first": (_st(1, "Enabled: no") + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "2=u-2! 3=u-3"),
+    "trusted-in-disabled": (_st(1, "Enabled: no", "Trusted: yes") + "\n" + _st(2) + "\n" + _st(3), "2=u-2 3=u-3"),
+    "no-newline-at-end": ((_st(1) + "\n" + _st(2)).rstrip("\n"), "1=u-1 2=u-2"),
+    "comment-at-end": (_st(1) + "\n" + _st(2) + "\n# the end", "1=u-1 2=u-2"),
+    "two-uris": ("Types: deb\nURIs: file:/u-1 file:/u-1b\nSuites: ./ x/\n\n" + _st(2), "1=u-1 1=u-1b 2=u-2"),
+    "trusted-first-only": (_st(1, "Trusted: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-yes-second": (_st(1) + "\n" + _st(2, "Trusted: yes"), "1=u-1 2=u-2!"),
+    "trusted-third-only": (_st(1) + "\n" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-1 2=u-2 3=u-3!"),
+    "trusted-second-after-comment-paragraph": ("# c\n\n" + _st(1) + "\n# d\n\n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-crlf-second": ((_st(1) + "\n" + _st(2, "Trusted: yes") + "\n" + _st(3)).replace("\n", "\r\n"), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-upper": (_st(1, "TRUSTED: YES") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-spaced": (_st(1, "trusted : yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-tab-colon": (_st(1, "Trusted\t:\tyes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-no-space": (_st(1, "Trusted:yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-colon-next-line": (_st(1, "Trusted\n: yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-value-next-line": (_st(1, "Trusted:\n yes") + "\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-cr-led": (_st(1) + "\n\r\rTrusted: yes\n" + _st(2) + "\n" + _st(3), "1=u-1 2=u-2! 3=u-3"),
+    "trusted-cr-led-mid": ("Types: deb\nURIs: file:/u-1\n\rTrusted: yes\nSuites: ./\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-after-ff-line": ("Types: deb\nURIs: file:/u-1\nSuites: ./\n\x0c\nTrusted: yes\n\n" + _st(2), "1=u-1! 2=u-2"),
+    "trusted-second-ff-blank-before-3": (_st(1) + "\n" + _st(2, "Trusted: yes") + "\x0c\n" + _st(3), "1=u-1 2=u-3!"),
+    "trusted-third-cr-between-1-2": (_st(1) + "\r" + _st(2) + "\n" + _st(3, "Trusted: yes"), "1=u-2 2=u-3!"),
+    "trusted-space-line-merged": (_st(1) + " \n" + _st(2, "Trusted: yes") + "\n" + _st(3), "1=u-2! 2=u-3"),
+    "trusted-continuation": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\n Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-tab-led": (_st(1, "X-Note: a", "\tTrusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-cr": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\rTrusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-after-u2028": ("Types: deb\nURIs: file:/u-1\nSuites: ./\nX-Note: a\u2028Trusted: yes\n\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-nbsp-colon": (_st(1, "Trusted\u00a0: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "x-trusted": (_st(1, "X-Trusted: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+    "trusted-extra": (_st(1, "Trusted-Extra: yes") + "\n" + _st(2), "1=u-1 2=u-2"),
+}
+
+
+@pytest.mark.parametrize("case", list(APT_STANZAS))
+def test_the_stanzas_of_a_sources_file_are_numbered_and_read_as_apt_numbers_and_reads_them(tmp_path, case):
+    text, apt = APT_STANZAS[case]
+    file = tmp_path / "x.sources"
+    file.write_bytes(text.encode("utf-8"))
+    said = [(int(n), address.rstrip("!"), address.endswith("!")) for n, address in (one.split("=") for one in apt.split())]
+    assert [(n, address, pkgbackend._sets_trusted(f"{file}:{n}")) for n, address, trusted in said] == said
+    for n, address, trusted in said:                # ...and it is that repository's stanza which was read
+        uris = [line for line in pkgbackend._stanza(text.split("\n"), n) if line.lower().startswith("uris")]
+        assert f"file:/{address}" in uris[-1].split()
+    # a stanza apt could name and the file doesn't have: not found, which counts as setting it
+    assert pkgbackend._stanza(text.split("\n"), 4) is None and pkgbackend._sets_trusted(f"{file}:4") and pkgbackend._sets_trusted(f"{file}:0")
+
+
+def _says_nothing(rows, tmp_path):
+    rows.clear()                                    # `apt-get indextargets` failed, or apt has no lists
+
+
+def _doesnt_name_it(rows, tmp_path):
+    del rows[1]
+
+
+def _has_no_such_field(rows, tmp_path):
+    for row in rows:                                # an apt that knows no $(TRUSTED) leaves the field's own name there
+        del row["TRUSTED"]
+
+
+def _says_it_isnt_trusted(rows, tmp_path):
+    rows[1]["TRUSTED"] = "no"
+
+
+def _names_no_sources_entry(rows, tmp_path):
+    del rows[1]["SOURCESENTRY"]
+
+
+def _names_an_entry_that_cant_be_read(rows, tmp_path):
+    os.remove(tmp_path / "ubuntu.sources")
+
+
+def _says_otherwise_of_another_entry_for_it(rows, tmp_path):
+    rows.append({**rows[1], "TRUSTED": "no"})
+
+
+def _says_otherwise_of_a_suite_its_line_could_be_of(rows, tmp_path):
+    rows.append({**rows[1], "RELEASE": "noble/main", "TRUSTED": "no"})
+
+
+@pytest.mark.parametrize("apt", [_says_nothing, _doesnt_name_it, _has_no_such_field, _says_it_isnt_trusted, _names_no_sources_entry,
+                                 _names_an_entry_that_cant_be_read, _says_otherwise_of_another_entry_for_it,
+                                 _says_otherwise_of_a_suite_its_line_could_be_of], ids=lambda f: f.__name__.strip("_"))
+def test_a_package_is_not_signed_unless_apt_itself_says_its_repository_was_checked(apt_says, tmp_path, apt):
+    """What apt doesn't say counts as not checked, never as checked: an answer that fails or is
+    empty made every repository a keyed one."""
+    apt(apt_says.rows, tmp_path)
+    apt_says(_policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])))
+    v = pkgbackend.signed_by("pkg", "apt")
+    assert (v["verified"], v["signer"], v["repository"]) == ("unverified", "", "http://archive.ubuntu.com/ubuntu")
+
+
+def test_a_sources_entry_that_sets_the_trusted_option(tmp_path):
+    """Whether the entry sets it, never to what: the value's reading is apt's own."""
+    sets = pkgbackend._sets_trusted
+    one = tmp_path / "x.list"
+    one.write_text("deb [arch=amd64 signed-by=/etc/apt/trusted.gpg.d/k.gpg] http://a/ stable main\n# deb [trusted=yes] http://b/ ./\n"
+                   "deb [ arch=amd64 Trusted = yes ] http://c/ ./\ndeb [trusted=no] http://d/ ./\ndeb-src [trusted=1] http://e/ ./\n")
+    assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4, 5)] == [False, False, True, True, True]
+    assert sets(f"{one}:9") and sets(f"{tmp_path / 'gone.list'}:1") and sets("$(SOURCESENTRY)") and sets("")
+    one.write_bytes(b"deb [signed-by=/k.gpg] http://a/ stable main\r\ndeb [trusted=yes] http://b/ ./\r\n# \xff not UTF-8\ndeb http://c/ ./\n")
+    assert [sets(f"{one}:{n}") for n in (1, 2, 3, 4)] == [False, True, False, False]      # a Windows line end is one line end
+    many = tmp_path / "x.sources"
+    many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n\nTypes: deb\nURIs: http://b/\nSuites: ./\ntrusted: YES\n")
+    assert not sets(f"{many}:1") and sets(f"{many}:2")              # its own stanza, and no other
+    assert sets(f"{many}:3") and sets(f"{many}:0") and sets(f"{many}:x") and sets(f"{many}:")     # no such stanza: not shown to be without it
+    many.write_text("Types: deb\nURIs: http://a/\nSuites: stable\n# Trusted: yes\nSigned-By: /etc/apt/trusted.gpg.d/k.gpg\n")
+    assert not sets(f"{many}:1")
+
+
+@pytest.mark.parametrize("from_repo, signature, verdict", [
+    ("updates\n", "RSA/SHA256, Tue 01 Oct 2026, Key ID 1234abcd(none)(none)(none)\tFedora Project", ("signed", "Fedora Project", "updates")),
+    ("copr:x\n", "(none)(none)RSA/SHA256, Key ID 99\t(none)", ("signed", "copr:x", "copr:x")),
+    ("akrepo\n", "(none)(none)(none)(none)\t(none)", ("unverified", "", "akrepo")),                 # gpgcheck=0 and no signature
+    ("@commandline\n", "RSA/SHA256, Key ID 1(none)(none)(none)\tVendor", ("unverified", "", "")),     # dnf install ./file.rpm
+    ("", "", ("unverified", "", "")),
+], ids=["the-distribution", "a-repository-with-no-vendor", "unsigned", "from-a-file", "not-installed"])
+def test_an_rpm_is_signed_only_from_a_repository_and_with_a_signature(monkeypatch, from_repo, signature, verdict):
+    """The dnf half (kept, unsupported: R1.1): by reading dnf's and rpm's manuals, run on no Fedora."""
+    monkeypatch.setattr(pkgbackend, "_text", lambda cmd: from_repo if cmd[0] == "dnf" else signature)
+    v = pkgbackend.signed_by("pkg", "dnf")
+    assert (v["verified"], v["signer"], v["repository"]) == verdict
+
+
+REMOTES = {False: "aktest\tno-gpg-verify\nflathub\nvendor\tno-enumerate\norg.a.B-origin\tno-enumerate,no-gpg-verify\n", True: "flathub\n"}
+
+
+@pytest.fixture
+def remotes(monkeypatch):
+    """flatpak with the user's and the system's remotes, as `flatpak remotes --columns=name,options` lists them."""
+    import subprocess
+
+    def run(args, **kw):
+        assert args[0] == "remotes" and args[2] == "--columns=name,options", args
+        return subprocess.CompletedProcess(args, 0, REMOTES[args[1] == "--system"], "")
+    monkeypatch.setattr(flatpak, "run", run)
+
+
+@pytest.mark.parametrize("remote, system, checked", [
+    ("flathub", False, True), ("flathub", True, True), ("vendor", False, True), ("aktest", False, False),
+    ("org.a.B-origin", False, False), ("vendor", True, False), ("gone", False, False), ("", False, False)])
+def test_flatpak_checks_a_remote_against_its_key_unless_told_not_to(remotes, remote, system, checked):
+    assert flatpak.checks_signatures(remote, system) is checked
+
+
+@pytest.mark.parametrize("remote, verdict", [("flathub", ("signed", "Flathub")), ("vendor", ("signed", "vendor")), ("aktest", ("unverified", ""))])
+def test_a_flatpak_install_records_whether_its_remotes_key_checked_it(db, monkeypatch, remotes, remote, verdict):
+    monkeypatch.setattr(flatpak, "has_remote", lambda name="flathub": True)
+    monkeypatch.setattr(flatpak, "metadata", lambda *a, **k: "")
+    monkeypatch.setattr(flatpak, "install", lambda app_id, remote, progress=None, cancel=None: flatpak.Installed(app_id, "1.0", remote, "user", "c1"))
+    url = "https://github.com/a/b"
+    rec = install.install_channel(db, {"url": url, "name": "B"}, {"channel": "flatpak", "value": "org.a.B", "remote": remote})
+    assert (rec["verified"], rec["signer"]) == verdict and rec == json.loads(db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])
+    # ...and an update asks again: the remote's checking was turned off since
+    monkeypatch.setattr(flatpak, "update", lambda *a, **k: {"version": "1.1", "commit": "c2"})
+    monkeypatch.setattr(flatpak, "installed_metadata", lambda *a, **k: "")
+    monkeypatch.setitem(REMOTES, False, REMOTES[False].replace("flathub\n", "flathub\tno-gpg-verify\n"))
+    rec = install.update_channel(db, url)
+    assert (rec["verified"], rec["signer"]) == (verdict if remote == "vendor" else ("unverified", ""))
+
+
+def _adoptable(db, monkeypatch, link, where="somewhere"):
+    db.x("INSERT INTO apps(url, name, repo) VALUES(?,?,?)", (KEEPASSXC, "KeePassXC", "keepassxreboot/keepassxc"))
+    db.x("INSERT INTO foreign_installs(url, location, version, checked_at, adopt) VALUES(?,?,?,?,?)",
+         (KEEPASSXC, where, link.get("version", ""), "", json.dumps(link)))
+
+
+@pytest.mark.parametrize("origin, installation, verdict", [
+    ("flathub", "user", ("signed", "Flathub")), ("flathub", "system", ("signed", "Flathub")), ("vendor", "user", ("signed", "vendor")),
+    ("aktest", "user", ("unverified", "")), ("org.a.B-origin", "user", ("unverified", "")),      # a bundle installed by hand
+    ("vendor", "system", ("unverified", "")),                    # the system installation has no such remote
+    ("", "user", ("unverified", "")),                            # flatpak named no origin
+])
+def test_an_adopted_flatpak_is_signed_only_where_its_own_remotes_key_checked_it(db, monkeypatch, remotes, origin, installation, verdict):
+    """It was "signed" by the link's remote, or by Flathub, whatever remote the copy came from."""
+    monkeypatch.setattr(flatpak, "info", lambda app_id, system=False: {"commit": "c1"})
+    monkeypatch.setattr(flatpak, "installed_metadata", lambda *a, **k: "")
+    _adoptable(db, monkeypatch, {"kind": "flatpak", "value": "org.a.B", "remote": "flathub", "origin": origin, "installation": installation,
+                                 "version": "1.0"})
+    rec = foreign.adopt(db, KEEPASSXC)
+    assert (rec["verified"], rec["signer"], rec["remote"]) == (*verdict, origin)
+
+
+@pytest.mark.parametrize("case", ["the-distribution", "a-ppa", "put-in-by-hand", "a-repository-trusted-without-a-key"])
+def test_a_package_is_recorded_as_what_apt_says_checked_it_when_adopted_installed_or_updated(db, monkeypatch, fake_pkgs, apt_says, case):
+    """It was "signed" by the distribution's name for any package of that name: a vendor's .deb put
+    in with `dpkg -i`, one from a PPA."""
+    policy, verdict = next(c[1:] for c in SIGNED_BY if c[0] == case)
+    apt_says(policy)
+    _adoptable(db, monkeypatch, {"kind": "package", "value": "keepassxc", "manager": "apt", "version": "2.7.6-1"})
+    rec = foreign.adopt(db, KEEPASSXC)
+    assert (rec["verified"], rec["signer"], rec["repository"]) == verdict and rec["adopted"]
+    db.x("DELETE FROM installs")
+    rec = install.install_channel(db, {"url": KEEPASSXC, "name": "KeePassXC"}, {"channel": "package", "value": "keepassxc", "origin": "main"})
+    assert (rec["verified"], rec["signer"], rec["repository"], rec["origin"]) == (*verdict, "main")
+    assert rec == json.loads(db.one("SELECT record FROM installs")["record"])
+    # ...and an update asks again: the copy is one put in by hand now
+    apt_says(_policy("3.0", ("3.0", [STATUS])))
+    rec = install.update_channel(db, KEEPASSXC)
+    assert (rec["verified"], rec["signer"], rec["repository"]) == ("unverified", "", "")
+
+
+def test_tracking(db, monkeypatch, fake_pkgs, remotes):
     """Removed and updated outside AppKata, and pending updates (R16.4.1, R16.5.4, R16.5.5)."""
     monkeypatch.setattr(channels, "manager", lambda: "apt")
     monkeypatch.setattr(flatpak, "available", lambda: True)
@@ -577,6 +1139,86 @@ def test_tracking(db, monkeypatch, fake_pkgs):
     assert not db.one("SELECT 1 FROM installs WHERE url='https://github.com/b/b'")
     acts = [r["action"] for r in db.all("SELECT action, actor FROM audit WHERE actor='system'")]
     assert acts == ["was updated outside AppKata", "was removed outside AppKata"]
+
+
+# R16.3.6 (CR1.6-33): the verdict in a channel copy's record is of the copy that is installed.
+# How it slipped past: #318 made every road by which AppKata itself puts a copy there ask what
+# checked it (install, adopt, update), and the one road it doesn't take was left: the copy changed
+# outside AppKata, which Sync finds. No test changed a copy there and read its chip's record after.
+def _tracked(db, monkeypatch, record, version="1.0"):
+    """One channel copy AppKata tracks, with this record, on a machine with no pending updates."""
+    monkeypatch.setattr(channels, "manager", lambda: "apt")
+    monkeypatch.setattr(pkgbackend, "pending_updates", lambda names, manager=None: {})
+    monkeypatch.setattr(autoupdate, "_out", lambda cmd: "")
+    monkeypatch.setattr(autoupdate, "last_change", lambda manager, package, version: ("", ""))
+    monkeypatch.setattr(flatpak, "updates", lambda system=False: {})
+    monkeypatch.setattr(flatpak, "history", lambda since="": [])
+    db.x("INSERT INTO installs(url, name, version, kind, record) VALUES(?,?,?,?,?)", (KEEPASSXC, "KeePassXC", version, "", json.dumps(record)))
+
+    def after():
+        sync.track_channel_installs(db)
+        return json.loads(db.one("SELECT record FROM installs WHERE url=?", (KEEPASSXC,))["record"])
+    return after
+
+
+UBUNTUS = {"verified": "signed", "signer": "Ubuntu", "repository": "Ubuntu"}
+BY_HAND = {"verified": "unverified", "signer": "", "repository": ""}
+CHANGED_PACKAGES = {
+    # what the record says, the version that is installed now, what apt says of it -> the record after
+    "a vendor's .deb put over the distribution's by hand":                      # the finding's case
+        (UBUNTUS, "9.9", _policy("9.9", ("9.9", [STATUS]), ("2.10-3build1", [NOBLE])), BY_HAND),
+    "the distribution's put back over one put in by hand": (BY_HAND, "2.10-3build1", _policy("2.10-3build1", ("2.10-3build1", [NOBLE, STATUS])), UBUNTUS),
+    "a PPA's version over the distribution's":
+        (UBUNTUS, "130.0", _policy("130.0", ("130.0", [PPA, STATUS]), ("125.0", [NOBLE])),
+         {"verified": "signed", "signer": "LP-PPA-mozillateam", "repository": "LP-PPA-mozillateam"}),
+    "one from a repository taken without a key":
+        (UBUNTUS, "1.0-1", _policy("1.0-1", ("1.0-1", [LOCAL, STATUS])), {"verified": "unverified", "signer": "", "repository": "file:/tmp/akrepo"}),
+    "the distribution's own update, made by the system": (UBUNTUS, "2.11-1", _policy("2.11-1", ("2.11-1", [NOBLE, STATUS])), UBUNTUS),
+    # ...and a copy that didn't change keeps the verdict of its own install, whatever is offered by now
+    "the same version, its repository now offering a newer one": (UBUNTUS, "2.10-2", _policy("2.10-2", ("2.10-3build1", [NOBLE]), ("2.10-2", [STATUS])), UBUNTUS),
+}
+
+
+@pytest.mark.parametrize("case", list(CHANGED_PACKAGES))
+def test_a_package_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now(db, monkeypatch, fake_pkgs, apt_says, case):
+    was, now_installed, policy, verdict = CHANGED_PACKAGES[case]
+    after = _tracked(db, monkeypatch, {"channel": "package", "package": "keepassxc", "manager": "apt", "pkgVersion": "2.10-2", **was})
+    fake_pkgs.installed["keepassxc"] = now_installed
+    apt_says(policy)
+    rec = after()
+    assert {k: rec[k] for k in verdict} == verdict and rec["pkgVersion"] == now_installed
+    said = [r["action"] for r in db.all("SELECT action FROM audit WHERE actor='system'")]
+    assert said == ([] if now_installed == "2.10-2" else ["was updated outside AppKata"])
+    assert after() == rec                                                # and it stays so at the next Sync
+
+
+FLATHUBS = {"remote": "flathub", "verified": "signed", "signer": "Flathub"}
+CHANGED_FLATPAKS = {
+    # what the record says, the copy flatpak has now (its origin, its commit) -> remote, verified and signer after
+    "one from a remote flatpak doesn't check": (FLATHUBS, ("aktest", "bbbbbbbbbbbb"), ("aktest", "unverified", "")),
+    "a bundle put in by hand": (FLATHUBS, ("org.a.B-origin", "bbbbbbbbbbbb"), ("org.a.B-origin", "unverified", "")),
+    "one from a vendor's remote": (FLATHUBS, ("vendor", "bbbbbbbbbbbb"), ("vendor", "signed", "vendor")),
+    "one flatpak names no origin for": (FLATHUBS, ("", "bbbbbbbbbbbb"), ("", "unverified", "")),
+    "Flathub's, over one no key checked": ({"remote": "aktest", "verified": "unverified", "signer": ""}, ("flathub", "bbbbbbbbbbbb"),
+                                           ("flathub", "signed", "Flathub")),
+    "Flathub's own update, made by the system": (FLATHUBS, ("flathub", "bbbbbbbbbbbb"), ("flathub", "signed", "Flathub")),
+    # ...and a copy that didn't change keeps the verdict of its own install (flatpak lists a shortened commit)
+    "the same commit, from a remote whose checking is off by now": ({"remote": "vendor", "verified": "signed", "signer": "vendor"}, ("aktest", "aaaaaaaaaaaa"),
+                                                                    ("vendor", "signed", "vendor")),
+}
+
+
+@pytest.mark.parametrize("case", list(CHANGED_FLATPAKS))
+def test_a_flatpak_changed_outside_appkata_is_recorded_as_what_checked_the_copy_there_now(db, monkeypatch, remotes, case):
+    was, (origin, commit), verdict = CHANGED_FLATPAKS[case]
+    after = _tracked(db, monkeypatch, {"channel": "flatpak", "flatpak": "org.a.B", "installation": "user", "commit": "a" * 64, "perms": [], **was})
+    monkeypatch.setattr(flatpak, "available", lambda: True)
+    monkeypatch.setattr(flatpak, "installed", lambda: {"org.a.B": flatpak.Installed("org.a.B", "2.0", origin, "user", commit)})
+    rec = after()
+    assert (rec["remote"], rec["verified"], rec["signer"]) == verdict
+    said = [r["action"] for r in db.all("SELECT action FROM audit WHERE actor='system'")]
+    assert said == ([] if commit.startswith("a") else ["was updated outside AppKata"])
+    assert after() == rec
 
 
 @pytest.mark.skipif(not os.path.exists(dbus.SYSTEM_BUS), reason="no system bus")

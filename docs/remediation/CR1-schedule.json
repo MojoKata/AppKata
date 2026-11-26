@@ -143,7 +143,15 @@
     328,
     497,
     628,
-    699
+    699,
+    729,
+    730,
+    731,
+    739,
+    740,
+    742,
+    746,
+    757
    ],
    "files": [
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
@@ -169,11 +177,19 @@
     "tests/test_forges.py",
     "tests/test_install_review.py",
     "tests/test_sandbox_ui_surfaces.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "tests/skips/tier1.txt",
+    "tests/skips/windows.txt",
+    "src/appkata/qml/AppRow.qml",
+    "tests/test_docs_facts.py",
+    "src/appkata_core/sync.py",
+    "scripts/demo_data.py",
+    "tests/test_demo_promises.py"
    ],
    "depends_on": [
     "U01"
-   ]
+   ],
+   "oversize": "23 findings: 15 from the review, and eight its own batches and rounds found in its own work (#729, #730, #731, #739, #740, #742, #746, #757), which are cheapest fixed while the unit is in them; #740, #742, #746 and #757 are on what #318, #327 and #731 just built."
   },
   {
    "id": "U05",
@@ -241,7 +257,9 @@
     430,
     556,
     662,
-    667
+    667,
+    737,
+    738
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -264,7 +282,8 @@
     "tests/test_channels.py",
     "tests/test_core.py",
     "tests/test_dialog_contract.py",
-    "tests/test_install_review.py"
+    "tests/test_install_review.py",
+    "tests/test_backend.py"
    ]
   },
   {
@@ -424,7 +443,9 @@
     359,
     365,
     367,
-    370
+    370,
+    741,
+    768
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -491,7 +512,13 @@
     671,
     486,
     638,
-    658
+    658,
+    749,
+    750,
+    751,
+    752,
+    753,
+    766
    ],
    "files": [
     "docs/build.md",
@@ -508,7 +535,8 @@
     "tests/test_backend.py",
     "tests/test_docs_facts.py",
     "tests/test_selfinstall.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "tests/test_install_review.py"
    ],
    "depends_on": [
     "U01"
@@ -759,7 +787,8 @@
     172,
     322,
     330,
-    451
+    451,
+    758
    ],
    "files": [
     "DEVELOP.md",
@@ -1163,7 +1192,11 @@
     429,
     431,
     654,
-    663
+    663,
+    754,
+    763,
+    764,
+    765
    ],
    "files": [
     "docs/requirements/R16-package-channels.md",
@@ -1339,7 +1372,9 @@
     484,
     503,
     69,
-    706
+    706,
+    747,
+    748
    ],
    "files": [
     "src/appkata/backend.py",
@@ -11416,6 +11451,405 @@
    "size": "small",
    "proof": "The mockups rendered again (the project's screenshot script, as docs/build.md says), and the screenshots page's checks.",
    "note": "Found by U03's fourth batch (2026-11-24) after #704's fix, and filed by the coordinator. The rendered SVGs and PNGs of the Settings mockups change with render.js; the unit lists them as the render makes them."
+  },
+  {
+   "finding": 729,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    628
+   ],
+   "related": [
+    365
+   ],
+   "size": "small",
+   "proof": "tests/test_windows.py's case for an app named Con, AUX or \"Com 1\"; the Windows VM's suite.",
+   "note": "Found and fixed by U04's first batch (2026-11-25, b583897) beside #628, and filed by the coordinator."
+  },
+  {
+   "finding": 730,
+   "readiness": "ready",
+   "files": [
+    "docs/requirements/R4-installing-updating-and-uninstalling.md",
+    "src/appkata_core/install.py",
+    "tests/skips/windows.txt",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    699
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "tests/test_install_review.py's cases for an installed version named 2.0.new or 2.0.old, failing before the fix.",
+   "note": "Found and fixed by U04's first batch (2026-11-25, 59fa749) beside #699, and filed by the coordinator."
+  },
+  {
+   "finding": 731,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    307
+   ],
+   "related": [
+    699
+   ],
+   "size": "small",
+   "proof": "A test installing 1.0 beta and then 1.0_beta keeps both versions.",
+   "note": "Found by U04's first batch (2026-11-25) and filed by the coordinator; taken in U04's fourth batch."
+  },
+  {
+   "finding": 737,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [],
+   "related": [
+    465
+   ],
+   "size": "small",
+   "proof": "A test writing a review of a Flatpak install and of a package install: the Channel line names the install's channel and a Flatpak's has its Commit line.",
+   "note": "Found by U04's second batch (2026-11-25) and filed by the coordinator."
+  },
+  {
+   "finding": 738,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [],
+   "related": [
+    466
+   ],
+   "size": "small",
+   "proof": "A test of sync after an outside update: the record holds the full commit and App Detail says Same file.",
+   "note": "Found by U04's second batch (2026-11-25), by reading, and filed by the coordinator."
+  },
+  {
+   "finding": 739,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "tests/test_channels.py with real apt in the channels container: an update from a release's .deb plans no upgrade of its own package.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator; fixed in U04 (24c5a0d)."
+  },
+  {
+   "finding": 740,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sync.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    738
+   ],
+   "size": "small",
+   "proof": "A test of sync after a channel copy is replaced outside AppKata: the record's verdict is taken again.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator; the verdict is #318's (U04), so U04's fourth batch takes it."
+  },
+  {
+   "finding": 741,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "src/appkata_core/windows.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [
+    326,
+    370
+   ],
+   "size": "small",
+   "proof": "The Windows VM's suite: the elevated .msi's log is written in the administrators-only folder.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 742,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the package manager refuses a plan: the backend shows the plan dialog with refused: True.",
+   "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading; U04's fourth batch takes it."
+  },
+  {
+   "finding": 746,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    731
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "test_a_version_installed_again_at_another_place_is_not_also_kept_as_a_previous_one.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator; fixed in U04 (b7297fb)."
+  },
+  {
+   "finding": 747,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    742
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of Remove Source with its app where the package's removal takes another package: the plan dialog shows.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator; run in a scratch copy."
+  },
+  {
+   "finding": 748,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/qml/ConfirmDialog.qml"
+   ],
+   "depends_on": [
+    742
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A QML test of the refused dialog for an update.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 749,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    306
+   ],
+   "related": [
+    750
+   ],
+   "size": "small",
+   "proof": "A test of a release naming its file as a path, with a checksum list that lists it.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 750,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    304
+   ],
+   "related": [
+    749
+   ],
+   "size": "small",
+   "proof": "A test of a SHA256SUMS holding one bare digest in a release of several files.",
+   "note": "Found by U04's fourth batch (2026-11-25) and filed by the coordinator, by reading."
+  },
+  {
+   "finding": 751,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    314
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a download, a probe and a checksum fetch at a host name that can't be encoded: each fails as an install error naming the address.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 752,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    308
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of http://127.0.0.1:80@host/: refused as plain http, proxy or not.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 753,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    304
+   ],
+   "related": [
+    749,
+    750
+   ],
+   "size": "small",
+   "proof": "A test reading a 1 MB checksum list of one line with a long run of spaces in well under a second.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 754,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the download is swapped after the check: the record names the package of the copy root installs.",
+   "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 757,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a failed package install with a folder at the download's path: the install's own error is shown.",
+   "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator; fixed in U04's round 3 (7ea064e), beside P3-4."
+  },
+  {
+   "finding": 758,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [
+    754
+   ],
+   "size": "small",
+   "proof": "A test with dnf 4's refusal: the dry run is never rerun through pkexec on the download's path.",
+   "note": "Found by pr-review pass 2 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 763,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    764,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt in the channels container: a trusted=yes repository whose address holds U+0085 or U+2028 reads Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 764,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    765
+   ],
+   "size": "small",
+   "proof": "Real apt: a .sources file opening with \\r# and one with a paragraph ending in a line with no colon each read their Trusted: yes stanza Unverified.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule; the second shape (a paragraph apt drops) is in its comment."
+  },
+  {
+   "finding": 765,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    318
+   ],
+   "related": [
+    763,
+    764
+   ],
+   "size": "small",
+   "proof": "Real apt with TrustCDROM set: an unsigned cdrom: repository reads Unverified whatever the disc's name.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; Low under REVIEW.md's rule for root-required misbehaviour (#762), and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 766,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    757
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of a second download over a folder left at its path: an install error naming it.",
+   "note": "Found by the last check read of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 768,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/windows.py",
+    "docs/requirements/R15-windows.md",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "medium",
+   "proof": "A Windows VM test: the downloads folder made a junction; the elevated side opens nothing outside it.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; cleared for public text and placed in U10 by the owner's walk thru (2026-11-26)"
   }
  ],
  "shared_files": [
@@ -11518,7 +11952,9 @@
   "tests/test_selfinstall.py",
   "tests/test_trust.py",
   "tests/test_version_reviews.py",
-  "tests/test_windows.py"
+  "tests/test_windows.py",
+  "tests/skips/tier1.txt",
+  "tests/skips/windows.txt"
  ],
  "set_aside": []
 }

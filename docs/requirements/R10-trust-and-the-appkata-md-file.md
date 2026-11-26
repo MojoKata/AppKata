@@ -80,7 +80,7 @@ Release files are now signed, and the Linux AppImage updates itself.
 - Platform: linux x86_64
 - Channel: GitHub release
 - File: Zettlr-3.5.1-x86_64.AppImage
-- SHA-256: 3c1f…9e07
+- SHA-256: 3c1f6a0b52d94e87c1a35f08b7e2d6490fa13c58e7b204d96c8a1f3075be9e07
 
 ### Zettlr[3.5.1]::Settings
 
@@ -194,6 +194,8 @@ reviewer had installed. Every line is optional; unknown lines are kept and shown
 
 Details never change scores. When the reviewer's SHA-256 or Flatpak commit equals the one about to
 be installed, or the one installed, the App Detail panel says "Same file as <Trust> reviewed".
+Only a whole one can be equal: all 64 hexadecimal digits. A shortened one (`3c1f…9e07`, or its first
+digits alone) is kept as written and never gets that pill, since many files share it.
 
 R10.3.5. **Which review applies to a version.** For a version *v*, a Trust's review is its newest
 version review whose version is *v* or older, else its app review. Versions are compared as in R9.4;

@@ -103,16 +103,20 @@ def installer_command(kind: str, exe_kind: str, file: str, scope: str, log_file:
     """(program, arguments, elevate) to run an installer silently for a scope (R15.7.2).
     An installer AppKata doesn't recognize runs interactively and decides for itself."""
     if kind == "msi":
-        args = f'/i "{file}" /qn /norestart' + (f' /l*v "{log_file}"' if log_file else "")
-        if scope == "everyone":
-            return "msiexec.exe", args + " ALLUSERS=1", True
-        return "msiexec.exe", args + " ALLUSERS=2 MSIINSTALLPERUSER=1", False
+        args = f'/i "{file}" ' + msi_arguments(scope, log_file)
+        return "msiexec.exe", args, scope == "everyone"
     silent = SILENT.get(exe_kind, "")
     if not silent:
         return file, "", False
     me, everyone = SCOPE_ARGS.get(exe_kind, ("", ""))
     extra = everyone if scope == "everyone" else me
     return file, (silent + " " + extra).strip(), bool(scope == "everyone" and everyone)
+
+
+def msi_arguments(scope: str, log_file: str = "") -> str:
+    """What follows `/i "<file>"` on msiexec's command line (R15.7.2)."""
+    args = "/qn /norestart" + (f' /l*v "{log_file}"' if log_file else "")
+    return args + (" ALLUSERS=1" if scope == "everyone" else " ALLUSERS=2 MSIINSTALLPERUSER=1")
 
 
 def exe_kind_from_release(asset_names: list[str]) -> str:
@@ -292,6 +296,168 @@ def shell_execute(program: str, args: str = "", elevate: bool = False, wait: boo
         return code.value
     finally:
         kernel32.CloseHandle(info.hProcess)
+
+
+# ---------------------------------------------------------------- installers run with administrator rights (R15.7.5)
+# The file AppKata checked is in a folder its user, and so any program of the user's, can change,
+# and Windows would start it with administrator rights after the UAC prompt. So what is elevated is
+# this script and not the file: it takes a copy to a folder only administrators can change, compares
+# the copy's SHA-256 with the one AppKata checked, and starts that copy. It runs elevated with
+# nothing to hold on to but Windows' own files, so it calls .NET alone: a cmdlet could come from a
+# module in the user's own module folder, and the user's environment could name another Windows
+# folder. Its values come as base64, never as text pasted into it.
+#
+# The download's path is the user's too, so the script opens it once and holds what it opened to
+# what AppKata checked: with no link at the path followed (Windows' own CreateFileW and its
+# FILE_FLAG_OPEN_REPARSE_POINT, which .NET's FileStream can't ask for; the call is declared in
+# memory, where a compiled declaration would be built in the user's TEMP folder), only a file on a
+# disk (no pipe, no device), only of the length AppKata checked, and copying no more than that
+# length and one byte, by which a longer file would fail the comparison. `[IO.File]::Copy` followed
+# a link and copied whatever it reached, however long.
+CHANGED = 0x4B410001            # its exit code when the copy isn't the file AppKata checked
+NOT_STARTED = 0x4B410002        # ...and when it couldn't make the copy or start it
+_ELEVATED = r"""$ErrorActionPreference = 'Stop'
+function V([string]$b) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)) }
+$src = V '@SRC@'; $want = V '@SHA@'; $name = V '@NAME@'; $argl = V '@ARGS@'; $msi = @MSI@; $len = [long]@LEN@
+$code = @NOT_STARTED@
+try {
+    $k = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('AppKataOpen'), [Reflection.Emit.AssemblyBuilderAccess]::Run).DefineDynamicModule('AppKataOpen').DefineType('AppKataOpen', [Reflection.TypeAttributes]'Public, Class')
+    $how = [Reflection.MethodAttributes]'Public, Static, PinvokeImpl'
+    $file = [Microsoft.Win32.SafeHandles.SafeFileHandle]
+    $m = $k.DefinePInvokeMethod('CreateFileW', 'kernel32.dll', $how, [Reflection.CallingConventions]::Standard, $file, [Type[]]@([string], [int], [int], [IntPtr], [int], [int], [IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+    $m.SetImplementationFlags($m.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+    $m = $k.DefinePInvokeMethod('GetFileType', 'kernel32.dll', $how, [Reflection.CallingConventions]::Standard, [int], [Type[]]@($file), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+    $m.SetImplementationFlags($m.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+    $k = $k.CreateType()
+    $dir = [IO.Path]::Combine([Environment]::GetFolderPath('Windows'), 'Temp', 'AppKata-' + [Guid]::NewGuid().ToString('N'))
+    $only = [Security.AccessControl.DirectorySecurity]::new()
+    $only.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)')
+    if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) { throw 'taken' }
+    [void][IO.Directory]::CreateDirectory($dir, $only)
+    try {
+        $copy = [IO.Path]::Combine($dir, $name)
+        $got = ''
+        $from = $k::CreateFileW($src, [int]::MinValue, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)
+        if ($from.IsInvalid) { throw 'open' }
+        try {
+            if ($k::GetFileType($from) -eq 1) {
+                $in = [IO.FileStream]::new($from, [IO.FileAccess]::Read)
+                if ($in.Length -eq $len) {
+                    $out = [IO.FileStream]::new($copy, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                    try {
+                        $buf = [byte[]]::new(1048576)
+                        $left = $len + 1
+                        while ($left -gt 0) {
+                            $n = $in.Read($buf, 0, [int][Math]::Min($left, [long]$buf.Length))
+                            if ($n -le 0) { break }
+                            $out.Write($buf, 0, $n)
+                            $left -= $n
+                        }
+                    } finally { $out.Dispose() }
+                    $in = [IO.File]::OpenRead($copy)
+                    try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($in)).Replace('-', '').ToLowerInvariant() }
+                    finally { $in.Dispose() }
+                }
+            }
+        } finally { $from.Dispose() }
+        if ($got -ne $want) { $code = @CHANGED@ }
+        else {
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            if ($msi) {
+                $start.FileName = [IO.Path]::Combine([Environment]::SystemDirectory, 'msiexec.exe')
+                $start.Arguments = '/i "' + $copy + '" ' + $argl
+            } else {
+                $start.FileName = $copy
+                $start.Arguments = $argl
+            }
+            $start.WorkingDirectory = $dir
+            $p = [Diagnostics.Process]::Start($start)
+            $p.WaitForExit()
+            $code = $p.ExitCode
+        }
+    } finally {
+        try { [IO.Directory]::Delete($dir, $true) } catch { }
+    }
+} catch {
+    $e = $_.Exception
+    while ($e.InnerException) { $e = $e.InnerException }
+    if ($e -is [ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { $code = 1223 }    # declined at Windows' own warning
+}
+exit $code
+"""
+
+
+def _b64(text: str) -> str:
+    import base64
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def elevated_script(file: str, sha256: str, length: int, args: str, msi: bool) -> str:
+    """The script run_elevated() runs with administrator rights, for this file: its SHA-256 and
+    its length are the ones AppKata checked."""
+    values = {"SRC": _b64(os.path.abspath(file)), "SHA": _b64(sha256.lower()), "LEN": str(int(length)), "NAME": _b64(os.path.basename(file)),
+              "ARGS": _b64(args), "MSI": "$true" if msi else "$false", "CHANGED": str(CHANGED), "NOT_STARTED": str(NOT_STARTED)}
+    return re.sub(r"@([A-Z_]+)@", lambda m: values[m.group(1)], _ELEVATED)
+
+
+def checked_length(file: str, sha256: str) -> int | None:
+    """The file's length when its SHA-256 is `sha256`, None when it isn't: the length of the bytes
+    that were checked, read in the one pass that checks them."""
+    import hashlib
+    h, length = hashlib.sha256(), 0
+    with open(file, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            length += len(chunk)
+    return length if h.hexdigest() == sha256.lower() else None
+
+
+def run_script_elevated(script: str, timeout: float = 3600) -> int:
+    """Ask Windows (UAC) to run a script in its own PowerShell with administrator rights; its exit code."""
+    import base64
+    command = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return shell_execute(system_powershell(), "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + command,
+                         elevate=True, show=0, timeout=timeout)
+
+
+def system_powershell() -> str:
+    """Windows' own PowerShell, by its full path: what the UAC prompt then names. The folder is the
+    one Windows names (system_folder), never one the environment names (`SystemRoot`, `windir`):
+    the program that gets administrator rights is no value of the environment's."""
+    import ntpath
+    return ntpath.join(system_folder(), "WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+def system_folder() -> str:
+    """Windows' system folder (`C:\\Windows\\System32`), asked of Windows itself: GetSystemDirectoryW.
+    An OSError when Windows names none."""
+    import ctypes
+    from ctypes import wintypes
+    get = ctypes.windll.kernel32.GetSystemDirectoryW
+    get.argtypes, get.restype = [wintypes.LPWSTR, wintypes.UINT], wintypes.UINT
+    buf = ctypes.create_unicode_buffer(32768)
+    n = get(buf, len(buf))
+    if not n or n >= len(buf) or not buf.value:
+        raise ctypes.WinError()
+    return buf.value
+
+
+def run_elevated(file: str, sha256: str, args: str = "", msi: bool = False, timeout: float = 3600) -> int:
+    """Run a downloaded installer with administrator rights (R15.7.5): Windows asks (UAC) for a
+    script that copies the file to a folder only administrators can change, checks that the copy
+    is the file AppKata checked (`sha256`), and runs the copy, an `.msi` through msiexec. Returns
+    the installer's exit code, 1223 when the prompt was declined, CHANGED when the file is no
+    longer the one that was checked, NOT_STARTED when the copy couldn't be made or started.
+
+    The script is given the length of the checked bytes too, and copies no more: the file is read
+    here once more for it, and one that already isn't the checked file is refused before Windows asks."""
+    try:
+        length = checked_length(file, sha256)
+    except OSError:
+        return NOT_STARTED
+    if length is None:
+        return CHANGED
+    return run_script_elevated(elevated_script(file, sha256, length, args, msi), timeout)
 
 
 def run_hidden(cmd: list[str], **kw) -> subprocess.CompletedProcess:
