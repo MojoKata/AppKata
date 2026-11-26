@@ -782,7 +782,8 @@
     172,
     322,
     330,
-    451
+    451,
+    758
    ],
    "files": [
     "DEVELOP.md",
@@ -11741,6 +11742,23 @@
    "size": "small",
    "proof": "A test of a failed package install with a folder at the download's path: the install's own error is shown.",
    "note": "Found by #732's author round 1 (U04, 2026-11-25), latent, and filed by the coordinator."
+  },
+  {
+   "finding": 758,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/pkgbackend.py",
+    "tests/test_channels.py"
+   ],
+   "depends_on": [
+    327
+   ],
+   "related": [
+    754
+   ],
+   "size": "small",
+   "proof": "A test with dnf 4's refusal: the dry run is never rerun through pkexec on the download's path.",
+   "note": "Found by pr-review pass 2 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   }
  ],
  "shared_files": [
