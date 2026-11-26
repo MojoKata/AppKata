@@ -136,8 +136,11 @@ def packages(db: DB, mgr: str, distro_pkg: str, local: bool) -> None:
         try:
             install.uninstall(db, a["url"])
             ok("removing it with a desktop metapackage is refused", False, "it was removed")
-        except install.InstallError as e:
+        except pkgbackend.Refused as e:         # as a refusal, which the plan dialog shows, and no plain install error
             ok("removing it with a desktop metapackage is refused", "needs" in str(e).lower() or "metapackage" in str(e), e)
+        except install.InstallError as e:
+            ok("removing it with a desktop metapackage is refused", False, f"as a plain install error: {e}")
+        ok("and the package is still installed", bool(pkgbackend.installed_version("akdemo", mgr)))
         sh(f"{'apt-get remove -y -qq' if mgr == 'apt' else 'dnf -y -q remove --noautoremove'} {meta} >/dev/null")
         # a dependent package that isn't special: confirmation first
         dep = "akdemo-plugins"
