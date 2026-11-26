@@ -2442,6 +2442,8 @@ def fake_home(tmp_path, monkeypatch):
     # WirePlumber's configuration beside PipeWire's (P2C-1): the folder, since the file read is the instance's choice
     ("~/.config/wireplumber", True), ("~/.config/wireplumber/wireplumber.conf", True), ("~/.config/wireplumber/main.conf", True),
     ("~/.config/wireplumber/wireplumber.conf.d", True), ("~/.config/wireplumber-old", False), ("~/.local/state/wireplumber", False),
+    # Readline's file, where a key can be made to type a command (P2C-2)
+    ("~/.inputrc", True), ("~/.inputrc.bak", False), ("~/.input", False),
     ("~/go/src/proj", False), ("~/.config/swaylock", False), ("~/.bash_completion.bak", False), ("~/.cargo-target", False),
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
@@ -2554,7 +2556,8 @@ def test_the_command_links_folder_and_the_default_install_folder_are_never_share
 # test set one of the variables to anything but the default place. Each variable → the moved places
 # refused, and why; the default places stay refused beside them, since a desktop reads the default
 # wherever the variable isn't set for it.
-MOVED = {"XDG_CONFIG_HOME": "/home/kata/cfg", "XDG_DATA_HOME": "/home/kata/data", "GNUPGHOME": "/home/kata/keys/gnupg", "ZDOTDIR": "/home/kata/cfg/zsh"}
+MOVED = {"XDG_CONFIG_HOME": "/home/kata/cfg", "XDG_DATA_HOME": "/home/kata/data", "GNUPGHOME": "/home/kata/keys/gnupg", "ZDOTDIR": "/home/kata/cfg/zsh",
+         "INPUTRC": "/home/kata/rl/inputrc"}
 WM = "your window manager's configuration, which starts programs"
 MOVED_PROTECTED = {
     "~/cfg/autostart": "autostart entries", "~/cfg/autostart/x.desktop": "autostart entries", "~/cfg/systemd/user": "systemd user units",
@@ -2564,6 +2567,7 @@ MOVED_PROTECTED = {
     "~/cfg/menus/cinnamon-applications-merged": "your app menu's layout, which can add app-menu entries from any folder",
     "~/data/thumbnailers": "thumbnailers, which your file manager runs as it shows a folder",
     "~/cfg/wireplumber/wireplumber.conf": "WirePlumber's configuration, which can start programs",
+    "~/rl/inputrc": "your terminal's key bindings, which can type commands", "~/rl": "a folder above your terminal's key bindings, which can type commands", "~/.inputrc": "your terminal's key bindings, which can type commands",
     "~/cfg/google-chrome": "a folder above programs browser extensions may start", "~/cfg": "a folder above autostart entries",
     "~/data/applications": "app-menu entries", "~/data/systemd": "systemd user units", "~/data/dbus-1/services": "D-Bus service activation",
     "~/data/flatpak": "Flatpak's user installation", "~/data/gnome-shell/extensions": "GNOME Shell extensions",
@@ -2580,7 +2584,8 @@ MOVED_SECRET = {
     "~/cfg/google-chrome/Default": "a browser's profiles and saved logins", "~/cfg/goa-1.0": "your online accounts' sign-ins",
     "~/cfg/mozilla/firefox": "Firefox's profiles and saved logins",
     "~/.local/share/keyrings": "your keyring", "~/.config/gh": "your GitHub token", "~/.config/google-chrome/Default": "a browser's profiles and saved logins"}
-MOVED_SHARED = ["~/cfg-old", "~/data2/applications", "~/keys2", "~/Notes", "~/cfg/zsh/plugins", "~/cfg/obsidian", "~/data/fonts", "/media/usb"]
+MOVED_SHARED = ["~/cfg-old", "~/data2/applications", "~/keys2", "~/Notes", "~/cfg/zsh/plugins", "~/cfg/obsidian", "~/data/fonts", "/media/usb",
+                "~/rl2", "~/rl-old/inputrc"]
 
 
 def test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_it_and_at_its_default_place(a_users_home, monkeypatch):
@@ -2597,7 +2602,7 @@ def test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_
     for p in MOVED_SHARED:
         assert not sb.protected_folder(p) and not sb.secret_folder(p), p
     # a review's line: the never-shared ones refused in the chips, the picker and the launcher, the secrets by strip_secrets
-    asked = [p for p in MOVED_PROTECTED if p.startswith(("~/cfg", "~/data", "~/keys"))]
+    asked = [p for p in MOVED_PROTECTED if p.startswith(("~/cfg", "~/data", "~/keys", "~/rl"))]
     cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": ", ".join(asked + list(MOVED_SECRET)) + ", ~/Notes"})
     source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
     gs, secret = sb.strip_secrets(gs)
@@ -2618,7 +2623,7 @@ def test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_
         assert tool.count(root + " ") == 3, root
     # the lists are as they were with the variables unset, set to the default place, empty, or no full path
     for var, where in {"XDG_CONFIG_HOME": "/home/kata/.config", "XDG_DATA_HOME": "/home/kata/.local/share/", "GNUPGHOME": "/home/kata/.gnupg",
-                       "ZDOTDIR": "/home/kata"}.items():
+                       "ZDOTDIR": "/home/kata", "INPUTRC": "/home/kata/.inputrc"}.items():
         monkeypatch.setenv(var, where)
     assert (sb._protected_roots(), sb._secret_roots()) == before
     # (but AppKata's own data folder, which is where platform.data_dir() says, whatever it makes of the variable)
@@ -2641,7 +2646,7 @@ def test_the_startup_pass_writes_a_launcher_again_once_a_variable_moves_a_never_
     monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
     monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
     monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
-    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "GNUPGHOME", "ZDOTDIR"):
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "GNUPGHOME", "ZDOTDIR", "INPUTRC"):
         monkeypatch.delenv(var, raising=False)
     home, root = str(fake_home), fake_home / "bin" / "apps"
     target = root / "demo"
@@ -2654,13 +2659,15 @@ def test_the_startup_pass_writes_a_launcher_again_once_a_variable_moves_a_never_
     port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False)
     install._activate(rec, app, port, str(target))
     assert install.launcher_is_current(rec, app, port) and f"{home}/cfg/autostart" not in open(target / "run").read()
-    for var, where in (("XDG_CONFIG_HOME", f"{home}/cfg"), ("XDG_DATA_HOME", f"{home}/data"), ("GNUPGHOME", f"{home}/keys"), ("ZDOTDIR", f"{home}/zsh")):
+    for var, where in (("XDG_CONFIG_HOME", f"{home}/cfg"), ("XDG_DATA_HOME", f"{home}/data"), ("GNUPGHOME", f"{home}/keys"), ("ZDOTDIR", f"{home}/zsh"),
+                       ("INPUTRC", f"{home}/rl/inputrc")):
         monkeypatch.setenv(var, where)
         assert not install.launcher_is_current(rec, app, port), var
         install._activate(rec, app, port, str(target))
         assert install.launcher_is_current(rec, app, port)
     text = open(target / "run").read()
-    for moved in (f"{home}/cfg/autostart", f"{home}/data/applications", f"{home}/keys", f"{home}/zsh/.zshrc", f"{home}/.config/autostart"):
+    for moved in (f"{home}/cfg/autostart", f"{home}/data/applications", f"{home}/keys", f"{home}/zsh/.zshrc", f"{home}/rl/inputrc",
+                  f"{home}/.config/autostart"):
         assert moved + " " in text, moved
 
 
@@ -2808,7 +2815,9 @@ LATER = {"~/.local/share/cinnamon": "Cinnamon's applets, desklets, extensions an
          # P2B-1: a .thumbnailer file's command, which Nemo runs for a file of its kind in a folder it shows
          "~/.local/share/thumbnailers": "thumbnailers, which your file manager runs as it shows a folder",
          # P2C-1: WirePlumber's own file has PipeWire's list of programs to start
-         "~/.config/wireplumber": "WirePlumber's configuration, which can start programs", "~/.config/wireplumber/wireplumber.conf": "WirePlumber's configuration, which can start programs"}
+         "~/.config/wireplumber": "WirePlumber's configuration, which can start programs", "~/.config/wireplumber/wireplumber.conf": "WirePlumber's configuration, which can start programs",
+         # P2C-2: a key macro in Readline's file adds a command to the line the user wrote
+         "~/.inputrc": "your terminal's key bindings, which can type commands"}
 
 
 def test_a_review_cannot_grant_a_place_code_runs_from_later_and_the_user_cannot_pick_one(a_users_home):

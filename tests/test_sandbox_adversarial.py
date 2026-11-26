@@ -204,7 +204,9 @@ LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local
          "~/.local/./share/thumbnailers", "~/Notes/../.local/share/thumbnailers",
          # ...WirePlumber's configuration, which starts programs as PipeWire's does (P2C-1)
          "~/.config/wireplumber", "~/.config/wireplumber/", "~/.config/wireplumber/wireplumber.conf", "/home/kata/.config/wireplumber/main.conf",
-         "~/.config//wireplumber/wireplumber.conf.d/x.conf", "~/Notes/../.config/wireplumber"]
+         "~/.config//wireplumber/wireplumber.conf.d/x.conf", "~/Notes/../.config/wireplumber",
+         # ...and Readline's file, where a key can be made to type a command (P2C-2)
+         "~/.inputrc", "/home/kata/.inputrc", "~//.inputrc", "~/Notes/../.inputrc"]
 
 
 @pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])

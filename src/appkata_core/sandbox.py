@@ -684,6 +684,10 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
         # default: its user file, and the one its profile script reads first (CR1.5-9)
         ".bash_completion", ".config/bash_completion",
         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".config/fish", ".kshrc", ".cshrc", ".tcshrc")]
+    # Readline's file, which every interactive bash reads (and python, gdb, psql): a key bound there
+    # to a macro types what the macro says, so Enter can be made to add a command to the line the
+    # user wrote and run both (pr-review pass 2 of #735, P2C-2)
+    roots.append((h(".inputrc"), "your terminal's key bindings, which can type commands"))
     # ~/.xinputrc: im-config's Xsession hook sources it as the session starts, on the Debian family;
     # ~/.gnomerc: cinnamon-session's own hook sources it at every Cinnamon X11 login, in the same
     # run of Xsession that sources ~/.xsessionrc; ~/.Xsession: Xsession's other name for the user's
@@ -700,7 +704,8 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     # folder under ~/.config (named one by one: the match is on exact roots, not patterns)
     roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in _CHROMIUM_FAMILY]
     # ...and where the environment moves them (CR1.5-17): the folders of the XDG variables, the keys
-    # in $GNUPGHOME and zsh's startup files in $ZDOTDIR. AppKata's own areas, first in the list, are
+    # in $GNUPGHOME, zsh's startup files in $ZDOTDIR and Readline's file where $INPUTRC names it
+    # (P2C-2). AppKata's own areas, first in the list, are
     # where they are (the data folder follows XDG_DATA_HOME by itself, platform.data_dir). A
     # $GNUPGHOME that is the home folder or above it adds nothing, as with `own`'s folders.
     roots = roots[:areas] + _moved(roots[areas:], home)
@@ -708,6 +713,8 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
         roots.append((os.path.normpath(keys), "GPG keys"))
     if os.path.isabs(zsh := os.environ.get("ZDOTDIR") or ""):
         roots += [(os.path.join(os.path.normpath(zsh), f), "your shell's startup files") for f in (".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout")]
+    if os.path.isabs(rc := os.environ.get("INPUTRC") or ""):
+        roots.append((os.path.normpath(rc), "your terminal's key bindings, which can type commands"))
     return list(dict.fromkeys(roots))
 
 

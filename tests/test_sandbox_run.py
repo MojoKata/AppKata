@@ -2723,6 +2723,34 @@ except subprocess.TimeoutExpired:
 time.sleep(0.5)
 print("read" if os.path.exists(home + "/ran") else "not read")
 """),
+    # Readline, in an interactive bash on a terminal of its own: Enter bound to a macro that adds a
+    # command to the line and accepts it, then `true` typed and Enter pressed (P2C-2)
+    "~/.inputrc": ("Readline (bash)", r"""
+import os, pty, select, sys, time
+if not os.path.exists("/bin/bash"):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+with open(sys.argv[1], "w") as f:
+    f.write('"\\C-m": "\\C-e; echo ran > %s/ran\\C-j"\n' % home)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv("/bin/bash", ["bash", "--norc", "--noprofile", "-i"])
+seen = []
+def wait(until, seconds):
+    end = time.time() + seconds
+    while time.time() < end and not until():
+        if select.select([fd], [], [], 0.1)[0]:
+            try:
+                seen.append(os.read(fd, 4096))
+            except OSError:
+                break
+wait(lambda: seen, 10)                     # its prompt
+os.write(fd, b"true\r")
+wait(lambda: os.path.exists(home + "/ran"), 5)
+os.write(fd, b"\x04")
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
 }
 
 
