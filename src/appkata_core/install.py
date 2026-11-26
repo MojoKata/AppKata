@@ -1624,7 +1624,7 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         elif keep:
             pass
         elif os.path.exists(file):
-            os.remove(file)                     # complete but bad (checksum, install): don't resume it
+            _drop(file)                         # complete but bad (checksum, install): don't resume it
 
 
 def kept_versions(db: DB, url: str) -> list[str]:
@@ -2053,7 +2053,18 @@ def install_msvcrt() -> str:
         return meaning
     finally:
         if os.path.exists(file):
-            os.remove(file)
+            _drop(file)
+
+
+def _drop(file: str) -> None:
+    """Remove a download that is not to be used again. One that can't be removed (a folder is at
+    its path, or Windows holds the file for another program) stays and is logged: this runs as an
+    install ends, and what the install itself says, its error or that it is done, is what the user
+    is told. A failure here took its place."""
+    try:
+        os.remove(file)
+    except OSError as e:
+        log.warning("couldn't remove the download %s: %s", file, e)
 
 
 def _remove_portable_windows(rec: dict, name: str) -> None:

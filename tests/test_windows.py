@@ -643,6 +643,75 @@ def test_the_visual_cpp_runtime_is_started_by_the_same_script_held_to_the_file_w
         install.install_msvcrt()
 
 
+# How it slipped past (found answering pass 3's P3-4): every test of an install that fails left a
+# file at the download's path that could be removed, so nothing asked what the user is told when it
+# can't be. The removal runs as the install's own error is on its way out, and its failure took
+# that error's place: "[Errno 21] Is a directory", or Windows' own words for a file another program
+# holds, where the install's reason should be. The class is a cleanup step that can fail in an
+# install's last lines; the two that remove a download are held here.
+@pytest.mark.parametrize("in_the_way", ["a folder at its path", "a file that can't be removed"])
+def test_a_download_that_cant_be_removed_takes_nothing_from_what_the_install_says(installer_road, env, server, tmp_path, monkeypatch, caplog, in_the_way):
+    import hashlib
+    import logging
+    from appkata_core import install
+    caplog.set_level(logging.WARNING, logger="appkata.install")
+    remove = os.remove
+
+    def block(path):
+        """After this, the download at `path` can't be removed: as a folder, or as Windows refuses a file that is held."""
+        if in_the_way == "a folder at its path":
+            remove(path)
+            os.mkdir(path)
+        else:
+            def held(p, *a, **k):
+                if p == path:
+                    raise PermissionError(13, "held by another program", p)
+                remove(p, *a, **k)
+            monkeypatch.setattr(os, "remove", held)
+
+    # an installer that fails: the install says why, whatever becomes of the file it ran
+    root, base = server
+    (root / "setup.exe").write_bytes(b"MZ")
+    a = Asset("setup.exe", f"{base}/setup.exe", 2)
+    start = w.shell_execute
+    monkeypatch.setattr(w, "shell_execute", lambda program, args="", **how: (start(program, args, **how), block(program))[0])
+    installer_road["code"] = 1603
+    with pytest.raises(install.InstallError, match="^the installer exited with code 1603$"):
+        install.install(env, {**APP, "installVersion": "1.0", "exeKind": "inno"}, a, "exe", [a],
+                        portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="me"))
+    file = os.path.join(install.downloads_dir(), "demo-tool", "setup.exe")
+    assert not env.one("SELECT 1 FROM installs") and f"couldn't remove the download {file}: " in caplog.text
+    monkeypatch.setattr(os, "remove", remove)
+    monkeypatch.setattr(w, "shell_execute", start)
+
+    # the Visual C++ run-time: installed is installed, and a refusal is said as it is
+    data = b"MZ, vc_redist as Microsoft published it"
+    file = os.path.join(install.downloads_dir(), "vc_redist.x64.exe")
+
+    def download(url, dest, *a, **k):
+        if os.path.isdir(dest):
+            os.rmdir(dest)
+        with open(dest, "wb") as f:
+            f.write(data)
+        block(dest)
+        return hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(install, "download", download)
+    monkeypatch.setattr(w, "authenticode", lambda path: ("Valid", "Microsoft Corporation"))
+    monkeypatch.setattr(w, "msvcrt_installed", lambda: "14.40")
+    monkeypatch.setattr(w, "run_elevated", lambda file, sha256, args="", **how: installer_road["code"])
+    for code, said in ((0, "ok"), (w.CHANGED, "the downloaded file changed after AppKata checked it; nothing was installed")):
+        installer_road["code"] = code
+        caplog.clear()
+        if code:
+            with pytest.raises(install.InstallError) as e:
+                install.install_msvcrt()
+            assert str(e.value) == said
+        else:
+            assert install.install_msvcrt() == said
+        assert f"couldn't remove the download {file}: " in caplog.text
+        monkeypatch.setattr(os, "remove", remove)
+
+
 def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_folder_of_its_own(tmp_path):
     """The script that runs with administrator rights. On any system, what its text must hold to,
     since it runs with nothing to rely on but Windows' own files. On Windows itself (the test VM's
