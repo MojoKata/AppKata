@@ -1,7 +1,0 @@
-# Batch 1 of the relay for CR1's unit U05
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U05. The unit's High finding #380 first, as the owner decided it: the system places join R17.3.1's never-shared list. #381 is fixed by the same list (a command-line tool's working directory, R17.3.3), and #189 is R17.3.3's own text, which repeats that list. The same functions of sandbox.py (_protected_roots, protected_folder, the cli-tool's baked list) and the cli-tool golden. Tier 2 for #380 and #381.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#380  medium CR1.5-5 The never-shared check refuses nothing outside the home and runtime folder, so a review can grant /proc, the Docker socket or /etc.
-#381  medium CR1.5-6 A command-line tool run from /tmp, /dev/shm or another system folder gets that whole folder read-write over the sandbox's own.
-#189  small  CR1.11-74 The cli-tool rule repeats the never-shared folder list and leaves out the shell and session startup files.

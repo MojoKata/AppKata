@@ -1,6 +1,0 @@
-# Batch 6 of the relay for CR1's unit U05
-# Added by the coordinator after batch 3 (2026-11-25): batch 3's new High finding, which #665's fix leaves open. It closes before #665 does.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#743  medium  CR1.5-53 A launcher written again takes a link an app planted for the folder it now leads to, so an app reaches folders it was never granted.
-#759  medium  CR1.5-55 The file-argument helper follows a link an app made in a folder it could once write, once the app is no longer shown that folder. (Added by the coordinator after batch 5: found by batch 5; High; the same class as #743. Its remedy waits on the owner's answer: take #743 first.)

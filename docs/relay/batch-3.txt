@@ -1,7 +1,0 @@
-# Batch 3 of the relay for CR1's unit U05
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U05. Where a grant's path really leads: the High #665 (a grant's source checked in the launcher's shell at each launch, against the physical path baked when it was written; it counts double: a planted run in tier 2), #391 (a grant shown and bound at its normalized path) and #401 (a NUL or another control character in a review's path). #391 and #401 change the same parser, parse_folders.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#665  medium CR1.5-40 A Standard app can replace a folder above a nested folder grant with links, so its next launch mounts a never-shared folder such as ~/.ssh.
-#391  small  CR1.5-16 A folder grant is shown as written, so a grant of ~/Documents/../.config reads as a folder under Documents.
-#401  small  CR1.5-26 A NUL character in a review's sandbox folder path makes the sandbox checks raise, blocking install of every app the review covers.

@@ -1,8 +1,0 @@
-# Batch 2 of the relay for CR1's unit U05
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U05. The file-argument helper that hands a tool's file arguments to the document portal: #651 first (the never-shared list wins over an argument, as the owner decided), then the High #379, whose second part is #651's change, then #390 (a bare word, as decided) and #666 (a link outside every grant). The same helper functions (hand, export), R17.6.2 and the five launcher goldens. Tier 2 with the real document portal for each. The brief says what list the helper gets if the coordinator hasn't.
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#651  medium CR1.5-38 A sandboxed tool given `.` or a path in a never-shared folder gets it read-write through the portal, such as the home folder with `~/.ssh`.
-#379  medium CR1.5-4 The file-argument helper hands an app the target of a link it planted in its own writable folder, so it can reach any user file.
-#390  medium CR1.5-15 The file-argument helper exports subcommand words that name a folder, and passes a relative path that leaves a tool's folder unchanged.
-#666  medium CR1.5-41 A file argument that is a link to a file outside every grant reaches a Standard app under the link's name, a path that doesn't exist.
