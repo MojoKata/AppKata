@@ -1007,7 +1007,7 @@ def test_a_tool_run_in_a_system_place_is_not_given_it_and_says_why(tmp_path, mon
             f"({', '.join(sb.SYSTEM_PLACES)}), or in or above one, and those are never shared.\n"
             "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). "
             "A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home "
-            "(your keys, your startup files, AppKata's own).\n") in r.stderr, r.stderr
+            "(your keys, your startup files, AppKata's own) or named through a link.\n") in r.stderr, r.stderr
     assert "can't see" not in r.stderr, r.stderr
 
 
@@ -3431,6 +3431,41 @@ def _handed(tmp_path, cwd, args, visible=(), incwd="", never=(), sockets=(), hom
     return forwarded_words("".join(l + "\n" for l in lines if l[0] == "=")), [l[1:] for l in lines if l[0] == "!"], calls
 
 
+def _through_a_link(arg, link, real) -> str:
+    """What the helper has the launcher say of an argument it didn't follow through `link`, which
+    leads to `real` (R17.6.2)."""
+    return f"runs sandboxed and isn't handed {arg}: {link} is a link, and a file argument is never followed through one (give {real} instead)."
+
+
+def _the_helper_where(tmp_path, owners: dict, locked=()) -> str:
+    """The file-argument helper as it runs on a machine where each link of `owners` is that user's
+    ({path: uid}) and each folder of `locked` is not the user's to change: no test can make a
+    link root's, or a folder of its own someone else's, so the two answers the helper asks the
+    system for (a link's owner, whether its folder can be written) are given here, and the
+    helper's own text does the rest."""
+    helper, there = tmp_path / "forward-files.py", tmp_path / "forward-files-there.py"
+    helper.write_text(sb.FORWARD_HELPER)
+    there.write_text(f"""import os, runpy
+OWNERS, LOCKED = {dict((str(k), v) for k, v in owners.items())!r}, {sorted(map(str, locked))!r}
+lstat, access = os.lstat, os.access
+
+
+def _lstat(path, *a, **k):
+    st = lstat(path, *a, **k)
+    uid = OWNERS.get(os.fspath(path))
+    return st if uid is None else os.stat_result(tuple(st)[:4] + (uid,) + tuple(st)[5:])
+
+
+def _access(path, mode, *a, **k):
+    return False if mode == os.W_OK and os.fspath(path) in LOCKED else access(path, mode, *a, **k)
+
+
+os.lstat, os.access = _lstat, _access
+runpy.run_path({str(helper)!r}, run_name="__main__")
+""")
+    return there
+
+
 def forwarded_words(answer: str) -> list[str]:
     """The file-argument helper's answer, read by its own rules: an argument a line, "=" first, a
     backslash doubled and a line break as a backslash and n (CR1.5-31: it is data, no longer shell)."""
@@ -3441,9 +3476,10 @@ def forwarded_words(answer: str) -> list[str]:
 
 def test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees(tmp_path):
     # Review 2, F6: a relative path or `.` from a granted folder reached the app's private home (its
-    # working directory inside); review 3, R3-17: a link outside the granted folders to a file inside
-    # one was passed by the link's path, which the app can't see; R3-16: an option's value was never
-    # looked at. None of these needs the document portal: the app finds them under the grant's mount.
+    # working directory inside); R3-16: an option's value was never looked at. Neither needs the
+    # document portal: the app finds them under the grant's mount. Review 3, R3-17 had a link outside
+    # the granted folders to a file inside one become the file's path; since CR1.5-55 no link is
+    # followed for an app, and such an argument passes as typed, with the path to give instead.
     home = tmp_path / "home"
     docs, desk = home / "Docs", home / "Desktop"
     (docs / "sub").mkdir(parents=True)
@@ -3454,9 +3490,11 @@ def test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees(tmp_pat
     want = str(docs / "in.txt")
     assert _forward(tmp_path, docs, "", [docs], ["in.txt", "./in.txt", ".", "sub/"]) == [want, want, str(docs), str(docs / "sub") + "/"]
     assert _forward(tmp_path, docs / "sub", "", [docs], ["../in.txt"]) == [want]
-    assert _forward(tmp_path, home, "", [docs], [str(desk / "link.txt"), str(home / "docs-link" / "in.txt")]) == [want, want]
-    assert _forward(tmp_path, home, "", [docs], ["--file=" + str(desk / "link.txt"), "-o" + str(desk / "link.txt")]) == \
-        ["--file=" + want, "-o" + want]
+    linked = [str(desk / "link.txt"), str(home / "docs-link" / "in.txt"), "--file=" + str(desk / "link.txt"), "-o" + str(desk / "link.txt")]
+    words, said, calls = _handed(tmp_path, home, linked, visible=[docs])
+    assert words == linked and calls == [], (words, calls)
+    assert said == [_through_a_link(desk / "link.txt", desk / "link.txt", want), _through_a_link(home / "docs-link" / "in.txt", home / "docs-link", want)], said
+    assert _forward(tmp_path, home, "", [docs], ["Docs/in.txt", "--file=Docs/in.txt", "-o" + want]) == [want, "--file=" + want, "-o" + want]
     # unchanged: already the app's path (as a path, a URI, with a trailing slash), not a file, not there
     same = [want, "file://" + want, str(docs / "sub") + "/", "https://example.org/x", str(home / "nothing.txt"), "-v", "--level=3"]
     assert _forward(tmp_path, home, "", [docs], same) == same
@@ -3469,6 +3507,10 @@ def test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_o
     # the folder whole). A link in a folder the app is shown is the app's to make: the argument is
     # passed as its own path there, where the link dangles, and the portal is asked nothing. How it
     # slipped past: the tests had the other direction alone (R3-17, a link outside to a file inside).
+    # Since CR1.5-55 no link is followed for an app, wherever it lies and wherever it leads: what
+    # this test holds is the same, a planted link never hands over what it leads to, and an argument
+    # that is not the app's own path as typed now passes as typed too, with a line, where it had
+    # become its path in the granted folder.
     home = tmp_path / "home"
     docs, media, private, desk = home / "Docs", home / "Media", home / "private", home / "Desktop"
     for d in (docs / "sub", media, private / "deep", desk):
@@ -3490,51 +3532,176 @@ def test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_o
                 str(docs / "chain"), "--file=" + str(docs / "report.md"), "-o" + str(docs / "Photos" / "taxes.txt"),
                 str(docs / "Photos" / ".." / "private" / "taxes.txt")]
     words, said, calls = _handed(tmp_path, home, as_typed, visible=[docs, media], home=home)
-    assert words == as_typed and calls == [] and said == [], (words, calls, said)
-    # named another way, it becomes its own path in the granted folder, the link not followed
-    words, said, calls = _handed(tmp_path, home, ["Docs/report.md", str(home / "docs-link" / "Photos" / "taxes.txt"), str(desk / "shortcut")],
-                                 visible=[docs, media], home=home)
-    assert words == [str(docs / "report.md"), str(docs / "Photos" / "taxes.txt"), str(docs / "report.md")] and calls == [], (words, calls)
+    assert words == as_typed and calls == [], (words, calls, said)
+    # each is the app's own path as typed, and said nothing of, but the one with a ".." in it, which is read by no text
+    taxes = private / "taxes.txt"
+    assert said == [_through_a_link(as_typed[-1], docs / "Photos", taxes)], said
+    # named another way, it is not followed either, and is said
+    other = ["Docs/report.md", str(home / "docs-link" / "Photos" / "taxes.txt"), str(desk / "shortcut")]
+    words, said, calls = _handed(tmp_path, home, other, visible=[docs, media], home=home)
+    assert words == other and calls == [], (words, calls)
+    assert said == [_through_a_link(other[0], docs / "report.md", taxes), _through_a_link(other[1], home / "docs-link", taxes),
+                    _through_a_link(other[2], desk / "shortcut", taxes)], said
     # ...in a command-line tool's shared folder too, where a relative path stays as typed
     typed = ["report.md", "./rel.md", "Photos/taxes.txt", "Photos"]
     words, said, calls = _handed(tmp_path, docs, typed + [str(docs / "report.md")], visible=[docs], incwd=str(docs), home=home)
-    assert words == typed + [str(docs / "report.md")] and calls == [], (words, calls)
-    # ...and where the folder is granted through a link (/home on Silverblue), by the grant's own path
+    assert words == typed + [str(docs / "report.md")] and calls == [] and said == [], (words, calls, said)
+    # ...and where the folder is granted through the user's own link (~/Documents kept on another
+    # disk): by the grant's own path a file opens as before, links and all, and nothing is said; by
+    # the path the link leads to, a file becomes the grant's, and the planted link is not followed
     (tmp_path / "homes").symlink_to(tmp_path)
     written = tmp_path / "homes" / "home" / "Docs"
-    words, said, calls = _handed(tmp_path, home, [str(docs / "report.md"), str(written / "Photos")], visible=[written], home=home)
-    assert words == [str(written / "report.md"), str(written / "Photos")] and calls == [], (words, calls)
-    # As before: a link that stays in the granted folders is the file's path there, whichever folder
-    # the link is in (R3-17), and with no grant of the folder the link is the user's own, followed
-    words, said, calls = _handed(tmp_path, home, [str(docs / "song"), str(docs / "self"), str(desk / "good")], visible=[docs, media], home=home)
-    assert words == [str(media / "song.ogg"), str(docs / "in.txt"), str(docs / "in.txt")] and calls == [], (words, calls)
-    words, said, calls = _handed(tmp_path, home, [str(docs / "report.md"), str(docs / "Photos")], visible=[media], home=home)
-    doc = str(tmp_path / "run" / "doc" / "DOC") + "/"
-    assert all(w.startswith(doc) for w in words) and [c[2] for c in calls if c[2]] == [[str(private / "taxes.txt")], [str(private)]], (words, calls)
+    through = [str(written / "in.txt"), str(written / "report.md"), str(written / "Photos"), "file://" + str(written / "sub") + "/"]
+    words, said, calls = _handed(tmp_path, home, through + [str(docs / "in.txt"), str(docs / "report.md")], visible=[written], home=home)
+    assert words == through + [str(written / "in.txt"), str(docs / "report.md")] and calls == [], (words, calls)
+    assert said == [_through_a_link(docs / "report.md", docs / "report.md", taxes)], said
+    # A link that stays in the granted folders is the app's to follow where the argument is its own
+    # path; the user's link from outside to a file inside (R3-17) is followed no more
+    stays = [str(docs / "song"), str(docs / "self"), str(desk / "good")]
+    words, said, calls = _handed(tmp_path, home, stays, visible=[docs, media], home=home)
+    assert words == stays and calls == [] and said == [_through_a_link(desk / "good", desk / "good", docs / "in.txt")], (words, calls, said)
+    # And with no grant of the folder now (CR1.5-55: one the app could write once, a grant taken
+    # away since), where the link was taken for the user's own and followed: nothing is handed over
+    once = [str(docs / "report.md"), str(docs / "Photos"), str(docs / "Photos" / "deep" / "file")]
+    words, said, calls = _handed(tmp_path, home, once, visible=[media], home=home)
+    assert words == once and calls == [], (words, calls)
+    assert said == [_through_a_link(once[0], docs / "report.md", taxes), _through_a_link(once[1], docs / "Photos", private),
+                    _through_a_link(once[2], docs / "Photos", private / "deep" / "file")], said
 
 
-def test_a_link_to_a_file_outside_every_grant_is_handed_over_under_the_files_own_name(tmp_path):
-    # CR1.5-41: the document portal names a document after the file its descriptor reaches (shown
-    # with the real one, tests/test_sandbox_run.py), and the helper named the path it handed after
-    # the argument, so a link reached the app as a path that isn't there. A linked folder was named
-    # rightly already. How it slipped past: the hand-over tests passed regular files alone.
+# CR1.5-55 (#759), the owner's decision of 2026-11-25: a file argument is never followed through a
+# link. CR1.5-4 and CR1.5-52 kept the helper from following a link out of a folder the app is shown
+# now, or holds through the portal now; a link stays on the disk longer than that. A tool run once
+# in ~/src/proj left a link to ~/Documents/taxes.txt where README.md was, and `tool
+# ~/src/proj/README.md`, run from the home folder, was handed taxes.txt, read-write; an app handed
+# ~/work did the same through the portal, and was handed the target after the next login. How it
+# slipped past: each fix asked "is the link in a folder the app has", and the tests beside them held
+# a link in a folder it has no more to be the user's own ("with no grant of the folder the link is
+# the user's own, followed"). The rule is asked of the link alone now, wherever it lies.
+def test_a_file_argument_is_followed_through_no_link_but_one_only_root_can_have_put_there(tmp_path):
     home = tmp_path / "home"
-    sync = home / "sync"
-    (sync / "project").mkdir(parents=True)
-    for f in (sync / "notes-2024.txt", sync / "plain.txt"):
+    sync, proj, docs = home / "sync", home / "src" / "proj", home / "Documents"
+    for d in (sync / "project", proj / "sub", docs / "deep", home / "elsewhere"):
+        d.mkdir(parents=True)
+    for f in (sync / "notes-2024.txt", sync / "plain.txt", docs / "taxes.txt", docs / "deep" / "file", proj / "main.c", proj / "sub" / "own.txt"):
         f.write_text("x")
+    taxes, doc = docs / "taxes.txt", str(tmp_path / "run" / "doc" / "DOC")
+    # What a tool left in the folder it was run in once: a link where its file was, to a file and
+    # to a folder, by a full path and a relative one, a link to a link, a link in a folder below
+    (proj / "README.md").symlink_to(taxes)
+    (proj / "rel.md").symlink_to("../../Documents/taxes.txt")
+    (proj / "all").symlink_to(docs)
+    (proj / "hop").symlink_to("README.md")
+    (proj / "sub" / "up").symlink_to("../../../Documents")
+    (proj / "own").symlink_to("sub/own.txt")                             # ...and one that stays in the folder
+    planted = {str(proj / "README.md"): (proj / "README.md", taxes),
+               str(proj / "rel.md"): (proj / "rel.md", taxes),
+               str(proj / "all"): (proj / "all", docs),
+               str(proj / "all") + "/": (proj / "all", docs),
+               str(proj / "all" / "taxes.txt"): (proj / "all", taxes),
+               str(proj / "all" / "deep" / "file"): (proj / "all", docs / "deep" / "file"),
+               str(proj / "hop"): (proj / "hop", taxes),
+               str(proj / "sub" / "up" / "taxes.txt"): (proj / "sub" / "up", taxes),
+               str(proj / "own"): (proj / "own", proj / "sub" / "own.txt"),
+               "src/proj/README.md": (proj / "README.md", taxes),
+               "./src/proj/all/taxes.txt": (proj / "all", taxes),
+               "src/proj/sub/../README.md": (proj / "README.md", taxes)}
+    forms = list(planted) + ["file://" + str(proj / "README.md"), "--file=" + str(proj / "README.md"), "-o" + str(proj / "all" / "taxes.txt"),
+                             "--dir=src/proj/all"]
+    lines = [_through_a_link(arg, link, real) for arg, (link, real) in planted.items()] + [_through_a_link("src/proj/all", proj / "all", docs)]
+    # run from the home folder, from another folder the tool is given (its shared one), with a
+    # folder granted, with the file the link leads to in a granted folder, with the folder held
+    # through the portal by another name: nothing is handed over, nothing becomes another path
+    for where in ({}, {"visible": [home / "elsewhere"]}, {"visible": [docs]}, {"held": {"D7": str(home / "elsewhere")}}):
+        words, said, calls = _handed(tmp_path, home, forms, home=home, **where)
+        assert words == forms and calls == [] and said == lines, (where, words, calls, said)
+    relative = {"../src/proj/README.md": (proj / "README.md", taxes), "../src/proj/all/taxes.txt": (proj / "all", taxes),
+                "../src/proj/hop": (proj / "hop", taxes), "../src/proj/all": (proj / "all", docs)}
+    typed = forms + list(relative) + ["--file=../src/proj/hop"]
+    words, said, calls = _handed(tmp_path, home / "elsewhere", typed, visible=[home / "elsewhere"], incwd=str(home / "elsewhere"), home=home)
+    assert words == typed and calls == [], (words, calls)
+    assert said == lines[:9] + [_through_a_link(arg, link, real) for arg, (link, real) in relative.items()], said
+    # ...while the files beside them are handed over as before, a folder too
+    words, said, calls = _handed(tmp_path, home, [str(proj / "main.c"), "src/proj/sub/own.txt", str(proj / "sub")], home=home)
+    assert words == [f"{doc}/main.c", f"{doc}/own.txt", f"{doc}/sub"] and said == [], (words, said)
+    assert [c[2] for c in calls if c[2]] == [[str(proj / "main.c")], [str(proj / "sub" / "own.txt")], [str(proj / "sub")]], calls
+
+    # The user's own links are followed no more either (the cost the decision takes): a file kept
+    # elsewhere and linked into the home, by a full path, a relative one, a URI, an option's value,
+    # a link to a link, a linked folder. Each is said once, with the path to give instead.
     (home / "notes.txt").symlink_to(sync / "notes-2024.txt")
     (home / "rel-notes.txt").symlink_to("sync/notes-2024.txt")
     (home / "first").symlink_to("notes.txt")                               # a link to a link
     (home / "proj-link").symlink_to(sync / "project")
-    doc = str(tmp_path / "run" / "doc" / "DOC")
+    notes = sync / "notes-2024.txt"
     args = [str(home / "notes.txt"), "rel-notes.txt", "file://" + str(home / "notes.txt"), "--file=first", str(sync / "plain.txt"),
             str(home / "proj-link"), "proj-link/"]
     words, said, calls = _handed(tmp_path, home, args, home=home)
-    assert words == [f"{doc}/notes-2024.txt", f"{doc}/notes-2024.txt", f"file://{doc}/notes-2024.txt", f"--file={doc}/notes-2024.txt",
-                     f"{doc}/plain.txt", f"{doc}/project", f"{doc}/project/"], words
-    # (the folder named a second time is the app's by then, CR1.5-52: the same path, and no second hand-over)
-    assert [c[2] for c in calls if c[2]] == [[str(sync / "notes-2024.txt")]] * 4 + [[str(sync / "plain.txt")]] + [[str(sync / "project")]], calls
+    assert words == args[:4] + [f"{doc}/plain.txt"] + args[5:], words
+    assert said == [_through_a_link(home / "notes.txt", home / "notes.txt", notes), _through_a_link("rel-notes.txt", home / "rel-notes.txt", notes),
+                    _through_a_link("first", home / "first", notes), _through_a_link(home / "proj-link", home / "proj-link", sync / "project"),
+                    _through_a_link("proj-link/", home / "proj-link", sync / "project")], said
+    assert [c[2] for c in calls if c[2]] == [[str(sync / "plain.txt")]], calls
+    # ...and the path each line gives is handed over
+    words, said, calls = _handed(tmp_path, home, [str(notes), str(sync / "project")], home=home)
+    assert words == [f"{doc}/notes-2024.txt", f"{doc}/project"] and said == [], (words, said)
+
+    # A link only root can have put there is no app's, and is followed: root's own, in a folder the
+    # user can't change (a system's /home -> /var/home, /bin -> usr/bin). What is handed over is the
+    # file it leads to, by that file's own name (CR1.5-41: the portal names a document after the
+    # file its descriptor reaches, and the link's name was a path that isn't there).
+    roots = {home / "notes.txt": 0, home / "first": 0, home / "proj-link": 0}
+    system = [str(home / "notes.txt"), "rel-notes.txt", "--file=first", "file://" + str(home / "first"), str(home / "proj-link"), "proj-link/"]
+    words, said, calls = _handed(tmp_path, home, system, home=home, helper=_the_helper_where(tmp_path, roots, locked=[home]))
+    assert words == [f"{doc}/notes-2024.txt", "rel-notes.txt", f"--file={doc}/notes-2024.txt", f"file://{doc}/notes-2024.txt", f"{doc}/project",
+                     f"{doc}/project/"], words
+    assert said == [_through_a_link("rel-notes.txt", home / "rel-notes.txt", notes)], said          # the user's own, beside them
+    assert [c[2] for c in calls if c[2]] == [[str(notes)]] * 3 + [[str(sync / "project")]], calls
+    # ...as the system's own are, asked of the system itself: /etc/os-release, a link on the systems AppKata runs on, and /bin/sh
+    there = [os.path.realpath("/etc/os-release"), os.path.realpath("/bin/sh")]
+    words, said, calls = _handed(tmp_path, home, ["/etc/os-release", "file:///bin/sh"], home=home)
+    assert words == [f"{doc}/{os.path.basename(there[0])}", f"file://{doc}/{os.path.basename(there[1])}"] and said == [], (words, said)
+    assert [c[2] for c in calls if c[2]] == [[there[0]], [there[1]]], calls
+    # ...root's own in a folder the user can change is anyone's to move there, and another user's link is no better
+    for owners, locked in ((roots, []), ({link: 4242 for link in roots}, [home]), ({home / "first": 0}, [home])):
+        words, said, calls = _handed(tmp_path, home, system, home=home, helper=_the_helper_where(tmp_path, owners, locked))
+        assert words == system and calls == [] and len(said) == 6, (owners, locked, words, calls, said)        # each said, by its own words
+    # ...and the process's own descriptors, which lead through the kernel's links in /proc, pass as
+    # typed with no line: the app has its own, and a tool's `-o /dev/stdout` is no file argument
+    own = ["/dev/stdout", "/dev/stderr", "/proc/self/fd/1", "-o/dev/stdout", "--log=/dev/stderr", "/dev/fd/1", "/dev/null"]
+    words, said, calls = _handed(tmp_path, home, own, home=home)
+    assert words == own and calls == [] and said == [], (words, calls, said)
+    # ...and a never-shared place is said as that, never as a path to give, whoever made the link
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id").write_text("KEY")
+    (home / "key").symlink_to(home / ".ssh" / "id")
+    for helper in (None, _the_helper_where(tmp_path, {home / "key": 0}, locked=[home])):
+        words, said, calls = _handed(tmp_path, home, [str(home / "key")], never=[home / ".ssh"], home=home, helper=helper)
+        assert words == [str(home / "key")] and calls == [], (words, calls)
+        assert said == [f"runs sandboxed and isn't handed {home}/key: {home}/.ssh is never shared with a sandboxed app."], said
+
+
+@pytest.mark.parametrize("template", ["cli-tool", "standard"])
+def test_the_launcher_says_why_an_argument_through_a_link_is_not_handed_over(tmp_path, monkeypatch, template):
+    # CR1.5-55, the finding's own road through the launcher's own lines: a tool run once in
+    # ~/src/proj left a link there; `tool ~/src/proj/README.md ~/src/proj/main.c`, run from another
+    # folder, reaches the program with the first argument as typed, the portal is given the second
+    # file alone, and the launcher says why after the app's name.
+    home = tmp_path / "home"
+    proj, taxes = home / "src" / "proj", home / "Documents" / "taxes.txt"
+    for d in (proj, taxes.parent, home / "other"):
+        d.mkdir(parents=True)
+    taxes.write_text("TAXES")
+    (proj / "main.c").write_text("x")
+    (proj / "README.md").symlink_to(taxes)
+    (tmp_path / "forward-files.py").write_text(sb.FORWARD_HELPER)
+    args = [str(proj / "README.md"), "--readme=" + str(proj / "README.md"), str(proj / "main.c")]
+    proxy, app, r, rt = _launched(tmp_path, monkeypatch, "unix:path={rt}/bus", template=template, forward=str(tmp_path / "forward-files.py"),
+                                  tools={"python3": _a_python3_with_the_stand_in_portal(tmp_path)}, args=args, cwd=home / "other")
+    calls = [json.loads(line) for line in (tmp_path / "portal.log").read_text().splitlines()]
+    assert r.returncode == 0 and app[-3:] == args[:2] + [str(rt / "doc" / "DOC" / "main.c")], (app[-4:], r.stderr)
+    assert [c[2] for c in calls if c[2]] == [[str(proj / "main.c")]], calls
+    assert r.stderr.splitlines().count("Demo " + _through_a_link(proj / "README.md", proj / "README.md", taxes)) == 1, r.stderr
 
 
 def test_a_grant_reached_through_a_linked_home_maps_to_where_the_launcher_mounts_it(tmp_path):
@@ -3766,6 +3933,9 @@ def test_a_link_in_a_folder_the_app_was_handed_is_never_followed_out_of_it(tmp_p
     # followed, and its target handed over, read-write. How it slipped past: #379's test made the
     # helper's rule for the folders it is told of, and the folders the portal knows of were never
     # among them; nothing ran two starts of one app. The helper asks the portal what the app holds.
+    # Since CR1.5-55 no link is followed for an app at all, so a link in such a folder passes as
+    # typed, with a line (it had become its path in the folder's document, dangling); what the
+    # portal holds still decides where a file of the folder is: its path in that document.
     home, rt = tmp_path / "home", tmp_path / "run"
     proj, docs, other, new = home / "proj", home / "Documents", home / "other", home / "new"
     for d in (proj / "sub", docs, other, new, home / ".ssh"):
@@ -3783,33 +3953,35 @@ def test_a_link_in_a_folder_the_app_was_handed_is_never_followed_out_of_it(tmp_p
     (new / "README.md").symlink_to(docs / "taxes.txt")
     held = {"D1": str(proj), "D2": str(docs / "single.txt")}
     view, doc = str(rt / "doc" / "D1" / "proj"), str(rt / "doc" / "DOC")
-    led_out = {str(proj / "README.md"): f"{view}/README.md",               # each becomes its own path in the folder's document,
-               str(proj / "rel.md"): f"{view}/rel.md",                     # the link included, where the app finds it dangling
-               str(proj / "sub" / "all" / "taxes.txt"): f"{view}/sub/all/taxes.txt",
-               str(proj / "sub" / "all"): f"{view}/sub/all",
-               str(proj / "hop"): f"{view}/hop",
-               str(home / "via"): f"{view}/README.md",                     # the user's own link to the app's
-               "proj/README.md": f"{view}/README.md",
-               "file://" + str(proj / "README.md"): f"file://{view}/README.md",
-               "--file=" + str(proj / "README.md"): f"--file={view}/README.md"}
+    taxes = docs / "taxes.txt"
+    led_out = {str(proj / "README.md"): (proj / "README.md", taxes),       # each passes as typed, the link not followed,
+               str(proj / "rel.md"): (proj / "rel.md", taxes),             # and is said with what it leads to
+               str(proj / "sub" / "all" / "taxes.txt"): (proj / "sub" / "all", taxes),
+               str(proj / "sub" / "all"): (proj / "sub" / "all", docs),
+               str(proj / "hop"): (proj / "hop", taxes),
+               str(home / "via"): (home / "via", taxes),                   # the user's own link to the app's
+               "proj/README.md": (proj / "README.md", taxes),
+               str(proj / "back.md"): (proj / "back.md", proj / "sub" / "deep.txt"),      # a link that stays in the folder
+               str(home / "mine.md"): (home / "mine.md", proj / "notes.md")}              # the user's link into it (R3-17's direction)
+    forms = ["file://" + str(proj / "README.md"), "--file=" + str(proj / "README.md")]    # said once, with the path's own line
     stays = {str(proj / "notes.md"): f"{view}/notes.md",                   # a file of the folder: its path there, and no
              str(proj / "sub" / "deep.txt"): f"{view}/sub/deep.txt",       # document of its own
-             str(proj / "back.md"): f"{view}/sub/deep.txt",                # a link that stays in the folder leads there
-             str(home / "mine.md"): f"{view}/notes.md",                    # the user's link into it (R3-17's direction)
              str(proj): view, str(proj) + "/": view + "/"}
-    words, said, calls = _handed(tmp_path, home, list(led_out) + list(stays), home=home, held=held, never=[home / ".ssh"])
-    assert dict(zip(list(led_out) + list(stays), words)) == {**led_out, **stays} and calls == [] and said == [], (words, calls, said)
-    # what the app holds no folder of is handed over as before: a file handed over before is a file
-    # (the portal lets no link be made in its document), and a link in a folder the portal lists
-    # for no one is the user's own, as far as the launcher can tell
+    words, said, calls = _handed(tmp_path, home, list(led_out) + forms + list(stays), home=home, held=held, never=[home / ".ssh"])
+    assert words == list(led_out) + forms + list(stays.values()) and calls == [], (words, calls)
+    assert said == [_through_a_link(arg, link, real) for arg, (link, real) in led_out.items()], said
+    # what the app holds no folder of is handed over as before, and a link in a folder the portal
+    # lists for no one is followed no more than any other (it was the user's own, as far as the
+    # launcher could tell: CR1.5-55's road, once the portal has forgotten the folder)
     words, said, calls = _handed(tmp_path, home, [str(docs / "single.txt"), str(other / "in.txt"), str(new / "README.md")], home=home, held=held)
-    assert words == [f"{doc}/single.txt", f"{doc}/in.txt", f"{doc}/taxes.txt"], words
-    assert [c[2] for c in calls if c[2]] == [[str(docs / "single.txt")], [str(other / "in.txt")], [str(docs / "taxes.txt")]], calls
-    words, said, calls = _handed(tmp_path, home, [str(proj / "README.md")], home=home)                  # held by no one: the fault's own run
-    assert words == [f"{doc}/taxes.txt"] and [c[0] for c in calls] == ["Add", "GrantPermissions"], (words, calls)
+    assert words == [f"{doc}/single.txt", f"{doc}/in.txt", str(new / "README.md")], words
+    assert [c[2] for c in calls if c[2]] == [[str(docs / "single.txt")], [str(other / "in.txt")]], calls
+    assert said == [_through_a_link(new / "README.md", new / "README.md", taxes)], said
+    words, said, calls = _handed(tmp_path, home, [str(proj / "README.md")], home=home)                  # held by no one: CR1.5-52's own run
+    assert words == [str(proj / "README.md")] and calls == [] and said == [_through_a_link(proj / "README.md", proj / "README.md", taxes)], (words, calls)
     # a folder handed over by one argument is the app's for the arguments after it, at the same start
     words, said, calls = _handed(tmp_path, home, [str(new), str(new / "README.md"), str(new / "plain.md"), str(other / "in.txt")], home=home)
-    assert words == [f"{doc}/new", f"{doc}/new/README.md", f"{doc}/new/plain.md", f"{doc}/in.txt"], words
+    assert words == [f"{doc}/new", str(new / "README.md"), f"{doc}/new/plain.md", f"{doc}/in.txt"], words
     assert [c[0] for c in calls] == ["AddFull", "Add", "GrantPermissions"] and calls[1][2] == [str(other / "in.txt")], calls
     # a granted folder comes first: a file in both is where the grant is mounted
     assert _handed(tmp_path, home, [str(proj / "notes.md"), str(proj / "README.md")], visible=[proj], home=home, held=held)[0] == [

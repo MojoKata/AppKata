@@ -72,8 +72,11 @@ def _corpus(h: str) -> list[tuple]:
         ("a path with spaces and accents", h, f"{h}/Elsewhere/Résumé 2024.txt", "ACCENTED", False),
         ("an option with its value (--file=/path)", h, f"--file={h}/Elsewhere/out.txt", "OUTSIDE", False),
         ("a short option glued to its value (-o/path)", h, f"-o{h}/Elsewhere/out.txt", "OUTSIDE", False),
-        ("a link on the desktop to a file in a granted folder", h, f"{h}/Desktop/link.txt", "IN-GRANT", False),
-        ("a path through a linked folder", h, f"{h}/docs-link/in.txt", "IN-GRANT", False),
+        # CR1.5-55 (the owner's decision of 2026-11-25): a file argument is never followed through a
+        # link, the user's own included (R3-17 had these reach the file); the launcher names the path
+        # to give instead, which is the second case of this list
+        ("a link on the desktop to a file in a granted folder (never followed)", h, f"{h}/Desktop/link.txt", f"MISSING {h}/Desktop/link.txt", False),
+        ("a path through a linked folder (never followed)", h, f"{h}/docs-link/in.txt", f"MISSING {h}/docs-link/in.txt", False),
         (". from a granted folder (the folder itself)", f"{h}/Docs", ".", "in.txt", False),
         ("a folder outside the granted folders", h, f"{h}/Elsewhere/sub", "listed.txt", False),
         ("a file still to be made", h, f"{h}/Elsewhere/new.txt", "WROTE", True),

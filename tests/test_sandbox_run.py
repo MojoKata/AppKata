@@ -1762,6 +1762,11 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
 
 # ---------------------------------------------------------------- file arguments (R17.6.2, R7)
 
+def _through_a_link(app, arg, link, real) -> str:
+    """The launcher's line for an argument not followed through `link`, which leads to `real` (R17.6.2)."""
+    return f"{app} runs sandboxed and isn't handed {arg}: {link} is a link, and a file argument is never followed through one (give {real} instead)."
+
+
 def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
     """CR1.5-4 (#379), with the real document portal, by the finding's own road: the app, given
     ~/Projects read-write, puts a link to a file of the user's where its own file was, and a link
@@ -1769,7 +1774,9 @@ def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
     linked folder). Each was handed over, read-write, by where it leads. Now each reaches the app as
     its own path in ~/Projects, where the link dangles, and nothing new is under
     $XDG_RUNTIME_DIR/doc. The other direction (R3-17: the user's link on the desktop to a file in
-    ~/Projects) still reaches its file. A part of the test below, which tests/skips/tier1.txt names."""
+    ~/Projects) is followed no more since CR1.5-55: it passes as typed, the launcher names the file
+    to give instead, and that path reaches it. A part of the test below, which tests/skips/tier1.txt
+    names."""
     docs, proj, desk = env.home / "Documents", env.home / "Projects", env.home / "Desktop"
     (docs / "taxes.txt").write_text("TAXES\n")
     desk.mkdir()
@@ -1783,17 +1790,23 @@ def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
     snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$4" "$XDG_RUNTIME_DIR"/doc/*/taxes.txt "$XDG_RUNTIME_DIR"/doc/*/*/taxes.txt 2>&1; '
                '(echo EDITED >> "$1") 2>/dev/null; ls "$3" 2>&1; cat "$5"; true')
     r = subprocess.run([lp, snippet, *args, str(desk / "mine")], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args + [str(proj / "mine.txt.was")], (r.stdout, r.stderr)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args + [str(desk / "mine")], (r.stdout, r.stderr)
     assert exported() == before, (exported() - before, r.stdout)
-    assert "TAXES" not in r.stdout and (docs / "taxes.txt").read_text() == "TAXES\n" and "MINE" in r.stdout, (r.stdout, r.stderr)
+    assert "TAXES" not in r.stdout and (docs / "taxes.txt").read_text() == "TAXES\n" and "MINE" not in r.stdout, (r.stdout, r.stderr)
+    assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [_through_a_link("Editor", desk / "mine", desk / "mine", proj / "mine.txt.was")], r.stderr
+    r = subprocess.run([lp, 'cat "$2"', str(proj / "mine.txt.was")], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "MINE" in r.stdout and "isn't handed" not in r.stderr, (r.stdout, r.stderr)        # the path the line gives
 
 
-def _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, e):
-    """CR1.5-41 (#666), the finding's own run with the real document portal: an absolute and a
-    relative link to a file outside every grant, as a path and as a file:// URI. The portal names
-    the document after the file the link leads to, and the app was handed the link's name, a path
-    that isn't there. A regular file and a linked folder as before. A part of the test below,
-    which tests/skips/tier1.txt names."""
+def _a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there(env, lp, e):
+    """CR1.5-55 (#759), with the real document portal: the user's own links to a file outside
+    every grant (a full and a relative link, as a path and as a file:// URI, a linked folder) are
+    followed no more. Each reaches the app as typed, nothing of it is under $XDG_RUNTIME_DIR/doc,
+    and the launcher names the path to give instead, which is handed over. A link only root can
+    have put there is followed: the system's own /etc/os-release, a link on Mint, LMDE and Ubuntu,
+    is handed over under the name of the file it leads to, a path that opens (CR1.5-41, #666: the
+    portal names a document after the file, and the app was handed the link's name, a path that
+    isn't there). A part of the test below, which tests/skips/tier1.txt names."""
     sync = env.home / "sync"
     (sync / "project").mkdir(parents=True)
     for f, text in ((sync / "notes-2024.txt", "NOTES-2024\n"), (sync / "plain.txt", "PLAIN\n"), (sync / "project" / "inproj.txt", "x")):
@@ -1801,16 +1814,35 @@ def _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(e
     (env.home / "notes.txt").symlink_to(sync / "notes-2024.txt")
     (env.home / "rel-notes.txt").symlink_to("sync/notes-2024.txt")
     (env.home / "proj-link").symlink_to(sync / "project")
-    args = [str(env.home / "notes.txt"), "rel-notes.txt", "file://" + str(env.home / "notes.txt"), str(sync / "plain.txt"), str(env.home / "proj-link")]
-    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$2" "${3#file://}" "$4"; ls "$5"; echo APPENDED >> "$2"; true')
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    linked = [str(env.home / "notes.txt"), "rel-notes.txt", "file://" + str(env.home / "notes.txt"), str(env.home / "proj-link")]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$2" "${3#file://}" 2>&1; ls "$4" 2>&1; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/notes-2024.txt 2>&1; (echo APPENDED >> "$1") 2>/dev/null; true')
+    r = subprocess.run([lp, snippet, *linked], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == linked, (r.stdout, r.stderr)
+    assert exported() == before and "NOTES-2024" not in r.stdout and "inproj.txt" not in r.stdout, (exported() - before, r.stdout)
+    assert (sync / "notes-2024.txt").read_text() == "NOTES-2024\n"
+    notes = sync / "notes-2024.txt"
+    assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [
+        _through_a_link("Editor", env.home / "notes.txt", env.home / "notes.txt", notes), _through_a_link("Editor", "rel-notes.txt", env.home / "rel-notes.txt", notes),
+        _through_a_link("Editor", env.home / "proj-link", env.home / "proj-link", sync / "project")], r.stderr
+    # the paths the lines give, a regular file as before, and the system's own link
+    system = os.path.realpath("/etc/os-release")
+    with open(system) as f:
+        release = f.read()
+    args = [str(notes), "file://" + str(notes), str(sync / "plain.txt"), str(sync / "project"), "/etc/os-release", "file:///etc/os-release"]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "${2#file://}" "$3"; ls "$4"; echo APPENDED >> "$1"; '
+               'echo RELEASE; cat "$5" "${6#file://}"; true')
     r = subprocess.run([lp, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
     got = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
     doc = str(env.rt / "doc") + "/"
-    assert r.returncode == 0 and len(got) == 5 and all(g.startswith(doc) for g in got[:2] + got[3:]), (r.stdout, r.stderr)
-    assert got[0].endswith("/notes-2024.txt") and got[1] == got[0] and got[2] == "file://" + got[0], got       # one document, by the file's name
-    assert got[3].endswith("/plain.txt") and got[4].endswith("/project"), got
-    assert r.stdout.count("NOTES-2024") == 3 and "PLAIN" in r.stdout and "inproj.txt" in r.stdout, (r.stdout, r.stderr)
-    assert (sync / "notes-2024.txt").read_text() == "NOTES-2024\nAPPENDED\n"                                    # and it is the file the app writes
+    assert r.returncode == 0 and len(got) == 6 and all(g.startswith(doc) for g in got[:1] + got[2:5]) and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+    assert got[0].endswith("/notes-2024.txt") and got[1] == "file://" + got[0] and got[2].endswith("/plain.txt") and got[3].endswith("/project"), got
+    assert got[4].endswith("/" + os.path.basename(system)) and got[5] == "file://" + got[4], (got, system)      # one document, by the file's name
+    assert r.stdout.count("NOTES-2024") == 2 and "PLAIN" in r.stdout and "inproj.txt" in r.stdout, (r.stdout, r.stderr)
+    assert r.stdout.split("RELEASE\n")[1] == release * 2, (r.stdout, r.stderr)
+    assert notes.read_text() == "NOTES-2024\nAPPENDED\n"                                                         # and it is the file the app writes
 
 
 @needs_proxy
@@ -1851,7 +1883,7 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert (docs / "picked.txt").read_text() == "PICKED\nEDITED\n"          # the app's edit reached the real file
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
             _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
-            _a_link_to_a_file_outside_every_grant_reaches_the_app_as_a_path_that_opens(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
             _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
@@ -1865,10 +1897,11 @@ def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e
     the app a folder (`editor ~/work`), and in it, through the portal's file system, the app puts a
     link to another file of the user's where README.md was, and a link to a folder beside it. At a
     later start the user opens README.md, by a path and by a URI, and a file through the linked
-    folder: each was handed over, read-write, by where it leads. Now each reaches the app as its
-    own path in the folder's document, where the link dangles; a file that is the folder's own is
-    its path there too, and nothing new is under $XDG_RUNTIME_DIR/doc. The same for a folder and
-    a link in it named at one start. A part of the test above, which tests/skips/tier1.txt names."""
+    folder: each was handed over, read-write, by where it leads. Now each reaches the app as it was
+    typed, the link not followed (CR1.5-55: it had become its own path in the folder's document,
+    where the link dangles), and the launcher says so; a file that is the folder's own is its path
+    in that document, and nothing new is under $XDG_RUNTIME_DIR/doc. The same for a folder and a
+    link in it named at one start. A part of the test above, which tests/skips/tier1.txt names."""
     docs, work, again = env.home / "Documents", env.home / "work", env.home / "again"
     for d in (work / "sub", again):
         d.mkdir(parents=True)
@@ -1900,13 +1933,16 @@ def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e
     before = exported()
     got, out = started('cat "$1" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; (echo EDITED >> "$1") 2>/dev/null; cat "$4"; echo MORE >> "$4"; true',
                        str(work / "README.md"), "file://" + str(work / "README.md"), str(work / "all" / "secret.txt"), str(work / "sub" / "deep.txt"))
-    assert got == [f"{view}/README.md", f"file://{view}/README.md", f"{view}/all/secret.txt", f"{view}/sub/deep.txt"], (got, out)
+    assert got == [str(work / "README.md"), "file://" + str(work / "README.md"), str(work / "all" / "secret.txt"), f"{view}/sub/deep.txt"], (got, out)
     assert exported() == before, (exported() - before, out)
+    assert [l for l in out.splitlines() if "isn't handed" in l] == [
+        _through_a_link("Editor", work / "README.md", work / "README.md", docs / "secret.txt"),
+        _through_a_link("Editor", work / "all" / "secret.txt", work / "all", docs / "secret.txt")], out
     assert "SECRET-TAXES" not in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
     assert "DEEP" in out and (work / "sub" / "deep.txt").read_text() == "DEEP\nMORE\n", out                # the folder's own file, read and written
     # a folder, and a link in it, at one start: the folder is the app's by the time the link is judged
     got, out = started('cat "$2" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; true', str(again), str(again / "README.md"), str(again / "plain.txt"))
-    assert got[0].endswith("/again") and got[1:] == [got[0] + "/README.md", got[0] + "/plain.txt"], (got, out)
+    assert got[0].endswith("/again") and got[1:] == [str(again / "README.md"), got[0] + "/plain.txt"], (got, out)
     assert "SECRET-TAXES" not in out and "PLAIN" in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
 
 
@@ -2036,6 +2072,48 @@ def _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e):
     assert f"can't see {env.home} " in r.stderr and "unless it is in a never-shared folder of your home" in r.stderr, r.stderr
 
 
+def _a_link_left_where_a_tool_ran_once_hands_it_nothing(env, lp, e):
+    """CR1.5-55 (#759), the finding's own run with the real document portal: a command-line tool,
+    run once in ~/src/proj, which is its to write for that run, puts a link to a file of the
+    user's where README.md was, and a link to a folder beside it. Run again from another folder
+    (shared with it) and from the home folder (not shared), with README.md named by a full path,
+    a URI, a relative path and an option's value, and a file through the linked folder, it was
+    handed what the links lead to, read-write: no folder it is shown now holds the link, and
+    AppKata keeps no memory of where it could write once. No link is followed for an app now:
+    each argument reaches the tool as typed, the launcher says why and names what the link leads
+    to, and the file beside them is handed over as before. A part of the test below, which
+    tests/skips/tier1.txt names (that file is another unit's)."""
+    docs, proj, other = env.home / "Documents", env.home / "src" / "proj", env.home / "src" / "other"
+    other.mkdir()
+    (docs / "taxes.txt").write_text("TAXES\n")
+    (proj / "README.md").write_text("README\n")
+    r = subprocess.run([lp, 'mv README.md README.was && ln -s "$HOME/Documents/taxes.txt" README.md && ln -s "$HOME/Documents" all && echo PLANTED'],
+                       cwd=str(proj), env=e, capture_output=True, text=True, timeout=60)
+    assert "PLANTED" in r.stdout and os.readlink(proj / "README.md") == str(docs / "taxes.txt") and os.readlink(proj / "all") == str(docs), (r.stdout, r.stderr)
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; for a in "$@"; do a=${a#--file=}; a=${a#file://}; cat "$a" 2>&1; (echo EDITED >> "$a") 2>/dev/null; done; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/taxes.txt "$XDG_RUNTIME_DIR"/doc/*/*/taxes.txt 2>&1; true')
+    readme, taxes = proj / "README.md", docs / "taxes.txt"
+    for cwd, rel in ((other, "../proj/README.md"), (env.home, "src/proj/README.md")):
+        linked = [str(readme), "file://" + str(readme), rel, "--file=" + str(readme), str(proj / "all" / "taxes.txt"), str(proj / "all")]
+        before = exported()
+        r = subprocess.run([lp, snippet, *linked, str(proj / "README.was")], cwd=str(cwd), env=e, capture_output=True, text=True, timeout=60)
+        got = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
+        assert r.returncode == 0 and got[:6] == linked, (cwd, r.stdout, r.stderr)                        # each as typed: no link followed
+        assert "TAXES" not in r.stdout and taxes.read_text() == "TAXES\n" and sorted(os.listdir(docs)) == ["notes.txt", "taxes.txt"], (cwd, r.stdout)
+        assert {f for _, f in exported() - before} <= {"README.was"} and got[6].startswith(str(env.rt / "doc") + "/") and got[6].endswith("/README.was"), (cwd, got)
+        assert "README" in r.stdout and (proj / "README.was").read_text().startswith("README\nEDITED\n"), (cwd, r.stdout)     # the file beside them, handed over
+        assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [
+            _through_a_link("Tool", readme, readme, taxes), _through_a_link("Tool", rel, readme, taxes),
+            _through_a_link("Tool", proj / "all" / "taxes.txt", proj / "all", taxes), _through_a_link("Tool", proj / "all", proj / "all", docs)], (cwd, r.stderr)
+    # in the folder itself, shared again, the link is the tool's own to see and leads nowhere inside;
+    # and the process's own descriptors (the kernel's links, under /proc) are no file arguments
+    own = ["README.md", "./all/taxes.txt", str(readme), "/dev/stdin", "--in=/dev/stdin"]
+    r = subprocess.run([lp, snippet, *own], cwd=str(proj), env=e, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == own, (r.stdout, r.stderr)
+    assert "TAXES" not in r.stdout and taxes.read_text() == "TAXES\n" and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+
+
 @needs_proxy
 def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(env):
     # Regression (round three, R3-3): the file-argument block ran before the working-directory rule
@@ -2068,6 +2146,7 @@ def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(
             r3 = subprocess.run([lp, snippet, "draft.txt", str(work / "draft.txt")], cwd=str(work), env=e,
                                 capture_output=True, text=True, timeout=60)
             _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e)
+            _a_link_left_where_a_tool_ran_once_hands_it_nothing(env, lp, e)
         finally:
             portal.close()
     finally:

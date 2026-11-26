@@ -2202,8 +2202,8 @@ def write_seccomp_filter() -> str | None:
 # Runs on the host, from the launcher, when the app was given arguments (R17.6.2). An argument naming a
 # file or folder -- a path, a file:// URI, or an option's value (`--file=PATH`, `-oPATH` with a full
 # path) -- becomes the path the app finds it at: inside a granted folder, the folder's own mount path
-# plus the rest, unless the argument already resolves there (a CLI tool's relative paths in its shared
-# folder, an absolute path written through no link); outside every granted folder, the document
+# plus the rest, unless the argument is that path as it is typed (a CLI tool's relative paths in its
+# shared folder, an absolute path under the folder's own); outside every granted folder, the document
 # portal's re-export of it (Documents.Add + GrantPermissions for a file, AddFull with the
 # export-directory flag for a folder, what the file chooser portal does for a pick), at
 # $XDG_RUNTIME_DIR/doc/<id>/<name>, where the launcher binds the app's by-app view. Done from the host
@@ -2224,17 +2224,34 @@ def write_seccomp_filter() -> str | None:
 # the session bus's socket files as the launcher read them ($bussocks); the home folder is the
 # helper's own to find. A file or folder that is one of them, inside one or above one is not handed
 # over, judged by where it leads and by each link on the way there (`~/.ssh/config`, a link to a
-# file kept elsewhere, is in `~/.ssh`). The system's own places are not in the list: a file under
+# file kept elsewhere, is in `~/.ssh`: said so, where the link rule below would name the file it
+# leads to as the one to give). The system's own places are not in the list: a file under
 # /tmp is handed over like any other (R17.3.3). Each refusal is a line of the answer, "!" first and
 # then what the launcher says after the app's name, on stderr.
-# A link in a folder the app is shown is the app's to make, so it is never followed out of that
-# folder (CR1.5-4): an app with ~/Documents read-write put a link to ~/.bashrc where report.md was,
-# and the user's opening report.md handed the app ~/.bashrc, read-write (a link to a folder, the
-# folder whole). An argument was judged by where it leads alone; now the first link on its way that
-# lies in a visible folder ends the way, unless the whole of it leads back into one: the argument
-# becomes its own path in that folder, the link included, where the app finds it dangling, and
-# nothing is handed over. The other direction is as it was (R3-17): a link outside the visible
-# folders to a file inside one is the user's, and becomes the file's path.
+# A file argument is never followed through a link (CR1.5-55, the owner's decision of 2026-11-25).
+# A link is the app's to make wherever it can write, and stays on the disk longer than AppKata
+# knows the app could write there: an app with ~/Documents read-write put a link to ~/.bashrc where
+# report.md was, and the user's opening report.md handed the app ~/.bashrc, read-write (CR1.5-4); an
+# app handed ~/proj did the same through the portal's file system (CR1.5-52); and a tool run once in
+# ~/src/proj left a link there that `tool ~/src/proj/README.md`, run from elsewhere, was handed the
+# target of, as an app was after the next login for a folder it had been handed (CR1.5-55). The
+# first two were shut by counting the folders the app is shown now, and what the portal lists for
+# it; nothing counts where it could write once. So no link is followed for an app: an argument whose
+# path passes through one, at any step, the last included, is handed over as nothing and becomes no
+# other path. It passes as typed, with a line that names the link and the file or folder it leads
+# to, the path to give instead. That costs the user's own links (a file kept in a dotfiles folder,
+# a link on the desktop to a file in a granted folder, which R3-17 had made the file's path there):
+# accepted. Two things stand beside it. A link only root can have put there -- root's own, in a
+# folder the user can't change, such as a system's /home -> /var/home or /bin -> usr/bin -- is no
+# app's and is followed (root's own in a folder the user can change could be moved there by a
+# rename, and counts as anyone's). And an argument that is, as it is typed, a path the app is shown
+# -- a full path under a granted folder's own, a tool's relative path in its shared folder, neither
+# with a ".." -- is left as typed and said nothing of, links and all: the app follows them itself,
+# in its own view, where a link out of what it is shown leads nowhere (so a file in ~/Documents
+# opens as before where ~/Documents is the user's link to another disk and the grant is of it).
+# The kernel's own links under /proc are not followed either, and nothing is said of them:
+# /dev/stdin, /dev/stdout and /dev/fd/3 lead through /proc/self/fd, which here is this helper's, and
+# the app has its own by inheritance (`tool -o /dev/stdout` must not print a line of AppKata's).
 # A bare word, with no "/" in it and neither "." nor "~" first, is a file argument when it names a
 # file and never when it names a folder (CR1.5-15, the owner's decision of 2026-11-24): the helper
 # can't know a program's own words, and `tool build` or `app help`, run where a folder of that
@@ -2253,9 +2270,9 @@ def write_seccomp_filter() -> str | None:
 # portal is asked what the app holds (List, for its identity), each folder in that answer counts
 # as one the app is shown, at the path its document has, and so does a folder handed over by an
 # earlier argument of the same start: a file in one becomes its path in that folder's document
-# (no second document is made for it), and a link in one is never followed out. A file handed
-# over can't be made a link: the portal refuses a link, and a folder, in a file's document. Where
-# the portal doesn't answer that question nothing is handed over.
+# (no second document is made for it). A link in one is followed no more than any other, since
+# CR1.5-55. A file handed over can't be made a link: the portal refuses a link, and a folder, in a
+# file's document. Where the portal doesn't answer that question nothing is handed over.
 # Before the first file or folder is handed over, a file named after the app's identity is made in
 # `handed/` beside this helper (handed_path): the portal keeps what an app was handed for the
 # session, AppKata takes it back when the app is uninstalled or leaves Standard (revoke_documents),
@@ -2280,8 +2297,8 @@ def within(path, folder):
 
 
 def follow(path):
-    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there:
-    # where the link is, and the path from there on, the link not followed
+    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there,
+    # as the file the link is: the folder it lies in resolved, its own name kept
     todo = os.path.join(os.getcwd(), path).split(os.sep)[::-1]
     at, links = os.sep, []
     while todo:
@@ -2297,13 +2314,33 @@ def follow(path):
         except OSError:
             at = step
             continue
-        links.append((step, os.path.join(step, *todo[::-1])))
+        links.append(step)
         if len(links) > 40:
             raise OSError("too many links")
         if target.startswith(os.sep):
             at = os.sep
         todo.extend(target.split(os.sep)[::-1])
     return at, links
+
+
+def roots(link):
+    # whether only root can have put the link there: it is root's own, in a folder the user can't
+    # change (one that is root's in a folder of the user's could be moved there by a rename)
+    try:
+        return os.lstat(link).st_uid == 0 and not os.access(os.path.dirname(link), os.W_OK)
+    except OSError:
+        return False
+
+
+def shown(path, uri):
+    # whether the argument is, as it is typed, a path the app is shown: a full path under a folder
+    # the launcher shows it, by that folder's own path, or a tool's relative path in its shared
+    # folder. Read by its text alone, no link followed, so never with a ".." in it
+    if ".." in path.split(os.sep):
+        return False
+    if not os.path.isabs(path):
+        return in_place and not uri
+    return any(within(os.path.normpath(path), seen) for seen, _ in pairs)
 
 
 def never_shared(real, links):
@@ -2317,7 +2354,7 @@ def never_shared(real, links):
         return "it holds your whole home folder, which is never shared with a sandboxed app"
     for root in never:              # where it leads now, and by its own name where it is a link
         for spot in (os.path.realpath(root), os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root))):
-            if any(within(p, spot) for p in [real] + [step for step, _ in links]):
+            if any(within(p, spot) for p in [real] + links):
                 return root + " is never shared with a sandboxed app"
             if within(spot, real):
                 return "it holds " + root + ", which is never shared with a sandboxed app"
@@ -2427,22 +2464,27 @@ def hand(path, uri):
         return None
     if not uri and os.sep not in path and path[:1] not in (".", "~") and os.path.isdir(path):
         return None                     # a bare word that names a folder: a program's own word as likely as a path
+    if shown(path, uri):
+        return None                     # already a path the app is shown, as typed: any link on it is the app's to follow
     try:
         real, links = follow(path)
     except OSError:
         return None
-    seen, where = inside(real), real
-    if seen is None:                    # a link in a visible folder that leads out of them all: the path as far as it
-        seen, where = next(((inside(rest), rest) for step, rest in links if inside(step) is not None), (None, real))
-    if in_place and not uri and not os.path.isabs(path) and within(where, os.getcwd()):
-        return None                     # a tool's relative path in its shared folder: as typed
+    link = next((link for link in links if not roots(link)), None)
+    if link and within(link, "/proc"):
+        return None                     # a descriptor of the process's own (/dev/stdin): the app has its own, and nothing is said
+    seen = None if link else inside(real)
     if seen is not None:
+        if in_place and not uri and not os.path.isabs(path) and within(real, os.getcwd()):
+            return None                 # a tool's relative path that comes back into its shared folder: as typed
         if os.path.isabs(path) and os.path.normpath(path) == seen:
             return None                 # already the path the app sees
         new = seen
     else:
         try:
             why = never_shared(real, links)
+            if link and not why:        # never followed for an app, wherever it leads (CR1.5-55)
+                why = link + " is a link, and a file argument is never followed through one (give " + real + " instead)"
             if why:
                 line = "runs sandboxed and isn't handed " + path + ": " + why + "."
                 if line not in said:
@@ -2853,7 +2895,8 @@ _FORWARD_NOTE = """# A file or folder the app was given as an argument ("Open wi
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
 # A file or folder that is a never-shared one (R17.3.1), in one or above one is not handed over,
-# whoever names it: the helper is given the list, and a line of its answer with "!" first says why.
+# whoever names it, nor one whose path passes through a link that isn't root's own: the helper is
+# given the list, and a line of its answer with "!" first says why.
 """
 _FORWARD_RUN = """if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
   if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "${{bussocks:-}}" {never} -- "$@" 2>/dev/null); then
@@ -3161,9 +3204,9 @@ else
       1) printf "%s runs sandboxed and isn't given %s to work in: it is one of the system's own folders ({places}), or in or above one, and those are never shared.\\n" {name} "$here" >&2 ;;
       *) printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2 ;;
     esac
-    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home (your keys, your startup files, AppKata's own)." >&2
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home (your keys, your startup files, AppKata's own) or named through a link." >&2
   else
-    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same, unless it is in a never-shared folder of your home.\\n" {name} "$here" "$upstream" >&2
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same, unless it is in a never-shared folder of your home or named through a link.\\n" {name} "$here" "$upstream" >&2
   fi
 fi
 """
