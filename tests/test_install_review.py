@@ -582,6 +582,27 @@ def test_the_exe_probe_and_the_checksum_fetch_take_a_broken_answer_as_no_answer(
     assert install.expected_sha256(a, [a, Asset("SHA256SUMS", bad_answers)]) == ("", "", "couldn't read SHA256SUMS")
 
 
+# ---------------------------------------------------------------- an address that can't be asked for (R4.8.2)
+# How it slipped past (pass 1 of the unit's own review): the tests above break answers, and none
+# gave download() an address http.client won't send. Its InvalidURL is one of http.client's own
+# exceptions, which were all taken as a connection that broke: three retries over 12 seconds, then
+# "the server's answer couldn't be read (InvalidURL); press Update again to resume", of a server
+# that was never asked. A release link is free text on some forges, so a space is enough.
+@pytest.mark.parametrize("address", ["{base}/my file.AppImage", "{base}/file\x7f.AppImage", "{base}x/file.AppImage"],
+                         ids=["a-space", "a-control-character", "a-port-that-is-no-number"])
+def test_a_download_from_an_address_that_cant_be_asked_for_fails_at_once_and_names_it(server, tmp_path, monkeypatch, address):
+    root, base = server
+    (root / "my file.AppImage").write_bytes(b"the file")
+    waits, dl = [], tmp_path / "dl"
+    dl.mkdir()
+    monkeypatch.setattr(install.time, "sleep", waits.append)
+    url = address.format(base=base)
+    with pytest.raises(install.InstallError) as e:
+        install.download(url, str(dl / "file.bin"))
+    assert str(e.value) == f"download failed: the release's address for this file isn't a valid one ({install.one_line(url)})"
+    assert waits == [] and os.listdir(dl) == []         # not tried again, and nothing kept to resume
+
+
 # ---------------------------------------------------------------- which addresses a download uses (R4.4; CR1.3-10)
 # How it slipped past: every test's file was on the test's own http server, so nothing asked what
 # else an address could be. download(), head_bytes() and expected_sha256() each opened whatever the

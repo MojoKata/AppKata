@@ -184,7 +184,8 @@ def _opener() -> urllib.request.OpenerDirector:
 # What a connection that breaks raises, while a request is made or its answer read: an OSError, or
 # one of http.client's own, which are no OSErrors. An answer sent in chunks has no length to fall
 # short of, so its break is only ever an `IncompleteRead`, and one caught nowhere: no retry, no
-# resume, and "IncompleteRead(65536 bytes read)" shown as a crash (CR1.3-16).
+# resume, and "IncompleteRead(65536 bytes read)" shown as a crash (CR1.3-16). One of them is no
+# break: `InvalidURL`, of an address http.client won't send at all, which download() says as that.
 _BROKEN = (OSError, http.client.HTTPException)
 
 
@@ -266,6 +267,8 @@ def download(url: str, dest: str, progress=None, cancel=None, timeout: float = 6
                 if attempt <= retries:
                     continue
             raise InstallError(f"download failed: HTTP {e.code}") from None
+        except http.client.InvalidURL:          # no connection that broke: trying again asks nothing new, and nothing came to resume
+            raise InstallError(f"download failed: the release's address for this file isn't a valid one ({one_line(url)[:200]})") from None
         except _BROKEN as e:
             attempt += 1
             if attempt > retries:
