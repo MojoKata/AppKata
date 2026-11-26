@@ -2300,7 +2300,9 @@ def fake_home(tmp_path, monkeypatch):
     ("~/.local/share/cinnamon-backup", False), ("~/.config/Code/User", False),
     ("~/Projects", False), ("~/Documents", False), ("~/.config/obsidian", False), ("/mnt/data", False), ("$cwd", False),
     ("~/.local/share/fonts", False), ("~/.config/git-extras", False), ("~/.bashrc.dev", False),
-    ("~/.config/chromium", True), ("~/.config/google-chrome/Default", False), ("~/.local/share/nemo", True),   # above a hosts folder; a sibling
+    # above a hosts folder; a profile beside it, which is no never-shared folder but a secret (CR1.5-8:
+    # this line held it as a folder anyone could be granted; SECRETS has it now); above Nemo's two
+    ("~/.config/chromium", True), ("~/.config/google-chrome/Default", False), ("~/.local/share/nemo", True),
     ("~/.mozilla/firefox", False), ("~/.local/share/plasma/look-and-feel", False)])
 def test_protected_folders_are_never_granted(fake_home, path, refused):
     # Regression: a review's `Sandbox folders` line or the Customize picker could name ~, /, ~/.ssh or
@@ -3656,7 +3658,16 @@ def test_a_review_saying_off_is_only_a_suggestion_and_the_reviewed_baseline_appl
 
 SECRETS = ["~/.mozilla/firefox", "~/snap/firefox/common/.mozilla/firefox", "~/.var/app/org.signal.Signal", "~/.thunderbird",
            "~/.aws", "~/.config/gh", "~/.config/gcloud", "~/.git-credentials", "~/.netrc", "~/.docker", "~/.kube",
-           "~/.password-store", "~/.local/share/keyrings", "~/.var"]
+           "~/.password-store", "~/.local/share/keyrings", "~/.var",
+           # CR1.5-8 (#383): a profile in each Chromium-family data folder, the Firefox forks, Tor
+           # Browser, Evolution's two folders and GNOME Online Accounts' sign-ins
+           "~/.config/google-chrome/Default", "~/.config/google-chrome/Profile 1", "~/.config/google-chrome/Default/Login Data",
+           "~/.config/google-chrome-beta/Default", "~/.config/google-chrome-unstable/Default", "~/.config/chromium/Default",
+           "~/.config/BraveSoftware/Brave-Browser/Default", "~/.config/microsoft-edge/Default", "~/.config/vivaldi/Default",
+           "~/.config/opera/Cookies", "~/.config/mozilla/firefox", "~/.config/mozilla/firefox/abc.default-release",
+           "~/.librewolf", "~/.librewolf/abc.default-default", "~/.waterfox", "~/.floorp", "~/.zen/abc.Default (release)",
+           "~/.local/share/torbrowser", "~/.config/evolution", "~/.config/evolution/sources", "~/.local/share/evolution",
+           "~/.local/share/evolution/mail", "~/.config/goa-1.0", "~/.config/goa-1.0/accounts.conf"]
 
 
 @pytest.mark.parametrize("path", SECRETS)
@@ -3672,8 +3683,46 @@ def test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can(path, fak
 
 
 def test_ordinary_folders_are_no_secrets(fake_home):
-    for p in ("~/Documents", "~/Projects/x", "~/.config/obsidian", "/media/usb", "~/.mozilla-backup"):
+    for p in ("~/Documents", "~/Projects/x", "~/.config/obsidian", "/media/usb", "~/.mozilla-backup", "~/.config/google-chrome-backup",
+              "~/.config/chromium-flags.conf", "~/.config/evolution-data", "~/.librewolf.tar", "~/.local/share/evolution-backup"):
         assert not sb.secret_folder(p), p
+
+
+# CR1.5-8 (#383): R17.3.1 says browsers' and mail clients' profiles are secrets, and the list had
+# Firefox and Thunderbird. A Chromium-family profile lies beside the browser's NativeMessagingHosts
+# folder, which is what made the data folder itself "never shared", so the profile was in neither
+# list: a review's line granted it with no warning. How it slipped past: the secrets were tested on
+# their members, and the one test that named a profile held it as grantable ("a sibling"). The
+# family's eight data folders: the top is never shared whoever asks, and that answer comes first;
+# what is in it is a secret, which a review is refused and the user is warned of.
+CHROMIUM_FAMILY = ["~/.config/chromium", "~/.config/google-chrome", "~/.config/google-chrome-beta", "~/.config/google-chrome-unstable",
+                   "~/.config/BraveSoftware/Brave-Browser", "~/.config/microsoft-edge", "~/.config/vivaldi", "~/.config/opera"]
+
+
+@pytest.mark.parametrize("top", CHROMIUM_FAMILY)
+def test_a_chromium_data_folder_is_never_shared_at_its_top_and_what_is_in_it_is_a_secret(top, a_users_home):
+    profile, hosts, above = top + "/Default", top + "/NativeMessagingHosts", "a folder above programs browser extensions may start"
+    assert sb.protected_folder(top) == above and sb.protected_folder(hosts) == "programs browser extensions may start"
+    assert sb.protected_folder(profile) == "" and sb.secret_folder(profile) == sb.secret_folder(top) == "a browser's profiles and saved logins"
+    # the finding's own road: a review's line, as the backend resolves it (choose, then strip_secrets)
+    cfg = sb.config_from_review({"sandbox": "standard", "sandboxFolders": f"{profile}:ro, {top}:ro, ~/Notes"})
+    source, gs, _ = sb.choose(None, None, [cfg], {"template": "strict"})
+    kept, refused = sb.strip_secrets(gs)
+    assert source == "reviews" and set(kept["folders"]) == {"~/Notes"}
+    assert refused == [(p, "a review can't grant a browser's profiles and saved logins") for p in sorted([top, profile])]
+    chips = sb.summary(kept) + [c[0] for c in sb.refused_chips(refused)]
+    assert f"{profile} · refused: a review can't grant a browser's profiles and saved logins" in chips and "~/Notes" in chips
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", kept, apps_root="/home/kata/bin/apps")
+    assert os.path.expanduser(profile) not in text and f"bind-try {os.path.expanduser(top)}" not in text
+    # the user's own pick: the top is refused as never shared, said first; the profile is theirs to give, with the warning
+    mine = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + top: "ro", "+" + profile: "ro"}})
+    chips = sb.summary(mine)
+    assert f"{top} · refused: {above}" in chips and f"{profile} · read-only · holds passwords or tokens" in chips
+    kept, refused = sb.strip_protected(mine)
+    assert set(kept["folders"]) == {profile} and refused == [(top, above)]
+    text = sb.build_launcher("app", "App", "/home/kata/bin/apps/app/1", "bin/app", mine, apps_root="/home/kata/bin/apps")
+    full = os.path.expanduser(profile)
+    assert f"--ro-bind-try {shlex.quote(full)} {shlex.quote(full)} " in text and f"# Refused folder grant {top}: {above} (R17.3.1)." in text
 
 
 def test_the_user_folders_are_this_systems_own_names_and_only_those_that_exist(tmp_path, monkeypatch):

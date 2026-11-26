@@ -69,7 +69,7 @@ differ from its list (review 3, harness B).
 | R17.3.1 | So is a path with a control character in it | test_a_review_whose_folder_has_a_control_character_breaks_nothing_and_is_refused, test_a_hostile_folder_path_is_bound_whole_or_refused_and_the_launcher_stays_valid_shell, test_parse_folders_keeps_every_hostile_path_whole |
 | R17.3.1 | A grant is kept, shown (the summary | test_a_folder_is_kept_shown_and_mounted_under_one_name_and_never_with_a_dotdot, test_a_review_cannot_write_a_folder_so_that_it_reads_as_another_and_two_ways_of_writing_one_are_one_grant |
 | R17.3.1 | Sandbox folders: home bound the real /home). | statement |
-| R17.3.1 | Secrets are refused when a review asks | test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can, test_the_users_own_secret_folder_stands_with_a_warning |
+| R17.3.1 | Secrets are refused when a review asks | test_a_secret_folder_is_one_a_review_cannot_grant_but_the_user_can, test_the_users_own_secret_folder_stands_with_a_warning, test_a_chromium_data_folder_is_never_shared_at_its_top_and_what_is_in_it_is_a_secret |
 | R17.3.1 | A review's request shows as refused | test_a_review_cannot_grant_a_secret_folder_and_the_summary_says_so |
 | R17.3.1 | The list is _secret_roots() in | statement |
 | R17.3.1 | The keyring capabilities (saved passwords, the password | test_saving_a_review_writes_the_users_own_sandbox_whole_and_only_when_included, test_one_review_can_say_every_change_that_runs_differently_but_the_listed |

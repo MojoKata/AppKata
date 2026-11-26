@@ -540,6 +540,13 @@ def grants_from_config(config: dict) -> dict:
 
 # -------------------------------------------------------------------------- protected folders (R17.3.1)
 
+# The Chromium family's data folders under ~/.config (R17.3.1): each holds the browser's profiles
+# (Default, Profile 1, ...: cookies, history, Login Data), which are secrets, beside its
+# NativeMessagingHosts folder, which is never shared. Named one by one: the match is on exact roots.
+_CHROMIUM_FAMILY = (("chromium",), ("google-chrome",), ("google-chrome-beta",), ("google-chrome-unstable",),
+                    ("BraveSoftware", "Brave-Browser"), ("microsoft-edge",), ("vivaldi",), ("opera",))
+
+
 class Own(NamedTuple):
     """AppKata's own folders beside the install folder of the app a grant is judged for, as Settings
     and the install records name them (this module reads neither): its callers pass one wherever
@@ -647,9 +654,7 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     # a browser's native-messaging manifests name programs the browser starts, as the user, on an
     # extension's request; Firefox's folder is above, the Chromium family keeps theirs per profile
     # folder under ~/.config (named one by one: the match is on exact roots, not patterns)
-    roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in (
-        ("chromium",), ("google-chrome",), ("google-chrome-beta",), ("google-chrome-unstable",),
-        ("BraveSoftware", "Brave-Browser"), ("microsoft-edge",), ("vivaldi",), ("opera",))]
+    roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in _CHROMIUM_FAMILY]
     return roots
 
 
@@ -835,11 +840,28 @@ def _secret_roots() -> list[tuple[str, str]]:
     keep theirs here, as AppKata's keep theirs in folders already never shared), credentials for
     clouds, forges and registries, and password stores. The user's own picker may grant them, with
     a warning; a review can't (R17.3.1). The goals promise "secrets stay private"; the never-shared
-    list covered ~/.ssh and ~/.gnupg alone (review 2, F8)."""
+    list covered ~/.ssh and ~/.gnupg alone (review 2, F8).
+
+    CR1.5-8: of browsers and mail clients the list had Firefox and Thunderbird alone, while R17.3.1
+    says "browsers' and mail clients' profiles". A Chromium-family profile lies beside the
+    browser's NativeMessagingHosts folder, not above it, so no list named it, and a review's
+    `Sandbox folders: ~/.config/google-chrome/Default:ro` was granted as asked, with no warning:
+    the history, the bookmarks and the form data in clear, and the cookies and saved logins too
+    where the browser has no keyring to encrypt them with. So the family's data folders are here
+    whole (their top stays never shared, as the folder above the manifests: that answer comes
+    first), with the Firefox forks', Tor Browser's, Evolution's and GNOME Online Accounts'."""
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
+    browser = "a browser's profiles and saved logins"
     return [(h(".mozilla", "firefox"), "Firefox's profiles and saved logins"),
+            (h(".config", "mozilla", "firefox"), "Firefox's profiles and saved logins"),      # where it keeps them by the XDG rule
+            *[(h(fork), browser) for fork in (".librewolf", ".waterfox", ".floorp", ".zen")],
+            (h(".local", "share", "torbrowser"), "Tor Browser and its profile"),
+            *[(h(".config", *parts), browser) for parts in _CHROMIUM_FAMILY],
             (h(".thunderbird"), "Thunderbird's mail and saved logins"),
+            (h(".config", "evolution"), "Evolution's mail and accounts"),
+            (h(".local", "share", "evolution"), "Evolution's mail and accounts"),
+            (h(".config", "goa-1.0"), "your online accounts' sign-ins"),
             (h(".var", "app"), "other apps' sandboxed data (Flatpak)"),
             (h("snap"), "other apps' sandboxed data (Snap)"),
             (h(".aws"), "cloud credentials"), (h(".azure"), "cloud credentials"), (h(".config", "gcloud"), "cloud credentials"),
