@@ -1122,3 +1122,326 @@ in a test went to a stand-in or to a container's bus.
     files ran in the worktree itself before each commit.
 11. For the tier 2 runs the worktree needed a mount point for the main checkout's Python,
     `build/python-3.14` (ignored by git, empty); it is removed again at the end of the batch.
+
+## Batch 6
+
+A link an app left where it could write once: #743 (batch 3's new High) and #759 (batch 5's new
+High), both added by the coordinator. #759 waited on the owner's choice of remedy; the answer came
+from the coordinator once #743 was committed (the owner's decision of 2026-11-25, on the issue as
+the coordinator's comment: a file argument is never followed through a link), and it was taken
+then. Fable 5.2, high effort. Nothing was taken over: the worktree was clean at the start.
+
+**The merge of U04's tip**: e8ba1e8, "Merge U04's branch in at c8af841". One conflict outside
+`docs/relay/`: `docs/remediation/CR1-schedule.json`, where both sides added records at the end of
+the findings (U04's #751–#754 and #757; this branch's #755, #756, #759–#761) and to U12's list
+(U04's #751–#753 and #757; this branch's #761). Both kept, in the issues' order; the other units
+as each side has them (`triage.py check --offline`: "49 units holding 615 findings, 0 set aside:
+no problems"). `docs/relay/` stayed this unit's. `git submodule update --init` changed nothing.
+After the merge the 60 test files that name the sandbox, the backend, an install or a dialog ran
+whole in the scratch home: 5601 passed, 56 skipped. U04's tip was not looked at again.
+
+**Counts**: fixed 2 (#743, #759), no defect 0, remedy changed 0, set aside 0, still left 0, new 1
+(Low, not fixed).
+
+**Files touched**: `src/appkata_core/sandbox.py`, `src/appkata_core/install.py`,
+`src/appkata/backend.py`, `tests/test_sandbox.py`, `tests/test_sandbox_run.py`,
+`tests/test_sandbox_two_apps.py`, `tests/test_sandbox_user_shaped.py`, the five goldens under
+`tests/data/launchers/` (written again by `UPDATE_GOLDEN=1`: the one with folder grants in #743's
+commit, all five in #759's), `docs/requirements/R17-app-sandboxing/R17.3-templates.md`,
+`docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md`,
+`docs/requirements/R17-app-sandboxing/R17.6-app-identity.md`,
+`docs/architecture/A1-app-sandboxing/A1.11-claims.md`, `docs/requirements-trace.md`.
+
+### The findings
+
+**#743, fixed, b5870f7.** Shown again first, on the merged tree (e8ba1e8) in both launcher
+containers with a real bwrap: a `cli-tool` with `~/src6/proj/data` read-only, run once in
+`~/src6/proj`, puts a link to `~/Documents` where `data` was; the next launch drops the grant
+(#665); AppKata's start then finds the launcher stale (`install.launcher_is_current` is False:
+where a folder leads is part of the text) and writes it again, and the launch after lists
+`taxes.txt` and reads "TAXES" at the tool's folder. **The finding stands.** The fix is the remedy
+as filed: where each granted folder led is kept with the install (its record's `sandboxLeads`, by
+the folder's name), every launcher is written with the kept answers (`sandbox.folder_leads`,
+and `leads` in `build_launcher`, `launcher_text` and `write_launcher`), and a folder is asked
+again only at the install that takes the grant, at an app's first launcher, and at the user's own
+Save of the sandbox. So a link made or moved since changes no launcher's text, AppKata's start
+has nothing to write for it, and a launcher the start does write again (a hand-edited one), an
+update's and a switch's hold the same answers; the launch goes on dropping the grant, with the
+line. An update carries the answers into its new record; an app that runs Off keeps none. The
+user's Save reaches the install module as `app["sandboxAnew"]`, set by the backend for
+`_apply_sandbox` alone (see **Guard** for why not as an argument). Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_a_launcher_written_again_keeps_where_each_folder_led_and_only_an_install_or_the_users_save_judges_it_anew`
+    (through the install module, three grants: the tool's planted link, the user's own link moved,
+    a folder left alone: the start's comparison; a hand-edited launcher written again; a real
+    update, the next version from a web server, and a switch back; the launch, with a stand-in
+    bwrap, and both lines; the Save; a set with no folders; Off; a link that leads a grant to
+    `~/.ssh`, refused, and then elsewhere, still held to the first answer; and `folder_leads`
+    itself);
+    `tests/test_sandbox_two_apps.py`:
+    `test_appkatas_start_keeps_where_a_granted_folder_led_and_the_users_save_judges_it_anew`
+    (through the backend: `setSandbox`, `_heal_launchers`, the record). Changed with it: the
+    line's words in `test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_said`,
+    and `_launched()`'s new `leads=`. Shown failing: the tree of e8ba1e8 (`git archive`) with the
+    three test files over it, in the scratch home: the new install test where
+    `launcher_is_current` is False after the plant, the backend test where `_heal_launchers()`
+    returns the app (it wrote the launcher again), and #665's own test on the line's words.
+- tier 2, `_a_launcher_written_again_keeps_where_a_folder_led`, a part of
+    `test_nested_folder_grants_cannot_reopen_the_symlink_hole` (the finding's run through
+    `install.rewrite_launcher` and `install.launcher_is_current`, as the start uses them: the
+    launch after the plant, after AppKata's next start, and after a hand-edited launcher is
+    written again; the link taken away, and the grant stands again; then the user's own link:
+    judged at the Save that adds it, not given once moved, not after AppKata's start either,
+    given again after the next Save). Shown failing on the e8ba1e8 tree in both containers (Mint
+    22.3: bwrap 0.9.0; LMDE 7: bwrap 0.12.0), with the old line's words put into a scratch copy
+    of the test so that it reaches the fault: "after AppKata's next start" the tool's output was
+    `taxes.txt`, `TAXES`. With the fix: passed in both; the whole launcher tier on the code as
+    committed, Mint 22.3 147 passed, 5 skipped, LMDE 7 147 passed, 5 skipped.
+
+Before #743's commit: the 60 test files that name the sandbox, the backend, an install or a dialog,
+whole, in the scratch home, in the worktree itself (5603 passed, 56 skipped; the test's last case
+was added during that run, and `tests/test_sandbox.py`, the two other touched test files, the
+goldens and the document checks ran whole after it: 762 passed); the whole launcher tier in both
+containers; the guard. After it: the whole tier 1 suite in its container under a 3 GB cap (5592
+passed, 138 skipped, none failed).
+
+**#759, fixed, eae0d22.** The remedy is the owner's decision: no link is followed for a file
+argument. In the helper (`FORWARD_HELPER`'s `hand()`), an argument whose path passes through a
+link, at any step, the last included, is handed over as nothing and becomes no other path: it
+passes as typed, and a line of the helper's answer has the launcher say why, with the link and
+what it leads to. A link only root can have put there is followed (`roots()`: root's own, in a
+folder the user can't write). An argument that is, as typed, a path the app is shown (a full path
+under a granted folder's own path, a tool's relative path in its shared directory, no `..` in it)
+is left as typed with nothing said (`shown()`): the app follows any link on it itself, in its own
+view. A path through the kernel's own links under `/proc` (`/dev/stdin`, `/dev/stdout`) passes as
+typed with nothing said either. **What it supersedes**: #379's rule (the first link in a visible folder ends the way) and
+`follow()`'s bookkeeping for it are gone; R3-17's direction (a link outside the grants to a file
+inside one became the file's path) is followed no more. **What stands of #736**: the portal is
+asked what the app holds, a file in a folder it holds becomes its path in that folder's document,
+and nothing is handed over where the portal doesn't answer; a link in such a folder is refused
+like any other. The never-shared check still judges each link on the way, so its reason is the
+one said where both hold. Tests:
+- tier 1, `tests/test_sandbox.py`:
+    `test_a_file_argument_is_followed_through_no_link_but_one_only_root_can_have_put_there` (the
+    class: twelve places and ways a link can be on a path, by a path, a URI and two options, with
+    nothing granted, a folder granted elsewhere, the link's target granted, another folder held
+    through the portal, and from a tool's shared directory: no call to the portal, every argument
+    as typed, every line; the files beside them handed over; the user's own links, and the path
+    each line gives handed over; root's own link in a folder the user can't write followed and
+    handed over under the file's own name, root's own in the user's folder, another user's, and a
+    chain with one of the user's refused; the system's `/etc/os-release` and `/bin/sh`; the
+    process's own descriptors, with no line; a link to a never-shared place said as that), and
+    `test_the_launcher_says_why_an_argument_through_a_link_is_not_handed_over` (a cli-tool and a
+    standard launcher run whole). **No test can make a link root's**, so for those cases the
+    helper's own text is run with the two answers it asks the system for given by the test
+    (`_the_helper_where`: a link's owner, whether its folder can be written); the two system
+    links are asked of the system itself. Changed with it: #379's test
+    (`test_a_link_in_a_granted_folder_is_never_followed_out_of_it_to_hand_a_file_over`), #736's
+    (`test_a_link_in_a_folder_the_app_was_handed_is_never_followed_out_of_it`) and
+    `test_file_arguments_in_a_granted_folder_become_the_path_the_app_sees` keep what they held
+    with the new rule's answers (an argument that had become its own path in the folder, or the
+    file's path through the user's link, passes as typed with the line); #666's test
+    (`test_a_link_to_a_file_outside_every_grant_is_handed_over_under_the_files_own_name`) became
+    the rule's own, above, its name with it. Shown failing: the tree of b5870f7 (`git archive`)
+    with the test files over it, in the scratch home: six tests, the new ones on the fault
+    itself (the stand-in portal was handed `taxes.txt`, and the program's argument was
+    `…/doc/DOC/taxes.txt`).
+- tier 2, with the real document portal: `_a_link_left_where_a_tool_ran_once_hands_it_nothing`,
+    a part of `test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments` (the
+    finding's run: the tool plants a link to a file and a link to a folder in `~/src/proj`, and
+    is run from a folder shared with it and from the home folder with six ways of naming them;
+    then in the folder itself, with `/dev/stdin` beside them); `_a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there`,
+    a part of `test_a_file_argument_is_handed_over_to_a_standard_app` (the user's links, the
+    paths the lines give, and `/etc/os-release`, root's link in both images, handed over under
+    the file's own name and read through the portal); #379's and #736's parts with the new
+    answers; two cases of `tests/test_sandbox_user_shaped.py`'s corpus turned round (the link on
+    the desktop and the path through a linked folder reach nothing now). Shown failing on the
+    b5870f7 tree in both containers (Mint 22.3: bwrap 0.9.0, portal 1.20.0; LMDE 7: bwrap 0.12.0,
+    portal 1.20.3): the tool's arguments were documents of `taxes.txt` and of `~/Documents`
+    where the links were named. With the fix: passed in both; the whole launcher tier, Mint 22.3
+    147 passed, 5 skipped, LMDE 7 147 passed, 5 skipped.
+
+Before #759's commit: the 60 test files, whole, in the scratch home, in the worktree itself (5605 passed, 56 skipped); the document checks;
+the whole launcher tier in both containers; the guard. After it: the whole tier 1 suite in its
+container under a 3 GB cap (5594 passed, 138 skipped, none failed).
+
+How #743 slipped past, as a class: a judgement made again by a writer that runs by itself. #665's
+tests wrote the launcher again through the function that judges, which is what a Save does, and
+no test ran AppKata's start between a link's making and the next launch. The members here are
+where a folder leads (this fix) and what `refused_folders` reads from the disk at each writing
+(the never-shared answer and the link-in-another-grant rule): those only ever refuse more, so a
+start that judges them again can take a grant away and never give one.
+
+How #759 slipped past, as a class: a rule asked of what the app has now, about a thing that
+outlives it. #379 and #736 each asked whether a link lies in a folder the app is shown or holds,
+and the tests beside them held a link in a folder it has no more to be the user's own. #743 was the
+same class at the launcher's writing. What is left of the class in this unit's code, that I know
+of: nothing that follows a link for an app (a grant's place is pinned, #743; an argument's links
+are not followed); the live races the doubts name.
+
+### Needs your eye
+
+- b5870f7 (#743): **the line a user sees** when a grant is dropped at a launch: "<App> runs
+    sandboxed and isn't given <folder> this time: it led to <where> when the app was given it and
+    leads to <where> now, so a link on the way there was made or changed since. AppKata keeps to
+    where it led: if the change is yours, save the app's sandbox again in its Sandbox dialog, and
+    the folder is judged anew." (It ended "AppKata judges the folder again the next time it
+    starts.") It is printed at every launch until the link is put back or the sandbox is saved.
+- b5870f7 (#743): R17.4 gains "Where a granted folder leads is judged when the app is given it and
+    at no other time: …", "AppKata keeps the answer with the install, and every launcher it
+    writes again … holds the answer kept: …" and "An app that runs Off has no answer kept.", and
+    its sentence on the launch check says "when its grant was judged" where it said "when the
+    launcher was written". R17.3.1's sentence on a link in another granted folder says the
+    judging it guards is "the user's next save of the sandbox", where it said the launcher's next
+    writing.
+- b5870f7 (#743): **what "the user saves it" is**, which the remedy leaves: every road through
+    `Backend._apply_sandbox`: the Sandbox dialog's Save, "Use theirs", Install options on an
+    installed app (its Sandbox card, or a corrected kind). Such a Save judges **every** folder of
+    the set anew, also when the set is the same. Mine, beside the remedy: an app's first launcher
+    (one installed while the system couldn't sandbox, R17.10) judges then; a folder with no kept
+    answer is judged at the next writing, whatever writes it; a refused folder's answer is kept
+    too, so a grant refused while a link led it to a never-shared place is not judged anew once
+    the link is pointed elsewhere.
+- b5870f7 (#743): A1.11 gains a row, **run**: bwrap follows every link on the way to a bind's
+    source, and GNU `readlink -m` names where they lead. It is the claim #665's launch check and
+    this fix rest on, which had no row.
+
+- eae0d22 (#759): **the line a user sees**, once for each argument not followed: "<App> runs
+    sandboxed and isn't handed <argument as typed>: <the link> is a link, and a file argument is
+    never followed through one (give <where it leads> instead)." A tool's two general lines now
+    end "… unless it is in a never-shared folder of your home (your keys, your startup files,
+    AppKata's own) or named through a link." and "… unless it is in a never-shared folder of
+    your home or named through a link."
+- eae0d22 (#759): R17.6.2 gains "**A file argument is never followed through a link** …", "It
+    passes unchanged, and the launcher says so …", "A link is an app's to make wherever it can
+    write …", "The user's own links are followed no more either …", "A link only root can have
+    put there …", "An argument that is, as it is typed, a path the app is shown …" and "Nor is
+    anything said of a path that leads through the kernel's own links under `/proc` …"; the
+    sentence "A link in a granted folder is never followed out of it …" gives way to them,
+    R3-17's clause leaves the sentence on a path in a granted folder, and the sentence on a
+    folder handed over says a link in one "is followed no more than any other".
+- eae0d22 (#759): **mine, beside the decision.** (1) Root's own link is followed only where the
+    folder it lies in is not the user's to write: a link that is root's in a folder of the
+    user's can be moved there by a rename (its target stays, but a relative one then leads
+    elsewhere), so it counts as anyone's. (2) An argument that is the app's own path as typed is
+    left alone and nothing is said: without it every file opened in a folder granted through the
+    user's own link (`~/Documents` kept on another disk) would be said to be "not handed", though
+    it opens, and so would a tool's relative paths through a link in its own project. Nothing is
+    handed over on that road either: the app follows the link in its own view. (3) Where a link
+    leads to a never-shared place the line says that, and names no path to give. (4) #736's
+    "nothing is handed over where the portal doesn't answer what the app holds" is kept, though
+    no link is followed any more; dropping it would be a change to R17.6.2 no one asked for.
+    (5) `/dev/stdin`, `/dev/stdout`, `/dev/fd/N` and the like lead through `/proc/self/fd`, links
+    of the kernel's that are the user's by owner: they pass as typed and nothing is said, or every
+    `tool -o /dev/stdout` would print a line of AppKata's (they were never handed over to any
+    purpose: in the helper they are the helper's own descriptors).
+- eae0d22 (#759): A1.11 gains a row, **read + run**: a link is its maker's, and a name is made in
+    a folder or moved into it only by a user who can write that folder (the man-pages, and the
+    tier 2 parts).
+
+### Needs a run
+
+The VMs (the coordinator's): #743's part under Ubuntu's kernel and AppArmor profile, and with
+Ubuntu 26.04's coreutils, which are another make (`readlink -m` is what the launch asks):
+
+```
+scripts/test-sandbox.sh launcher-vm -k "nested_folder_grants or real_install_update or session_bus_socket"
+scripts/test-sandbox.sh launcher-vm26 -k "nested_folder_grants or real_install_update or session_bus_socket"
+```
+
+#759's parts with Ubuntu's portals (1.18 and 1.21), and `/etc/os-release` as Ubuntu has it (the
+part holds whether it is a link or a file; a link there that is not root's would fail it):
+
+```
+scripts/test-sandbox.sh launcher-vm -k "file_argument_is_handed_over or refused_folder_is_still_given or arguments_shaped or never_handed_over"
+scripts/test-sandbox.sh launcher-vm26 -k "file_argument_is_handed_over or refused_folder_is_still_given or arguments_shaped or never_handed_over"
+```
+
+### Guard
+
+The guard (`triage.py guard U05 --on U04 --base origin/cr1-u04-downloads-checksums`, from the main
+checkout's `agents/`, no `__pycache__` left) passes on both commits, with no file outside U05's plan
+(but `docs/relay/`). #759's record names `sandbox.py`, `tests/test_sandbox.py` and R17.6; the run
+tests, the corpus, the goldens, the trace and A1.11 are U05's. Of #743's own record only `sandbox.py`, `tests/test_sandbox.py`, R17.3 and
+R17.4 are named; `install.py`, `backend.py`, the golden, the trace, A1.11 and the two other test
+files are U05's. **Two files of other units shaped the fix**: `tests/test_sandbox_backend.py`
+(a shared file; U09, U17, U31 and U41 hold it) stands in for `install.rewrite_launcher` with three
+arguments, and `tests/test_sandbox_lifecycle.py` (U17's) for `Backend._regenerate_launcher` with
+one, both on the Save's road; so "this is the user's Save" rides in the app dictionary
+(`sandboxAnew`) and a per-app set in the backend (`_saving`), not in a new argument, and neither
+file changed. `tests/test_sandbox.py` now takes the web-server fixture and the archive helper from
+`tests/test_install_review.py` by import, as `tests/test_sandbox_transitions.py` does. The tier 2 check
+is a part of a run test `tests/skips/tier1.txt` already names, as settled.
+
+### New
+
+1. **Low. Every update of a sandboxed app asks the document portal to take back what the app was
+    handed**, not only an install that had no launcher (#400's rule, R17.14).
+    `src/appkata_core/install.py`, `_sandbox_launcher()` (`if not rec.get("launcher") or …`):
+    `install()` builds an update's record anew and carries no `launcher` key into it, so the
+    check reads every update as a first launcher. The app, updated while it runs or within the
+    login session, loses the documents it holds, which R17.14 doesn't say. Run at b5870f7 by a
+    scratch test (not in the repository) with a stand-in for the ask: an install and then an
+    update through `install.install()` each asked once for the app's id. Met while carrying
+    `sandboxLeads` through an update, which had the same cause. Not fixed: it is #400's code,
+    and a record that carries `launcher` into an update changes what a failed update takes back.
+
+### The real home
+
+Every run's `diff` of `/home/dev/bin`, `~/.local/share/appkata` and `~/.local/share/applications`
+before and after: empty. No session bus or portal of the machine's was asked.
+
+### Doubts for the coordinator
+
+1. **A user's Save takes a link for the folder's place, whoever made the link.** That is the
+    remedy ("judge it anew only then"), and it leaves this: an app plants a link on a grant's way
+    by a road no rule knows (the three of #743), the launches drop the grant with the line, and
+    the user later saves that app's sandbox for another reason (the camera, the network). The
+    Save judges the folder anew, the dialog shows it by its name as before, and the app is given
+    what the link names (never a never-shared folder; a link in another folder of the same set
+    is refused). Two ways to close it, both the owner's: the dialog shows where a folder leads
+    when that is not the folder itself (or asks before a kept answer changes); or a Save judges
+    only the folders it adds, and a folder is judged anew by taking it out and granting it again.
+2. Install options that end in an install or update (`installWith` with `install`), with a
+    sandbox chosen in its card, go through `install.install()`, not `_apply_sandbox`: the folders
+    already granted keep their answers there, and only a folder new to the set is judged. The
+    safe side; R17.4's sentence names the roads that do judge anew.
+3. A record with a launcher and no kept answer for a granted folder (written before this commit,
+    or made by hand as most tests make them) is judged at its next writing, whatever writes it:
+    no logic for an earlier version's records, as the brief says. On this branch's code every
+    writing stores the answers.
+4. Nothing in App Detail or the Sandbox dialog says a grant is being dropped at each launch; the
+    line is on stderr (the App log for an app started from the menu). The chips still show the
+    folder as granted.
+5. While a link leads a grant to a never-shared folder, the launcher's text has the refusal, so
+    AppKata's start does write it again (refusing), and again when the link changes: only ever
+    with less. The kept answer stays the first one (in the tier 1 test).
+6. `Backend._saving` is a set of URLs with no lock: AppKata's start, on its thread, rewriting the
+    same app at the moment the user saves its sandbox would judge anew too, which is what that
+    Save does anyway.
+7. A1.2's sketch of the launcher and A1.12 say nothing of the kept answers (U42's files, with
+    #734, #744 and #760).
+8. **#759's decision reached me as the coordinator's message and as its comment on the issue**
+    ("Decided by the owner (2026-11-25)", by the coordinator's account); I saw no word of the
+    owner's own, and took the coordinator's as the brief has it.
+9. #759: what the rule costs beyond the dotfiles the decision names. A file opened from the file
+    manager through any link of the user's outside a granted folder (a `~/Documents` kept on
+    another disk and not granted, a link on the desktop) reaches the app as a path that isn't
+    there, and the line is in the App log, which no one is shown; the app's own "file not found"
+    is what the user sees.
+10. #759: an argument that is the app's own path as typed says nothing, so a link an app planted
+    in its granted folder still dangles for it without a word, as #379 left it; and such a path
+    with a `..` in it is judged like any other, and said.
+11. #759: a live race stays, as elsewhere: an instance of the app still running, with a folder it
+    can write, could put a link on a path between the helper's look and the portal's opening of
+    the file (the helper opens the path it resolved; no step of it is opened without following).
+12. #759: where AppKata is run by root every link is refused, the system's too (root can write
+    every folder). And a root-owned link in a folder another user owns is followed: the rule is
+    about what this user's apps can have done.
+13. #759: the two general sentences of a tool's lines changed, so every launcher's text did (the
+    note on the helper too): the startup pass writes each sandboxed app's launcher again, once.
+14. #759: tier 1's cases for root's and another user's links run the helper's own text with
+    `os.lstat` and `os.access` answered by the test for the named paths; nothing but the system
+    links (`/etc/os-release`, `/bin/sh`) shows the real answers, in both tiers.
+15. For the tier 2 runs the worktree needed a mount point for the main checkout's Python,
+    `build/python-3.14` (ignored by git, empty); it is removed again at the end of the batch.
