@@ -1125,6 +1125,8 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
     # Standard, and before an install that had no launcher is given one: the holder of an identity
     # starts with nothing an earlier one was handed, also where the uninstall couldn't ask the
     # portal (R17.14; CR1.5-25). It costs nothing for an app that was handed nothing.
+    # An update's record carries the launcher of the record before it (install()), so it is no
+    # first launcher and takes nothing back (CR1.5-56).
     if not rec.get("launcher") or not sandbox.uses_bus(gs):
         sandbox.revoke_documents(app_id)
     appdir, exec_rel, appimage_path = _launcher_program(rec, target)
@@ -1549,6 +1551,12 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
         if OS == "windows":
             rec["scope"] = portable.scope
         portable_kind = kind in ("appimage", "tarball", "zip") or (kind == "exe" and app.get("exeKind") == "portable")
+        if portable_kind and prev.get("launcher"):
+            # An update is no first launcher: the app that had one is the same holder of its id, and
+            # keeps what the document portal holds for it (_sandbox_launcher; CR1.5-56, #767: the
+            # fresh record had no launcher, so every update of a Standard app took back the files
+            # it had been handed). A fresh install has no record before it, under a freed id too.
+            rec["launcher"] = prev["launcher"]
         if portable_kind and app.get("autoUpdate"):
             # it replaces its own files, so no version folders, kept versions or current link (R4.10.2)
             target = prev.get("target") if prev.get("current") else os.path.join(portable.root, app_id)

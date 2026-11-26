@@ -4313,6 +4313,77 @@ def test_an_uninstall_a_change_away_from_standard_and_a_first_launcher_take_back
     assert json.loads(docs.read_text()) == {"io.appkata.notes": {}} and _portal_calls(log) == [["RevokePermissions", ["d1", "io.appkata.notes", ALL_PERMISSIONS]]]
 
 
+def test_an_update_keeps_what_a_standard_app_was_handed_and_a_fresh_install_under_a_freed_id_takes_it_back(fake_home, tmp_path, monkeypatch, server):   # noqa: F811
+    # CR1.5-56 (#767): what the portal holds for an app is taken back before a first launcher
+    # (CR1.5-25, #400), which was asked of the record being written, and an update writes a fresh
+    # record: it has no launcher yet. So every update of a Standard app revoked what the app had
+    # been handed, and the files it had open were gone from its view. How it slipped past: #400's
+    # test wrote each launcher over one record (install._activate), never through an update.
+    import json as _json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
+    root = fake_home / "Apps"
+    target = root / "notes"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "notes"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    url = "https://example.org/alice/notes"
+    level = lambda template: {"name": "Notes", "url": url, "sandbox": sb.to_json(sb.resolve_template(template))}   # noqa: E731
+    rec = {"id": "notes", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/notes"}, "links": [], "files": [], "target": str(target)}
+    db = DB(str(tmp_path / "a.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Notes", "1.0", "tarball", _json.dumps(rec), now()))
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False)
+    stored = lambda: _json.loads(db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])      # noqa: E731
+    held = {sb.app_identity("notes"): {"d1": str(fake_home / "Documents" / "taxes.txt")}}
+    docs, log, _ = a_portal_holding(tmp_path, monkeypatch, {})
+    asked, real = [], sb.revoke_documents
+    monkeypatch.setattr(sb, "revoke_documents", lambda app_id: asked.append(app_id) or real(app_id))
+
+    def handed():                       # the app is handed a file while it runs Standard
+        docs.write_text(json.dumps(held))
+        os.makedirs(os.path.dirname(sb.handed_path("notes")), exist_ok=True)
+        open(sb.handed_path("notes"), "w").close()
+        asked.clear()
+        if log.exists():
+            log.unlink()
+
+    took_back = [["RevokePermissions", ["d1", sb.app_identity("notes"), ALL_PERMISSIONS]]]
+    install.rewrite_launcher(db, level("online-app"), port)
+    assert asked == ["notes"] and stored()["launcher"]                  # its first launcher: the holder of an id starts with nothing
+    # an update, the next version installed from its release: the app is the same holder, and keeps what it holds
+    handed()
+    asset = _tarball(server, "notes-2.0.tar.gz", {"notes-2.0/bin/notes": 0o755})
+    new = install.install(db, {**level("online-app"), "installVersion": "2.0"}, asset, "tarball", [asset], portable=port)
+    assert new["current"]["version"] == "2.0" and new["id"] == "notes" and new["launcher"] == stored()["launcher"]
+    assert asked == [] and json.loads(docs.read_text()) == held and _portal_calls(log) == [], (asked, _portal_calls(log))
+    install.switch_to(db, level("online-app"), "1.0", port)                  # and a switch back to the kept version
+    assert asked == [] and json.loads(docs.read_text()) == held
+    # an update that leaves Standard still takes it back
+    asset = _tarball(server, "notes-3.0.tar.gz", {"notes-3.0/bin/notes": 0o755})
+    install.install(db, {**level("strict"), "installVersion": "3.0"}, asset, "tarball", [asset], portable=port)
+    assert asked == ["notes"] and json.loads(docs.read_text()) == {sb.app_identity("notes"): {}} and _portal_calls(log) == took_back
+    install.rewrite_launcher(db, level("online-app"), port)
+    # ...and so does a change away from Standard with no update
+    handed()
+    install.rewrite_launcher(db, level("strict"), port)
+    assert asked == ["notes"] and _portal_calls(log) == took_back
+    # A fresh install under a freed id (#400's case): the app is uninstalled where the portal
+    # couldn't be asked, so it still holds the document for the id, and another install takes the
+    # id: it has no record before it, and starts with nothing
+    install.uninstall(db, url, remove_sandbox=True)
+    handed()
+    asset = _tarball(server, "notes-4.0.tar.gz", {"notes-4.0/bin/notes": 0o755})
+    fresh = install.install(db, {**level("online-app"), "installVersion": "4.0"}, asset, "tarball", [asset], portable=port)
+    assert fresh["id"] == "notes" and fresh["launcher"]
+    assert asked == ["notes"] and json.loads(docs.read_text()) == {sb.app_identity("notes"): {}} and _portal_calls(log) == took_back
+
+
 # CR1.5-20 (#395): a private home is its app's to write, and what an app leaves there need not be
 # removable as it lies. The uninstall removed what it could, said nothing of the rest, and removed
 # the owner record, after which the home was no app's (a home with no owner counts as another's):
