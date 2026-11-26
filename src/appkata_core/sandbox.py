@@ -712,14 +712,22 @@ def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> li
     # ...and where the environment moves them (CR1.5-17): the folders of the XDG variables, the keys
     # in $GNUPGHOME, zsh's startup files in $ZDOTDIR and Readline's file where $INPUTRC names it
     # (P2C-2). AppKata's own areas, first in the list, are
-    # where they are (the data folder follows XDG_DATA_HOME by itself, platform.data_dir). A
-    # $GNUPGHOME that is the home folder or above it adds nothing, as with `own`'s folders.
+    # where they are (the data folder follows XDG_DATA_HOME by itself, platform.data_dir).
+    # GnuPG and Readline expand a leading `~` in theirs, so it is expanded here (a quoted `~` in
+    # ~/.profile, or a line of environment.d, which expands none, reaches them as it is); the XDG
+    # variables' readers and zsh take theirs as written. A $GNUPGHOME or an $INPUTRC that is the
+    # home folder or above it adds nothing, as with `own`'s folders: neither program reads a file
+    # there for it, and as a root it would make every folder of the home refused. One that names a
+    # folder below the home stays a root, $INPUTRC's too, though Readline reads nothing from a
+    # folder: skipped, an app granted the folder above could put a file in its place (pr-review
+    # pass 3 of #735, P3B-1 and P3-1).
     roots = roots[:areas] + _moved(roots[areas:], home)
-    if os.path.isabs(keys := os.environ.get("GNUPGHOME") or "") and not above_home(keys):
+    named = lambda var: os.path.expanduser(os.environ.get(var) or "")      # noqa: E731
+    if os.path.isabs(keys := named("GNUPGHOME")) and not above_home(keys):
         roots.append((os.path.normpath(keys), "GPG keys"))
     if os.path.isabs(zsh := os.environ.get("ZDOTDIR") or ""):
         roots += [(os.path.join(os.path.normpath(zsh), f), "your shell's startup files") for f in (".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout")]
-    if os.path.isabs(rc := os.environ.get("INPUTRC") or ""):
+    if os.path.isabs(rc := named("INPUTRC")) and not above_home(rc):
         roots.append((os.path.normpath(rc), "your terminal's key bindings, which can type commands"))
     return list(dict.fromkeys(roots))
 

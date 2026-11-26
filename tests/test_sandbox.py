@@ -2632,13 +2632,61 @@ def test_a_never_shared_or_secret_folder_is_refused_where_the_environment_moves_
     assert (sb._protected_roots(), sb._secret_roots()) == before
     # (but AppKata's own data folder, which is where platform.data_dir() says, whatever it makes of the variable)
     places = lambda roots: [r for r in roots if r[1] != "AppKata's own data and the apps' private homes"]      # noqa: E731
-    for value in ("", "cfg", "~/cfg", "./x"):
+    for value in ("", "cfg", "./x"):
         for var in MOVED:
             monkeypatch.setenv(var, value)
         assert (places(sb._protected_roots()), sb._secret_roots()) == (places(before[0]), before[1]), value
+    # ...and written with `~`, for the variables whose readers take it as it is (the XDG pair's and
+    # zsh expand nothing); Readline and GnuPG expand it, which the test below holds them to
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR"):
+        monkeypatch.setenv(var, "~/cfg")
+    assert (places(sb._protected_roots()), sb._secret_roots()) == (places(before[0]), before[1])
     # a GnuPG home that is the home folder, or above it, makes no folder of the home the keys'
     monkeypatch.setenv("GNUPGHOME", "/home/kata")
     assert places(sb._protected_roots()) == places(before[0]) and not sb.protected_folder("~/Notes")
+
+
+# pr-review pass 3 of #735 (P3B-1, P3-1): round 2's INPUTRC root took the value whatever it named, so
+# one naming the home (or a folder above it) made every folder of the home "your terminal's key
+# bindings"; and neither it nor GNUPGHOME was followed when written with `~`, which Readline and
+# GnuPG expand, so the file or the keys such a value names were an ordinary folder. The moved test
+# above gave both a full path below the home, and held "~/cfg" ignored for every variable alike.
+# Each variable → the home and above add nothing, in every way of writing them; a value with `~`
+# is refused as its full path is; and a value naming a folder stays refused, folder and all (a
+# folder skipped would be one the app, granted the folder above, could swap for a file).
+@pytest.mark.parametrize("var,why", [("INPUTRC", "your terminal's key bindings, which can type commands"), ("GNUPGHOME", "GPG keys")])
+def test_a_variable_its_program_expands_is_followed_written_with_a_tilde_and_adds_nothing_as_the_home_or_above(var, why, fake_home, monkeypatch):
+    for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "GNUPGHOME", "ZDOTDIR", "INPUTRC", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    home = str(fake_home)
+    for d in ("Notes", "Projects/sub", "rl/dir", "dots"):
+        (fake_home / d).mkdir(parents=True)
+    (fake_home / "rl" / "file").write_text("")
+    os.symlink(home, fake_home / "dots" / "home")
+    before = sb._protected_roots()
+    ordinary = ("~/Notes", "~/Projects", "~/Projects/sub", "~/rl", "~/rl/dir", "~/rl/file", "~/dots")
+    assert not any(sb.protected_folder(p) for p in ordinary)
+    # the home, or above it: no root, and no folder of the home refused for it
+    for value in (home, home + "/", home + "/.", home + "/Notes/..", os.path.dirname(home), "/", "~", "~/", "~/.", "~/Notes/..", "~/..",
+                  home + "/dots/home", "~/dots/home"):
+        monkeypatch.setenv(var, value)
+        assert sb._protected_roots() == before, value
+        assert not any(sb.protected_folder(p) for p in ordinary), value
+    # a file or a folder of the home, as a full path and with `~`: refused, with what is in it and
+    # the folders above it, and nothing beside it
+    for value, named in ((home + "/rl/file", "~/rl/file"), ("~/rl/file", "~/rl/file"), (home + "/rl/dir", "~/rl/dir"), ("~/rl/dir", "~/rl/dir"),
+                         ("~/rl/dir/", "~/rl/dir"), ("~/Projects/sub", "~/Projects/sub"), ("~/rl/new", "~/rl/new")):
+        monkeypatch.setenv(var, value)
+        assert sb._protected_roots() == before + [(os.path.join(home, named[2:]), why)], value
+        assert sb.protected_folder(named) == why and sb.protected_folder(named + "/x") == why, value
+        assert sb.protected_folder(os.path.dirname(named)) == "a folder above " + why, value
+        assert not sb.protected_folder("~/Notes") and not sb.protected_folder("~/dots"), value
+        kept, refused = sb.strip_protected({**sb.to_json(sb.resolve_template("standard")), "folders": {named: "rw", os.path.dirname(named): "rw", "~/Notes": "rw"}})
+        assert set(kept["folders"]) == {"~/Notes"} and dict(refused) == {named: why, os.path.dirname(named): "a folder above " + why}, value
+    # no other way of writing one is a path its program opens there
+    for value in ("rl/file", "./rl/file", "~rl/file"):
+        monkeypatch.setenv(var, value)
+        assert sb._protected_roots() == before, value
 
 
 def test_the_startup_pass_writes_a_launcher_again_once_a_variable_moves_a_never_shared_folder(fake_home, tmp_path, monkeypatch):
