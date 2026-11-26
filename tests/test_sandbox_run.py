@@ -2624,11 +2624,95 @@ def _cinnamon_loads(main_js: str, launchers_js: str) -> list[str]:
     return sorted(set(out))
 
 
-def _sourced_from_the_home(text: str) -> list[str]:
-    """The files in the home a shell script sources (`. <file>`), wherever on a line it does."""
-    import re
-    return sorted({_home_path(m.group(1)) for m in re.finditer(
-        r"(?:^|&&|\|\||;|\bthen\b)\s*\.\s+\"?((?:\$\{XDG_\w+_HOME:-[^}]+\}|\$HOME|~)/[^\s\";]+)", text, re.M)})
+# pr-review pass 2 of #735, P2-3: this reader was given one script (xdg-user-dir) and matched only a
+# path written after the `.`, while its commit said it asked for every file a script of the platform
+# sources from the home. The session's own scripts name the file in a variable first
+# (`GNOMERC=$HOME/.gnomerc`, then `. "$GNOMERC"`), set it in another script (Xsession sets
+# USERXSESSIONRC, a file of Xsession.d sources it) or in a file they source (im-config's), loop over
+# a list of names, or hand the name to a function that sources its argument (Mint's
+# lightdm-session): none of which it saw, so it would have found neither ~/.xsessionrc nor
+# ~/.gnomerc (P2-2) had it been given their scripts. It reads them all now (_session_scripts), and a
+# word is resolved from the scripts themselves.
+_A_COMMAND = r"(?:^|&&|\|\||;|\bthen\b|\bdo\b|\belse\b)\s*(?:\w+=\S*\s+)*"       # where a command starts, after any `NAME=value` before it
+_IN_THE_HOME = r"(?:\$\{XDG_\w+_HOME:-[^}]+\}|\$\{HOME\}|\$HOME|~)/[^\s\"';)]+"   # a word that names a place in the home
+_A_NAME = r"\$\{?(\w+)\}?"                                                         # a word that is one variable
+
+
+def _names_in(texts: list[str], read) -> tuple[list[str], dict[str, set[str]], set[str]]:
+    """What a set of shell scripts says of its own words: the scripts with every file of the system
+    one of them sources by its full path (their variables count as its own); {a variable: the
+    places in the home a plain assignment gives it}; and the functions that source their first
+    argument."""
+    texts = [t for t in texts if t]
+    for text in texts:                                     # (grows as it goes)
+        for m in re.finditer(_A_COMMAND + r"(?:\.|source)\s+\"?(/[^\s\"';$]+)", text, re.M):
+            if (more := read(m.group(1))) and more not in texts:
+                texts.append(more)
+    names: dict[str, set[str]] = {}
+    for text in texts:
+        for m in re.finditer(r"^\s*(?:export\s+)?(\w+)=\"?(" + _IN_THE_HOME + r")\"?\s*(?:#.*)?$", text, re.M):
+            names.setdefault(m.group(1), set()).add(m.group(2))
+    sourcing = set()
+    for text in texts:
+        for m in re.finditer(r"^(\w+)\s*\(\)\s*\{\n(.*?)^\}", text, re.M | re.S):
+            first = {"1"} | set(re.findall(r"^\s*(\w+)=\"?\$\{?1\}?\"?\s*$", m.group(2), re.M))
+            if any(var in first for var in re.findall(_A_COMMAND + r"(?:\.|source)\s+\"?" + _A_NAME, m.group(2), re.M)):
+                sourcing.add(m.group(1))
+    return texts, names, sourcing
+
+
+def _named(var: str, text: str, at: int, names: dict[str, set[str]]) -> set[str]:
+    """The places in the home the variable `var` names at the place `at` of the script `text`: the
+    ones in the list of the last `for var in ...` before it (a loop's variable is the loop's own:
+    another loop of the script reuses the name for other files), each word of the list a place or a
+    variable; with no such loop, the ones an assignment gives it."""
+    loops = [m for m in re.finditer(r"\bfor\s+" + re.escape(var) + r"\s+in\s+([^;\n]+)", text) if m.start() < at]
+    if not loops:
+        return names.get(var, set())
+    out = set()
+    for quoted, bare in re.findall(r"\"([^\"]*)\"|(\S+)", loops[-1].group(1)):
+        word = quoted or bare
+        if re.fullmatch(_IN_THE_HOME, word):
+            out.add(word)
+        elif inner := re.fullmatch(_A_NAME, word):
+            out |= names.get(inner.group(1), set())
+    return out
+
+
+def _sourced_from_the_home(text: str, *beside: str, read=lambda path: "") -> list[str]:
+    """The files in the home the shell script `text` sources (`. <file>`, `source <file>`, or a
+    function of its own that sources its argument), wherever on a line it does, the file written
+    there or named by a variable: one the script sets, or a script `beside` it does, or a file of
+    the system they source (`read` gives a path's text)."""
+    _, names, sourcing = _names_in([text, *beside], read)
+    by = "|".join([r"\.", "source", *sorted(map(re.escape, sourcing))])
+    out = set()
+    for m in re.finditer(_A_COMMAND + r"(?:" + by + r")\s+\"?(?:(" + _IN_THE_HOME + r")|" + _A_NAME + r")", text, re.M):
+        out |= {m.group(1)} if m.group(1) else _named(m.group(2), text, m.start(), names)
+    return sorted({_home_path(p.replace("${HOME}", "$HOME")).rstrip("*").rstrip("/") for p in out})
+
+
+def _started_from_the_home(text: str, *beside: str, read=lambda path: "") -> list[str]:
+    """The files in the home `text`, a script of Xsession, makes the session's own program
+    (`STARTUP="$file"`, or `STARTUP="$shell $file"`): the user's session script, run in place of the
+    desktop's where the display manager names none."""
+    _, names, _ = _names_in([text, *beside], read)
+    out = set()
+    for m in re.finditer(r"^\s*STARTUP=\"?(?:\$\{?\w+\}?\s+)?" + _A_NAME + r"\"?\s*$", text, re.M):
+        out |= _named(m.group(1), text, m.start(), names)
+    return sorted({_home_path(p.replace("${HOME}", "$HOME")) for p in out})
+
+
+def _session_scripts() -> list[str]:
+    """Every script of this system that the X11 session runs as it starts, and that can source a
+    file from the home: Xsession and each file of Xsession.d (the Debian family's, which a display
+    manager runs or its own wrapper sources), the display managers' wrappers, xinit's, and
+    xdg-user-dir, which the desktop's programs run."""
+    import glob
+    return [p for p in ("/etc/X11/Xsession", *sorted(glob.glob("/etc/X11/Xsession.d/*")), "/usr/sbin/lightdm-session",
+                        "/etc/gdm3/Xsession", "/etc/sddm/Xsession", "/usr/share/sddm/scripts/Xsession", "/etc/X11/xdm/Xsession",
+                        "/etc/X11/xinit/xinitrc", *sorted(glob.glob("/etc/X11/xinit/xinitrc.d/*")), "/usr/bin/xdg-user-dir")
+            if os.path.isfile(p)]
 
 
 def _cinnamon_runs_what_its_settings_name(keybindings_js: str) -> bool:
@@ -2832,8 +2916,12 @@ def _loaded_from_the_home() -> dict[str, str]:
     for line in _read("/usr/share/im-config/xinputrc.common").splitlines():     # the file im-config's Xsession hook sources
         if line.startswith("IM_CONFIG_XINPUTRC_USR="):
             found[_home_path(line.split("=", 1)[1].strip().strip('"'))] = "im-config"
-    for script in ("/usr/bin/xdg-user-dir",):                                   # sources the user's folder names as shell
-        for path in _sourced_from_the_home(_read(script)):
+    scripts = {script: _read(script) for script in _session_scripts()}          # P2-3: all of them, each beside the others
+    for script, text in scripts.items():
+        beside = [t for s, t in scripts.items() if s != script]
+        for path in _sourced_from_the_home(text, *beside, read=_read):
+            found[path] = script
+        for path in _started_from_the_home(text, *beside, read=_read):
             found[path] = script
     # the settings Cinnamon takes a custom keybinding's command from are GSettings', kept in dconf's
     # database in the user's configuration folder where its backend is installed (the default one)
@@ -2870,6 +2958,42 @@ def _what_the_desktops_own_programs_load_from_the_home_is_refused():
     assert _sourced_from_the_home(
         '#!/bin/sh\ntest -f ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs && . ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs\n'
         'if [ "x$1" = "xDESKTOP" ]; then\n  eval echo \\${XDG_${1}_DIR:-$HOME/Desktop}\nfi\n. /etc/os-release\n') == ["~/.config/user-dirs.dirs"]
+    # ...and the session's scripts (P2-3), on the lines of x11-common 7.7 (/etc/X11/Xsession and its
+    # Xsession.d files), cinnamon-session-common 6.6.3, im-config 0.57, LMDE 7's 99lmde and lightdm
+    # 1.30's lightdm-session (Mint 22.3's default wrapper): a name set in one script and sourced in
+    # another, in the same one, in a file of the system it sources, in a loop's list, and handed to
+    # a function that sources its argument; a file the session writes (ERRFILE) or only merges
+    # (xrdb) is not one
+    xsession = ('USRRESOURCES=$HOME/.Xresources\nUSERXSESSION=$HOME/.xsession\nUSERXSESSIONRC=$HOME/.xsessionrc\nALTUSERXSESSION=$HOME/.Xsession\n'
+                'ERRFILE=$HOME/.xsession-errors\nSESSIONFILES=$(run-parts --list $SYSSESSIONDIR)\n  for SESSIONFILE in $SESSIONFILES; do\n    . $SESSIONFILE\n  done\n')
+    xsessionrc = '#Source user defined xsessionrc\nif [ -r "$USERXSESSIONRC" ]; then\n  . "$USERXSESSIONRC"\nfi\n'
+    startup = ('    for STARTUPFILE in "$USERXSESSION" "$ALTUSERXSESSION"; do\n      if [ -e "$STARTUPFILE" ]; then\n        if [ -x "$STARTUPFILE" ]; then\n'
+               '          STARTUP="$STARTUPFILE"\n        else\n          shell=${SHELL:-sh}\n          STARTUP="$shell $STARTUPFILE"\n        fi\n'
+               '  if [ -x /usr/bin/x-session-manager ]; then\n    STARTUP=x-session-manager\n')
+    gnomerc = 'case "$BASESTARTUP" in\n  cinnamon-session*)\n    GNOMERC=$HOME/.gnomerc\n    if [ -r "$GNOMERC" ]; then\n      . "$GNOMERC"\n    fi\n'
+    resources = 'if has_option allow-user-resources && [ -f "$USRRESOURCES" ]; then\n  if type xrdb >/dev/null 2>&1; then\n    xrdb -merge $USRRESOURCES\n'
+    im_config = ('    . /usr/share/im-config/xinputrc.common\n    if [ -r "$IM_CONFIG_XINPUTRC_USR" ]; then\n        . $IM_CONFIG_XINPUTRC_USR\n'
+                 '    elif [ -r "$IM_CONFIG_XINPUTRC_SYS" ]; then\n        . $IM_CONFIG_XINPUTRC_SYS\n    fi\n')
+    common = {"/usr/share/im-config/xinputrc.common": 'IM_CONFIG_XINPUTRC_USR=$HOME/.xinputrc\nIM_CONFIG_XINPUTRC_SYS=/etc/X11/xinit/xinputrc\n. gettext.sh\n'}
+    lmde = 'for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do\n    if [ -f "$file" ]; then\n        . "$file"\n    fi\ndone\n'
+    lightdm = ('source_with_error_check () {\n    CONFIG_FILE="$1"\n    echo "Loading $CONFIG_FILE"\n    BASH_VERSION= . "$CONFIG_FILE" 2>"$ERR"\n'
+               '    if [ -s "$ERR" ]; then\n        . /usr/lib/lightdm/config-error-dialog.sh\n    fi\n}\n'
+               'for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do\n    if [ -f "$file" ]; then\n'
+               '        source_with_error_check "$file"\n    fi\ndone\n    xresourcefile="$HOME/.Xresources"\n        xrdb -merge "$xresourcefile"\n'
+               '    for file in "/etc/X11/Xkbmap" "$HOME/.Xkbmap"; do\n            setxkbmap `cat "$file"`\n    done\n'
+               'USERXSESSIONRC=$HOME/.xsessionrc\n    for i in `ls $xsessionddir`; do\n        script="$xsessionddir/$i"\n            . "$script"\n    done\n')
+    session = {"Xsession": xsession, "40x11-common_xsessionrc": xsessionrc, "50x11-common_determine-startup": startup,
+               "55cinnamon-session_gnomerc": gnomerc, "30x11-common_xresources": resources, "70im-config_launch": im_config, "99lmde": lmde,
+               "lightdm-session": lightdm}
+    sourced = {name: _sourced_from_the_home(text, *(t for n, t in session.items() if n != name), read=lambda p: common.get(p, ""))
+               for name, text in session.items()}
+    assert sourced == {"Xsession": [], "40x11-common_xsessionrc": ["~/.xsessionrc"], "50x11-common_determine-startup": [],
+                       "55cinnamon-session_gnomerc": ["~/.gnomerc"], "30x11-common_xresources": [], "70im-config_launch": ["~/.xinputrc"],
+                       "99lmde": ["~/.profile", "~/.xprofile"], "lightdm-session": ["~/.profile", "~/.xprofile"]}, sourced
+    assert _sourced_from_the_home(xsessionrc) == [] and _sourced_from_the_home(im_config, xsession) == []     # the name is set elsewhere
+    assert _started_from_the_home(startup, xsession) == ["~/.Xsession", "~/.xsession"] and _started_from_the_home(startup) == []
+    assert _sourced_from_the_home('for rc in ~/.bashrc.d/*; do\n  if [ -f "$rc" ]; then source "$rc"; fi\ndone\n[ -r ${HOME}/.x ] && . ${HOME}/.x\n') == [
+        "~/.bashrc.d", "~/.x"]
     assert _cinnamon_runs_what_its_settings_name(
         '        let list = this.kb_schema.get_strv("custom-list");\n            let command = schema.get_string("command");\n'
         '                Util.spawnCommandLine(command);\n') and not _cinnamon_runs_what_its_settings_name("Util.spawnCommandLine(command);")
