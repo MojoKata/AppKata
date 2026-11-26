@@ -972,8 +972,9 @@ def refused_folders(gs: dict, apps_root: str | None = None, own: Own | None = No
     A link in a folder the app is given is the app's to make: with ~/Projects read-write and
     ~/Projects/sub/deep granted too, the app put a link where `sub` was, and what the link named was
     mounted at the next launch, the user's keys among it (CR1.5-40). The launcher drops a grant that
-    no longer leads where it led when it was written; this is the rule for the next time it is
-    written, so that AppKata's own start doesn't take the app's link for the folder's place. The
+    no longer leads where it led when it was judged (:func:`folder_leads`); this is the rule for
+    the judging itself, an install's or the user's next Save of the sandbox, so that it doesn't
+    take the app's link for the folder's place. The
     link is judged by where it lies, not by where it leads or who made it: the user's own link in
     a granted folder is refused the same way, and the folder it names can be granted itself."""
     gs = normalize(gs)
@@ -996,6 +997,28 @@ def strip_protected(gs: dict, apps_root: str | None = None, own: Own | None = No
     for p, _ in refused:
         gs["folders"].pop(p)
     return gs, refused
+
+
+def folder_leads(gs: dict, kept: dict | None = None) -> dict[str, str]:
+    """Where each folder of the grant set `gs` leads, by the folder's name in the set: the place the
+    host has it at, every link on the way followed, which a launcher bakes beside the folder and
+    holds each launch to (R17.4). `kept`: the answers given when the folders' grants were judged,
+    which stand for every folder still in the set; only a folder with none is asked now.
+
+    Where a folder leads is judged when its grant is: at the install that takes it and at the
+    user's own Save of the app's sandbox, and the install keeps the answers (its record's
+    "sandboxLeads", install._sandbox_launcher). It was asked each time a launcher was written, and
+    AppKata's start writes a launcher again whenever its text would differ -- which it did as soon
+    as a link led a grant elsewhere, the place being part of the text. So the launch that dropped
+    the grant was followed by a start that took the link for the folder's place: a tool given
+    ~/src/proj/data and run once in ~/src/proj put a link to ~/Documents where `data` was, and read
+    the user's documents there from AppKata's next start on (CR1.5-53). :func:`refused_folders`
+    knows a link in another folder of the set, and an app can write elsewhere too: where a tool was
+    run, a folder it was handed, another app's grant above its own. The working directory ("$cwd")
+    is decided at each launch and has no answer here."""
+    kept = kept if isinstance(kept, dict) else {}
+    return {p: led if isinstance(led := kept.get(p), str) and led else os.path.realpath(os.path.expanduser(p))
+            for p in sorted(normalize(gs)["folders"]) if p != "$cwd"}
 
 
 # -------------------------------------------------------------------------- resolving sources (R17.3.2)
@@ -2955,22 +2978,28 @@ def _launcher_env(net: bool = False) -> list[str]:
 # `../../.ssh`), the user's real ~/.ssh, at the app's ~/.ssh (CR1.5-40; this note said the source
 # side was safe, and the test beside it planted a link to /oldroot, which leads nowhere on the host
 # and is skipped whatever bwrap does). So each grant is asked again at every launch, before bwrap
-# (_GRANT_FN): mounted only while it leads where it led when the launcher was written, which is
+# (_GRANT_FN): mounted only while it leads where it led when the grant was judged, which is
 # baked beside it, and dropped with a line on stderr otherwise. Compared with where it led, not
 # with the path as written: a grant through the user's own link (~/Documents kept on another disk)
-# stands. And when a launcher is written, a grant that a link in another granted folder is on the
-# way to is refused (refused_folders), so writing it again never takes the app's link for the place.
+# stands. Where it led is the install's to keep (folder_leads): judged when an install takes the
+# grant and when the user saves the app's sandbox, and the same in every launcher written between,
+# so writing one again never takes the app's link for the place (CR1.5-53: it was asked at each
+# writing, and AppKata's start wrote the launcher again as soon as a link had moved a grant). And
+# where a grant is judged, one that a link in another granted folder is on the way to is refused
+# (refused_folders).
 # As with the guard, a second instance still running could put a link there between the asking and
 # bwrap's mounts: this covers what an app leaves behind, not a live race.
-_GRANT_FN = """# A folder the app was given is mounted only while it leads where it led when AppKata wrote this
-# launcher (R17.3.1): bwrap follows each link on the way to it, and a link put there since -- the app
-# can put one in a folder it was given, above another -- would mount whatever the link names.
+_GRANT_FN = """# A folder the app was given is mounted only while it leads where it led when the app was given it
+# (R17.4): bwrap follows each link on the way to it, and a link put there since -- the app can put
+# one in a folder it could write, above another -- would mount whatever the link names. Where it led
+# is kept with the install, and is the same in every launcher AppKata writes until an install or
+# your own Save of the app's sandbox judges the folder anew.
 # "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
 # while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
 leads() {{
   now=$(readlink -m -- "$1" 2>/dev/null) || now=
   [ "$now" = "$2" ] && return 0
-  printf "%s runs sandboxed and isn't given %s this time: it led to %s when AppKata wrote this launcher and leads to %s now, so a link on the way there was made or changed since. AppKata judges the folder again the next time it starts.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox dialog, and the folder is judged anew.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
   return 1
 }}
 """
@@ -3144,7 +3173,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None, apps_root: str | None = None,
                    seccomp: str | None = None, log_path: str | None = None, forward: str | None = None,
                    shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True,
-                   path: str | None = None, own: Own | None = None) -> str:
+                   path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (R17.4). The launcher
     does no run-time policy resolution; its text is exactly what runs (shown in App Detail, audited).
 
@@ -3166,6 +3195,9 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     runs with no session bus, and the files it is given still reach it (R17.10; review 2, F12).
     `path`: the PATH the launcher sets for the host commands it runs, :data:`HOST_PATH` unless given
     (:func:`host_path`); the PATH it is started with never decides what runs out there.
+    `leads`: where each granted folder led when its grant was judged, which the launcher holds it
+    to at each launch (:func:`folder_leads`, the install's to keep); a folder it doesn't name is
+    judged now, as for an app's first launcher.
     """
     from . import applog
     gs, refused = strip_protected(gs, apps_root, own)
@@ -3193,10 +3225,11 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # (_GRANT_FN): asked before the file-argument block, which counts a folder as visible only then.
     granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
     stands = {p: f"g{i}" for i, p in enumerate(granted, 1)}
+    led = folder_leads(gs, leads)
     grants = ""
     if granted:
         grants = _GRANT_FN.format(name=q(name)) + "".join(
-            f'{stands[p]}={q(os.path.expanduser(p))}; leads "${stands[p]}" {q(os.path.realpath(os.path.expanduser(p)))} || {stands[p]}=\n' for p in granted)
+            f'{stands[p]}={q(os.path.expanduser(p))}; leads "${stands[p]}" {q(led[p])} || {stands[p]}=\n' for p in granted)
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it
@@ -3231,7 +3264,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # is inside a granted folder all the same, or is what a grant names, the file is covered, after
     # that grant's bind, so the app never sees the unfiltered bus (R17.3.1). Each grant as the app sees
     # it, and as it really is at the launch: `readlink -f`, which follows a link as bwrap's bind then
-    # follows it (where it can't, as it was when the launcher was written); each socket file the
+    # follows it (where it can't, where it led when the grant was judged); each socket file the
     # address names, but a link, which the folder shows pointing at a file it doesn't (its target is in
     # $bussocks too, and covered where a grant shows it). PR #694's review, P5-B1: the match was on
     # what lies under a grant alone ("$r"/*), so a grant of the socket file itself, or of a link to it
@@ -3252,7 +3285,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                  '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'      [ -z "${stands[p]}" ] || {{ r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
+            cover.append(f'      [ -z "${stands[p]}" ] || {{ r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(led[p])}; '
                          f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac; }}')
         cover += ["    fi", "  done", "else",
                   "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
@@ -3547,13 +3580,14 @@ def launcher_path(app_id: str, apps_root: str) -> str:
 
 
 def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                  appimage_path: str | None = None, own: Own | None = None) -> str:
+                  appimage_path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
     run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
     bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant, where its
-    folder leads, and where AppKata's own session bus has its socket if in it (R17.3.1), and AppKata's
+    folder led when the grant was judged (`leads`, which the install keeps: a link made since
+    changes no launcher's text, CR1.5-53), and where AppKata's own session bus has its socket if in it (R17.3.1), and AppKata's
     own folders, which are in every launcher's never-shared list (`apps_root`, `own`) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
@@ -3561,7 +3595,7 @@ def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel:
     return build_launcher(app_id, name, appdir, exec_rel, gs, appimage_path, apps_root,
                           seccomp_path() if seccomp_filter() is not None else None,
                           forward=forward_path(), shims=shims_dir(), inner_sandbox=nested_userns_works(),
-                          bus_filter=have_bus_filter(), path=host_path(apps_root), own=own)
+                          bus_filter=have_bus_filter(), path=host_path(apps_root), own=own, leads=leads)
 
 
 def _marker_network(gs: dict) -> bool:
@@ -3592,9 +3626,10 @@ def helpers_current(app_id: str, gs: dict) -> bool:
 
 
 def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                   appimage_path: str | None = None, own: Own | None = None) -> str:
+                   appimage_path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """Write `<apps_root>/<app>/run`, the identity marker and the shared helpers it calls, and return
-    the launcher path (R17.4)."""
+    the launcher path (R17.4). `leads`: where each granted folder led when its grant was judged
+    (:func:`folder_leads`); without it each is judged now."""
     write_flatpak_info(app_id, network=_marker_network(gs))
     write_seccomp_filter()
     write_forward_helper()
@@ -3609,7 +3644,7 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # as the paths' own bytes, UTF-8 or not (#689's review, P4-1: written as text, an install folder
     # whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error), by the
     # helper that writes every file here, which removes the file beside when the write fails.
-    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path, own)), 0o755)
+    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path, own, leads)), 0o755)
 
 
 def _write_whole(path: str, data: bytes, mode: int) -> str:

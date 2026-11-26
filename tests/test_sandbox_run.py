@@ -2136,6 +2136,7 @@ def test_nested_folder_grants_cannot_reopen_the_symlink_hole(env):
     assert r.returncode == 0 and "RAN-AGAIN" in r.stdout, r.stderr            # the next launch still works ...
     assert os.listdir(victim) == []                                            # ... and created nothing there
     _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env)
+    _a_launcher_written_again_keeps_where_a_folder_led(env)
 
 
 def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
@@ -2146,8 +2147,9 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
     # `sub` a link to `evil`; all of it landed in the real ~/Projects, and the next launch mounted the
     # user's real ~/.ssh at the app's (read-only as the inner grant was; with a read-write one, the
     # real ~/.config/autostart, written to). Each grant is asked again at every launch now, and one
-    # that no longer leads where it led when the launcher was written is dropped, with a line; and a
-    # launcher written again refuses a grant that a link in another granted folder is on the way to.
+    # that no longer leads where it led when it was judged is dropped, with a line; and a grant
+    # judged anew (written here as an install or the user's Save writes it, CR1.5-53) is refused
+    # where a link in another granted folder is on the way to it.
     # (Parts of the test above, not tests of their own: a run test is named in tests/skips/tier1.txt,
     # which is another unit's file while this is written.)
     (env.home / ".config" / "autostart" / "HOST-VICTIM-FILE").write_text("HOST-VICTIM-CONTENT\n")
@@ -2164,7 +2166,7 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
 
     look = ('ls "$HOME/{victim}" 2>&1; cat "$HOME/{victim}"/* 2>&1; cat "$HOME/{inner}"/* 2>&1; (echo x > "$HOME/{victim}/planted-by-app") 2>&1; '
             '(echo x > "$HOME/{inner}/planted-by-app") 2>&1; echo out > "$HOME/{outer}/out.txt"; echo RAN-AGAIN')
-    dropped = "{app} runs sandboxed and isn't given {folder} this time: it led to {folder} when AppKata wrote this launcher and leads to {now} now"
+    dropped = "{app} runs sandboxed and isn't given {folder} this time: it led to {folder} when the app was given it and leads to {now} now"
 
     # the finding's own run, the inner grant read-only and read-write; then a folder no list names
     for n, (mode, victim) in enumerate((("ro", ".ssh"), ("rw", ".config/autostart"), ("ro", "Documents")), 1):
@@ -2182,11 +2184,11 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
         untouched(r, outer, "the next launch")
         assert dropped.format(app=f"Nest{n}", folder=proj / "sub" / "deep", now=env.home / victim) in r.stderr, r.stderr
         assert (proj / "out.txt").read_text() == "out\n"                                            # the folder above is still the app's
-        # ...and AppKata writing the launcher again (its next start does) doesn't take the link for the folder
+        # ...and judging the grant anew (the user's next Save of the sandbox does) doesn't take the link for the folder
         lp = env.app(f"nest{n}", gs)
         assert f"# Refused folder grant ~/{outer}/sub/deep: " in open(lp).read()
         assert [c for c in sb.summary(gs, str(env.home / "apps")) if c.startswith(f"~/{outer}/sub/deep · refused: ")]
-        untouched(env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer)), outer, "written again")
+        untouched(env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer)), outer, "judged anew")
 
     # a nested folder that wasn't there when the launcher was written, made as a link since
     proj = env.home / "P4"
@@ -2212,8 +2214,8 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
     assert dropped.format(app="Tool5", folder=proj / "data", now=env.home / ".ssh") in r.stderr, r.stderr
 
     # The user's own link is no plant: a grant through one stands (~/Docs kept on another disk). Pointed
-    # elsewhere after the launcher was written, it is not given at that launch, and is again once
-    # AppKata has written the launcher for where it leads now.
+    # elsewhere after the grant was judged, it is not given at that launch, and is again once the
+    # grant is judged anew (the user's Save of the sandbox; the part below holds AppKata's start to it).
     for d in ("Documents", "Other"):
         (env.home / "disk" / d).mkdir(parents=True)
         (env.home / "disk" / d / "note.txt").write_text(d.upper() + "-NOTE\n")
@@ -2227,10 +2229,98 @@ def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
     (env.home / "Docs").symlink_to(env.home / "disk" / "Other")
     r = env.run(lp, 'cat "$HOME/Docs/note.txt" 2>&1; echo RAN-AGAIN')
     assert r.returncode == 0 and "RAN-AGAIN" in r.stdout and "-NOTE" not in r.stdout, (r.stdout, r.stderr)
-    assert (f"Reader runs sandboxed and isn't given {env.home}/Docs this time: it led to {env.home}/disk/Documents when AppKata wrote this "
-            f"launcher and leads to {env.home}/disk/Other now") in r.stderr, r.stderr
+    assert LED.format(app="Reader", folder=env.home / "Docs", was=env.home / "disk" / "Documents", now=env.home / "disk" / "Other") in r.stderr, r.stderr
     r = env.run(env.app("reader", gs), 'cat "$HOME/Docs/note.txt"')
     assert r.returncode == 0 and "OTHER-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+
+
+LED = ("{app} runs sandboxed and isn't given {folder} this time: it led to {was} when the app was given it and leads to {now} now, so a link on the "
+       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox "
+       "dialog, and the folder is judged anew.")
+
+
+def _a_launcher_written_again_keeps_where_a_folder_led(env):
+    """CR1.5-53 (#743), the finding's run: a command-line tool with ~/src6/proj/data read-only is
+    run once in ~/src6/proj, which is its to write for that run, and puts a link to ~/Documents
+    where `data` was. The next launch dropped the grant (CR1.5-40), but where a folder leads was
+    part of the launcher's text, so AppKata's next start found the launcher stale, wrote it again
+    for where the link led, and the launch after read the user's ~/Documents at the tool's folder.
+    The install keeps where each folder led now, and every launcher written again is written with
+    that; the user's own Save of the sandbox judges it anew. A part of the test above, which
+    tests/skips/tier1.txt names (that file is another unit's)."""
+    import json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    docs = env.home / "Documents"
+    docs.mkdir(exist_ok=True)
+    (docs / "taxes.txt").write_text("TAXES\n")
+    proj, other = env.home / "src6" / "proj", env.home / "src6" / "other"
+    (proj / "data").mkdir(parents=True)
+    (proj / "data" / "mine.txt").write_text("MINE\n")
+    other.mkdir()
+    for d in ("A", "B"):
+        (env.home / "disk6" / d).mkdir(parents=True)
+        (env.home / "disk6" / d / "note.txt").write_text(d + "-NOTE\n")
+    (env.home / "Docs6").symlink_to(env.home / "disk6" / "A")                # the user's own link
+    gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+" + str(proj / "data"): "ro"}})
+    lp = env.app("tool6", gs)                                                # the app's files
+    target, url = env.home / "apps" / "tool6", "https://example.org/alice/tool6"
+    rec = {"id": "tool6", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/app"}, "target": str(target),
+           "root": str(env.home / "apps"), "links": [], "files": [str(target)]}
+    db = DB(str(env.home / ".local" / "share" / "appkata" / "led.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Tool6", "1.0", "tarball", json.dumps(rec), now()))
+    portable = install.Portable(folder=str(env.home / "apps"), command_dir="", app_menu=False, stable_name=False)
+    app = {"url": url, "name": "Tool6", "sandbox": sb.to_json(gs)}
+    stored = lambda: json.loads(db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])      # noqa: E731
+
+    def appkata_starts(app):            # the startup pass, for this app: a launcher that is not today's is written again
+        if install.launcher_is_current(stored(), app, portable):
+            return False
+        install.rewrite_launcher(db, app, portable)
+        return True
+
+    def not_given(when, snippet, folder, was, now, *secret):
+        r = env.run(lp, snippet + "; echo RAN-AGAIN", cwd=str(other))
+        assert r.returncode == 0 and "RAN-AGAIN" in r.stdout and not [w for w in secret if w in r.stdout], (when, r.stdout, r.stderr)
+        assert LED.format(app="Tool6", folder=folder, was=was, now=now) in r.stderr and "bwrap" not in r.stderr, (when, r.stderr)
+
+    install.rewrite_launcher(db, app, portable)                              # the install takes the grant
+    assert stored()["launcher"] == lp and not appkata_starts(app)
+    text = open(lp).read()
+    r = env.run(lp, 'cat data/mine.txt && mv data data.old && ln -s ../../Documents data && echo planted', cwd=str(proj))
+    assert "MINE" in r.stdout and "planted" in r.stdout and os.path.islink(proj / "data"), (r.stdout, r.stderr)
+    assert os.path.realpath(proj / "data") == str(docs)                      # where bwrap would be led
+    look = 'ls "$HOME/src6/proj/data" 2>&1; cat "$HOME/src6/proj/data"/* 2>&1; (echo x > "$HOME/src6/proj/data/planted-by-app") 2>&1'
+    planted = (look, proj / "data", proj / "data", docs, "TAXES", "taxes.txt")
+    not_given("the next launch", *planted)
+    wrote = appkata_starts(app)                                              # AppKata's next start...
+    not_given("after AppKata's next start", *planted)                        # ...takes no link for the folder's place
+    assert not wrote and open(lp).read() == text                             # it had nothing to write
+    with open(lp, "a") as f:                                                 # and where it has (a launcher edited by hand)
+        f.write("# edited by hand\n")
+    assert appkata_starts(app) and open(lp).read() == text
+    not_given("written again by AppKata's start", *planted)
+    assert sorted(os.listdir(docs)) == ["taxes.txt"] and (docs / "taxes.txt").read_text() == "TAXES\n"
+    os.remove(proj / "data")                                                 # the link gone and the folder back: the grant stands again
+    (proj / "data.old").rename(proj / "data")
+    r = env.run(lp, 'cat "$HOME/src6/proj/data/mine.txt"', cwd=str(other))
+    assert r.returncode == 0 and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+
+    # The user's own link is judged when they save the grant; pointed elsewhere, the folder is not
+    # given, AppKata's start changes nothing, and their next Save of the sandbox gives it again.
+    both = {**app, "sandbox": sb.to_json(sb.apply_overrides(gs, {"folders": {"+~/Docs6": "rw"}}))}
+    install.rewrite_launcher(db, {**both, "sandboxAnew": True}, portable)    # as the backend asks for a Save (Backend._apply_sandbox)
+    r = env.run(lp, 'cat "$HOME/Docs6/note.txt" "$HOME/src6/proj/data/mine.txt"', cwd=str(other))
+    assert r.returncode == 0 and "A-NOTE" in r.stdout and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+    (env.home / "Docs6").unlink()
+    (env.home / "Docs6").symlink_to(env.home / "disk6" / "B")
+    moved = ('cat "$HOME/Docs6/note.txt" 2>&1', env.home / "Docs6", env.home / "disk6" / "A", env.home / "disk6" / "B", "-NOTE")
+    not_given("the user's link moved", *moved)
+    assert not appkata_starts(both)
+    not_given("the user's link moved, after AppKata's next start", *moved)
+    install.rewrite_launcher(db, {**both, "sandboxAnew": True}, portable)    # the user's Save
+    r = env.run(lp, 'cat "$HOME/Docs6/note.txt"', cwd=str(other))
+    assert r.returncode == 0 and "B-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
 
 
 def test_a_launcher_rewritten_while_the_app_runs_still_tears_down_and_reports_its_status(env):

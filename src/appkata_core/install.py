@@ -1102,7 +1102,8 @@ def _activate_linux(rec: dict, app: dict, portable: "Portable", target: str) -> 
 
 def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, prog: str) -> str:
     """Generate (or remove) the per-app sandbox launcher and return its path, or "" when the app runs
-    Off (R17.4, R17.7). The resolved grant set is `app["sandbox"]`, baked in by the backend;
+    Off (R17.4, R17.7). The resolved grant set is `app["sandbox"]`, baked in by the backend, which
+    sets `app["sandboxAnew"]` where the set is the user's own Save of the app's sandbox;
     an absent/Off/unsupported sandbox leaves the program running directly, as before. Whether this
     system can sandbox is the backend's to decide: an app that has a launcher keeps it on a broken
     host (R17.10; review 2, F16: a missing tool here removed it)."""
@@ -1111,6 +1112,7 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
     lp = sandbox.launcher_path(app_id, portable.root)
     if OS != "linux" or not gs or sandbox.level_of(gs) == "off":
         rec.pop("sandbox", None)
+        rec.pop("sandboxLeads", None)
         rec.pop("launcher", None)
         if os.path.exists(lp):
             os.remove(lp)
@@ -1125,10 +1127,20 @@ def _sandbox_launcher(rec: dict, app: dict, portable: "Portable", target: str, p
     if not rec.get("launcher") or not sandbox.uses_bus(gs):
         sandbox.revoke_documents(app_id)
     appdir, exec_rel, appimage_path = _launcher_program(rec, target)
-    launcher = sandbox.write_launcher(app_id, app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own)
+    # Where each granted folder leads is judged when its grant is, and kept in the record: a folder
+    # the record has an answer for keeps it in every launcher written again (an update, a switch,
+    # AppKata's start), and only a folder with none is asked now -- at the install that takes the
+    # grant, at an app's first launcher, and at the user's own Save of the sandbox, which asks for
+    # every folder again (`app["sandboxAnew"]`). Asked at each writing, a link an app had put on a
+    # grant's way became the folder's place at AppKata's next start (R17.4; CR1.5-53).
+    leads = sandbox.folder_leads(gs, None if app.get("sandboxAnew") else rec.get("sandboxLeads"))
+    launcher = sandbox.write_launcher(app_id, app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own, leads)
     if app.get("url"):
         sandbox.record_home_owner(app_id, app["url"])      # the home outlives an uninstall that keeps it (F19)
     rec["sandbox"] = sandbox.to_json(gs)
+    rec.pop("sandboxLeads", None)
+    if leads:
+        rec["sandboxLeads"] = leads
     rec["launcher"] = launcher
     return launcher
 
@@ -1149,6 +1161,9 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
     or a sandbox change rewrote it, so one written by an older AppKata -- before a launcher fix --
     kept running as written (round four, R4-4); the startup pass uses this to catch up, and it
     restores a hand-edited launcher the same way. False when there is no launcher or no grant set.
+    Where a granted folder leads is no part of the question: the launcher holds where it led when
+    its grant was judged, which the record keeps (`sandboxLeads`), so a link made on a grant's way
+    since makes no launcher stale (CR1.5-53).
     The launcher is compared as the bytes it is written as, its paths UTF-8 or not (#689's review,
     P4-1)."""
     lp = rec.get("launcher")
@@ -1157,7 +1172,8 @@ def launcher_is_current(rec: dict, app: dict, portable: "Portable") -> bool:
         return False
     portable = _where_it_is(rec, portable)
     appdir, exec_rel, appimage_path = _launcher_program(rec, rec["target"])
-    want = os.fsencode(sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own))
+    want = os.fsencode(sandbox.launcher_text(app_id_of(rec, app), app["name"], portable.root, appdir, exec_rel, gs, appimage_path, portable.own,
+                                             rec.get("sandboxLeads")))
     try:
         with open(lp, "rb") as f:
             if f.read() != want:
@@ -1524,6 +1540,8 @@ def install(db: DB, app: dict, asset: Asset, kind: str, assets: list[Asset], pro
                      **({"checksum_reason": why_not} if why_not else {}), "root": portable.root,
                      **({"selfInstalled": True} if prev.get("selfInstalled") else {}),
                      "signer": signer, "motw": portable.motw}
+        if prev.get("sandboxLeads"):        # an update judges no granted folder anew (_sandbox_launcher; CR1.5-53)
+            rec["sandboxLeads"] = prev["sandboxLeads"]
         if OS == "windows":
             rec["scope"] = portable.scope
         portable_kind = kind in ("appimage", "tarball", "zip") or (kind == "exe" and app.get("exeKind") == "portable")
@@ -1686,8 +1704,11 @@ def switch_to(db: DB, app: dict, version: str, portable: "Portable", date: str =
 
 def rewrite_launcher(db: DB, app: dict, portable: "Portable") -> dict:
     """Regenerate ~/bin/apps/<app>/run for the current version and grant set, without reinstalling
-    (R17.4): used when the user changes an installed app's sandbox. `app["sandbox"]` is the
-    resolved grant set (or None/Off to drop the launcher).
+    (R17.4): used when the user changes an installed app's sandbox, and by AppKata's start for a
+    launcher that is not today's. `app["sandbox"]` is the resolved grant set (or None/Off to drop
+    the launcher). `app["sandboxAnew"]`: set for the user's own Save of the app's sandbox, which
+    judges where each granted folder leads anew; without it the launcher is written with where
+    each led when its grant was judged, as the record keeps it (:func:`_sandbox_launcher`; CR1.5-53).
 
     An app that updates itself (`app["autoUpdate"]`, R4.10) and has a launcher is in version
     folders, where AppKata updated it (R17.12). When its sandbox is turned Off here it updates

@@ -15,6 +15,7 @@ import pytest
 
 from appkata_core import sandbox as sb
 from appkata_core import trustfile
+from test_install_review import _tarball, server   # noqa: F401
 import written
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sandbox and its launchers are Linux-only (R17.1)")
@@ -377,7 +378,7 @@ if "xdg-dbus-proxy" in argv:
 
 
 def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=None, tools=None,
-              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None, home=None):
+              proxy_at="/usr/bin/xdg-dbus-proxy", app=True, hide=(), forward=None, args=(), before=None, home=None, leads=None):
     """A generated launcher run in a session whose bus is at `address` ({rt}: the runtime folder;
     None: no address set), for `template` or the grant set `gs`, from `cwd` (the home folder when
     None), with `tools` ({name: script}) first on its PATH: the words of the proxy's own bwrap (None
@@ -389,7 +390,9 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     `forward`: the file-argument helper the launcher calls, and `args` its arguments. `before`, where
     given, is called once the launcher is written and before it runs. `home`: the user's home folder,
     tmp_path's own "home" unless given: a folder a test grants is one of the home, since everything
-    else a test can make is under /tmp, which no grant shares (R17.3.1)."""
+    else a test can make is under /tmp, which no grant shares (R17.3.1). `leads`: where each granted
+    folder led when its grant was judged, as an install keeps it (sandbox.folder_leads); judged now
+    where None."""
     home, rt, fake, log = home or tmp_path / "home", tmp_path / "run", tmp_path / "fakebin", tmp_path / "bwrap-words"
     home.mkdir(exist_ok=True)
     for d in (rt, fake):
@@ -422,7 +425,7 @@ def _launched(tmp_path, monkeypatch, address, template="standard", gs=None, cwd=
     lp = tmp_path / "launcher"
     lp.write_text(sb.build_launcher("demo", "Demo", str(home / "apps/demo/1"), "bin/demo", gs or sb.resolve_template(template),
                                     seccomp=str(fake / "record.py"), forward=forward,    # any file there is: nothing here reads it as a filter
-                                    path=f"{fake}:{path}"))
+                                    path=f"{fake}:{path}", **({"leads": leads} if leads is not None else {})))
     if before:
         before()
     env = {"HOME": str(home), "XDG_RUNTIME_DIR": str(rt), "PATH": f"{fake}:{path}"}
@@ -1422,9 +1425,7 @@ def test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_
     assert sorted(told[3:told.index("--")]) == sorted(str(home / p) for p in stand), told             # ...and no other is the app's to see
     said = [line for line in r.stderr.splitlines() if "isn't given" in line]
     led = {"Moved": ("disk/Documents", "disk/Other"), "Projects/later/deep": ("Projects/later/deep", "Music"), "Projects/sub/deep": ("Projects/sub/deep", ".ssh")}
-    assert said == [f"Demo runs sandboxed and isn't given {home / p} this time: it led to {home / was} when AppKata wrote this launcher and leads to "
-                    f"{home / now} now, so a link on the way there was made or changed since. AppKata judges the folder again the next time it starts."
-                    for p, (was, now) in led.items()], r.stderr
+    assert said == [LED.format(app="Demo", folder=home / p, was=home / was, now=home / now) for p, (was, now) in led.items()], r.stderr
 
     # Where the launcher can't ask (no `readlink` that answers), no grant stands; and one that doesn't
     # is not covered or shown empty either, where this session's bus names a file the launcher can't read
@@ -1434,18 +1435,19 @@ def test_a_grant_that_no_longer_leads_where_it_led_is_dropped_at_the_launch_and_
     _, app, r, _ = _launched(again, monkeypatch, "unix:path=relative/bus", gs=gs, home=home, tools={"readlink": "#!/bin/sh\nexit 1\n"})
     assert r.returncode == 0 and not [w for w in app if users(w)], (app, r.stderr)
     for p, was in (("Docs", "disk/Documents"), ("Music", "Music")):
-        assert f"isn't given {home / p} this time: it led to {home / was} when AppKata wrote this launcher and leads to nowhere that can be followed now" in r.stderr, r.stderr
+        assert LED.format(app="Demo", folder=home / p, was=home / was, now="nowhere that can be followed") in r.stderr, r.stderr
     (tmp_path / "once-more").mkdir()
     _, app, r, _ = _launched(tmp_path / "once-more", monkeypatch, "unix:path=relative/bus", gs=gs, home=home)
     assert {w for w in app if users(w)} == {str(home / "Docs"), str(home / "Music")} and app.count("--tmpfs") >= 2, app      # as before, where they stand
 
 
 def test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_the_launcher_is_written(tmp_path, monkeypatch):
-    # ...and AppKata writes every launcher again at its next start if its text would differ, as it does
-    # once a grant leads elsewhere: where the folder leads is baked into it. Judged afresh there, the
-    # app's link would have become the folder's place for good, for every folder no list names
-    # (~/Documents). So a grant is refused when a link on its way lies in another folder of the set,
-    # whoever made the link: the chips, the launcher and the Sandbox dialog's own check say so.
+    # ...and a grant is judged anew: at the user's next Save of the sandbox (and, until CR1.5-53
+    # below, at AppKata's next start, which wrote the launcher again once a grant led elsewhere).
+    # Judged afresh there, the app's link would have become the folder's place for good, for every
+    # folder no list names (~/Documents). So a grant is refused when a link on its way lies in
+    # another folder of the set, whoever made the link: the chips, the launcher and the Sandbox
+    # dialog's own check say so.
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
@@ -1489,6 +1491,133 @@ def test_a_grant_that_a_link_in_another_granted_folder_leads_to_is_refused_when_
     assert f"# Refused folder grant ~/Projects/sub/deep: {why} (R17.3.1)." in text
     assert f"g1={home}/Projects; leads \"$g1\" {home}/Projects || g1=\n" in text and "g2=" not in text and "/sub/deep" not in text.split("# Refused")[0]
     assert text.count("bind-try " + str(home)) == 1 and f'[ {home}/Projects = "$g1" ] && set -- --bind-try {home}/Projects {home}/Projects "$@"\n' in text
+
+# CR1.5-53 (#743): where a granted folder leads was asked each time a launcher was written, and
+# AppKata writes a launcher again at its start whenever its text would differ -- which it did as
+# soon as a grant led elsewhere, where it leads being part of the text. So a link an app put on a
+# grant's way was dropped for one launch (CR1.5-40) and taken for the folder's place from AppKata's
+# next start on. The rule at writing (a link in another folder of the set, above) knows the set's
+# own folders, and an app can write elsewhere: where a command-line tool was run, a folder it was
+# handed, another app's grant above its own. In the finding's run a tool with ~/src5/proj/data
+# read-only, run once in ~/src5/proj, put a link to ~/Documents where `data` was, and after
+# AppKata's next start read the user's ~/Documents there. How it slipped past: #665's tests wrote
+# the launcher again through the function that judges, and held the one road its rule names.
+# Where each folder led is kept with the install now (its record), judged when an install takes the
+# grant and when the user saves the app's sandbox, and every launcher written between is written
+# with it: here through the code that writes them, with the launcher AppKata's start compares.
+LED = ("{app} runs sandboxed and isn't given {folder} this time: it led to {was} when the app was given it and leads to {now} now, so a link on the "
+       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox "
+       "dialog, and the folder is judged anew.")
+
+
+def test_a_launcher_written_again_keeps_where_each_folder_led_and_only_an_install_or_the_users_save_judges_it_anew(fake_home, tmp_path, tmp_path_factory,
+                                                                                                                   monkeypatch, server):   # noqa: F811
+    import json as _json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    monkeypatch.setattr(sb, "have_tools", lambda: True)
+    monkeypatch.setattr(install, "desktop_dir", lambda: str(tmp_path / "applications"))
+    monkeypatch.setenv("APPKATA_DATA", str(fake_home / ".local/share/appkata"))
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={tmp_path}/run/bus")
+    home, root = fake_home, fake_home / "Apps"
+    target = root / "tool"
+    (target / "1.0" / "bin").mkdir(parents=True)
+    exe = target / "1.0" / "bin" / "tool"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    for d in ("src/proj/data", "src/other", "Documents", "disk/Documents", "disk/Other", "Music"):
+        (home / d).mkdir(parents=True)
+    (home / "Docs").symlink_to(home / "disk" / "Documents")           # the user's own link, there before the grant
+    gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+~/src/proj/data": "ro", "+~/Docs": "rw", "+~/Music": "ro"}})
+    url = "https://example.org/alice/tool"
+    app = {"name": "Tool", "url": url, "sandbox": sb.to_json(gs)}
+    rec = {"id": "tool", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/tool"}, "links": [], "files": [], "target": str(target)}
+    db = DB(str(tmp_path / "a.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Tool", "1.0", "tarball", _json.dumps(rec), now()))
+    port = install.Portable(folder=str(root), app_menu=False, command_dir="", stable_name=False)
+    stored = lambda: _json.loads(db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])      # noqa: E731
+    monkeypatch.setattr(sb, "helpers_current", lambda app_id, gs: True)
+    install.rewrite_launcher(db, app, port)                           # its first launcher: each folder judged now
+    lp = target / "run"
+    first = lp.read_text()
+    led = {"~/Docs": str(home / "disk/Documents"), "~/Music": str(home / "Music"), "~/src/proj/data": str(home / "src/proj/data")}
+    for n, (p, where) in enumerate(sorted(led.items()), 1):
+        assert f'g{n}={home}/{p[2:]}; leads "$g{n}" {where} || g{n}=\n' in first, (p, first)
+    assert install.launcher_is_current(stored(), app, port)
+
+    # The tool, run once in ~/src/proj (its to write for that run), puts a link where its folder was;
+    # and the user points a link of their own elsewhere. No rule at writing knows either road.
+    (home / "src/proj/data").rename(home / "src/proj/data.old")
+    (home / "src/proj/data").symlink_to("../../Documents")
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / "disk" / "Other")
+    assert sb.refused_folders(gs, str(root)) == {}
+    # AppKata's next start finds the launcher it would write, so it writes none...
+    assert install.launcher_is_current(stored(), app, port) and lp.read_text() == first
+    # ...and where it does write one (a hand-edited launcher), the text is the same
+    lp.write_text(first + "# edited by hand\n")
+    assert not install.launcher_is_current(stored(), app, port)
+    install.rewrite_launcher(db, app, port)
+    assert lp.read_text() == first and stored()["sandboxLeads"] == led         # kept with the install
+    # So does an update, the next version installed from its release, and a switch back to the kept one
+    asset = _tarball(server, "tool-2.0.tar.gz", {"tool-2.0/bin/tool": 0o755})
+    new = install.install(db, {**app, "installVersion": "2.0"}, asset, "tarball", [asset], portable=port)
+    assert new["current"]["version"] == "2.0" and new["sandboxLeads"] == led == stored()["sandboxLeads"]
+    updated = lp.read_text()
+    assert updated != first and [line for line in updated.splitlines() if "; leads " in line] == [line for line in first.splitlines() if "; leads " in line]
+    assert install.launcher_is_current(stored(), app, port)
+    install.switch_to(db, app, "1.0", port)
+    assert lp.read_text() == first and stored()["sandboxLeads"] == led
+
+    # So the launch drops both, and says so, at every launch until the folder is judged anew
+    _, bw, r, _ = _launched(tmp_path_factory.mktemp("launch"), monkeypatch, None, gs=gs, cwd=home / "src" / "other", home=home, leads=stored()["sandboxLeads"])
+    assert r.returncode == 0, r.stderr
+    binds = _binds(bw)
+    assert binds[str(home / "Music")] == ("--ro-bind-try", str(home / "Music")) and str(home / "src" / "other") in binds, binds
+    assert not [w for w in bw if "/Documents" in w or "/Docs" in w or "/proj/data" in w or "/disk" in w], bw
+    assert [line for line in r.stderr.splitlines() if "isn't given" in line] == [
+        LED.format(app="Demo", folder=home / "Docs", was=home / "disk/Documents", now=home / "disk/Other"),
+        LED.format(app="Demo", folder=home / "src/proj/data", was=home / "src/proj/data", now=home / "Documents")], r.stderr
+
+    # The user's own Save of the app's sandbox judges every folder anew: the link that is theirs
+    # is followed again, and so is any other on a grant's way, which is why the line names both places
+    install.rewrite_launcher(db, {**app, "sandboxAnew": True}, port)         # as the backend asks for it (Backend._apply_sandbox)
+    anew = {"~/Docs": str(home / "disk/Other"), "~/Music": str(home / "Music"), "~/src/proj/data": str(home / "Documents")}
+    assert stored()["sandboxLeads"] == anew and f'g1={home}/Docs; leads "$g1" {home}/disk/Other || g1=\n' in lp.read_text()
+    assert install.launcher_is_current(stored(), app, port)
+    # a set with no folder of its own keeps nothing, nor does an app that runs Off; its next launcher is a first one
+    install.rewrite_launcher(db, {**app, "sandbox": sb.to_json(sb.resolve_template("cli-tool"))}, port)
+    assert "sandboxLeads" not in stored() and "sandbox" in stored()
+    install.rewrite_launcher(db, app, port)
+    assert stored()["sandboxLeads"] == anew
+    install.rewrite_launcher(db, {**app, "sandbox": None}, port)
+    assert "sandboxLeads" not in stored() and "sandbox" not in stored() and not lp.exists()
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / "disk" / "Documents")
+    install.rewrite_launcher(db, app, port)
+    assert stored()["sandboxLeads"] == {**anew, "~/Docs": str(home / "disk/Documents")}
+    # A link that leads a grant to a never-shared folder gets it refused where a launcher is written,
+    # which the start then does; the answer kept is still the first, so the link pointed elsewhere
+    # next is not taken for the folder's place either
+    (home / ".ssh").mkdir()
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / ".ssh")
+    assert not install.launcher_is_current(stored(), app, port)
+    install.rewrite_launcher(db, app, port)
+    assert "# Refused folder grant ~/Docs: SSH keys (R17.3.1)." in lp.read_text() and f"{home}/Docs;" not in lp.read_text()
+    assert stored()["sandboxLeads"]["~/Docs"] == str(home / "disk/Documents")
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / "Music")
+    assert not install.launcher_is_current(stored(), app, port)
+    install.rewrite_launcher(db, app, port)
+    assert f'g1={home}/Docs; leads "$g1" {home}/disk/Documents || g1=\n' in lp.read_text() and "# Refused folder grant ~/Docs" not in lp.read_text()
+
+    # The answer itself (sandbox.folder_leads): kept for each folder still in the set, asked now for a
+    # folder new to it or one whose answer is no path, forgotten for one that left; never for "$cwd"
+    kept = sb.folder_leads(gs, {"~/Docs": "/was/there", "~/Gone": "/x", "~/Music": "", "~/src/proj/data": 7, "$cwd": "/y"})
+    assert kept == {"~/Docs": "/was/there", "~/Music": str(home / "Music"), "~/src/proj/data": str(home / "Documents")}
+    assert sb.folder_leads(gs) == sb.folder_leads(gs, None) == sb.folder_leads(gs, "junk") == {**kept, "~/Docs": str(home / "Music")}
+    assert sb.folder_leads(sb.resolve_template("cli-tool")) == {}
 
 
 def test_proxy_args_map_capabilities():

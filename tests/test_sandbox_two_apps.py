@@ -252,3 +252,30 @@ def test_the_keyspace_catches_round_sixs_one_id_for_both(be, two):
     be._regenerate_launcher(B)
     found = _collisions(be, two)
     assert any("notes" in k and "notes-2" not in k and "Notes.log" not in k for k in found), found
+
+
+def test_appkatas_start_keeps_where_a_granted_folder_led_and_the_users_save_judges_it_anew(be, two):
+    # CR1.5-53 (#743), through the backend: where a granted folder leads is in its launcher's text,
+    # so once a link an app made led it elsewhere, AppKata's next start found the launcher stale and
+    # wrote it again for where the link led; the app then read ~/Documents at the folder it was
+    # given. The start writes nothing for it now, and a launcher it does write again holds where the
+    # folder led when the user saved the grant; the user's next Save is what judges it anew.
+    home = two
+    (home / "proj" / "data").mkdir(parents=True)
+    (home / "Documents").mkdir()
+    cfg = {"template": "online-app", "overrides": {"folders": {"+~/proj/data": "ro"}}}
+    be.setSandbox(B, cfg)
+    lp = _rec(be, B)["launcher"]
+    text = open(lp).read()
+    assert f'g1={home}/proj/data; leads "$g1" {home}/proj/data || g1=\n' in text and be._heal_launchers() == []
+    (home / "proj" / "data").rename(home / "proj" / "data.old")           # what an app that could write ~/proj once left there
+    (home / "proj" / "data").symlink_to("../Documents")
+    assert be._heal_launchers() == [] and open(lp).read() == text           # AppKata's start: nothing to write
+    with open(lp, "a") as f:                                                # ...and where it has a launcher to write again
+        f.write("# edited by hand\n")
+    assert be._heal_launchers() == [B] and open(lp).read() == text
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    assert be._heal_launchers() == [] and _rec(be, A).get("sandboxLeads") is None       # A has no folder: nothing kept
+    be.setSandbox(B, cfg)                                                    # the user's own Save, of the same set
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "Documents")}
+    assert f'g1={home}/proj/data; leads "$g1" {home}/Documents || g1=\n' in open(lp).read() and be._heal_launchers() == []

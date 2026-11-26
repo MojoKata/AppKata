@@ -105,15 +105,17 @@ case "$upstream" in
        01:) busat=abstract ;;
      esac ;;
 esac
-# A folder the app was given is mounted only while it leads where it led when AppKata wrote this
-# launcher (R17.3.1): bwrap follows each link on the way to it, and a link put there since -- the app
-# can put one in a folder it was given, above another -- would mount whatever the link names.
+# A folder the app was given is mounted only while it leads where it led when the app was given it
+# (R17.4): bwrap follows each link on the way to it, and a link put there since -- the app can put
+# one in a folder it could write, above another -- would mount whatever the link names. Where it led
+# is kept with the install, and is the same in every launcher AppKata writes until an install or
+# your own Save of the app's sandbox judges the folder anew.
 # "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
 # while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
 leads() {
   now=$(readlink -m -- "$1" 2>/dev/null) || now=
   [ "$now" = "$2" ] && return 0
-  printf "%s runs sandboxed and isn't given %s this time: it led to %s when AppKata wrote this launcher and leads to %s now, so a link on the way there was made or changed since. AppKata judges the folder again the next time it starts.\n" App "$1" "$2" "${now:-nowhere that can be followed}" >&2
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, save the app's sandbox again in its Sandbox dialog, and the folder is judged anew.\n" App "$1" "$2" "${now:-nowhere that can be followed}" >&2
   return 1
 }
 g1=/home/kata/Media; leads "$g1" /home/kata/Media || g1=
