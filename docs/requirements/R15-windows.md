@@ -126,9 +126,11 @@ can change (R4.4). AppKata asks Windows to elevate Windows PowerShell with a scr
 prompt names Windows PowerShell and not the installer. The script:
 
 1. Makes a new folder in Windows' own `Temp` folder that only Administrators and SYSTEM can
-   change, and copies the download there.
-2. Compares the copy's SHA-256 with the one AppKata took of the download. When they differ it
-   starts nothing, and the install fails with R4.4's message.
+   change, and copies the download there. It opens the download once, following no link put at
+   its path, takes it only when it is a file on a disk of the length AppKata checked, and copies
+   no more than that length.
+2. Compares the copy's SHA-256 with the one AppKata took of the download. When they differ, or
+   the download was no such file, it starts nothing, and the install fails with R4.4's message.
 3. Starts the copy through the shell (R15.2), an `.msi` with Windows' own `msiexec`, waits, and
    hands back its exit code (R15.7.3). Then it removes the folder.
 

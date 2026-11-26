@@ -651,11 +651,11 @@ def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_fo
     import hashlib
     import re
     import shutil
-    script = w.elevated_script("C:\\d\\setup.exe", "ab" * 32, "/S", False)
+    script = w.elevated_script("C:\\d\\setup.exe", "ab" * 32, 44, "/S", False)
     assert not re.search(r"\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b", script)              # no cmdlet: one could come from the user's own modules
     assert "$env:" not in script and "%" not in script                         # nor a folder the user's environment names
     assert "'O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)'" in script          # the folder: Administrators' and SYSTEM's, nothing inherited
-    steps = [script.index(step) for step in ("::CreateDirectory($dir, $only)", "[IO.File]::Copy($src, $copy)", "ComputeHash($in)",
+    steps = [script.index(step) for step in ("::CreateDirectory($dir, $only)", "::CreateFileW($src,", "$out.Write($buf, 0, $n)", "ComputeHash($in)",
                                              "if ($got -ne $want)", "[Diagnostics.Process]::Start($start)", "[IO.Directory]::Delete($dir, $true)")]
     assert steps == sorted(steps)                                              # made, copied, hashed, compared, then started; removed after
     assert script.count("$copy") >= 4 and "$start.FileName = $src" not in script and "+ $src" not in script     # only the copy is ever started
@@ -682,3 +682,61 @@ def test_the_administrators_side_starts_only_the_file_that_was_checked_from_a_fo
     # an installer's own exit code comes back
     sha = hashlib.sha256(setup.read_bytes()).hexdigest()
     assert w.run_elevated(str(setup), sha, "/d /c exit 3010") == 3010
+
+
+# How it slipped past (pass 2 of the unit's own review): the test above asks that a copy is made
+# before it is hashed, and never how the user's path is opened or how much of it is copied. Round 1
+# bounded what root reads on Linux (P1-2: a link, a device or an endless file at the download's
+# path) and left the same step on Windows as it was: `[IO.File]::Copy`, which follows a link and
+# copies whatever it reaches, whole, into the administrators' folder. The class is one rule kept on
+# one system's road and not the other's: R15.7.5 now says for Windows what R16.8.5 says for Linux.
+def test_the_administrators_side_opens_the_download_once_follows_no_link_and_copies_no_more_than_was_checked(tmp_path, monkeypatch):
+    """On any system, what the script's text must hold to, and what AppKata hands it. On Windows
+    itself it is run (the test VM's session has administrator rights) on a link, on a longer
+    file and on a folder at the download's path, and on a file of more than one read."""
+    import hashlib
+    import shutil
+    setup = tmp_path / "setup one.exe"
+    setup.write_bytes(b"MZ" + b"\0" * 70000)
+    sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+    with monkeypatch.context() as m:
+        asked = []
+        m.setattr(w, "shell_execute", lambda program, args="", **how: asked.append(args) or 0)
+        assert w.run_elevated(str(setup), sha.upper(), "/S") == 0
+        script = _elevated_values(asked[0])["script"]
+        # the user's path is opened once: by Windows' own CreateFileW, to read, an existing file, and with
+        # FILE_FLAG_OPEN_REPARSE_POINT (0x00200000), so a link there is opened itself and not followed
+        assert "[IO.File]::Copy" not in script and script.count("$src") == 2
+        assert "::CreateFileW($src, [int]::MinValue, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)" in script
+        # only a file on a disk, of the length AppKata checked, and no more of it than that length and one byte
+        assert "$len = [long]70002\n" in script
+        steps = [script.index(step) for step in ("::CreateFileW($src,", "if ($k::GetFileType($from) -eq 1) {", "if ($in.Length -eq $len) {",
+                                                 "$left = $len + 1", "while ($left -gt 0) {", "$in.Read($buf, 0, [int][Math]::Min($left, [long]$buf.Length))",
+                                                 "$left -= $n", "[IO.File]::OpenRead($copy)", "if ($got -ne $want) { $code = %d }" % w.CHANGED)]
+        assert steps == sorted(steps)
+        # the length is that of the very bytes whose SHA-256 was checked: a file that already isn't those is
+        # refused before Windows is asked, and so is one that can't be read
+        with open(setup, "ab") as f:
+            f.write(b"\0")
+        assert w.run_elevated(str(setup), sha, "/S") == w.CHANGED and w.run_elevated(str(tmp_path / "gone.exe"), sha, "/S") == w.NOT_STARTED
+        assert len(asked) == 1
+    if os.name != "nt":
+        return
+    real, ran = tmp_path / "real.exe", tmp_path / "ran.txt"
+    shutil.copy(os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "cmd.exe"), real)
+    data = real.read_bytes()
+    sha, args = hashlib.sha256(data).hexdigest(), f'/d /c "cd>{ran}"'
+    # a link at the download's path to a file of the very bytes that were checked: followed, it would pass every check
+    link = tmp_path / "setup two.exe"
+    os.symlink(real, link)
+    assert w.run_script_elevated(w.elevated_script(str(link), sha, len(data), args, False)) == w.CHANGED and not ran.exists()
+    # a longer file, whose first bytes are the checked ones, and a shorter one
+    longer, shorter = tmp_path / "setup three.exe", tmp_path / "setup four.exe"
+    longer.write_bytes(data + b"\0" * (3 << 20))
+    shorter.write_bytes(data[:-1])
+    for other in (longer, shorter):
+        assert w.run_script_elevated(w.elevated_script(str(other), sha, len(data), args, False)) == w.CHANGED and not ran.exists()
+    # a folder at the path can't be opened as a file
+    assert w.run_script_elevated(w.elevated_script(str(tmp_path), sha, len(data), args, False)) == w.NOT_STARTED and not ran.exists()
+    # and the checked file itself is copied whole and started: one of more than one read (cmd.exe with 3 MB after it)
+    assert w.run_elevated(str(longer), hashlib.sha256(longer.read_bytes()).hexdigest(), args) == 0 and ran.exists()

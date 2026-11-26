@@ -306,13 +306,29 @@ def shell_execute(program: str, args: str = "", elevate: bool = False, wait: boo
 # nothing to hold on to but Windows' own files, so it calls .NET alone: a cmdlet could come from a
 # module in the user's own module folder, and the user's environment could name another Windows
 # folder. Its values come as base64, never as text pasted into it.
+#
+# The download's path is the user's too, so the script opens it once and holds what it opened to
+# what AppKata checked: with no link at the path followed (Windows' own CreateFileW and its
+# FILE_FLAG_OPEN_REPARSE_POINT, which .NET's FileStream can't ask for; the call is declared in
+# memory, where a compiled declaration would be built in the user's TEMP folder), only a file on a
+# disk (no pipe, no device), only of the length AppKata checked, and copying no more than that
+# length and one byte, by which a longer file would fail the comparison. `[IO.File]::Copy` followed
+# a link and copied whatever it reached, however long.
 CHANGED = 0x4B410001            # its exit code when the copy isn't the file AppKata checked
 NOT_STARTED = 0x4B410002        # ...and when it couldn't make the copy or start it
 _ELEVATED = r"""$ErrorActionPreference = 'Stop'
 function V([string]$b) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)) }
-$src = V '@SRC@'; $want = V '@SHA@'; $name = V '@NAME@'; $argl = V '@ARGS@'; $msi = @MSI@
+$src = V '@SRC@'; $want = V '@SHA@'; $name = V '@NAME@'; $argl = V '@ARGS@'; $msi = @MSI@; $len = [long]@LEN@
 $code = @NOT_STARTED@
 try {
+    $k = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('AppKataOpen'), [Reflection.Emit.AssemblyBuilderAccess]::Run).DefineDynamicModule('AppKataOpen').DefineType('AppKataOpen', [Reflection.TypeAttributes]'Public, Class')
+    $how = [Reflection.MethodAttributes]'Public, Static, PinvokeImpl'
+    $file = [Microsoft.Win32.SafeHandles.SafeFileHandle]
+    $m = $k.DefinePInvokeMethod('CreateFileW', 'kernel32.dll', $how, [Reflection.CallingConventions]::Standard, $file, [Type[]]@([string], [int], [int], [IntPtr], [int], [int], [IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+    $m.SetImplementationFlags($m.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+    $m = $k.DefinePInvokeMethod('GetFileType', 'kernel32.dll', $how, [Reflection.CallingConventions]::Standard, [int], [Type[]]@($file), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+    $m.SetImplementationFlags($m.GetMethodImplementationFlags() -bor [Reflection.MethodImplAttributes]::PreserveSig)
+    $k = $k.CreateType()
     $dir = [IO.Path]::Combine([Environment]::GetFolderPath('Windows'), 'Temp', 'AppKata-' + [Guid]::NewGuid().ToString('N'))
     $only = [Security.AccessControl.DirectorySecurity]::new()
     $only.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)')
@@ -320,10 +336,30 @@ try {
     [void][IO.Directory]::CreateDirectory($dir, $only)
     try {
         $copy = [IO.Path]::Combine($dir, $name)
-        [IO.File]::Copy($src, $copy)
-        $in = [IO.File]::OpenRead($copy)
-        try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($in)).Replace('-', '').ToLowerInvariant() }
-        finally { $in.Dispose() }
+        $got = ''
+        $from = $k::CreateFileW($src, [int]::MinValue, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)
+        if ($from.IsInvalid) { throw 'open' }
+        try {
+            if ($k::GetFileType($from) -eq 1) {
+                $in = [IO.FileStream]::new($from, [IO.FileAccess]::Read)
+                if ($in.Length -eq $len) {
+                    $out = [IO.FileStream]::new($copy, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                    try {
+                        $buf = [byte[]]::new(1048576)
+                        $left = $len + 1
+                        while ($left -gt 0) {
+                            $n = $in.Read($buf, 0, [int][Math]::Min($left, [long]$buf.Length))
+                            if ($n -le 0) { break }
+                            $out.Write($buf, 0, $n)
+                            $left -= $n
+                        }
+                    } finally { $out.Dispose() }
+                    $in = [IO.File]::OpenRead($copy)
+                    try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($in)).Replace('-', '').ToLowerInvariant() }
+                    finally { $in.Dispose() }
+                }
+            }
+        } finally { $from.Dispose() }
         if ($got -ne $want) { $code = @CHANGED@ }
         else {
             $start = [Diagnostics.ProcessStartInfo]::new()
@@ -356,11 +392,32 @@ def _b64(text: str) -> str:
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
-def elevated_script(file: str, sha256: str, args: str, msi: bool) -> str:
-    """The script run_elevated() runs with administrator rights, for this file."""
-    values = {"SRC": _b64(os.path.abspath(file)), "SHA": _b64(sha256.lower()), "NAME": _b64(os.path.basename(file)),
+def elevated_script(file: str, sha256: str, length: int, args: str, msi: bool) -> str:
+    """The script run_elevated() runs with administrator rights, for this file: its SHA-256 and
+    its length are the ones AppKata checked."""
+    values = {"SRC": _b64(os.path.abspath(file)), "SHA": _b64(sha256.lower()), "LEN": str(int(length)), "NAME": _b64(os.path.basename(file)),
               "ARGS": _b64(args), "MSI": "$true" if msi else "$false", "CHANGED": str(CHANGED), "NOT_STARTED": str(NOT_STARTED)}
     return re.sub(r"@([A-Z_]+)@", lambda m: values[m.group(1)], _ELEVATED)
+
+
+def checked_length(file: str, sha256: str) -> int | None:
+    """The file's length when its SHA-256 is `sha256`, None when it isn't: the length of the bytes
+    that were checked, read in the one pass that checks them."""
+    import hashlib
+    h, length = hashlib.sha256(), 0
+    with open(file, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            length += len(chunk)
+    return length if h.hexdigest() == sha256.lower() else None
+
+
+def run_script_elevated(script: str, timeout: float = 3600) -> int:
+    """Ask Windows (UAC) to run a script in its own PowerShell with administrator rights; its exit code."""
+    import base64
+    command = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return shell_execute(system_powershell(), "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + command,
+                         elevate=True, show=0, timeout=timeout)
 
 
 def system_powershell() -> str:
@@ -373,11 +430,17 @@ def run_elevated(file: str, sha256: str, args: str = "", msi: bool = False, time
     script that copies the file to a folder only administrators can change, checks that the copy
     is the file AppKata checked (`sha256`), and runs the copy, an `.msi` through msiexec. Returns
     the installer's exit code, 1223 when the prompt was declined, CHANGED when the file is no
-    longer the one that was checked, NOT_STARTED when the copy couldn't be made or started."""
-    import base64
-    command = base64.b64encode(elevated_script(file, sha256, args, msi).encode("utf-16-le")).decode("ascii")
-    return shell_execute(system_powershell(), "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + command,
-                         elevate=True, show=0, timeout=timeout)
+    longer the one that was checked, NOT_STARTED when the copy couldn't be made or started.
+
+    The script is given the length of the checked bytes too, and copies no more: the file is read
+    here once more for it, and one that already isn't the checked file is refused before Windows asks."""
+    try:
+        length = checked_length(file, sha256)
+    except OSError:
+        return NOT_STARTED
+    if length is None:
+        return CHANGED
+    return run_script_elevated(elevated_script(file, sha256, length, args, msi), timeout)
 
 
 def run_hidden(cmd: list[str], **kw) -> subprocess.CompletedProcess:
