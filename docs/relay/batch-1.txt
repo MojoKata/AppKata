@@ -1,8 +1,0 @@
-# Batch 1 of the relay for CR1's unit U04
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U04. The unit's High finding first (#306), with the three findings that set what a release's version and an app's name may be as a part of a path: they change the same functions of install.py (_safe, _place, install()) and the same tests (tests/test_install_review.py).
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#306  medium CR1.3-8 A release file name holding ../ or starting with / makes the download and install write and delete files outside AppKata's folders.
-#307  small  CR1.3-9 A release version of `..` makes the install delete the whole install folder, every app AppKata installed with it.
-#628  small  CR1.3-39 An app whose name has no ASCII letter or digit gets an AppImage or Windows program named just `.AppImage` or `.exe`.
-#699  small  CR1.3-47 A release whose version is the word "current" can't be installed as an archive, because the version's folder takes the name of the link to the current version.

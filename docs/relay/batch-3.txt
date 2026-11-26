@@ -1,7 +1,0 @@
-# Batch 3 of the relay for CR1's unit U04
-# From docs/remediation/CR1-schedule.json at upstream/master 6c3d380, the unit U04. What Verified means (R4.4, #223), a channel's install or adoption shown as Verified only when a repository's key checked it (#318), and the downloaded package or installer checked on the administrator's side before it is installed (#327). #318 and #327 are proven in the channels container, and each counts double; #327's Windows half needs the Windows VM (the coordinator's run).
-# One line a finding, in the order to take them: its issue, its size in the schedule, its title.
-
-#223  small  CR1.11-105 R4.4 says a publisher's detached signature is checked and shown as Verified, while the signing guide and the code ignore it.
-#318  medium CR1.3-20 Adopted packages and Flatpaks, and every channel install, are shown as Verified by a repository's signature though nothing checked one.
-#327  medium CR1.3-28 A downloaded .deb, .rpm or Windows installer is checked once, then installed as administrator from a folder where it can be swapped.
