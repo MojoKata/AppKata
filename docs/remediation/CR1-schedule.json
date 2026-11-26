@@ -181,7 +181,9 @@
     "tests/skips/windows.txt",
     "src/appkata/qml/AppRow.qml",
     "tests/test_docs_facts.py",
-    "src/appkata_core/sync.py"
+    "src/appkata_core/sync.py",
+    "scripts/demo_data.py",
+    "tests/test_demo_promises.py"
    ],
    "depends_on": [
     "U01"
@@ -451,7 +453,8 @@
     365,
     367,
     370,
-    741
+    741,
+    768
    ],
    "files": [
     "docs/requirements/R15-windows.md",
@@ -12038,6 +12041,20 @@
    "size": "small",
    "proof": "A test of an update of a sandboxed app: the portal is asked to revoke nothing.",
    "note": "Found by U05's sixth batch (2026-11-25) on what #400 just built, and filed by the coordinator; fixed in U05's first review round."
+  },
+  {
+   "finding": 768,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/windows.py",
+    "docs/requirements/R15-windows.md",
+    "tests/test_windows.py"
+   ],
+   "depends_on": [],
+   "related": [],
+   "size": "medium",
+   "proof": "A Windows VM test: the downloads folder made a junction; the elevated side opens nothing outside it.",
+   "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; cleared for public text and placed in U10 by the owner's walk thru (2026-11-26)"
   },
   {
    "finding": 769,

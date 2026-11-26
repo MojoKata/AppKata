@@ -123,12 +123,14 @@ package's full name is recorded for uninstalling.
 R15.7.5. **An installer AppKata elevates** (the "elevated" cells of R15.7.2, and the Visual C++
 run-time, R15.18.3) is never started from the downloads folder, which the user's other programs
 can change (R4.4). AppKata asks Windows to elevate Windows PowerShell with a script, so the UAC
-prompt names Windows PowerShell and not the installer. The script:
+prompt names Windows PowerShell and not the installer. That PowerShell is the one in the system
+folder Windows itself names, never in a folder the environment names. The script:
 
 1. Makes a new folder in Windows' own `Temp` folder that only Administrators and SYSTEM can
-   change, and copies the download there. It opens the download once, following no link put at
-   its path, takes it only when it is a file on a disk of the length AppKata checked, and copies
-   no more than that length.
+   change, and copies the download there. It opens the download once and never follows a link
+   at the download's own name; the folders above it are not yet covered
+   ([#768](https://github.com/MojoKata/AppKata/issues/768)). It takes the download only when it
+   is a file on a disk of the length AppKata checked, and copies no more than that length.
 2. Compares the copy's SHA-256 with the one AppKata took of the download. When they differ, or
    what it opened was no such file, it starts nothing, and the install fails with R4.4's message.
    A download that can't be opened as a file (it is gone, a folder is at its path, or Windows

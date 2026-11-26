@@ -522,6 +522,20 @@ def _elevated_values(args: str) -> dict:
     return {**said, "msi": re.search(r"\$msi = \$(true|false)", script).group(1) == "true", "script": script}
 
 
+SYSTEM_FOLDER = w.system_folder
+
+
+@pytest.fixture(autouse=True)
+def windows_system_folder(monkeypatch):
+    """Off Windows there is no Windows to name its system folder (windows.system_folder asks it, and
+    reads no environment value in its place), so the tests that go as far as starting a program get
+    a stand-in for it. On Windows it is Windows' own answer. The stand-in is spelled as Windows spells
+    its answer, `system32` in small letters: with `System32` here, a test that compared the letters'
+    case passed off Windows and failed on it (the Windows run of 7f353c1)."""
+    if os.name != "nt":
+        monkeypatch.setattr(w, "system_folder", lambda: "C:\\Windows\\system32")
+
+
 @pytest.fixture
 def installer_road(windows_road, monkeypatch):
     """The installers' road on any OS: no signature, no Uninstall entries, and Windows' own start of a
@@ -570,7 +584,8 @@ def test_an_installer_for_everyone_is_started_by_the_script_that_copies_and_chec
                           portable=install.Portable(folder_everyone=str(tmp_path / "Programs"), scope="everyone"))
     (started,) = installer_road["started"]                    # one start, and it is not of the downloaded file
     assert started["elevate"] and started["show"] == 0
-    assert started["program"].replace("\\", "/").endswith("/System32/WindowsPowerShell/v1.0/powershell.exe")
+    # the PowerShell in the folder Windows names, as Windows spells it (`system32` there): never by the letters' case
+    assert started["program"] == w.system_folder() + "\\WindowsPowerShell\\v1.0\\powershell.exe"
     assert started["args"].startswith("-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ")
     v = _elevated_values(started["args"])
     folder = os.path.join(install.downloads_dir(), rec["id"])
@@ -877,3 +892,56 @@ def _refusal(code: int) -> str:
     with pytest.raises(install.InstallError) as e:
         install._elevated_refusal(code)
     return str(e.value)
+
+
+def test_the_program_windows_is_asked_to_elevate_is_in_the_folder_windows_names(tmp_path, monkeypatch):
+    """Pass 1 of #732, P1-3 (the walk thru of 2026-11-26, item 5.1): R15.7.5 has AppKata ask Windows to
+    elevate Windows PowerShell, and system_powershell() took the folder it is in from `SystemRoot`, a
+    value of AppKata's environment and so not Windows' own word. With `SystemRoot` and `windir` naming
+    another folder: the program is the one in the system folder Windows itself names
+    (GetSystemDirectoryW), and when Windows names none, nothing is asked to be elevated. Windows is a
+    stand-in here; the test after this one asks Windows itself."""
+    import ctypes
+    monkeypatch.setattr(w, "system_folder", SYSTEM_FOLDER)      # the code's own, whatever the stand-in above
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("SystemRoot", str(elsewhere))
+    monkeypatch.setenv("windir", str(elsewhere))
+    answers = ["D:\\Win\\System32"]
+
+    def GetSystemDirectoryW(buf, size):
+        if not answers[0]:
+            return 0
+        buf.value = answers[0]
+        return len(answers[0])
+    kernel32 = type("kernel32", (), {"GetSystemDirectoryW": staticmethod(GetSystemDirectoryW)})
+    monkeypatch.setattr(ctypes, "windll", type("windll", (), {"kernel32": kernel32}), raising=False)
+    monkeypatch.setattr(ctypes, "WinError", lambda *a: OSError(31, "no system folder"), raising=False)
+    assert w.system_powershell() == "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    asked = []
+    monkeypatch.setattr(w, "shell_execute", lambda program, args="", **how: asked.append((program, how["elevate"])) or 0)
+    assert w.run_script_elevated("exit 0") == 0
+    assert asked == [("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", True)]
+    answers[0] = ""                                 # Windows names no folder: no program from anywhere else
+    with pytest.raises(OSError):
+        w.system_powershell()
+    with pytest.raises(OSError):
+        w.run_script_elevated("exit 0")
+    assert len(asked) == 1
+
+
+@on_windows
+def test_on_windows_the_elevated_program_is_windows_own_whatever_the_environment_says(tmp_path, monkeypatch):
+    """The same of Windows itself: with `SystemRoot` and `windir` set to a folder of the test's that has
+    a powershell.exe of its own, system_powershell() is the one in Windows' system folder, which the
+    test reads from the machine's own registry (HKLM), another way than the code's."""
+    import winreg
+    fake = tmp_path / "System32" / "WindowsPowerShell" / "v1.0"
+    fake.mkdir(parents=True)
+    (fake / "powershell.exe").write_bytes(b"MZ")
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as k:
+        root = winreg.QueryValueEx(k, "SystemRoot")[0]
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setenv("windir", str(tmp_path))
+    got = w.system_powershell()
+    assert os.path.normcase(got) == os.path.normcase(os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+    assert os.path.isfile(got) and os.path.getsize(got) > 2

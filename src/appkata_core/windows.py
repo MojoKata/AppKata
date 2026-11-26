@@ -421,8 +421,25 @@ def run_script_elevated(script: str, timeout: float = 3600) -> int:
 
 
 def system_powershell() -> str:
-    """Windows' own PowerShell, by its full path: what the UAC prompt then names."""
-    return os.path.join(os.environ.get("SystemRoot") or "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    """Windows' own PowerShell, by its full path: what the UAC prompt then names. The folder is the
+    one Windows names (system_folder), never one the environment names (`SystemRoot`, `windir`):
+    the program that gets administrator rights is no value of the environment's."""
+    import ntpath
+    return ntpath.join(system_folder(), "WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+def system_folder() -> str:
+    """Windows' system folder (`C:\\Windows\\System32`), asked of Windows itself: GetSystemDirectoryW.
+    An OSError when Windows names none."""
+    import ctypes
+    from ctypes import wintypes
+    get = ctypes.windll.kernel32.GetSystemDirectoryW
+    get.argtypes, get.restype = [wintypes.LPWSTR, wintypes.UINT], wintypes.UINT
+    buf = ctypes.create_unicode_buffer(32768)
+    n = get(buf, len(buf))
+    if not n or n >= len(buf) or not buf.value:
+        raise ctypes.WinError()
+    return buf.value
 
 
 def run_elevated(file: str, sha256: str, args: str = "", msi: bool = False, timeout: float = 3600) -> int:
