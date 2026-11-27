@@ -90,6 +90,13 @@ The `coverage` job combines the parts' data and runs
 - **The changed lines**: of the lines a pull request adds or changes in `src/` and `scripts/`, how
   many tier 1 reaches, and a notice on each of the largest stretches it doesn't, which the pull
   request shows on those lines.
+- **The impact on a pull request**: CI can't write to a pull request from a fork (its token only
+  reads), so once CI is green its description ends with a **Test coverage impact** section holding
+  what [`scripts/coverage_impact.py`](../scripts/coverage_impact.py) `--pr N` prints: each area's
+  lines and branches before (master's last run whose `coverage` job passed) and after (the pull
+  request's, on its head), for the areas that moved half a point or more and the total always,
+  each figure after marked ⭐ from 95 %, 🟢 from 80 %, 🟡 from 60 % and 🔴 under it. Two runs can be
+  compared by id instead (`coverage_impact.py BASE_RUN HEAD_RUN`).
 - **QML** isn't Python, and coverage.py can't read it: the `qml` area is listed with its file count
   and no figure, and has no floor. Its tests (`test_qml_slots.py`, `test_dialog_contract.py`, the
   layout and theme tests) drive the QML offscreen against a real Backend, which counts in

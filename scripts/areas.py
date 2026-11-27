@@ -61,7 +61,7 @@ TESTS = {
             "tests/test_theme_shown.py", "tests/test_time_shown.py"],
     "scripts": ["tests/test_appimage_host_libs.py", "tests/test_appimage_trim.py", "tests/test_demo_remake.py",
                 "tests/test_pins_newest.py", "tests/test_publish.py", "tests/test_third_party_notices.py",
-                "tests/test_coverage_report.py",
+                "tests/test_coverage_impact.py", "tests/test_coverage_report.py",
                 "tests/test_coverage_site.py", "tests/test_hardening.py", "tests/test_tour_data.py",
                 "tests/test_tour_page.py"],
     "docs": ["tests/test_doc_links.py", "tests/test_docs_facts.py", "tests/test_field_test_plan.py",
