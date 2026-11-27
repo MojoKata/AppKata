@@ -25,8 +25,11 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import time
+import unicodedata
+from typing import NamedTuple
 
 from .platform import OS, data_dir
 
@@ -79,7 +82,7 @@ def normalize(gs: dict) -> dict:
     The X11 device grant stays: it is about the display, which every level has."""
     out = blank_grants(gs.get("level", "standard"))
     strict = out["level"] == "strict"
-    out["folders"] = {} if strict else dict(gs.get("folders") or {})
+    out["folders"] = {} if strict else _folders(gs.get("folders"))
     out["network"] = False if strict else bool(gs.get("network", False))
     out["ports"] = None if strict else gs.get("ports")
     out["sound"] = set() if strict else set(gs.get("sound") or [])
@@ -90,6 +93,56 @@ def normalize(gs: dict) -> dict:
     out["mpris_name"] = mpris_name(gs.get("mpris_name")) if "mpris" in out["caps"] else None
     out["exec_deny"] = bool(gs.get("exec_deny", True))
     out["write_app"] = False if strict else bool(gs.get("write_app", False))      # writable app folder (R17.7.1)
+    return out
+
+
+# A control character in a folder's path (R17.3.1; CR1.5-26): a NUL, a line break, an escape. No
+# folder a person names has one, and a NUL is no path at all: os.path.realpath() raised ValueError
+# on it in every check, so one line of a review, `Sandbox folders: +~/a<NUL>b`, broke the install
+# card and the install of every app the review covers. Such a path is refused, whoever asks, and
+# is kept and shown with UNSHOWN where each such character was, so nothing that reads a grant set
+# (a chip, the Audit, the launcher's note, the database) meets one; a path with UNSHOWN in it is
+# that refused path, read again.
+UNSHOWN = "\ufffd"
+CONTROL = "not a full path (it has a control character in it, shown as \ufffd)"
+
+
+def _shown(path: str) -> str:
+    """`path` with UNSHOWN where each control character was (Unicode's category Cc)."""
+    return "".join(UNSHOWN if unicodedata.category(c) == "Cc" else c for c in path)
+
+
+def folder_path(path: str) -> str:
+    """A folder grant's path as it is kept, shown and mounted (R17.3.1): written from `~` where it
+    is in the home and from `/` elsewhere, with no doubled slash, no `.` step and no slash at its
+    end, each of which names the same folder to the kernel whatever on the way is a link. A grant
+    set's folders are named so wherever one is read (:func:`normalize`), so the chip, the Audit's
+    phrase, the review badge and the launcher's mount say one string for one folder, and a folder
+    written two ways is one grant. CR1.5-16: a folder was kept and shown as it was written and
+    judged and mounted by where it leads, so a review's `~/Documents/../.config/google-chrome/Default`
+    read as a folder of Documents. A `..` can't be taken out by its text (after a link it leads
+    elsewhere than the text says), so a path with one is refused, whoever asks
+    (:func:`protected_folder`), and like any path refused for how it is written, and `$cwd`, it
+    stays as it is written, but a control character in it, which is shown as UNSHOWN (CR1.5-26)."""
+    path = _shown(path)
+    full = os.path.expanduser(path)
+    if path == "$cwd" or UNSHOWN in path or os.sep != "/" or not os.path.isabs(full) or ".." in full.split(os.sep):
+        return path                     # (a system with another separator has no sandbox, R17.1)
+    full = os.sep + os.path.normpath(full).lstrip(os.sep)
+    home = os.path.expanduser("~")
+    home = os.sep + os.path.normpath(home).lstrip(os.sep) if os.path.isabs(home) else ""
+    if home not in ("", os.sep) and (full == home or full.startswith(home + os.sep)):
+        return "~" + full[len(home):]
+    return full
+
+
+def _folders(folders: dict | None) -> dict:
+    """A grant set's folders, each under its one name (:func:`folder_path`); of a folder written
+    two ways with two modes, the read-only one."""
+    out: dict = {}
+    for path, mode in (folders or {}).items():
+        p = folder_path(path)
+        out[p] = "ro" if "ro" in (mode, out.get(p)) else mode
     return out
 
 
@@ -351,11 +404,13 @@ def parse_folders(spec: str) -> dict:
 
     Comma-separated entries, each a path with an optional `+`/`-` prefix (add to / remove from the
     template's set) and an optional `:ro`/`:rw` suffix (read-only / read-write; read-write by
-    default). `- Sandbox folders: +~/Zettlr, ~/Media:ro, -~/Downloads`.
+    default). `- Sandbox folders: +~/Zettlr, ~/Media:ro, -~/Downloads`. A control character in a
+    path is no part of what is kept: the entry stands with UNSHOWN in its place, a path every
+    check refuses (:func:`protected_folder`; CR1.5-26).
     """
     out: dict = {}
     for raw in (spec or "").split(","):
-        entry = raw.strip()
+        entry = _shown(raw.strip())
         if not entry:
             continue
         mode = "rw"
@@ -379,15 +434,13 @@ def apply_overrides(gs: dict, ov: dict) -> dict:
     gs = normalize(gs)
     for k, v in (ov or {}).items():
         if k == "folders":
+            added: dict = {}        # each under its one name (folder_path): of one written twice here, the read-only one
             for path, mode in (v or {}).items():
-                if path.startswith("+"):
-                    gs["folders"][path[1:]] = mode or "rw"
-                elif path.startswith("-"):
-                    gs["folders"].pop(path[1:], None)
-                elif mode is None:
-                    gs["folders"].pop(path, None)
+                name = folder_path(path[1:] if path.startswith(("+", "-")) else path)
+                if path.startswith("-") or (mode is None and not path.startswith("+")):
+                    gs["folders"].pop(name, None)
                 else:
-                    gs["folders"][path] = mode
+                    added[name] = gs["folders"][name] = "ro" if added.get(name) == "ro" else mode or "rw"
         elif k in ("sound", "devices", "caps"):
             if isinstance(v, dict):          # "+x"/"-x" entries change the template's set (R10.3.1, F9)
                 cur = set(gs[k])
@@ -488,17 +541,69 @@ def grants_from_config(config: dict) -> dict:
 
 # -------------------------------------------------------------------------- protected folders (R17.3.1)
 
-def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
+# The Chromium family's data folders under ~/.config (R17.3.1): each holds the browser's profiles
+# (Default, Profile 1, ...: cookies, history, Login Data), which are secrets, beside its
+# NativeMessagingHosts folder, which is never shared. Named one by one: the match is on exact roots.
+_CHROMIUM_FAMILY = (("chromium",), ("google-chrome",), ("google-chrome-beta",), ("google-chrome-unstable",),
+                    ("BraveSoftware", "Brave-Browser"), ("microsoft-edge",), ("vivaldi",), ("opera",))
+
+
+def _moved(roots: list[tuple[str, str]], home: str) -> list[tuple[str, str]]:
+    """`roots`, and after them each one's place where the environment moves it (R17.3.1): a root
+    under ~/.config or ~/.local/share is under $XDG_CONFIG_HOME or $XDG_DATA_HOME too, where the
+    variable names another folder. Both places, since a desktop reads the default wherever the
+    variable isn't set for it. CR1.5-17: every root was joined to `~`, so for a user who moved them
+    the real autostart folder, systemd user units, app-menu entries or keyring were where no list
+    looked, and a grant of that place was not refused. The variables are AppKata's own, read when a
+    grant is judged and when a launcher is written; one that is no full path is ignored, as the
+    desktop ignores it."""
+    out = list(roots)
+    for var, default in (("XDG_CONFIG_HOME", os.path.join(home, ".config")), ("XDG_DATA_HOME", os.path.join(home, ".local", "share"))):
+        base = os.environ.get(var) or ""
+        if os.path.isabs(base) and os.path.normpath(base) != os.path.normpath(default):
+            out += [(os.path.join(os.path.normpath(base), os.path.relpath(r, default)), what) for r, what in roots if r.startswith(default + os.sep)]
+    return list(dict.fromkeys(out))
+
+
+class Own(NamedTuple):
+    """AppKata's own folders beside the install folder of the app a grant is judged for, as Settings
+    and the install records name them (this module reads neither): its callers pass one wherever
+    they pass `apps_root` (R17.3.1)."""
+    commands: tuple[str, ...] = ()     # the command links folder of Settings, and each folder a command link is in
+    roots: tuple[str, ...] = ()        # every install folder AppKata has apps in, and the one Settings name for the next
+
+
+def _protected_roots(apps_root: str | None = None, own: Own | None = None) -> list[tuple[str, str]]:
     """(folder, what it holds) for the folders a grant may never share, nor anything inside or above
     them: AppKata's own areas (installed apps, the data folder with the database and every private
     home), the places that make a program start again later, the user's keys, and the session's
     runtime folder (the real, unfiltered session bus lives there, in a login session; where else
-    it can be is :func:`bus_files`'s)."""
-    from .platform import apps_dir
+    it can be is :func:`bus_files`'s). The list is of the places known to AppKata, kept by hand: it
+    is not complete, and a program it doesn't know can read its code from somewhere else in the
+    home (R17.3.1 and R17.17 say so).
+
+    AppKata's own areas are the app's install folder (`apps_root`), the default one whatever Settings
+    names, and the command links folders (`own`, and the default one): the links are on PATH, as
+    ~/.local/bin is, and each starts an app's launcher or program. CR1.5-37: the list had the app's
+    install folder alone, so ~/bin was refused only as the folder above the default ~/bin/apps; with
+    the install folder set elsewhere ~/bin and ~/bin/apps, where the earlier installs' launchers
+    still are, could be granted, and a command links folder of the user's own (~/tools) always
+    could. And they are every other install folder AppKata has apps in (`own.roots`): an app stays
+    in the folder it was installed in when the setting changes (R4.3.1), so apps are in two, and
+    an app in one could be granted the other read-write, to replace another app's program or
+    launcher, which then runs in that app's sandbox, or in none (CR1.5-45)."""
+    from .platform import apps_dir, command_dir_default
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
-    roots = [(apps_root or apps_dir(), "AppKata's installed apps"),
-             (data_dir(), "AppKata's own data and the apps' private homes"),
+    # A folder of `own` that is the home folder, or above it, adds nothing: that folder is never
+    # shared as it is, and as a root it would make every folder of the home AppKata's own.
+    above_home = lambda d: (os.path.realpath(home) + os.sep).startswith(os.path.realpath(d).rstrip(os.sep) + os.sep)      # noqa: E731
+    others = sorted({os.path.expanduser(r) for r in (own or Own()).roots if r and not above_home(r)})
+    roots = [(r, "AppKata's installed apps") for r in dict.fromkeys([apps_root or apps_dir(), *others, apps_dir()])]
+    commands = sorted({os.path.expanduser(c) for c in (*(own or Own()).commands, command_dir_default()) if c})
+    roots += [(c, "the command links folder, which is on your PATH") for c in commands if not above_home(c)]
+    areas = len(roots) + 1             # AppKata's own areas, the data folder the last of them
+    roots += [(data_dir(), "AppKata's own data and the apps' private homes"),
              (h(".config", "autostart"), "autostart entries"),
              (h(".config", "autostart-scripts"), "autostart scripts"),
              (h(".config", "systemd"), "systemd user units"),
@@ -524,6 +629,51 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
              (h(".local", "share", "nemo", "scripts"), "file-manager scripts"),
              (h(".local", "share", "nemo", "actions"), "file-manager actions"),
              (h(".local", "lib"), "programs and Python modules on your own paths"),
+             # More places of the same two kinds, on the desktops AppKata supports (CR1.5-9: the list is
+             # kept by hand, and these were not in it, so a review's `Sandbox folders:
+             # ~/.local/share/cinnamon` was an ordinary folder). Cinnamon, Mint's desktop, imports its
+             # applets, desklets, extensions and search providers from ~/.local/share/cinnamon and
+             # starts the panel's own launchers from there and from ~/.cinnamon; bash-completion loads
+             # ~/.local/share/bash-completion/completions/<command> at a tab (its two startup files are
+             # with the shell's, below); PipeWire's configuration has a list of programs to start; an
+             # editor runs its extensions whenever it starts; and Cargo's and Go's folders of programs
+             # are on PATH wherever those tools are set up (A1.11 says which of these was run or read).
+             (h(".local", "share", "cinnamon"), "Cinnamon's applets, desklets, extensions and panel launchers"),
+             (h(".cinnamon"), "Cinnamon's panel launchers"),
+             (h(".local", "share", "bash-completion"), "your shell's completion scripts"),
+             (h(".config", "pipewire"), "PipeWire's configuration, which can start programs"),
+             # WirePlumber, PipeWire's session manager, reads its own file of the same format before
+             # the system's, and 0.4 (Mint 22, Ubuntu 24.04) runs its list of programs at each start.
+             # The whole folder: which file it reads is its instance's choice (wireplumber.conf,
+             # main.conf, policy.conf, bluetooth.conf), 0.5 adds each one's .conf.d fragments, and
+             # they decide which modules and scripts it loads (pr-review pass 2 of #735, P2C-1)
+             (h(".config", "wireplumber"), "WirePlumber's configuration, which can start programs"),
+             # every PulseAudio client (which is every program with sound, on PipeWire too) reads
+             # client.conf here: it names the program to start when no sound server answers, and
+             # the server to talk to, which can be a socket the app serves. libpulse reads ~/.pulse
+             # instead where that older folder exists (pr-review pass 2 of #735, P2B-2)
+             (h(".config", "pulse"), "your sound setup, which can start a program or send your sound elsewhere"),
+             (h(".pulse"), "your sound setup, which can start a program or send your sound elsewhere"),
+             # the desktop's settings database (GSettings in dconf): Cinnamon runs the command of each
+             # custom keybinding it lists, at the key, and opens the terminal it names; and the file
+             # of the user's folder names, which xdg-user-dir runs as a shell script whenever a
+             # program asks it for a folder (pr-review pass 1 of #735, P1-2)
+             (h(".config", "dconf"), "your desktop's settings, which name programs to start"),
+             (h(".config", "user-dirs.dirs"), "your folders' names, which some programs run as a script"),
+             # the user's own menu files, read before the system's: one can add a folder of entries
+             # (<AppDir>) from anywhere, and an entry there takes the place of the system's of the
+             # same name, in the menu and for the panel's pinned launchers. The whole folder, since
+             # Cinnamon makes `applications-merged` in it at every start and each desktop's menu
+             # has its own file and merge folder there (pr-review pass 2 of #735, P2-1)
+             (h(".config", "menus"), "your app menu's layout, which can add app-menu entries from any folder"),
+             # a .thumbnailer file names a command for a kind of file, and the user's are read before
+             # the system's: Nemo, Mint's file manager, runs it with no sandbox of its own as it
+             # shows a folder that holds such a file (pr-review pass 2 of #735, P2B-1)
+             (h(".local", "share", "thumbnailers"), "thumbnailers, which your file manager runs as it shows a folder"),
+             (h(".vscode", "extensions"), "your editor's extensions"),
+             (h(".vscode-oss", "extensions"), "your editor's extensions"),
+             (h(".cargo", "bin"), "programs on your PATH"),
+             (h("go", "bin"), "programs on your PATH"),
              (h(".gitconfig"), "your git configuration (hooks, aliases)"),
              (h(".config", "git"), "your git configuration (hooks, aliases)"),
              (h(".ssh"), "SSH keys"),
@@ -536,15 +686,50 @@ def _protected_roots(apps_root: str | None = None) -> list[tuple[str, str]]:
         # what the distributions' default .bashrc sources in turn: Ubuntu's and Mint's ~/.bash_aliases,
         # Fedora's ~/.bashrc.d/* (round five, R5-2)
         ".bash_aliases", ".bashrc.d",
+        # what bash-completion sources as every interactive shell starts, on Mint and Ubuntu by
+        # default: its user file, and the one its profile script reads first (CR1.5-9)
+        ".bash_completion", ".config/bash_completion",
         ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".config/fish", ".kshrc", ".cshrc", ".tcshrc")]
-    roots += [(h(f), "your session's startup files") for f in (".xsessionrc", ".xprofile", ".xinitrc", ".Xresources", ".xsession")]
+    # Readline's file, which every interactive bash reads (and python, gdb, psql): a key bound there
+    # to a macro types what the macro says, so Enter can be made to add a command to the line the
+    # user wrote and run both (pr-review pass 2 of #735, P2C-2)
+    roots.append((h(".inputrc"), "your terminal's key bindings, which can type commands"))
+    # ~/.xinputrc: im-config's Xsession hook sources it as the session starts, on the Debian family;
+    # ~/.gnomerc: cinnamon-session's own hook sources it at every Cinnamon X11 login, in the same
+    # run of Xsession that sources ~/.xsessionrc; ~/.Xsession: Xsession's other name for the user's
+    # own session script, run where ~/.xsession is (pr-review pass 2 of #735, P2-2)
+    roots += [(h(f), "your session's startup files") for f in (".xsessionrc", ".xprofile", ".xinitrc", ".Xresources", ".xsession",
+                                                               ".xinputrc", ".gnomerc", ".Xsession")]
+    # a compositor's or a window manager's own configuration starts programs (`exec` lines, an
+    # autostart script): the ones R17.9 names, and i3 and Openbox (CR1.5-9)
+    roots += [(h(*parts), "your window manager's configuration, which starts programs") for parts in (
+        (".config", "sway"), (".sway",), (".config", "i3"), (".i3",), (".config", "hypr"), (".config", "labwc"),
+        (".config", "openbox"), (".config", "river"), (".config", "niri"), (".config", "wayfire.ini"))]
     # a browser's native-messaging manifests name programs the browser starts, as the user, on an
     # extension's request; Firefox's folder is above, the Chromium family keeps theirs per profile
     # folder under ~/.config (named one by one: the match is on exact roots, not patterns)
-    roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in (
-        ("chromium",), ("google-chrome",), ("google-chrome-beta",), ("google-chrome-unstable",),
-        ("BraveSoftware", "Brave-Browser"), ("microsoft-edge",), ("vivaldi",), ("opera",))]
-    return roots
+    roots += [(h(".config", *parts, "NativeMessagingHosts"), "programs browser extensions may start") for parts in _CHROMIUM_FAMILY]
+    # ...and where the environment moves them (CR1.5-17): the folders of the XDG variables, the keys
+    # in $GNUPGHOME, zsh's startup files in $ZDOTDIR and Readline's file where $INPUTRC names it
+    # (P2C-2). AppKata's own areas, first in the list, are
+    # where they are (the data folder follows XDG_DATA_HOME by itself, platform.data_dir).
+    # GnuPG and Readline expand a leading `~` in theirs, so it is expanded here (a quoted `~` in
+    # ~/.profile, or a line of environment.d, which expands none, reaches them as it is); the XDG
+    # variables' readers and zsh take theirs as written. A $GNUPGHOME or an $INPUTRC that is the
+    # home folder or above it adds nothing, as with `own`'s folders: neither program reads a file
+    # there for it, and as a root it would make every folder of the home refused. One that names a
+    # folder below the home stays a root, $INPUTRC's too, though Readline reads nothing from a
+    # folder: skipped, an app granted the folder above could put a file in its place (pr-review
+    # pass 3 of #735, P3B-1 and P3-1).
+    roots = roots[:areas] + _moved(roots[areas:], home)
+    named = lambda var: os.path.expanduser(os.environ.get(var) or "")      # noqa: E731
+    if os.path.isabs(keys := named("GNUPGHOME")) and not above_home(keys):
+        roots.append((os.path.normpath(keys), "GPG keys"))
+    if os.path.isabs(zsh := os.environ.get("ZDOTDIR") or ""):
+        roots += [(os.path.join(os.path.normpath(zsh), f), "your shell's startup files") for f in (".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout")]
+    if os.path.isabs(rc := named("INPUTRC")) and not above_home(rc):
+        roots.append((os.path.normpath(rc), "your terminal's key bindings, which can type commands"))
+    return list(dict.fromkeys(roots))
 
 
 def _bus_keys(address: str):
@@ -617,14 +802,74 @@ def bus_files(address: str | None = None) -> tuple[list[str], bool]:
     return files, readable
 
 
+# The system's own places (R17.3.1): no grant shares one, nor anything inside or above one, whoever
+# asks. A grant is bound after the sandbox's own /proc, /dev and /tmp, so one of those put the
+# host's back over them, and the host's /proc leads to every file of the user's (/proc/<pid>/root);
+# /run and /var/run hold the system bus and the container and VM managers' sockets, /tmp and /var/tmp
+# other programs' (an ssh agent's, tmux's), and /etc, /usr and /boot are the system itself. CR1.5-5
+# (the owner's decision of 2026-11-24): the never-shared list knew the home and the runtime folder
+# alone, so a review's `Sandbox folders: /proc:ro` was an ordinary folder, bound as asked. How it
+# slipped past: every path the tests granted was under a test's home, and that is under /tmp.
+SYSTEM_PLACES = ("/proc", "/sys", "/dev", "/run", "/var/run", "/tmp", "/var/tmp", "/etc", "/usr", "/boot")
+# ...but where the desktop mounts a stick or a disk for the user, which is under /run
+SYSTEM_MEDIA = ("/run/media", "/var/run/media")
+# The places among them that hold the system's live state: a folder in one is handed over by no file
+# argument either (R17.6.2), where a folder below the others (/tmp/build, /usr/share/doc) is
+SYSTEM_LIVE = ("/proc", "/sys", "/dev", "/run", "/var/run")
+
+
+def _as_written_and_real(path: str) -> list[str]:
+    """A full path as it is written, normalized, and as it resolves here: one path, or two."""
+    written = "/" + os.path.normpath(path).lstrip("/")
+    return list(dict.fromkeys((written, os.path.realpath(path))))
+
+
+def _system_roots() -> list[tuple[str, str]]:
+    """(folder, the system place it is) for each of SYSTEM_PLACES, as written and as it resolves on
+    this machine (/var/run is a link to /run on most): the launcher's list for a command-line
+    tool's working directory too (R17.3.3)."""
+    roots: dict[str, str] = {}
+    for place in SYSTEM_PLACES:
+        for r in _as_written_and_real(place):
+            roots.setdefault(r, place)
+    return list(roots.items())
+
+
+def system_folder(path: str) -> str:
+    """Why a folder grant for the full path `path` is refused as one of the system's places
+    (SYSTEM_PLACES), or "": the place itself, anything inside it and anything above it, judged by
+    the path as it is written, which is where the grant is mounted in the sandbox, and by where it
+    leads, which is what the app is shown (`/proc/self/cwd` leads to AppKata's own working
+    directory, and is in /proc all the same). Two things are not refused: what is under /run/media,
+    and a folder of the home, which is judged as the home's wherever the home is (a home under
+    /tmp, as every test's is, is still a home; one that is `/` is none)."""
+    full = os.path.expanduser(path)
+    if not os.path.isabs(full) or _shown(path) != path:
+        return ""
+    homes = [h for h in _as_written_and_real(os.path.expanduser("~")) if h != os.sep]
+    within = lambda p, roots: any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in roots)      # noqa: E731
+    for p in _as_written_and_real(full):
+        if within(p, homes) or within(p, [m for media in SYSTEM_MEDIA for m in _as_written_and_real(media)]):
+            continue
+        for root, place in _system_roots():
+            if within(p, [root]):
+                return f"the system's own {place}"
+            if within(root, [p]):
+                return f"a folder above the system's own {place}"
+    return ""
+
+
+# Why a folder written with a `..` step is refused (R17.3.1): no full path, to a reader
+DOTDOT = "not a full path (it has a .. in it: name the folder it leads to)"
 # Why every folder grant is refused while AppKata's own session bus names a socket file it can't read
 BUS_UNREADABLE = "a folder the session bus's socket could be in (its address names a file AppKata can't read)"
 
 
-def protected_folder(path: str, apps_root: str | None = None) -> str:
+def protected_folder(path: str, apps_root: str | None = None, own: Own | None = None) -> str:
     """Why a folder grant for `path` is refused, or "" when it may be shared (R17.3.1): a protected
     folder itself, anything inside one, and anything above one — the home folder and `/` included,
-    since sharing a parent shares everything beneath it — and the session bus's own socket file and
+    since sharing a parent shares everything beneath it — the system's own places the same way
+    (:func:`system_folder`), and the session bus's own socket file and
     anything above it, wherever it is (a folder beside it may be shared), and every folder where
     the address names a socket file AppKata can't read, which could be in any (the launcher shares
     no folder then either; PR #694's review, P3-2): both are :func:`bus_files`'s. Reviews
@@ -632,6 +877,8 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     (R17.3.3)."""
     if path == "$cwd":
         return ""
+    if UNSHOWN in _shown(path):          # a control character, as it is or as it is kept: no path to resolve
+        return CONTROL
     # bwrap resolves a bind source from the host's root, realpath() below from AppKata's own working
     # directory: a folder named from neither (`home`, `run/user/1000`, `./x`, an unknown `~user`) would
     # be judged here as one place and bound there as another. Review 2, F1: `Sandbox folders: home`
@@ -645,12 +892,20 @@ def protected_folder(path: str, apps_root: str | None = None) -> str:
     if p == "/" or home.startswith(p + os.sep):
         return "everything, your home folder included"
     sockets, readable = bus_files()
-    for root, what in _protected_roots(apps_root) + [(s, "the session bus's socket") for s in sockets]:
+    for root, what in _protected_roots(apps_root, own) + [(s, "the session bus's socket") for s in sockets]:
         r = os.path.realpath(root)
         if p == r or p.startswith(r + os.sep):
             return what
         if r.startswith(p + os.sep):
             return f"a folder above {what}"
+    if why := system_folder(path):
+        return why
+    # A `..` is refused whoever asks, however harmless where it leads (what is never shared is said
+    # above, by where it leads): the folder is shown as it is written, and `~/Documents/../.cache`
+    # reads as a folder of Documents; and it can't be shown by its text without the `..` either,
+    # which is another folder than bwrap mounts where a step before the `..` is a link (CR1.5-16).
+    if ".." in os.path.expanduser(path).split(os.sep):
+        return DOTDOT
     return "" if readable else BUS_UNREADABLE
 
 
@@ -662,27 +917,45 @@ def _secret_roots() -> list[tuple[str, str]]:
     keep theirs here, as AppKata's keep theirs in folders already never shared), credentials for
     clouds, forges and registries, and password stores. The user's own picker may grant them, with
     a warning; a review can't (R17.3.1). The goals promise "secrets stay private"; the never-shared
-    list covered ~/.ssh and ~/.gnupg alone (review 2, F8)."""
+    list covered ~/.ssh and ~/.gnupg alone (review 2, F8).
+
+    CR1.5-8: of browsers and mail clients the list had Firefox and Thunderbird alone, while R17.3.1
+    says "browsers' and mail clients' profiles". A Chromium-family profile lies beside the
+    browser's NativeMessagingHosts folder, not above it, so no list named it, and a review's
+    `Sandbox folders: ~/.config/google-chrome/Default:ro` was granted as asked, with no warning:
+    the history, the bookmarks and the form data in clear, and the cookies and saved logins too
+    where the browser has no keyring to encrypt them with. So the family's data folders are here
+    whole (their top stays never shared, as the folder above the manifests: that answer comes
+    first), with the Firefox forks', Tor Browser's, Evolution's and GNOME Online Accounts'."""
     home = os.path.expanduser("~")
     h = lambda *parts: os.path.join(home, *parts)      # noqa: E731
-    return [(h(".mozilla", "firefox"), "Firefox's profiles and saved logins"),
-            (h(".thunderbird"), "Thunderbird's mail and saved logins"),
-            (h(".var", "app"), "other apps' sandboxed data (Flatpak)"),
-            (h("snap"), "other apps' sandboxed data (Snap)"),
-            (h(".aws"), "cloud credentials"), (h(".azure"), "cloud credentials"), (h(".config", "gcloud"), "cloud credentials"),
-            (h(".kube"), "cluster credentials"), (h(".docker"), "registry credentials"),
-            (h(".config", "gh"), "your GitHub token"), (h(".git-credentials"), "your git passwords"),
-            (h(".netrc"), "saved passwords for servers"), (h(".npmrc"), "registry tokens"), (h(".pypirc"), "registry tokens"),
-            (h(".cargo", "credentials.toml"), "registry tokens"), (h(".cargo", "credentials"), "registry tokens"),
-            (h(".config", "rclone"), "cloud storage tokens"), (h(".vault-token"), "a Vault token"),
-            (h(".password-store"), "your password store"), (h(".local", "share", "keyrings"), "your keyring"),
-            (h(".local", "share", "kwalletd"), "your KDE wallet")]
+    browser = "a browser's profiles and saved logins"
+    roots = [(h(".mozilla", "firefox"), "Firefox's profiles and saved logins"),
+             (h(".config", "mozilla", "firefox"), "Firefox's profiles and saved logins"),      # where it keeps them by the XDG rule
+             *[(h(fork), browser) for fork in (".librewolf", ".waterfox", ".floorp", ".zen")],
+             (h(".local", "share", "torbrowser"), "Tor Browser and its profile"),
+             *[(h(".config", *parts), browser) for parts in _CHROMIUM_FAMILY],
+             (h(".thunderbird"), "Thunderbird's mail and saved logins"),
+             (h(".config", "evolution"), "Evolution's mail and accounts"),
+             (h(".local", "share", "evolution"), "Evolution's mail and accounts"),
+             (h(".config", "goa-1.0"), "your online accounts' sign-ins"),
+             (h(".var", "app"), "other apps' sandboxed data (Flatpak)"),
+             (h("snap"), "other apps' sandboxed data (Snap)"),
+             (h(".aws"), "cloud credentials"), (h(".azure"), "cloud credentials"), (h(".config", "gcloud"), "cloud credentials"),
+             (h(".kube"), "cluster credentials"), (h(".docker"), "registry credentials"),
+             (h(".config", "gh"), "your GitHub token"), (h(".git-credentials"), "your git passwords"),
+             (h(".netrc"), "saved passwords for servers"), (h(".npmrc"), "registry tokens"), (h(".pypirc"), "registry tokens"),
+             (h(".cargo", "credentials.toml"), "registry tokens"), (h(".cargo", "credentials"), "registry tokens"),
+             (h(".config", "rclone"), "cloud storage tokens"), (h(".vault-token"), "a Vault token"),
+             (h(".password-store"), "your password store"), (h(".local", "share", "keyrings"), "your keyring"),
+             (h(".local", "share", "kwalletd"), "your KDE wallet")]
+    return _moved(roots, home)             # ...and where $XDG_CONFIG_HOME and $XDG_DATA_HOME put them (CR1.5-17)
 
 
 def secret_folder(path: str) -> str:
     """What a folder holds when it is (inside, or above) one of :func:`_secret_roots`, else ""."""
-    if path == "$cwd" or not os.path.isabs(os.path.expanduser(path)):
-        return ""
+    if path == "$cwd" or not os.path.isabs(os.path.expanduser(path)) or UNSHOWN in _shown(path):
+        return ""                        # no full path (a control character in it too): protected_folder() says so
     p = os.path.realpath(os.path.expanduser(path))
     for root, what in _secret_roots():
         r = os.path.realpath(root)
@@ -716,13 +989,87 @@ def refused_chips(refused: list) -> list[list]:
     return [[f"{p} · refused: {why}", "ban", "warn"] for p, why in refused or []]
 
 
-def strip_protected(gs: dict, apps_root: str | None = None) -> tuple[dict, list[tuple[str, str]]]:
-    """A grant set without its protected folders, and [(path, why)] for each one dropped."""
+def _links_on_the_way(full: str) -> list[str]:
+    """Each link followed on the way to the full path `full`, as the file the link is: the folder it
+    lies in resolved, its own name kept; of a loop of links, the first forty."""
+    todo, at, links = full.split(os.sep)[::-1], os.sep, []
+    while todo:
+        name = todo.pop()
+        if name in ("", "."):
+            continue
+        if name == "..":
+            at = os.path.dirname(at)
+            continue
+        step = os.path.join(at, name)
+        try:
+            target = os.readlink(step)
+        except OSError:
+            at = step
+            continue
+        links.append(step)
+        if len(links) >= 40:
+            break
+        if target.startswith(os.sep):
+            at = os.sep
+        todo.extend(target.split(os.sep)[::-1])
+    return links
+
+
+def refused_folders(gs: dict, apps_root: str | None = None, own: Own | None = None) -> dict[str, str]:
+    """Each folder of the grant set `gs` that is not shared, and why (R17.3.1): a never-shared one
+    (:func:`protected_folder`), and one that a link in another folder of the set is on the way to.
+    A link in a folder the app is given is the app's to make: with ~/Projects read-write and
+    ~/Projects/sub/deep granted too, the app put a link where `sub` was, and what the link named was
+    mounted at the next launch, the user's keys among it (CR1.5-40). The launcher drops a grant that
+    no longer leads where it led when it was judged (:func:`folder_leads`); this is the rule for
+    the judging itself, an install's or the user's Save that grants the folder, so that it doesn't
+    take the app's link for the folder's place. The
+    link is judged by where it lies, not by where it leads or who made it: the user's own link in
+    a granted folder is refused the same way, and the folder it names can be granted itself."""
     gs = normalize(gs)
-    refused = [(p, why) for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root))]
+    out = {p: why for p in sorted(gs["folders"]) if (why := protected_folder(p, apps_root, own))}
+    shared = {p: os.path.realpath(os.path.expanduser(p)) for p in gs["folders"] if p != "$cwd" and p not in out}
+    for p in sorted(shared):
+        links = _links_on_the_way(os.path.expanduser(p))
+        for other, real in sorted(shared.items()):
+            if other != p and any(link.startswith(real.rstrip(os.sep) + os.sep) for link in links):
+                out[p] = f"a link in {other}, which the app can change, is on the way to it"
+                break
+    return out
+
+
+def strip_protected(gs: dict, apps_root: str | None = None, own: Own | None = None) -> tuple[dict, list[tuple[str, str]]]:
+    """A grant set without the folders that are not shared (:func:`refused_folders`), and [(path,
+    why)] for each one dropped."""
+    gs = normalize(gs)
+    refused = sorted(refused_folders(gs, apps_root, own).items())
     for p, _ in refused:
         gs["folders"].pop(p)
     return gs, refused
+
+
+def folder_leads(gs: dict, kept: dict | None = None) -> dict[str, str]:
+    """Where each folder of the grant set `gs` leads, by the folder's name in the set: the place the
+    host has it at, every link on the way followed, which a launcher bakes beside the folder and
+    holds each launch to (R17.4). `kept`: the answers given when the folders' grants were judged,
+    which stand for every folder still in the set; only a folder with none is asked now.
+
+    Where a folder leads is judged when its grant is: at the install that takes it and at the
+    user's own Save of the app's sandbox that adds it (a Save judges no folder the app already
+    had: one is judged anew by taking it out and granting it again), and the install keeps the
+    answers (its record's
+    "sandboxLeads", install._sandbox_launcher). It was asked each time a launcher was written, and
+    AppKata's start writes a launcher again whenever its text would differ -- which it did as soon
+    as a link led a grant elsewhere, the place being part of the text. So the launch that dropped
+    the grant was followed by a start that took the link for the folder's place: a tool given
+    ~/src/proj/data and run once in ~/src/proj put a link to ~/Documents where `data` was, and read
+    the user's documents there from AppKata's next start on (CR1.5-53). :func:`refused_folders`
+    knows a link in another folder of the set, and an app can write elsewhere too: where a tool was
+    run, a folder it was handed, another app's grant above its own. The working directory ("$cwd")
+    is decided at each launch and has no answer here."""
+    kept = kept if isinstance(kept, dict) else {}
+    return {p: led if isinstance(led := kept.get(p), str) and led else os.path.realpath(os.path.expanduser(p))
+            for p in sorted(normalize(gs)["folders"]) if p != "$cwd"}
 
 
 # -------------------------------------------------------------------------- resolving sources (R17.3.2)
@@ -862,12 +1209,13 @@ _CAP_CHIP = {"notifications": ("Notifications", "info"), "inhibit": ("Keep the s
 _DEVICE_CHIP = {"camera": ("Camera", "panel")}
 
 
-def summary_chips(gs: dict, apps_root: str | None = None, template: str | None = None) -> list[list]:
+def summary_chips(gs: dict, apps_root: str | None = None, template: str | None = None, own: Own | None = None) -> list[list]:
     """Plain-language chips [label, icon, tone] describing a grant set, for the install card, App
     Detail and the Sandbox dialog (A20/A21/C11). tone is "ok", "warn" or "track". `apps_root`: the
     app's install root, so a refused folder is the same one the launcher refuses (round two, R9: the
     chips checked the default root while the launcher checked the app's, and disagreed under a custom
-    install folder). `template`: the template the set is named after; one made for a folder the user
+    install folder), and `own` AppKata's other folders, as the launcher is told them (CR1.5-37).
+    `template`: the template the set is named after; one made for a folder the user
     picks says "No folder yet" until it has one (review 2, F10)."""
     gs = normalize(gs)
     if gs["level"] == "off":
@@ -875,9 +1223,10 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
     out = [["Strict · private home", "lock", "ok"] if gs["level"] == "strict" else ["Standard", "shieldCheck", "ok"]]
     if template in FOLDER_TEMPLATES and gs["level"] != "strict" and not any(p != "$cwd" for p in gs["folders"]):
         out.append(["No folder yet", "folder", "warn"])
+    refused = refused_folders(gs, apps_root, own)
     for path, mode in sorted(gs["folders"].items()):
         nice = "The folder it's run in" if path == "$cwd" else path
-        if why := protected_folder(path, apps_root):     # never shared, whoever asked (R17.3.1)
+        if why := refused.get(path):                     # never shared, whoever asked (R17.3.1)
             out.append([f"{nice} · refused: {why}", "ban", "warn"])
             continue
         if secret_folder(path):                          # the user's own grant of a secret (R17.3.1): said plainly
@@ -904,9 +1253,9 @@ def summary_chips(gs: dict, apps_root: str | None = None, template: str | None =
     return out
 
 
-def summary(gs: dict, apps_root: str | None = None, template: str | None = None) -> list[str]:
+def summary(gs: dict, apps_root: str | None = None, template: str | None = None, own: Own | None = None) -> list[str]:
     """The chip labels alone (for comparisons and compact displays)."""
-    return [c[0] for c in summary_chips(gs, apps_root, template)]
+    return [c[0] for c in summary_chips(gs, apps_root, template, *(() if own is None else (own,)))]
 
 
 def level_of(gs: dict) -> str:
@@ -1516,12 +1865,146 @@ def home_belongs_to_another(app_id: str, url: str) -> bool:
         return True
 
 
-def remove_sandbox_home(app_id: str) -> None:
-    """Remove the app's private home on uninstall (R17.14), its identity marker and its owner record."""
-    shutil.rmtree(sandbox_home(app_id), ignore_errors=True)
+def handed_path(app_id: str) -> str:
+    """The file that says the app was handed files or folders through the document portal
+    (R17.6.2): the file-argument helper makes it beside itself, named after the app's identity,
+    before it hands the first one over (:data:`FORWARD_HELPER`'s `noted`). Outside every private
+    home, in the folder no sandbox sees. :func:`revoke_documents` reads it and removes it."""
+    return os.path.join(sandboxes_root(), ".identity", "handed", app_identity(app_id))
+
+
+# What the document portal still holds for an app's identity is taken back from the host side, as
+# it was handed over: every document the portal lists for the identity loses each permission the
+# identity has on it. The document itself stays (another app may have been handed the same file).
+# Run by the system's python3, which has python3-gi, as the file-argument helper is; AppKata's own
+# Python has none. The portal is never started for the ask: a document handed over lasts as long
+# as the portal's process (none is added "persistent"), so where no portal runs nothing is held.
+# Exit 0: the identity holds nothing now; anything else: it couldn't be asked, or still holds one.
+_REVOKE = """import sys
+from gi.repository import Gio, GLib
+ident = sys.argv[1]
+GONE = ("org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner")
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+
+def call(method, args, answer=None):
+    return bus.call_sync("org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
+                         method, args, GLib.VariantType(answer) if answer else None, Gio.DBusCallFlags.NO_AUTO_START, 5000, None)
+
+
+def held():
+    return call("List", GLib.Variant("(s)", (ident,)), "(a{say})").unpack()[0]
+
+
+try:
+    docs = held()
+except GLib.Error as e:
+    if Gio.DBusError.is_remote_error(e) and Gio.DBusError.get_remote_error(e) in GONE:
+        sys.exit(0)
+    raise
+for doc in docs:
+    call("RevokePermissions", GLib.Variant("(ssas)", (doc, ident, ["read", "write", "grant-permissions", "delete"])))
+sys.exit(1 if held() else 0)
+"""
+
+
+def revoke_documents(app_id: str) -> bool:
+    """Take back every file and folder the app was handed through the document portal (R17.6.2,
+    R17.14): when it is uninstalled, when it leaves Standard, and before an install is given a
+    launcher under its id. The portal keeps what was handed over, with its permission, for as long
+    as it runs (the login session), under the app's identity alone: an app uninstalled with its
+    home removed frees its id (R17.6), and the next app of that name, from another Source, found
+    every file the user had opened with the first one in its `doc/by-app` view, to read and to
+    write (CR1.5-25; shown with the real portal, tests/test_sandbox_run.py). Nothing revoked a
+    grant, at an uninstall or when the app went to Strict or Off.
+
+    The portal is asked only where :func:`handed_path` says this AppKata's helper handed the app
+    something, so an app that was handed nothing costs no process and no bus is touched for it.
+    Returns whether the identity holds nothing now. False -- no python3 or python3-gi, no session
+    bus, a portal that doesn't answer -- leaves the record in place, so the next call asks again,
+    and is logged; the caller goes on."""
+    record = handed_path(app_id)
+    if OS != "linux" or not os.path.lexists(record):
+        return True
+    from .platform import apps_dir
+    why = "no python3 where the launchers find theirs"
+    try:
+        if python := host_which("python3"):
+            # -I: nothing of the folder AppKata was started in, nor of the user's own site, is loaded
+            r = subprocess.run([python, "-I", "-c", _REVOKE, app_identity(app_id)], env={**os.environ, "PATH": host_path(apps_dir())},
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1] if r.returncode else ""
+    except (OSError, subprocess.SubprocessError) as e:
+        why = str(e) or type(e).__name__
+    if why:
+        log.warning("couldn't take back what %s was handed through the document portal: %s", app_identity(app_id), why)
+        return False
+    os.unlink(record)
+    return True
+
+
+def _give_folders_back(top: str) -> None:
+    """Give the owner read, write and search back on every folder of the tree at `top`, `top`
+    among them, so that what is in them can be removed. Each folder is opened as itself, by its
+    name in the folder above that is already open and never through a link (O_NOFOLLOW), and its
+    mode is changed through that descriptor: a link the app left in its home leads nowhere here,
+    and nothing outside the tree changes. A file's own mode is left alone: removing a file asks
+    its folder. A folder that can't be opened or changed is passed over."""
+    stack: list[tuple[int, list[str]]] = []         # the folders open on the way down, each with its names still to visit
+
+    def enter(name: str, parent: int | None = None) -> None:
+        try:
+            fd = os.open(name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        except OSError:
+            return
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                if mode & 0o700 != 0o700:
+                    os.chmod(f"/proc/self/fd/{fd}", stat.S_IMODE(mode) | 0o700)
+                inside = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=fd)
+                try:
+                    stack.append((inside, os.listdir(inside)))
+                except OSError:
+                    os.close(inside)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
+    enter(top)
+    while stack:
+        fd, names = stack[-1]
+        if names:
+            enter(names.pop(), fd)
+        else:
+            os.close(stack.pop()[0])
+
+
+def remove_sandbox_home(app_id: str) -> bool:
+    """Remove the app's private home on uninstall (R17.14), its identity marker and, once the
+    home is gone, its owner record. Returns whether the home is gone.
+
+    A private home is its app's to write, so it can hold folders its owner may not open or change:
+    Go's module cache is read-only by design, and `mkdir -p a/b; chmod 000 a` is one line for an
+    app that means it. Such a tree was left in place without a word, the owner record was removed
+    all the same, and a home with no owner is no app's (:func:`home_belongs_to_another`): the data
+    the user asked to have deleted stayed, and not even the same app installed again was given it
+    (CR1.5-20). Now the folders are made the owner's again (:func:`_give_folders_back`) and the
+    removal tried once more; a home that still can't be removed whole keeps its owner record, so it
+    stays that app's as a kept home does (R17.6), and the caller is told."""
+    home = sandbox_home(app_id)
+    shutil.rmtree(home, ignore_errors=True)
+    if os.path.lexists(home):
+        _give_folders_back(home)
+        shutil.rmtree(home, ignore_errors=True)
     remove_identity(app_id)
+    if os.path.lexists(home):
+        log.warning("couldn't remove the private home %s whole: it stays, with its owner record", home)
+        return False
     if os.path.lexists(home_owner_path(app_id)):
         os.unlink(home_owner_path(app_id))
+    return True
 
 
 # -------------------------------------------------------------------------- D-Bus proxy (R17.5)
@@ -1770,8 +2253,8 @@ def write_seccomp_filter() -> str | None:
 # Runs on the host, from the launcher, when the app was given arguments (R17.6.2). An argument naming a
 # file or folder -- a path, a file:// URI, or an option's value (`--file=PATH`, `-oPATH` with a full
 # path) -- becomes the path the app finds it at: inside a granted folder, the folder's own mount path
-# plus the rest, unless the argument already resolves there (a CLI tool's relative paths in its shared
-# folder, an absolute path written through no link); outside every granted folder, the document
+# plus the rest, unless the argument is that path as it is typed (a CLI tool's relative paths in its
+# shared folder, an absolute path under the folder's own); outside every granted folder, the document
 # portal's re-export of it (Documents.Add + GrantPermissions for a file, AddFull with the
 # export-directory flag for a folder, what the file chooser portal does for a pick), at
 # $XDG_RUNTIME_DIR/doc/<id>/<name>, where the launcher binds the app's by-app view. Done from the host
@@ -1784,18 +2267,183 @@ def write_seccomp_filter() -> str | None:
 # and the launcher ran `eval "set -- $fwd"` on them, so whatever answered to the name python3 wrote a
 # line of the launcher's shell). An argument that can't be handed over passes unchanged, and any
 # failure of the whole leaves the launcher passing them all unchanged.
-# argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...] -- <arguments...>
+# The never-shared list wins over an argument (R17.3.1, R17.6.2; CR1.5-38, the owner's decision of
+# 2026-11-23): the helper had no such list, so `tool .` from the home folder, `tool ~/.ssh` or the
+# home dropped on a menu entry was exported whole, read-write, right after the launcher said the
+# tool couldn't see it. The launcher gives it the list now: the folders of _protected_roots() and
+# the private homes, as they are written (resolved here, at each launch), the runtime folder and
+# the session bus's socket files as the launcher read them ($bussocks); the home folder is the
+# helper's own to find. A file or folder that is one of them, inside one or above one is not handed
+# over, judged by where it leads and by each link on the way there (`~/.ssh/config`, a link to a
+# file kept elsewhere, is in `~/.ssh`: said so, where the link rule below would name the file it
+# leads to as the one to give). The system's own places are not in the list: a file under
+# /tmp is handed over like any other (R17.3.3). A folder is another matter (the owner's decisions
+# of 2026-11-26, on #735): `tool /tmp`, `tool /proc` and `tool /etc` were exported whole, with
+# every other program's sockets or every process's files in them. So an argument that is a folder
+# and one of SYSTEM_PLACES, as it is written or as it resolves here, or a folder above one (`/`,
+# `/var`), is handed over to no app. Nor is a folder in one of SYSTEM_LIVE (/proc, /sys, /dev,
+# /run, /var/run), which hold the system's live state: `/proc/1` and `/proc/self` are a process's
+# files, `/dev/shm` every program's shared memory, a folder of /run the system's sockets (the
+# first rule alone left them to the argument). The runtime folder, which is in /run, keeps its
+# own reason, and what is under SYSTEM_MEDIA is a stick or a disk of the user's, left to an
+# argument as it is to a grant. A file in any system place is handed over, and so is a folder
+# below the other places (`/tmp/build`, `/usr/share/doc`), which the user named and is no more
+# than a folder of theirs. Each refusal is a line of the
+# answer, "!" first and then what the launcher says after the app's name, on stderr.
+# A file argument is never followed through a link (CR1.5-55, the owner's decision of 2026-11-25).
+# A link is the app's to make wherever it can write, and stays on the disk longer than AppKata
+# knows the app could write there: an app with ~/Documents read-write put a link to ~/.bashrc where
+# report.md was, and the user's opening report.md handed the app ~/.bashrc, read-write (CR1.5-4); an
+# app handed ~/proj did the same through the portal's file system (CR1.5-52); and a tool run once in
+# ~/src/proj left a link there that `tool ~/src/proj/README.md`, run from elsewhere, was handed the
+# target of, as an app was after the next login for a folder it had been handed (CR1.5-55). The
+# first two were shut by counting the folders the app is shown now, and what the portal lists for
+# it; nothing counts where it could write once. So no link is followed for an app: an argument whose
+# path passes through one, at any step, the last included, is handed over as nothing and becomes no
+# other path. It passes as typed, with a line that names the link and the file or folder it leads
+# to, the path to give instead. That costs the user's own links (a file kept in a dotfiles folder,
+# a link on the desktop to a file in a granted folder, which R3-17 had made the file's path there):
+# accepted. Two things stand beside it. A link only root can have put there -- root's own, in a
+# folder the user can't change, such as a system's /home -> /var/home or /bin -> usr/bin -- is no
+# app's and is followed (root's own in a folder the user can change could be moved there by a
+# rename, and counts as anyone's). And an argument that is, as it is typed, a path the app is shown
+# -- a full path under a granted folder's own, a tool's relative path in its shared folder, neither
+# with a ".." -- is left as typed and said nothing of, links and all: the app follows them itself,
+# in its own view, where a link out of what it is shown leads nowhere (so a file in ~/Documents
+# opens as before where ~/Documents is the user's link to another disk and the grant is of it).
+# The kernel's own links under /proc are not followed either, and nothing is said of them:
+# /dev/stdin, /dev/stdout and /dev/fd/3 lead through /proc/self/fd, which here is this helper's, and
+# the app has its own by inheritance (`tool -o /dev/stdout` must not print a line of AppKata's).
+# A bare word, with no "/" in it and neither "." nor "~" first, is a file argument when it names a
+# file and never when it names a folder (CR1.5-15, the owner's decision of 2026-11-24): the helper
+# can't know a program's own words, and `tool build` or `app help`, run where a folder of that
+# name lies, got the folder handed over, read-write, and a path where its word was. `./build` or
+# `build/` names the folder. And in its shared folder a tool's relative path stays as typed only
+# while it stays in that folder: `../notes.txt` passed unchanged and reached nothing inside.
+# What is handed over is the file or folder the argument leads to, opened by that path and named by
+# it: the portal names a document after the file its descriptor reaches, so a link to a file
+# outside every grant (~/notes.txt -> ~/sync/notes-2024.txt) reached the app under the link's own
+# name, a path that isn't there (CR1.5-41).
+# A folder handed over is the app's from then on, as a granted one is: the portal's file system
+# lets the app make a link in it. An argument was judged by the folders the launcher shows alone,
+# so an app handed ~/proj (`editor ~/proj`) put a link to another file of the user's where
+# README.md was, and `editor ~/proj/README.md` at a later start handed it that file, read-write
+# (CR1.5-52: the road CR1.5-4 shut for a granted folder, open through a folder argument). Now the
+# portal is asked what the app holds (List, for its identity), each folder in that answer counts
+# as one the app is shown, at the path its document has, and so does a folder handed over by an
+# earlier argument of the same start: a file in one becomes its path in that folder's document
+# (no second document is made for it). A link in one is followed no more than any other, since
+# CR1.5-55. A file handed over can't be made a link: the portal refuses a link, and a folder, in a
+# file's document. Where the portal doesn't answer that question nothing is handed over.
+# Before the first file or folder is handed over, a file named after the app's identity is made in
+# `handed/` beside this helper (handed_path): the portal keeps what an app was handed for the
+# session, AppKata takes it back when the app is uninstalled or leaves Standard (revoke_documents),
+# and it asks the portal only for an app this file names (CR1.5-25). Where the file can't be made
+# nothing is handed over.
+# argv: <app identity> <runtime dir> <the folder relative paths resolve in inside, or ""> [visible folder...]
+#       -- <the session bus's socket files, one a line> [never-shared folder...] -- <arguments...>
 FORWARD_HELPER = """import os, sys, urllib.parse
 ident, rt, incwd, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 sep = rest.index("--")
 pairs = [(d, os.path.realpath(d)) for d in rest[:sep]]        # (where the app sees it, where the host has it)
+rest = rest[sep + 1:]
+sep = rest.index("--")
+never = [os.path.normpath(n) for n in rest[1:sep] + [rt] + rest[0].split(chr(10)) if n]
 args = rest[sep + 1:]
+system = @SYSTEM_PLACES@        # the system's own places (R17.3.1): no folder argument hands one over whole
+live = @SYSTEM_LIVE@            # ...nor a folder in one of these, which hold the system's live state
+media = @SYSTEM_MEDIA@          # ...but what the desktop mounts for the user there
 in_place = bool(incwd) and os.path.realpath(incwd) == os.path.realpath(os.getcwd())
+said = []
 
 
-def inside(path):
-    real = os.path.realpath(path)
+def within(path, folder):
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def follow(path):
+    # where `path` leads, as os.path.realpath() finds it, and each link followed on the way there,
+    # as the file the link is: the folder it lies in resolved, its own name kept
+    todo = os.path.join(os.getcwd(), path).split(os.sep)[::-1]
+    at, links = os.sep, []
+    while todo:
+        name = todo.pop()
+        if name in ("", "."):
+            continue
+        if name == "..":
+            at = os.path.dirname(at)
+            continue
+        step = os.path.join(at, name)
+        try:
+            target = os.readlink(step)
+        except OSError:
+            at = step
+            continue
+        links.append(step)
+        if len(links) > 40:
+            raise OSError("too many links")
+        if target.startswith(os.sep):
+            at = os.sep
+        todo.extend(target.split(os.sep)[::-1])
+    return at, links
+
+
+def roots(link):
+    # whether only root can have put the link there: it is root's own, in a folder the user can't
+    # change (one that is root's in a folder of the user's could be moved there by a rename)
+    try:
+        return os.lstat(link).st_uid == 0 and not os.access(os.path.dirname(link), os.W_OK)
+    except OSError:
+        return False
+
+
+def shown(path, uri):
+    # whether the argument is, as it is typed, a path the app is shown: a full path under a folder
+    # the launcher shows it, by that folder's own path, or a tool's relative path in its shared
+    # folder. Read by its text alone, no link followed, so never with a ".." in it
+    if ".." in path.split(os.sep):
+        return False
+    if not os.path.isabs(path):
+        return in_place and not uri
+    return any(within(os.path.normpath(path), seen) for seen, _ in pairs)
+
+
+def never_shared(real, links):
+    # why the file or folder at `real`, reached through `links`, is handed to no app, or None
+    # (R17.3.1): the home folder or a folder above it, or a never-shared folder, what is in one and
+    # what is above one
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real == home:
+        return "your whole home folder is never shared with a sandboxed app"
+    if within(home, real):
+        return "it holds your whole home folder, which is never shared with a sandboxed app"
+    if os.path.isdir(real):         # a system place whole, or a folder above one; a file in one is handed over
+        for place in system:
+            for spot in dict.fromkeys((place, os.path.realpath(place))):
+                if real == spot:
+                    return place + " is one of the system's own folders, and none of them is handed over whole"
+                if within(spot, real):
+                    return "it holds " + place + ", one of the system's own folders, and none of them is handed over whole"
+    for root in never:              # where it leads now, and by its own name where it is a link
+        for spot in (os.path.realpath(root), os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root))):
+            if any(within(p, spot) for p in [real] + links):
+                return root + " is never shared with a sandboxed app"
+            if within(spot, real):
+                return "it holds " + root + ", which is never shared with a sandboxed app"
+    if os.path.isdir(real):         # a folder in a place that holds the system's live state, where it leads and by each link there
+        at = [real] + links
+        if not any(within(p, spot) for m in media for spot in (m, os.path.realpath(m)) for p in at):
+            for place in live:
+                if any(within(p, spot) for spot in (place, os.path.realpath(place)) for p in at):
+                    return "it is in " + place + ", one of the system's own folders that hold its live state, and no folder in one is handed over"
+    return None
+
+
+def inside(real):
     for seen, host in pairs:
+        if real == host or real.startswith(host + os.sep):
+            return seen + real[len(host):]
+    for seen, host in earlier():
         if real == host or real.startswith(host + os.sep):
             return seen + real[len(host):]
     return None
@@ -1811,6 +2459,8 @@ def as_file(arg):
 
 
 bus = None
+known = False
+held = None
 
 
 def portal():
@@ -1821,8 +2471,45 @@ def portal():
     return bus
 
 
+def earlier():
+    # the folders the app was handed whole and still holds, as the portal lists them for its
+    # identity: (where the app sees it, where the host has it), like `pairs`. Asked once, when an
+    # argument lies in no folder the launcher shows. False until the portal has answered.
+    global held
+    if held is None:
+        held = False
+        try:
+            from gi.repository import Gio, GLib
+            docs = portal().call_sync(
+                "org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
+                "List", GLib.Variant("(s)", (ident,)), GLib.VariantType("(a{say})"), Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
+            found = []
+            for doc in sorted(docs):
+                host = os.fsdecode(bytes(docs[doc]).split(bytes(1))[0])
+                seen = os.path.join(rt, "doc", doc, os.path.basename(host))
+                if os.path.isdir(host) and os.path.isdir(seen) and not never_shared(os.path.realpath(host), []):
+                    found.append((seen, os.path.realpath(host)))
+            held = found
+        except Exception:
+            pass
+    return held or []
+
+
+def noted():
+    # the file that says this app was handed something, made before the first hand-over
+    global known
+    if not known:
+        if os.sep in ident or ident in ("", ".", ".."):
+            raise OSError("no name for the record")
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "handed")
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        open(os.path.join(folder, ident), "a").close()
+        known = True
+
+
 def export(path):
     from gi.repository import Gio, GLib
+    noted()
     fdl = Gio.UnixFDList.new()
     i = fdl.append(os.open(path, os.O_RDONLY))
     res, _ = portal().call_with_unix_fd_list_sync(
@@ -1837,6 +2524,7 @@ def export(path):
 
 def export_dir(path):
     from gi.repository import Gio, GLib
+    noted()
     fdl = Gio.UnixFDList.new()
     i = fdl.append(os.open(path, os.O_PATH | os.O_DIRECTORY))
     perms = ["read"] + (["write"] if os.access(path, os.W_OK) else [])
@@ -1844,20 +2532,45 @@ def export_dir(path):
         "org.freedesktop.portal.Documents", "/org/freedesktop/portal/documents", "org.freedesktop.portal.Documents",
         "AddFull", GLib.Variant("(ahusas)", ([i], 1 | 8, ident, perms)), GLib.VariantType("(asa{sv})"),
         Gio.DBusCallFlags.NONE, 5000, fdl, None)
-    return os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(os.path.realpath(path)))
+    seen = os.path.join(rt, "doc", res.unpack()[0][0], os.path.basename(path))
+    held.append((seen, path))           # the app's own from here on, for the arguments after this one too
+    return seen
 
 
 def hand(path, uri):
-    if not os.path.exists(path) or (in_place and not uri and not os.path.isabs(path)):
+    if not os.path.exists(path):
         return None
-    seen = inside(path)
+    if not uri and os.sep not in path and path[:1] not in (".", "~") and os.path.isdir(path):
+        return None                     # a bare word that names a folder: a program's own word as likely as a path
+    if shown(path, uri):
+        return None                     # already a path the app is shown, as typed: any link on it is the app's to follow
+    try:
+        real, links = follow(path)
+    except OSError:
+        return None
+    link = next((link for link in links if not roots(link)), None)
+    if link and within(link, "/proc"):
+        return None                     # a descriptor of the process's own (/dev/stdin): the app has its own, and nothing is said
+    seen = None if link else inside(real)
     if seen is not None:
+        if in_place and not uri and not os.path.isabs(path) and within(real, os.getcwd()):
+            return None                 # a tool's relative path that comes back into its shared folder: as typed
         if os.path.isabs(path) and os.path.normpath(path) == seen:
             return None                 # already the path the app sees
         new = seen
     else:
         try:
-            new = export(path) if os.path.isfile(path) else export_dir(path) if os.path.isdir(path) else None
+            why = never_shared(real, links)
+            if link and not why:        # never followed for an app, wherever it leads (CR1.5-55)
+                why = link + " is a link, and a file argument is never followed through one (give " + real + " instead)"
+            if why:
+                line = "runs sandboxed and isn't handed " + path + ": " + why + "."
+                if line not in said:
+                    said.append(line)
+                return None
+            if held is False:           # the portal didn't say what the app holds: nothing more is handed to it
+                return None
+            new = export(real) if os.path.isfile(real) else export_dir(real) if os.path.isdir(real) else None
         except Exception:
             return None
     if new is None:
@@ -1883,8 +2596,9 @@ for a in args:
         new = a[:2] + one(a[2:])
     out.append(new)
 BS, NL = chr(92), chr(10)
-sys.stdout.buffer.write(os.fsencode("".join("=" + a.replace(BS, BS + BS).replace(NL, BS + "n") + NL for a in out)))
-"""
+lines = ["!" + line for line in said] + ["=" + a for a in out]
+sys.stdout.buffer.write(os.fsencode("".join(line.replace(BS, BS + BS).replace(NL, BS + "n") + NL for line in lines)))
+""".replace("@SYSTEM_PLACES@", repr(SYSTEM_PLACES)).replace("@SYSTEM_LIVE@", repr(SYSTEM_LIVE)).replace("@SYSTEM_MEDIA@", repr(SYSTEM_MEDIA))
 
 
 def forward_path() -> str:
@@ -2134,7 +2848,7 @@ fi
 # bwrap is the sandbox. Without it the app can't run sandboxed, and AppKata never runs it any other
 # way unasked (R17.10; review 2, F16), so say so rather than leave the shell's "not found".
 command -v bwrap >/dev/null 2>&1 || {{ printf "AppKata: bubblewrap (bwrap) isn't installed, so %s can't run sandboxed here. Install it, or set its sandbox to Off in AppKata (App Detail > Sandbox).\\n" {qname} >&2; exit 1; }}
-{bus}{cwd}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
+{bus}{cwd}{grants}{forward}{note}# The bwrap words decided at run time are prepended to "$@", ahead of the program and its own
 # arguments, each word quoted -- so paths and values with spaces or glob characters stay whole.
 set -- -- "$appdir/$exe" "$@"
 """
@@ -2249,15 +2963,21 @@ esac
 # below; PR #694's review, P3-B4), so a file there is handed over instead. build_launcher puts the
 # line that decides that ($folders) between the note and the lines that run; _FORWARD_BLOCK is the
 # two without it, as tests/test_sandbox_adversarial.py runs them, its folders named outright.
+# {never}: the never-shared folders (R17.3.1), which win over an argument: the helper hands over
+# nothing that is one, in one or above one, and its answer says why, a line with "!" first for each,
+# which is printed after the app's name ({name}) on stderr and is no argument (CR1.5-38).
 _FORWARD_NOTE = """# A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
+# A file or folder that is a never-shared one (R17.3.1), in one or above one is not handed over,
+# whoever names it, nor one whose path passes through a link that isn't root's own: the helper is
+# given the list, and a line of its answer with "!" first says why.
 """
 _FORWARD_RUN = """if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
-  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "$@" 2>/dev/null); then
+  if fwd=$(python3 {helper} "$id" "$rt" {incwd} {visible} -- "${{bussocks:-}}" {never} -- "$@" 2>/dev/null); then
     n=0
     while IFS= read -r w; do
       case "$w" in =*) n=$((n + 1)) ;; esac
@@ -2266,7 +2986,7 @@ $fwd
 EOF
     if [ "$n" -eq $# ]; then
       while IFS= read -r w; do
-        case "$w" in =*) w=${{w#=}} ;; *) continue ;; esac
+        case "$w" in =*) w=${{w#=}} ;; "!"*) printf '%s %s\\n' {name} "${{w#!}}" >&2; continue ;; *) continue ;; esac
         case "$w" in *\\\\*) w=$(printf '%bx' "$w"); w=${{w%x}} ;; esac
         set -- "$@" "$w"
       done <<EOF
@@ -2371,10 +3091,40 @@ def _launcher_env(net: bool = False) -> list[str]:
 # launcher drops any it finds before mounting; `rm` on a link never follows it. A second, already
 # running instance could still plant one between this check and bwrap's mounts — bwrap offers no
 # fd-based destination to close that — so the guard covers the persistent case, not a live race.
-# Nested folder grants (~/Projects rw with ~/Projects/sub/deep ro) don't reopen the hole from the
-# source side: a link the app plants at the outer grant lands on the host, but bwrap resolves the
-# *source* on the host too, where /oldroot does not exist, so --bind-try skips the mount, and a link
-# to a path that resolves on both sides mounts inside the private home. Checked in round two.
+# A folder grant's *source* is the host's real folder, and bwrap follows every link on the way to it
+# at each launch. With one grant inside another (~/Projects read-write and ~/Projects/sub/deep), a
+# link the app puts where `sub` was lands on the host, in the real ~/Projects, where the guard, which
+# walks the private home, never looks; the next launch mounted what the link named: with relative
+# links that lead somewhere on both sides (`sub` to a folder `evil` beside it, `evil/deep` to
+# `../../.ssh`), the user's real ~/.ssh, at the app's ~/.ssh (CR1.5-40; this note said the source
+# side was safe, and the test beside it planted a link to /oldroot, which leads nowhere on the host
+# and is skipped whatever bwrap does). So each grant is asked again at every launch, before bwrap
+# (_GRANT_FN): mounted only while it leads where it led when the grant was judged, which is
+# baked beside it, and dropped with a line on stderr otherwise. Compared with where it led, not
+# with the path as written: a grant through the user's own link (~/Documents kept on another disk)
+# stands. Where it led is the install's to keep (folder_leads): judged when an install takes the
+# grant and when the user's Save of the app's sandbox adds it, and the same in every launcher
+# written until the folder is taken out,
+# so writing one again never takes the app's link for the place (CR1.5-53: it was asked at each
+# writing, and AppKata's start wrote the launcher again as soon as a link had moved a grant). And
+# where a grant is judged, one that a link in another granted folder is on the way to is refused
+# (refused_folders).
+# As with the guard, a second instance still running could put a link there between the asking and
+# bwrap's mounts: this covers what an app leaves behind, not a live race.
+_GRANT_FN = """# A folder the app was given is mounted only while it leads where it led when the app was given it
+# (R17.4): bwrap follows each link on the way to it, and a link put there since -- the app can put
+# one in a folder it could write, above another -- would mount whatever the link names. Where it led
+# is kept with the install, and is the same in every launcher AppKata writes until you take the
+# folder out in the app's Sandbox dialog and give it again, which judges it anew.
+# "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
+# while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
+leads() {{
+  now=$(readlink -m -- "$1" 2>/dev/null) || now=
+  [ "$now" = "$2" ] && return 0
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox dialog, save, and give it again, and the folder is judged anew.\\n" {name} "$1" "$2" "${{now:-nowhere that can be followed}}" >&2
+  return 1
+}}
+"""
 # Password service (R17.5.1) owns org.freedesktop.secrets only where no other program holds it at
 # launch. To the filter a name an app may own is one it may call, whoever holds it, so with the
 # keyring (or another password manager) holding the name the app reached that program's whole
@@ -2483,9 +3233,14 @@ _GUARD_FN = """guard() {
 # The CLI-tool template's "$cwd" grant (R17.3.3): the directory the tool is run in, except where that
 # would hand over far more than a project folder — the home folder or anything above it (the whole
 # home, or the whole filesystem at /), AppKata's own areas (installed apps, other apps' private
-# homes), or a folder that holds a socket file of the session bus ($bussocks, wherever the session's
-# address puts them; any folder, where it names one the launcher can't read). There the tool runs in
-# its private home instead and says why. Paths are compared physically
+# homes), a folder that holds a socket file of the session bus ($bussocks, wherever the session's
+# address puts them; any folder, where it names one the launcher can't read), or one of the system's
+# own places, a folder in one or a folder above one (SYSTEM_PLACES, as protected_folder() refuses
+# them to a grant, with its two exceptions, a folder of the home and what is under /run/media;
+# CR1.5-6: a tool run from /tmp or /dev/shm got that whole folder read-write, bound after the
+# sandbox's own and over it, with every other program's sockets). There the tool runs in
+# its private home instead and says why: in its own words where the system's places alone refuse
+# the directory ($cwdsys is 1: nothing before them had). Paths are compared physically
 # (`pwd -P`), so a symlinked route to the same place is caught too. The decision is made in the
 # header, before the file-argument block, which counts the directory as visible only when it will
 # be shared (round three, R3-3: it always counted "$PWD", so a file named from a refused folder was
@@ -2507,6 +3262,14 @@ done
 for d in {protected}; do
   case "$here/" in "$d"/*) share=0 ;; esac
 done
+cwdsys=0
+case "$here/" in "$hm"/*|{media}) ;; *)
+  for d in {system}; do
+    case "$here/" in "$d"/*) cwdsys=1 ;; esac
+    case "$d/" in "$here"/*) cwdsys=1 ;; esac
+  done ;;
+esac
+if [ "$cwdsys" = 1 ]; then cwdsys=$share; share=0; fi
 cwdvis=
 [ "$share" = 1 ] && cwdvis=$here
 """
@@ -2516,10 +3279,13 @@ _CWD_WORDS = """if [ "$share" = 1 ]; then
 else
   set -- --chdir "$HOME" "$@"
   if [ "${{busok:-1}}" = 1 ]; then
-    printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2
-    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way." >&2
+    case "$cwdsys" in
+      1) printf "%s runs sandboxed and isn't given %s to work in: it is one of the system's own folders ({places}), or in or above one, and those are never shared.\\n" {name} "$here" >&2 ;;
+      *) printf "%s runs sandboxed and can't see %s (your home folder or a folder above it, AppKata's own files, a folder like ~/.config, ~/.ssh, ~/.local/bin or the session's runtime folder, or one that holds the session bus).\\n" {name} "$here" >&2 ;;
+    esac
+    echo "Run it from a project folder, or give it a folder in AppKata (App Detail > Sandbox). A file you name on the command line is handed over either way, unless it is in a never-shared folder of your home (your keys, your startup files, AppKata's own) or named through a link." >&2
   else
-    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same.\\n" {name} "$here" "$upstream" >&2
+    printf "%s runs sandboxed and can't see %s, nor any folder here: this session bus's address (%s) names a socket file AppKata can't read, which could be there. A file you name on the command line is handed over all the same, unless it is in a never-shared folder of your home or named through a link.\\n" {name} "$here" "$upstream" >&2
   fi
 fi
 """
@@ -2529,13 +3295,15 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                    appimage_path: str | None = None, apps_root: str | None = None,
                    seccomp: str | None = None, log_path: str | None = None, forward: str | None = None,
                    shims: str | None = None, inner_sandbox: bool = True, bus_filter: bool = True,
-                   path: str | None = None) -> str:
+                   path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """The text of `~/bin/apps/<app>/run` with the resolved grant set baked in (R17.4). The launcher
     does no run-time policy resolution; its text is exactly what runs (shown in App Detail, audited).
 
     `appdir`: the app's current version folder (the extracted dir for an AppImage). `exec_rel`: the
     program, relative to `appdir`. `appimage_path`: the kept `.AppImage` (sets APPIMAGE), or None.
-    `apps_root`: the install root, which a CLI tool's working-directory grant must never expose.
+    `apps_root`: the install root, which a CLI tool's working-directory grant must never expose, and
+    `own`: AppKata's other folders, which it must not either (:class:`Own`); no grant shares one, and
+    no file argument hands one over.
     `seccomp`: the terminal-injection filter (:func:`write_seccomp_filter`); without one the program
     runs in a new session instead, safe but cut off from its terminal, and so does the bus proxy,
     which takes the same filter. `log_path`: the app's log
@@ -2549,9 +3317,12 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     runs with no session bus, and the files it is given still reach it (R17.10; review 2, F12).
     `path`: the PATH the launcher sets for the host commands it runs, :data:`HOST_PATH` unless given
     (:func:`host_path`); the PATH it is started with never decides what runs out there.
+    `leads`: where each granted folder led when its grant was judged, which the launcher holds it
+    to at each launch (:func:`folder_leads`, the install's to keep); a folder it doesn't name is
+    judged now, as for an app's first launcher.
     """
     from . import applog
-    gs, refused = strip_protected(gs, apps_root)
+    gs, refused = strip_protected(gs, apps_root, own)
     q = shlex.quote
     home = sandbox_home(app_id)
     strict = gs["level"] == "strict"
@@ -2566,17 +3337,32 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         # The same folders a grant may never share (R17.3.1), plus the private homes and the runtime
         # folder as the launcher sees it: "$rt" holds the real session bus, and a bind of it would land
         # after the proxy socket's and put the unfiltered bus back.
-        roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root)]
+        roots = [sandboxes_root()] + [r for r, _ in _protected_roots(apps_root, own)]
         protected = " ".join(q(os.path.realpath(r)) for r in roots) + ' "$rt"'
-        cwd = _CWD_DECIDE.format(protected=protected)
+        # ...and the system's own places, with what is under the media mounts left to the tool
+        system = " ".join(q(r) for r, _ in _system_roots())
+        media = "|".join(q(m) + "/*" for m in dict.fromkeys(m for media in SYSTEM_MEDIA for m in _as_written_and_real(media)))
+        cwd = _CWD_DECIDE.format(protected=protected, system=system, media=media)
+    # Each granted folder, and the variable that says at each launch whether its grant stands
+    # (_GRANT_FN): asked before the file-argument block, which counts a folder as visible only then.
+    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
+    stands = {p: f"g{i}" for i, p in enumerate(granted, 1)}
+    led = folder_leads(gs, leads)
+    grants = ""
+    if granted:
+        grants = _GRANT_FN.format(name=q(name)) + "".join(
+            f'{stands[p]}={q(os.path.expanduser(p))}; leads "${stands[p]}" {q(led[p])} || {stands[p]}=\n' for p in granted)
     fwd = ""
     if forward and standard:
         # the working directory counts as visible only when the block above will share it
-        visible = ["${folders:+" + q(os.path.expanduser(p)) + "}" for p in sorted(gs["folders"]) if p != "$cwd"] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
+        visible = ["${folders:+${" + stands[p] + ":+" + q(os.path.expanduser(p)) + "}}" for p in granted] + (['${cwdvis:+"$cwdvis"}'] if cli else [])
         shown = 'folders=1; [ "${busok:-1}" = 1 ] || folders=\n' if any(p != "$cwd" for p in gs["folders"]) else ""
         # where a relative path resolves inside: a CLI tool's shared folder, else nowhere it does outside
         incwd = '"${cwdvis:-}"' if cli else '""'
-        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible))
+        # what no argument hands over (R17.3.1): as written, for the helper to resolve at each launch
+        never = " ".join(q(r) for r in dict.fromkeys([sandboxes_root()] + [r for r, _ in _protected_roots(apps_root, own)]))
+        fwd = _FORWARD_NOTE + shown + _FORWARD_RUN.format(helper=q(forward), incwd=incwd, visible=" ".join(visible),
+                                                          never=never, name=q(name))
     # Text that lands in a *comment* is not a shell word, so a newline in it would end the comment
     # and run what follows: the name and a refused path are flattened there, quoted everywhere else.
     c = lambda s: " ".join(str(s).split())         # noqa: E731
@@ -2584,7 +3370,7 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     out = [_LAUNCHER_HEADER.format(name=c(name), qname=q(name), path=q(path or HOST_PATH), id=app_identity(app_id), home=q(home),
                                    rt=_RT, info=q(identity_path(app_id)), appdir=q(appdir), exe=q(exec_rel),
                                    log=q(log_path or applog.app_log_path(app_id)), bus=_BUS_BLOCK if standard else "",
-                                   cwd=cwd, forward=fwd, note=note), _GUARD_FN]
+                                   cwd=cwd, grants=grants, forward=fwd, note=note), _GUARD_FN]
     for path, why in refused:            # said in the launcher itself, which App Detail can show
         out.append(f"# Refused folder grant {c(path)}: {c(why)} (R17.3.1).")
     if appimage_path is not None:
@@ -2593,14 +3379,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append(_INNER_BLOCK)
     if cli:
         bind = "--bind" if gs["folders"]["$cwd"] == "rw" else "--ro-bind"
-        out.append(_CWD_WORDS.format(name=q(name), bind=bind))
+        out.append(_CWD_WORDS.format(name=q(name), bind=bind, places=", ".join(SYSTEM_PLACES)))
     # A folder grant is judged when the launcher is written, by AppKata's own session bus (a grant
     # that holds its socket is refused above), and this session's bus can be elsewhere: one started
     # by dbus-run-session from a terminal, a later login of another kind. Where this session's socket
     # is inside a granted folder all the same, or is what a grant names, the file is covered, after
     # that grant's bind, so the app never sees the unfiltered bus (R17.3.1). Each grant as the app sees
     # it, and as it really is at the launch: `readlink -f`, which follows a link as bwrap's bind then
-    # follows it (where it can't, as it was when the launcher was written); each socket file the
+    # follows it (where it can't, where it led when the grant was judged); each socket file the
     # address names, but a link, which the folder shows pointing at a file it doesn't (its target is in
     # $bussocks too, and covered where a grant shows it). PR #694's review, P5-B1: the match was on
     # what lies under a grant alone ("$r"/*), so a grant of the socket file itself, or of a link to it
@@ -2612,7 +3398,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
     # granted socket file is covered, as the working directory is refused then, with a line (PR
     # #694's review, P3-B4: the cover never asked $busok, and an address the clients read past the
     # launcher left a live socket in sight). A file or a folder not there is left as its bind left it.
-    granted = [p for p in sorted(gs["folders"]) if p != "$cwd"]
     if standard and granted:
         cover = ["# A granted folder that holds a socket file of this session's bus all the same: the file covered (R17.3.1).",
                  'if [ "${busok:-1}" = 1 ]; then',
@@ -2622,13 +3407,13 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
                  '    if [ -S "$s" ] && [ ! -L "$s" ]; then']
         for p in granted:
             dest = os.path.expanduser(p)
-            cover.append(f'      r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(os.path.realpath(dest))}; '
-                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac')
+            cover.append(f'      [ -z "${stands[p]}" ] || {{ r=$(readlink -f {q(dest)} 2>/dev/null) && [ -n "$r" ] || r={q(led[p])}; '
+                         f'case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null {q(dest)}"${{s#"$r"}}" "$@" ;; esac; }}')
         cover += ["    fi", "  done", "else",
                   "  # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty."]
         for p in granted:
             d = q(os.path.expanduser(p))
-            cover.append(f'  if [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
+            cover.append(f'  if [ -z "${stands[p]}" ]; then :; elif [ -S {d} ]; then set -- --ro-bind /dev/null {d} "$@"; elif [ -d {d} ]; then set -- --tmpfs {d} --remount-ro {d} "$@"; fi')
         cover.append(f"  printf \"%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file "
                      f"AppKata can't read, which could be in one of them.\\n\" {q(name)} {q(', '.join(granted))} \"$upstream\" >&2")
         out.append("\n".join(cover + ["fi"]) + "\n")
@@ -2775,6 +3560,14 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         dests.append('"$img"')
     dests += [q(os.path.expanduser(p)) for p in sorted(gs["folders"]) if p != "$cwd"]
     out.append("for d in " + " ".join(dests) + '; do guard "$d"; done')
+    # Folder grants: each bound while it stands (_GRANT_FN), the last first, so that in "$@" they
+    # are in their order, a folder before one inside it, and before every word above that covers a
+    # part of one. $cwd (the CLI-tool template) is the working-directory block's (R17.3.3). The
+    # folder is the line's second word, as tests/test_sandbox_properties.py reads a bind's.
+    for path in reversed(granted):
+        flag = "--bind-try" if gs["folders"][path] == "rw" else "--ro-bind-try"
+        p = q(os.path.expanduser(path))
+        out.append(f'[ {p} = "${stands[path]}" ] && set -- {flag} {p} {p} "$@"')
     out.append("")
 
     # 2. The sandboxed app. Fixed args are baked; the run-time ones are in "$@", after them.
@@ -2831,13 +3624,6 @@ def build_launcher(app_id: str, name: str, appdir: str, exec_rel: str, gs: dict,
         out.append('for d in /dev/video* /dev/media*; do\n'
                    '  if [ -c "$d" ]; then set -- --dev-bind "$d" "$d" "$@"; fi\n'
                    'done\n')
-    # Folder grants (baked). $cwd (the CLI-tool template) binds the current directory (R17.3.3).
-    for path, mode in sorted(gs["folders"].items()):
-        if path == "$cwd":           # added at run time by the working-directory block
-            continue
-        flag = "--bind-try" if mode == "rw" else "--ro-bind-try"
-        p = q(os.path.expanduser(path))
-        parts.append(f'  {flag} {p} {p} \\')
     # Sound: the PipeWire and Pulse sockets, the app identified as sandboxed by .flatpak-info (R17.8).
     # PipeWire/WirePlumber don't stop such a client from recording (verified: WirePlumber 0.4.17,
     # PipeWire 1.0.5), so "play" and "record" bind the same sockets; enforcing the split is deferred.
@@ -2916,20 +3702,22 @@ def launcher_path(app_id: str, apps_root: str) -> str:
 
 
 def launcher_text(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                  appimage_path: str | None = None) -> str:
+                  appimage_path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """The text :func:`write_launcher` writes for these inputs, without writing anything: the
     helpers it refers to live at fixed paths, so the text is a pure function of the app, its grant
     set and four facts about this machine (the seccomp filter's ABI, whether an app's own sandbox can
     run inside, R17.10.2, whether an xdg-dbus-proxy the launcher runs is here, R17.5, R17.10, and a
-    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant that holds it,
-    where AppKata's own session bus has its socket (R17.3.1) -- and the startup pass can tell a
+    bwrap outside the system's folders, :func:`host_path`) -- and, for a folder grant, where its
+    folder led when the grant was judged (`leads`, which the install keeps: a link made since
+    changes no launcher's text, CR1.5-53), and where AppKata's own session bus has its socket if in it (R17.3.1), and AppKata's
+    own folders, which are in every launcher's never-shared list (`apps_root`, `own`) -- and the startup pass can tell a
     launcher an older AppKata wrote -- or one written before the system changed under it, an upgrade
     to Ubuntu 25.04+, the proxy installed since -- from today's (:func:`install.launcher_is_current`,
     round four R4-4)."""
     return build_launcher(app_id, name, appdir, exec_rel, gs, appimage_path, apps_root,
                           seccomp_path() if seccomp_filter() is not None else None,
                           forward=forward_path(), shims=shims_dir(), inner_sandbox=nested_userns_works(),
-                          bus_filter=have_bus_filter(), path=host_path(apps_root))
+                          bus_filter=have_bus_filter(), path=host_path(apps_root), own=own, leads=leads)
 
 
 def _marker_network(gs: dict) -> bool:
@@ -2960,9 +3748,10 @@ def helpers_current(app_id: str, gs: dict) -> bool:
 
 
 def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel: str, gs: dict,
-                   appimage_path: str | None = None) -> str:
+                   appimage_path: str | None = None, own: Own | None = None, leads: dict | None = None) -> str:
     """Write `<apps_root>/<app>/run`, the identity marker and the shared helpers it calls, and return
-    the launcher path (R17.4)."""
+    the launcher path (R17.4). `leads`: where each granted folder led when its grant was judged
+    (:func:`folder_leads`); without it each is judged now."""
     write_flatpak_info(app_id, network=_marker_network(gs))
     write_seccomp_filter()
     write_forward_helper()
@@ -2977,7 +3766,7 @@ def write_launcher(app_id: str, name: str, apps_root: str, appdir: str, exec_rel
     # as the paths' own bytes, UTF-8 or not (#689's review, P4-1: written as text, an install folder
     # whose name isn't UTF-8 stopped a sandboxed app's install with Python's encoding error), by the
     # helper that writes every file here, which removes the file beside when the write fails.
-    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path)), 0o755)
+    return _write_whole(path, os.fsencode(launcher_text(app_id, name, apps_root, appdir, exec_rel, gs, appimage_path, own, leads)), 0o755)
 
 
 def _write_whole(path: str, data: bytes, mode: int) -> str:

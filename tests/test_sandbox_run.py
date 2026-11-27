@@ -59,14 +59,15 @@ class Env:
                     "LANG": "C.UTF-8"}
         self.machines = 0
 
-    def app(self, app_id: str, gs: dict) -> str:
-        """Install the fake app and write its launcher; returns the launcher path."""
+    def app(self, app_id: str, gs: dict, own: sb.Own | None = None) -> str:
+        """Install the fake app and write its launcher; returns the launcher path. `own`: AppKata's
+        other folders, as Settings and the other installs would name them (sandbox.Own)."""
         appdir = self.home / "apps" / app_id / "1.0"
         (appdir / "bin").mkdir(parents=True, exist_ok=True)
         exe = appdir / "bin" / "app"
         exe.write_text(APP)
         exe.chmod(0o755)
-        return sb.write_launcher(app_id, app_id.title(), str(self.home / "apps"), str(appdir), "bin/app", gs)
+        return sb.write_launcher(app_id, app_id.title(), str(self.home / "apps"), str(appdir), "bin/app", gs, own=own)
 
     def on_a_machine_with(self, launcher: str, path: str) -> str:
         """`launcher` as AppKata writes it on a machine whose command folders are `path`: a copy with
@@ -170,6 +171,36 @@ def test_cli_tool_sees_and_writes_the_project_folder_it_is_run_in(env):
     assert (proj / "out.txt").read_text() == "out\n"
     assert "id_ed25519" not in r.stdout                   # the rest of the home stays hidden
     assert "bwrap" not in r.stderr                        # no warnings (e.g. two --chdir options)
+    _a_tool_run_in_a_system_place_has_the_sandboxes_own(env)
+
+
+def _a_tool_run_in_a_system_place_has_the_sandboxes_own(env):
+    # CR1.5-6 (#381): ...and the folder it is run in is not the tool's where it is one of the system's
+    # own places. Run from /tmp, /var/tmp or /dev/shm the tool got the whole folder read-write, bound
+    # after the sandbox's own /tmp and /dev and over them, with what other programs keep there (tmux's
+    # server socket, an ssh agent's). Now it runs in its private home, with the sandbox's own /tmp,
+    # /dev and /proc, and says why. (Part of the test above, not one of its own, as the #380 run is.)
+    lp = _cli(env)
+    work = env.home.parent / "work"                        # a folder of /tmp that is not above this test's home
+    work.mkdir()
+    mark = f"appkata-cr1-5-6-{os.getpid()}"
+    theirs = [str(work / mark), f"/var/tmp/{mark}", f"/dev/shm/{mark}"]
+    mine = [t + "-mine" for t in theirs]
+    try:
+        for t in theirs:
+            with open(t, "w") as f:
+                f.write("x")
+        for cwd in (str(work), "/var/tmp", "/dev/shm", "/proc", "/sys", "/etc", "/usr/share", "/var"):
+            r = env.run(lp, f'pwd; [ -e {cwd}/{mark} ] && echo THEIRS; (echo x > {cwd}/{mark}-mine) 2>/dev/null; cat /proc/1/comm; true', cwd=cwd)
+            assert r.returncode == 0 and r.stdout.split() == [str(env.home), "bwrap"], (cwd, r.stdout, r.stderr)   # in its private home, with its own /proc
+            assert f"Tool runs sandboxed and isn't given {cwd} to work in: it is one of the system's own folders" in r.stderr, (cwd, r.stderr)
+            assert "A file you name on the command line is handed over either way, unless it is in a never-shared folder" in r.stderr, (cwd, r.stderr)
+            assert "bwrap" not in r.stderr, (cwd, r.stderr)
+            assert not [m for m in mine if os.path.exists(m)], (cwd, mine)                                        # and nothing it wrote landed outside
+    finally:
+        for left in theirs + mine:
+            if os.path.exists(left):
+                os.unlink(left)
 
 
 @pytest.mark.parametrize("where", ["home", "root", "parent", "symlink-to-home", "install-root", "sandboxes",
@@ -1224,16 +1255,17 @@ def test_a_session_bus_socket_is_out_of_reach_of_a_tool_run_beside_it_and_of_a_g
     # command-line tool run in its folder shared it, and so did a grant of that folder, and the app
     # connected to it past the filter. Now the tool runs in its private home and says why, and the
     # grant -- made in a session whose bus was the runtime folder's, so nothing refused it -- has the
-    # socket covered. The bus's folder is one of the test's own here: /tmp is above this test's home.
+    # socket covered. The bus's folder is one of the user's own here: /tmp itself is no tool's and no
+    # grant's (CR1.5-5, CR1.5-6), and a bus can be put anywhere (`dbus-daemon --address`).
     # And a grant of the socket file itself, or of a link to it, which the cover matched no part of
     # (PR #694's review, P5-B1): the app saw the live socket and reached the bus through it. And an
     # address with its key's name escaped, `pa%74h=`, which is GIO's `path=` and which the launcher
     # read as written, so it covered nothing and shared the tool's folder (P6-1).
-    folder = env.home.parent / "shared"
+    folder = env.home / "shared"
     folder.mkdir()
     bus = _Bus(env, at=folder / "dbus-MZ8lHbtZ8K")
     sock = str(folder / "dbus-MZ8lHbtZ8K")
-    link = env.home.parent / "bus-link"
+    link = env.home / "bus-link"
     link.symlink_to(sock)
     probe = lambda at, said="": (f'[ -S {at} ] && echo SEEN{said}; gdbus call --address unix:path={at} --dest org.freedesktop.DBus '   # noqa: E731
                                  f'--object-path /org/freedesktop/DBus --method org.freedesktop.DBus.GetId >/dev/null 2>&1 && echo REACHED{said}; ')
@@ -1524,6 +1556,47 @@ def test_a_grant_of_the_home_folder_or_the_keys_does_not_open_them(env):
     assert r.returncode == 0 and "done" in r.stdout, (r.stdout, r.stderr)
     assert "SECRET-KEY" not in r.stdout
     assert (env.home / ".bashrc").read_text() == "# real bashrc\n"
+    _a_review_that_grants_a_system_place_leaves_the_sandbox_its_own(env)
+
+
+def _a_review_that_grants_a_system_place_leaves_the_sandbox_its_own(env):
+    # CR1.5-5 (#380): a system place was an ordinary folder to the never-shared check, and a grant is
+    # bound after the sandbox's own /proc, /dev and /tmp: a review's `Sandbox folders: /proc:ro` put
+    # the host's process table over the sandbox's (and with it every file of the user's, through
+    # /proc/<pid>/root), and /dev/shm or a folder of /tmp the host's own, with what other programs
+    # keep there. Refused now, whoever asks: the app runs with the sandbox's own, and the folder of
+    # the home on the same line is still its. (Part of the test above, not one of its own: a run test
+    # is named in tests/skips/tier1.txt, which is another unit's file while this is written.)
+    from appkata_core import trustfile
+    beside = env.home.parent / "beside-the-home"                 # a folder of /tmp that isn't above this test's home
+    beside.mkdir()
+    (beside / "theirs.sock").write_text("x")
+    shm, probe = f"/dev/shm/appkata-cr1-5-5-{os.getpid()}", f"/var/tmp/appkata-cr1-5-5-{os.getpid()}"
+    (env.home / "Notes").mkdir()
+    (env.home / "Notes" / "n.txt").write_text("a note\n")
+    parsed, _ = trustfile.parse_section("Demo", "## Demo::Settings\n\n- Trust: 4\n- Sandbox (linux): standard\n"
+                                                f"- Sandbox folders (linux): /proc:ro, /dev/shm, {beside}, /var/tmp, /etc:ro, /sys:ro, ~/Notes\n")
+    gs = sb.grants_from_config(sb.config_from_review(trustfile.resolve_settings(parsed["opts"], "linux")))
+    assert {"/proc", "/dev/shm", str(beside), "/var/tmp", "/etc", "/sys", "~/Notes"} <= set(gs["folders"])      # the line, as written
+    lp = env.app("grabby", gs)
+    with open(shm, "w") as f:
+        f.write("x")
+    try:
+        r = env.run(lp, 'echo "pid1=$(cat /proc/1/comm)"; echo "procs=$(ls /proc | grep -c "^[0-9]")"; '
+                        f'[ -e {shm} ] && echo HOST-SHM; [ -e {beside}/theirs.sock ] && echo HOST-TMP; '
+                        f'echo probe > {probe} 2>/dev/null; cat "$HOME/Notes/n.txt"; echo done')
+        wrote = os.path.exists(probe)
+    finally:
+        for left in (shm, probe):
+            if os.path.exists(left):
+                os.unlink(left)
+    assert r.returncode == 0 and "done" in r.stdout and "a note" in r.stdout, (r.stdout, r.stderr)
+    assert "pid1=bwrap" in r.stdout, r.stdout                         # the sandbox's own /proc: its first process is bwrap
+    assert int(re.search(r"procs=(\d+)", r.stdout).group(1)) < 10, r.stdout
+    assert not {"HOST-SHM", "HOST-TMP"} & set(r.stdout.split()) and not wrote, r.stdout      # nor the host's /dev/shm, /tmp and /var/tmp
+    text = open(lp).read()                                           # and the launcher says what it refused, and why
+    for place, of in (("/proc", "/proc"), ("/dev/shm", "/dev"), (str(beside), "/tmp"), ("/var/tmp", "/var/tmp"), ("/etc", "/etc"), ("/sys", "/sys")):
+        assert f"# Refused folder grant {place}: the system's own {of} (R17.3.1)." in text, place
 
 
 # ---------------------------------------------------------------- the field test itself (review 2, D1)
@@ -1689,6 +1762,124 @@ def test_a_launch_from_the_menu_writes_its_refusal_to_the_app_log(env, tmp_path)
 
 # ---------------------------------------------------------------- file arguments (R17.6.2, R7)
 
+def _through_a_link(app, arg, link, real) -> str:
+    """The launcher's line for an argument not followed through `link`, which leads to `real` (R17.6.2)."""
+    return f"{app} runs sandboxed and isn't handed {arg}: {link} is a link, and a file argument is never followed through one (give {real} instead)."
+
+
+def _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env, lp, e):
+    """The owner's decision of 2026-11-26, on #735 (R17.6.2), with the real document portal: `/etc`,
+    `/proc`, `/tmp` and `/` named as arguments were exported whole, and so was a folder in /proc,
+    /sys, /dev or /run. Each passes as typed now, with the launcher's line, and nothing new is under
+    $XDG_RUNTIME_DIR/doc; a file in one (`/etc/passwd`) is handed over and read, and so is a folder
+    below the other places (`/usr/share/doc`). A part of the test below, which tests/skips/tier1.txt names."""
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    whole = ["/etc", "/proc", "/tmp", "/", "file:///etc"]
+    r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; true', *whole], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == whole, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)
+    for place in ("/etc", "/proc"):
+        assert f"isn't handed {place}: {place} is one of the system's own folders, and none of them is handed over whole." in r.stderr, r.stderr
+    assert "isn't handed /tmp: " in r.stderr and "isn't handed /: it holds " in r.stderr, r.stderr      # the home's reason, where the home is under it
+    # ...nor is a folder in /proc, /sys, /dev or /run, which hold the system's live state (the
+    # owner's decision on the check read of f8b1c0d), where a folder below the others still is
+    live = ["/proc/1", "/proc/self", "/dev/shm", "/sys/kernel"]
+    r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; true', *live], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == live, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)
+    for arg in live:
+        place = arg[:arg.index("/", 1)]
+        assert (f"isn't handed {arg}: it is in {place}, one of the system's own folders that hold its live state, and no folder in one is handed over."
+                in r.stderr), r.stderr
+    r = subprocess.run([lp, 'shift; printf "ARG %s\\n" "$1"; ls "$1" >/dev/null && echo LISTED', "/usr/share/doc"], cwd=str(env.home), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and f"ARG {env.rt}/doc/" in r.stdout and "LISTED" in r.stdout and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+    r = subprocess.run([lp, 'shift; printf "ARG %s\\n" "$1"; cat "$1"', "/etc/passwd"], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+    assert f"ARG {env.rt}/doc/" in r.stdout and "/passwd\n" in r.stdout and "root:" in r.stdout, (r.stdout, r.stderr)
+
+
+def _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, e):
+    """CR1.5-4 (#379), with the real document portal, by the finding's own road: the app, given
+    ~/Projects read-write, puts a link to a file of the user's where its own file was, and a link
+    to a folder beside it; the user then opens both (a path, a file:// URI, a file through the
+    linked folder). Each was handed over, read-write, by where it leads. Now each reaches the app as
+    its own path in ~/Projects, where the link dangles, and nothing new is under
+    $XDG_RUNTIME_DIR/doc. The other direction (R3-17: the user's link on the desktop to a file in
+    ~/Projects) is followed no more since CR1.5-55: it passes as typed, the launcher names the file
+    to give instead, and that path reaches it. A part of the test below, which tests/skips/tier1.txt
+    names."""
+    docs, proj, desk = env.home / "Documents", env.home / "Projects", env.home / "Desktop"
+    (docs / "taxes.txt").write_text("TAXES\n")
+    desk.mkdir()
+    (desk / "mine").symlink_to(proj / "mine.txt.was")
+    r = subprocess.run([lp, 'cd "$HOME/Projects" && mv mine.txt mine.txt.was && ln -s "$HOME/Documents/taxes.txt" mine.txt && '
+                            'ln -s "$HOME/Documents" Photos && echo PLANTED'], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert "PLANTED" in r.stdout and os.readlink(proj / "mine.txt") == str(docs / "taxes.txt"), (r.stdout, r.stderr)   # on the host, as the app meant
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    args = [str(proj / "mine.txt"), "file://" + str(proj / "mine.txt"), str(proj / "Photos"), str(proj / "Photos" / "taxes.txt")]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$4" "$XDG_RUNTIME_DIR"/doc/*/taxes.txt "$XDG_RUNTIME_DIR"/doc/*/*/taxes.txt 2>&1; '
+               '(echo EDITED >> "$1") 2>/dev/null; ls "$3" 2>&1; cat "$5"; true')
+    r = subprocess.run([lp, snippet, *args, str(desk / "mine")], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args + [str(desk / "mine")], (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stdout)
+    assert "TAXES" not in r.stdout and (docs / "taxes.txt").read_text() == "TAXES\n" and "MINE" not in r.stdout, (r.stdout, r.stderr)
+    assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [_through_a_link("Editor", desk / "mine", desk / "mine", proj / "mine.txt.was")], r.stderr
+    r = subprocess.run([lp, 'cat "$2"', str(proj / "mine.txt.was")], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "MINE" in r.stdout and "isn't handed" not in r.stderr, (r.stdout, r.stderr)        # the path the line gives
+
+
+def _a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there(env, lp, e):
+    """CR1.5-55 (#759), with the real document portal: the user's own links to a file outside
+    every grant (a full and a relative link, as a path and as a file:// URI, a linked folder) are
+    followed no more. Each reaches the app as typed, nothing of it is under $XDG_RUNTIME_DIR/doc,
+    and the launcher names the path to give instead, which is handed over. A link only root can
+    have put there is followed: the system's own /etc/os-release, a link on Mint, LMDE and Ubuntu,
+    is handed over under the name of the file it leads to, a path that opens (CR1.5-41, #666: the
+    portal names a document after the file, and the app was handed the link's name, a path that
+    isn't there). A part of the test below, which tests/skips/tier1.txt names."""
+    sync = env.home / "sync"
+    (sync / "project").mkdir(parents=True)
+    for f, text in ((sync / "notes-2024.txt", "NOTES-2024\n"), (sync / "plain.txt", "PLAIN\n"), (sync / "project" / "inproj.txt", "x")):
+        f.write_text(text)
+    (env.home / "notes.txt").symlink_to(sync / "notes-2024.txt")
+    (env.home / "rel-notes.txt").symlink_to("sync/notes-2024.txt")
+    (env.home / "proj-link").symlink_to(sync / "project")
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    linked = [str(env.home / "notes.txt"), "rel-notes.txt", "file://" + str(env.home / "notes.txt"), str(env.home / "proj-link")]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "$2" "${3#file://}" 2>&1; ls "$4" 2>&1; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/notes-2024.txt 2>&1; (echo APPENDED >> "$1") 2>/dev/null; true')
+    r = subprocess.run([lp, snippet, *linked], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == linked, (r.stdout, r.stderr)
+    assert exported() == before and "NOTES-2024" not in r.stdout and "inproj.txt" not in r.stdout, (exported() - before, r.stdout)
+    assert (sync / "notes-2024.txt").read_text() == "NOTES-2024\n"
+    notes = sync / "notes-2024.txt"
+    assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [
+        _through_a_link("Editor", env.home / "notes.txt", env.home / "notes.txt", notes), _through_a_link("Editor", "rel-notes.txt", env.home / "rel-notes.txt", notes),
+        _through_a_link("Editor", env.home / "proj-link", env.home / "proj-link", sync / "project")], r.stderr
+    # the paths the lines give, a regular file as before, and the system's own link
+    system = os.path.realpath("/etc/os-release")
+    with open(system) as f:
+        release = f.read()
+    args = [str(notes), "file://" + str(notes), str(sync / "plain.txt"), str(sync / "project"), "/etc/os-release", "file:///etc/os-release"]
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; cat "$1" "${2#file://}" "$3"; ls "$4"; echo APPENDED >> "$1"; '
+               'echo RELEASE; cat "$5" "${6#file://}"; true')
+    r = subprocess.run([lp, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    got = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
+    doc = str(env.rt / "doc") + "/"
+    assert r.returncode == 0 and len(got) == 6 and all(g.startswith(doc) for g in got[:1] + got[2:5]) and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
+    assert got[0].endswith("/notes-2024.txt") and got[1] == "file://" + got[0] and got[2].endswith("/plain.txt") and got[3].endswith("/project"), got
+    assert got[4].endswith("/" + os.path.basename(system)) and got[5] == "file://" + got[4], (got, system)      # one document, by the file's name
+    assert r.stdout.count("NOTES-2024") == 2 and "PLAIN" in r.stdout and "inproj.txt" in r.stdout, (r.stdout, r.stderr)
+    assert r.stdout.split("RELEASE\n")[1] == release * 2, (r.stdout, r.stderr)
+    assert notes.read_text() == "NOTES-2024\nAPPENDED\n"                                                         # and it is the file the app writes
+
+
 @needs_proxy
 def test_a_file_argument_is_handed_over_to_a_standard_app(env):
     # Regression (round two, R7): the desktop entry's %U, "Open with", a drop on the entry and
@@ -1726,10 +1917,145 @@ def test_a_file_argument_is_handed_over_to_a_standard_app(env):
             assert "PICKED" in r.stdout and "MINE" in r.stdout and "RO" in r.stdout and "no write" in r.stdout
             assert (docs / "picked.txt").read_text() == "PICKED\nEDITED\n"          # the app's edit reached the real file
             assert (docs / "read only.txt").read_text() == "RO\n"                    # read-only for the user: read-only here
+            _a_link_the_app_plants_in_its_folder_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_link_is_followed_for_no_file_argument_but_one_only_root_can_have_put_there(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _a_system_place_is_handed_over_whole_by_no_argument_and_a_file_in_one_is(env, lp, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
+            _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, {**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr})
         finally:
             portal.close()
     finally:
         bus.close()
+
+
+def _a_link_the_app_plants_in_a_folder_it_was_handed_hands_it_nothing(env, lp, e):
+    """CR1.5-52 (#736), with the real document portal, by the finding's own road: the user hands
+    the app a folder (`editor ~/work`), and in it, through the portal's file system, the app puts a
+    link to another file of the user's where README.md was, and a link to a folder beside it. At a
+    later start the user opens README.md, by a path and by a URI, and a file through the linked
+    folder: each was handed over, read-write, by where it leads. Now each reaches the app as it was
+    typed, the link not followed (CR1.5-55: it had become its own path in the folder's document,
+    where the link dangles), and the launcher says so; a file that is the folder's own is its path
+    in that document, and nothing new is under $XDG_RUNTIME_DIR/doc. The same for a folder and a
+    link in it named at one start. A part of the test above, which tests/skips/tier1.txt names."""
+    docs, work, again = env.home / "Documents", env.home / "work", env.home / "again"
+    for d in (work / "sub", again):
+        d.mkdir(parents=True)
+    for f, text in ((work / "README.md", "README\n"), (work / "sub" / "deep.txt", "DEEP\n"), (docs / "secret.txt", "SECRET-TAXES\n"), (again / "plain.txt", "PLAIN\n"),
+                    (docs / "one.txt", "ONE\n")):
+        f.write_text(text)
+    (again / "README.md").symlink_to(docs / "secret.txt")
+
+    def started(snippet, *args):
+        r = subprocess.run([lp, 'shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; ' + snippet, *args], cwd=str(env.home), env=e,
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")], r.stdout + r.stderr
+
+    got, out = started(f'cd "$1" && mv README.md README.was && ln -s {shlex.quote(str(docs / "secret.txt"))} README.md && '
+                       f'ln -s {shlex.quote(str(docs))} all && echo PLANTED; '
+                       # what the fix rests on (A1.11): a file's document takes no link and no folder, and the app can
+                       # neither remove nor rename a folder's document, so it stays in what the portal lists for the app
+                       'one=$(dirname "$2"); ln -s /etc/hostname "$one/planted" 2>/dev/null && echo LINK-IN-A-FILES-DOCUMENT; '
+                       'mkdir "$one/made" 2>/dev/null && echo FOLDER-IN-A-FILES-DOCUMENT; held=$(dirname "$1"); '
+                       'rmdir "$held" 2>/dev/null && echo DOCUMENT-REMOVED; mv "$held" "$held.gone" 2>/dev/null && echo DOCUMENT-RENAMED; '
+                       'mv "$1" "$held/renamed" 2>/dev/null && echo FOLDER-RENAMED; true', str(work), str(docs / "one.txt"))
+    view = got[0]
+    assert "PLANTED" in out and view.startswith(str(env.rt / "doc") + "/") and view.endswith("/work"), (got, out)
+    assert os.readlink(work / "README.md") == str(docs / "secret.txt") and os.readlink(work / "all") == str(docs)       # on the host, as the app meant
+    assert got[1].endswith("/one.txt") and not any(w in out for w in ("LINK-IN", "FOLDER-IN", "DOCUMENT-RE", "FOLDER-RENAMED")), out
+    assert not os.path.lexists(docs / "planted") and not os.path.lexists(docs / "made") and work.is_dir()
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    got, out = started('cat "$1" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; (echo EDITED >> "$1") 2>/dev/null; cat "$4"; echo MORE >> "$4"; true',
+                       str(work / "README.md"), "file://" + str(work / "README.md"), str(work / "all" / "secret.txt"), str(work / "sub" / "deep.txt"))
+    assert got == [str(work / "README.md"), "file://" + str(work / "README.md"), str(work / "all" / "secret.txt"), f"{view}/sub/deep.txt"], (got, out)
+    assert exported() == before, (exported() - before, out)
+    assert [l for l in out.splitlines() if "isn't handed" in l] == [
+        _through_a_link("Editor", work / "README.md", work / "README.md", docs / "secret.txt"),
+        _through_a_link("Editor", work / "all" / "secret.txt", work / "all", docs / "secret.txt")], out
+    assert "SECRET-TAXES" not in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
+    assert "DEEP" in out and (work / "sub" / "deep.txt").read_text() == "DEEP\nMORE\n", out                # the folder's own file, read and written
+    # a folder, and a link in it, at one start: the folder is the app's by the time the link is judged
+    got, out = started('cat "$2" "$3" "$XDG_RUNTIME_DIR"/doc/*/secret.txt 2>&1; true', str(again), str(again / "README.md"), str(again / "plain.txt"))
+    assert got[0].endswith("/again") and got[1:] == [str(again / "README.md"), got[0] + "/plain.txt"], (got, out)
+    assert "SECRET-TAXES" not in out and "PLAIN" in out and (docs / "secret.txt").read_text() == "SECRET-TAXES\n", out
+
+
+def _what_an_app_was_handed_is_taken_back_when_it_goes(env, lp, gs, e):
+    """CR1.5-25 (#400), with the real document portal, which the review could not run: a file and a
+    folder handed to an app are still its own at its next start, which is the hand-over working
+    (the portal keeps them for the session). They stayed its own when it went to Strict or Off and
+    came back, and they were the next app's of that id: the app uninstalled with its home removed,
+    another Source's "Editor" installed under the freed id read the file and wrote to it. A part
+    of the test above, which tests/skips/tier1.txt names (that file is another unit's)."""
+    import json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    picked, folder = env.home / "Documents" / "picked.txt", env.home / "Handed"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("INSIDE\n")
+    was = picked.read_text()
+    look = ('cat "$XDG_RUNTIME_DIR"/doc/*/picked.txt "$XDG_RUNTIME_DIR"/doc/*/Handed/inside.txt 2>/dev/null; '
+            'for d in "$XDG_RUNTIME_DIR"/doc/*; do [ -e "$d" ] && echo "DOCUMENT $d"; done; true')
+    write = 'for f in "$XDG_RUNTIME_DIR"/doc/*/picked.txt "$XDG_RUNTIME_DIR"/doc/*/Handed/inside.txt; do (echo LATER >> "$f") 2>/dev/null; done; true'
+
+    def run(launcher, snippet, *args):
+        r = subprocess.run([launcher, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return r.stdout + r.stderr
+
+    def hand():                         # the user opens the file and the folder with the app
+        assert "PICKED" in run(lp, 'cat "$2" "$3"/inside.txt', str(picked), str(folder))
+        held = run(lp, look)            # ...and at its next start they are still its own, by no argument
+        assert "PICKED" in held and "INSIDE" in held and "DOCUMENT " in held, held
+
+    def holds_nothing(launcher, when):
+        held = run(launcher, look + "; " + write)
+        assert "PICKED" not in held and "INSIDE" not in held and "DOCUMENT " not in held, (when, held)
+        assert picked.read_text() == was and (folder / "inside.txt").read_text() == "INSIDE\n", when
+
+    target, url = env.home / "apps" / "editor", "https://example.org/alice/editor"
+    rec = {"id": "editor", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/app"}, "target": str(target),
+           "root": str(env.home / "apps"), "links": [], "files": [str(target)], "launcher": lp, "sandbox": sb.to_json(gs)}
+    db = DB(str(env.home / ".local" / "share" / "appkata" / "handed.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Editor", "1.0", "tarball", json.dumps(rec), now()))
+    portable = install.Portable(folder=str(env.home / "apps"), command_dir="", app_menu=False, stable_name=False)
+    app = lambda level: {"url": url, "name": "Editor", "sandbox": level and sb.to_json(level)}      # noqa: E731
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", e["DBUS_SESSION_BUS_ADDRESS"])          # AppKata runs in the same session
+        for away in (sb.resolve_template("strict"), None):                              # to Strict and back, to Off and back
+            hand()
+            install.rewrite_launcher(db, app(away), portable)
+            install.rewrite_launcher(db, app(gs), portable)
+            holds_nothing(lp, "back from Strict" if away else "back from Off")
+        hand()
+        install.uninstall(db, url, remove_sandbox=True)
+        assert not os.path.exists(sb.sandbox_home("editor")) and not os.path.exists(lp)
+        assert install.new_app_id(db, "https://example.org/bob/editor", "Editor") == "editor"       # the id is free (R17.6)
+        holds_nothing(env.app("editor", gs), "another Source's app under the freed id")
+        assert not os.path.lexists(sb.handed_path("editor"))
+        hand()                          # and what this one is handed is its own
+        assert os.path.isfile(sb.handed_path("editor"))
+
+
+def _a_session_with_no_document_portal_holds_nothing_and_is_not_made_to_start_one(env, addr):
+    """CR1.5-25 (#400): AppKata's ask of the portal on a real session bus where none runs. The bus
+    could start one (_bus_conf); the ask must not, and its answer is that nothing is held. With
+    no bus to ask at all it couldn't be asked, and the note that the app was handed something
+    stays for the next ask. A part of the test below, which tests/skips/tier1.txt names."""
+    def note():
+        os.makedirs(os.path.dirname(sb.handed_path("plain")), exist_ok=True)
+        open(sb.handed_path("plain"), "w").close()
+
+    with pytest.MonkeyPatch.context() as mp:
+        note()
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+        assert sb.revoke_documents("plain") is True and not os.path.lexists(sb.handed_path("plain"))
+        assert not os.path.isdir(env.rt / "doc" / "by-app")             # no portal was started for it
+        note()
+        mp.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env.rt}/nonexistent")
+        assert sb.revoke_documents("plain") is False and os.path.isfile(sb.handed_path("plain"))
 
 
 @needs_proxy
@@ -1752,9 +2078,76 @@ def test_file_arguments_pass_through_when_they_cannot_be_handed_over(env):
         r = subprocess.run([env.on_a_machine_with(lp, f"{fake}:{os.environ['PATH']}"), 'echo "ARG $2"', str(docs / "a.txt")],
                            cwd=str(env.home), env={**env.env, "DBUS_SESSION_BUS_ADDRESS": bus.addr},
                            capture_output=True, text=True, timeout=60)
+        _a_session_with_no_document_portal_holds_nothing_and_is_not_made_to_start_one(env, bus.addr)
     finally:
         bus.close()
     assert r.returncode == 0 and f"ARG {docs}/a.txt" in r.stdout, (r.stdout, r.stderr)
+
+
+def _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e):
+    """CR1.5-38 (#651), with the real document portal: `tool .` from the home folder, the home by
+    its path and as a URI, a key and a startup file leave nothing under $XDG_RUNTIME_DIR/doc, reach
+    the tool as they were typed, and each has its line on stderr. The tool's own line said it
+    couldn't see the home, and the helper then exported the home, read-write. A part of the test
+    below, which tests/skips/tier1.txt names (that file is another unit's)."""
+    key, rc = env.home / ".ssh" / "id_ed25519", env.home / ".bashrc"
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    before = exported()
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; ls -A "$XDG_RUNTIME_DIR"/doc/* 2>&1; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/id_ed25519 "$XDG_RUNTIME_DIR"/doc/*/*/.ssh/id_ed25519 "$2" 2>&1; echo x >> "$3"; true')
+    args = [".", str(key), str(rc), str(env.home), "file://" + str(env.home), "--key=" + str(key)]
+    r = subprocess.run([lp, snippet, *args], cwd=str(env.home), env=e, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == args, (r.stdout, r.stderr)
+    assert exported() == before, (exported() - before, r.stderr)             # the portal was given nothing of them
+    assert "SECRET-KEY" not in r.stdout and rc.read_text() == "# real bashrc\n", r.stdout
+    said = [l for l in r.stderr.splitlines() if "isn't handed" in l]
+    assert said == [f"Tool runs sandboxed and isn't handed .: your whole home folder is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {key}: {env.home}/.ssh is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {rc}: {rc} is never shared with a sandboxed app.",
+                    f"Tool runs sandboxed and isn't handed {env.home}: your whole home folder is never shared with a sandboxed app."], r.stderr
+    assert f"can't see {env.home} " in r.stderr and "unless it is in a never-shared folder of your home" in r.stderr, r.stderr
+
+
+def _a_link_left_where_a_tool_ran_once_hands_it_nothing(env, lp, e):
+    """CR1.5-55 (#759), the finding's own run with the real document portal: a command-line tool,
+    run once in ~/src/proj, which is its to write for that run, puts a link to a file of the
+    user's where README.md was, and a link to a folder beside it. Run again from another folder
+    (shared with it) and from the home folder (not shared), with README.md named by a full path,
+    a URI, a relative path and an option's value, and a file through the linked folder, it was
+    handed what the links lead to, read-write: no folder it is shown now holds the link, and
+    AppKata keeps no memory of where it could write once. No link is followed for an app now:
+    each argument reaches the tool as typed, the launcher says why and names what the link leads
+    to, and the file beside them is handed over as before. A part of the test below, which
+    tests/skips/tier1.txt names (that file is another unit's)."""
+    docs, proj, other = env.home / "Documents", env.home / "src" / "proj", env.home / "src" / "other"
+    other.mkdir()
+    (docs / "taxes.txt").write_text("TAXES\n")
+    (proj / "README.md").write_text("README\n")
+    r = subprocess.run([lp, 'mv README.md README.was && ln -s "$HOME/Documents/taxes.txt" README.md && ln -s "$HOME/Documents" all && echo PLANTED'],
+                       cwd=str(proj), env=e, capture_output=True, text=True, timeout=60)
+    assert "PLANTED" in r.stdout and os.readlink(proj / "README.md") == str(docs / "taxes.txt") and os.readlink(proj / "all") == str(docs), (r.stdout, r.stderr)
+    exported = lambda: {(d, f) for d in os.listdir(env.rt / "doc") if d != "by-app" for f in os.listdir(env.rt / "doc" / d)}   # noqa: E731
+    snippet = ('shift; for a in "$@"; do printf "ARG %s\\n" "$a"; done; for a in "$@"; do a=${a#--file=}; a=${a#file://}; cat "$a" 2>&1; (echo EDITED >> "$a") 2>/dev/null; done; '
+               'cat "$XDG_RUNTIME_DIR"/doc/*/taxes.txt "$XDG_RUNTIME_DIR"/doc/*/*/taxes.txt 2>&1; true')
+    readme, taxes = proj / "README.md", docs / "taxes.txt"
+    for cwd, rel in ((other, "../proj/README.md"), (env.home, "src/proj/README.md")):
+        linked = [str(readme), "file://" + str(readme), rel, "--file=" + str(readme), str(proj / "all" / "taxes.txt"), str(proj / "all")]
+        before = exported()
+        r = subprocess.run([lp, snippet, *linked, str(proj / "README.was")], cwd=str(cwd), env=e, capture_output=True, text=True, timeout=60)
+        got = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
+        assert r.returncode == 0 and got[:6] == linked, (cwd, r.stdout, r.stderr)                        # each as typed: no link followed
+        assert "TAXES" not in r.stdout and taxes.read_text() == "TAXES\n" and sorted(os.listdir(docs)) == ["notes.txt", "taxes.txt"], (cwd, r.stdout)
+        assert {f for _, f in exported() - before} <= {"README.was"} and got[6].startswith(str(env.rt / "doc") + "/") and got[6].endswith("/README.was"), (cwd, got)
+        assert "README" in r.stdout and (proj / "README.was").read_text().startswith("README\nEDITED\n"), (cwd, r.stdout)     # the file beside them, handed over
+        assert [l for l in r.stderr.splitlines() if "isn't handed" in l] == [
+            _through_a_link("Tool", readme, readme, taxes), _through_a_link("Tool", rel, readme, taxes),
+            _through_a_link("Tool", proj / "all" / "taxes.txt", proj / "all", taxes), _through_a_link("Tool", proj / "all", proj / "all", docs)], (cwd, r.stderr)
+    # in the folder itself, shared again, the link is the tool's own to see and leads nowhere inside;
+    # and the process's own descriptors (the kernel's links, under /proc) are no file arguments
+    own = ["README.md", "./all/taxes.txt", str(readme), "/dev/stdin", "--in=/dev/stdin"]
+    r = subprocess.run([lp, snippet, *own], cwd=str(proj), env=e, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")] == own, (r.stdout, r.stderr)
+    assert "TAXES" not in r.stdout and taxes.read_text() == "TAXES\n" and "isn't handed" not in r.stderr, (r.stdout, r.stderr)
 
 
 @needs_proxy
@@ -1781,11 +2174,24 @@ def test_a_cli_tool_run_from_a_refused_folder_is_still_given_its_file_arguments(
                                capture_output=True, text=True, timeout=60)
             r2 = subprocess.run([lp, snippet, "in.txt", str(docs / "notes.txt")], cwd=str(proj), env=e,
                                 capture_output=True, text=True, timeout=60)
+            # CR1.5-6 (#381): a folder of /tmp is no tool's to work in, and a file named there, by
+            # either path, is handed over like any other
+            work = env.home.parent / "work"
+            work.mkdir()
+            (work / "draft.txt").write_text("DRAFT\n")
+            r3 = subprocess.run([lp, snippet, "draft.txt", str(work / "draft.txt")], cwd=str(work), env=e,
+                                capture_output=True, text=True, timeout=60)
+            _a_never_shared_argument_is_handed_over_to_no_app(env, lp, e)
+            _a_link_left_where_a_tool_ran_once_hands_it_nothing(env, lp, e)
         finally:
             portal.close()
     finally:
         bus.close()
     doc = str(env.rt / "doc") + "/"
+    args = [l[4:] for l in r3.stdout.splitlines() if l.startswith("ARG ")]
+    assert r3.returncode == 0 and f"isn't given {work} to work in" in r3.stderr, (r3.stdout, r3.stderr)
+    assert len(args) == 2 and all(a.startswith(doc) and a.endswith("/draft.txt") for a in args), args
+    assert r3.stdout.count("DRAFT") == 2, r3.stdout
     args = [l[4:] for l in r.stdout.splitlines() if l.startswith("ARG ")]
     assert r.returncode == 0 and "can't see" in r.stderr, (r.stdout, r.stderr)        # refused, as before
     assert len(args) == 2 and all(a.startswith(doc) and a.endswith("/notes.txt") for a in args), args
@@ -1844,6 +2250,197 @@ def test_nested_folder_grants_cannot_reopen_the_symlink_hole(env):
     r = env.run(lp, "echo RAN-AGAIN")
     assert r.returncode == 0 and "RAN-AGAIN" in r.stdout, r.stderr            # the next launch still works ...
     assert os.listdir(victim) == []                                            # ... and created nothing there
+    _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env)
+    _a_launcher_written_again_keeps_where_a_folder_led(env)
+
+
+def _a_link_put_above_a_nested_grant_mounts_nothing_of_the_users(env):
+    # CR1.5-40 (#665): ...but a link to /oldroot leads nowhere on the host, so that plant was skipped
+    # whatever bwrap did with a source. Relative links lead somewhere on both sides: with ~/Projects
+    # read-write and ~/Projects/sub/deep granted too, the app made ~/.ssh in its private home, put a
+    # folder `evil` in ~/Projects with `evil/deep` a link to `../../.ssh`, moved `sub` away and made
+    # `sub` a link to `evil`; all of it landed in the real ~/Projects, and the next launch mounted the
+    # user's real ~/.ssh at the app's (read-only as the inner grant was; with a read-write one, the
+    # real ~/.config/autostart, written to). Each grant is asked again at every launch now, and one
+    # that no longer leads where it led when it was judged is dropped, with a line; and a grant
+    # judged anew (written here as an install or a Save that adds it writes it, CR1.5-53) is refused
+    # where a link in another granted folder is on the way to it.
+    # (Parts of the test above, not tests of their own: a run test is named in tests/skips/tier1.txt,
+    # which is another unit's file while this is written.)
+    (env.home / ".config" / "autostart" / "HOST-VICTIM-FILE").write_text("HOST-VICTIM-CONTENT\n")
+    (env.home / "Documents").mkdir()
+    (env.home / "Documents" / "taxes.txt").write_text("TAXES\n")
+    hosts = {".ssh": ["id_ed25519"], ".config/autostart": ["HOST-VICTIM-FILE"], "Documents": ["taxes.txt"]}
+    secret = ("SECRET-KEY", "HOST-VICTIM-CONTENT", "TAXES", "id_ed25519", "HOST-VICTIM-FILE", "taxes.txt")
+
+    def untouched(r, *where):
+        assert r.returncode == 0 and "RAN-AGAIN" in r.stdout, (where, r.stdout, r.stderr)
+        assert not [w for w in secret if w in r.stdout], (where, r.stdout, r.stderr)             # nothing of the user's read or listed
+        assert {v: sorted(os.listdir(env.home / v)) for v in hosts} == hosts, where              # and nothing written there
+        assert "bwrap" not in r.stderr, (where, r.stderr)
+
+    look = ('ls "$HOME/{victim}" 2>&1; cat "$HOME/{victim}"/* 2>&1; cat "$HOME/{inner}"/* 2>&1; (echo x > "$HOME/{victim}/planted-by-app") 2>&1; '
+            '(echo x > "$HOME/{inner}/planted-by-app") 2>&1; echo out > "$HOME/{outer}/out.txt"; echo RAN-AGAIN')
+    dropped = "{app} runs sandboxed and isn't given {folder} this time: it led to {folder} when the app was given it and leads to {now} now"
+
+    # the finding's own run, the inner grant read-only and read-write; then a folder no list names
+    for n, (mode, victim) in enumerate((("ro", ".ssh"), ("rw", ".config/autostart"), ("ro", "Documents")), 1):
+        outer, up = f"P{n}", "../.."                           # from ~/P<n>/evil, where the link is, to the home
+        proj = env.home / outer
+        (proj / "sub" / "deep").mkdir(parents=True)
+        (proj / "sub" / "deep" / "mine.txt").write_text("MINE\n")
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + str(proj): "rw", "+" + str(proj / "sub" / "deep"): mode}})
+        lp = env.app(f"nest{n}", gs)
+        r = env.run(lp, f'cat "$HOME/{outer}/sub/deep/mine.txt" && mkdir -p "$HOME/{victim}" "$HOME/{outer}/evil" && ln -s {up}/{victim} "$HOME/{outer}/evil/deep" && '
+                        f'mv "$HOME/{outer}/sub" "$HOME/{outer}/sub.old" && ln -s evil "$HOME/{outer}/sub" && echo planted')
+        assert "MINE" in r.stdout and "planted" in r.stdout and os.path.islink(proj / "sub"), (r.stdout, r.stderr)   # the grant worked, and the links are the host's
+        assert os.path.realpath(proj / "sub" / "deep") == str(env.home / victim)                    # where bwrap would be led
+        r = env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer))
+        untouched(r, outer, "the next launch")
+        assert dropped.format(app=f"Nest{n}", folder=proj / "sub" / "deep", now=env.home / victim) in r.stderr, r.stderr
+        assert (proj / "out.txt").read_text() == "out\n"                                            # the folder above is still the app's
+        # ...and judging the grant anew (the user's next Save of the sandbox does) doesn't take the link for the folder
+        lp = env.app(f"nest{n}", gs)
+        assert f"# Refused folder grant ~/{outer}/sub/deep: " in open(lp).read()
+        assert [c for c in sb.summary(gs, str(env.home / "apps")) if c.startswith(f"~/{outer}/sub/deep · refused: ")]
+        untouched(env.run(lp, look.format(victim=victim, inner=f"{outer}/sub/deep", outer=outer)), outer, "judged anew")
+
+    # a nested folder that wasn't there when the launcher was written, made as a link since
+    proj = env.home / "P4"
+    proj.mkdir()
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + str(proj): "rw", "+" + str(proj / "later" / "deep"): "rw"}})
+    lp = env.app("nest4", gs)
+    r = env.run(lp, 'mkdir -p "$HOME/.config/autostart" "$HOME/P4/later" && ln -s ../../.config/autostart "$HOME/P4/later/deep" && echo planted')
+    assert "planted" in r.stdout and os.path.islink(proj / "later" / "deep"), (r.stdout, r.stderr)
+    r = env.run(lp, look.format(victim=".config/autostart", inner="P4/later/deep", outer="P4"))
+    untouched(r, "P4")
+    assert dropped.format(app="Nest4", folder=proj / "later" / "deep", now=env.home / ".config/autostart") in r.stderr, r.stderr
+
+    # a command-line tool with a folder of its own, run once in a folder above it (its to write), then elsewhere
+    proj, other = env.home / "src5" / "proj", env.home / "src5" / "other"
+    (proj / "data").mkdir(parents=True)
+    other.mkdir()
+    gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+" + str(proj / "data"): "ro"}})
+    lp = env.app("tool5", gs)
+    r = env.run(lp, 'mkdir -p "$HOME/.ssh" && mv data data.old && ln -s ../../.ssh data && echo planted', cwd=str(proj))
+    assert "planted" in r.stdout and os.path.islink(proj / "data"), (r.stdout, r.stderr)
+    r = env.run(lp, look.format(victim=".ssh", inner="src5/proj/data", outer="src5/other"), cwd=str(other))
+    untouched(r, "the tool")
+    assert dropped.format(app="Tool5", folder=proj / "data", now=env.home / ".ssh") in r.stderr, r.stderr
+
+    # The user's own link is no plant: a grant through one stands (~/Docs kept on another disk). Pointed
+    # elsewhere after the grant was judged, it is not given at that launch, and is again once the
+    # grant is judged anew (taken out and granted again; the part below holds AppKata's start and a Save to it).
+    for d in ("Documents", "Other"):
+        (env.home / "disk" / d).mkdir(parents=True)
+        (env.home / "disk" / d / "note.txt").write_text(d.upper() + "-NOTE\n")
+    (env.home / "Docs").symlink_to(env.home / "disk" / "Documents")
+    gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+~/Docs": "rw"}})
+    lp = env.app("reader", gs)
+    r = env.run(lp, 'cat "$HOME/Docs/note.txt"; echo mine > "$HOME/Docs/mine.txt"')
+    assert r.returncode == 0 and "DOCUMENTS-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+    assert (env.home / "disk" / "Documents" / "mine.txt").read_text() == "mine\n"
+    (env.home / "Docs").unlink()
+    (env.home / "Docs").symlink_to(env.home / "disk" / "Other")
+    r = env.run(lp, 'cat "$HOME/Docs/note.txt" 2>&1; echo RAN-AGAIN')
+    assert r.returncode == 0 and "RAN-AGAIN" in r.stdout and "-NOTE" not in r.stdout, (r.stdout, r.stderr)
+    assert LED.format(app="Reader", folder=env.home / "Docs", was=env.home / "disk" / "Documents", now=env.home / "disk" / "Other") in r.stderr, r.stderr
+    r = env.run(env.app("reader", gs), 'cat "$HOME/Docs/note.txt"')
+    assert r.returncode == 0 and "OTHER-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+
+
+LED = ("{app} runs sandboxed and isn't given {folder} this time: it led to {was} when the app was given it and leads to {now} now, so a link on the "
+       "way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox "
+       "dialog, save, and give it again, and the folder is judged anew.")
+
+
+def _a_launcher_written_again_keeps_where_a_folder_led(env):
+    """CR1.5-53 (#743), the finding's run: a command-line tool with ~/src6/proj/data read-only is
+    run once in ~/src6/proj, which is its to write for that run, and puts a link to ~/Documents
+    where `data` was. The next launch dropped the grant (CR1.5-40), but where a folder leads was
+    part of the launcher's text, so AppKata's next start found the launcher stale, wrote it again
+    for where the link led, and the launch after read the user's ~/Documents at the tool's folder.
+    The install keeps where each folder led now, and every launcher written again is written with
+    that, the user's own Save of the sandbox too; a folder taken out and granted again is judged
+    anew. A part of the test above, which
+    tests/skips/tier1.txt names (that file is another unit's)."""
+    import json
+    from appkata_core import install
+    from appkata_core.db import DB, now
+    docs = env.home / "Documents"
+    docs.mkdir(exist_ok=True)
+    (docs / "taxes.txt").write_text("TAXES\n")
+    proj, other = env.home / "src6" / "proj", env.home / "src6" / "other"
+    (proj / "data").mkdir(parents=True)
+    (proj / "data" / "mine.txt").write_text("MINE\n")
+    other.mkdir()
+    for d in ("A", "B"):
+        (env.home / "disk6" / d).mkdir(parents=True)
+        (env.home / "disk6" / d / "note.txt").write_text(d + "-NOTE\n")
+    (env.home / "Docs6").symlink_to(env.home / "disk6" / "A")                # the user's own link
+    gs = sb.apply_overrides(sb.resolve_template("cli-tool"), {"folders": {"+" + str(proj / "data"): "ro"}})
+    lp = env.app("tool6", gs)                                                # the app's files
+    target, url = env.home / "apps" / "tool6", "https://example.org/alice/tool6"
+    rec = {"id": "tool6", "current": {"version": "1.0", "path": str(target / "1.0"), "exec": "1.0/bin/app"}, "target": str(target),
+           "root": str(env.home / "apps"), "links": [], "files": [str(target)]}
+    db = DB(str(env.home / ".local" / "share" / "appkata" / "led.db"))
+    db.x("INSERT INTO installs(url, name, version, kind, record, installed_at) VALUES(?,?,?,?,?,?)", (url, "Tool6", "1.0", "tarball", json.dumps(rec), now()))
+    portable = install.Portable(folder=str(env.home / "apps"), command_dir="", app_menu=False, stable_name=False)
+    app = {"url": url, "name": "Tool6", "sandbox": sb.to_json(gs)}
+    stored = lambda: json.loads(db.one("SELECT record FROM installs WHERE url=?", (url,))["record"])      # noqa: E731
+
+    def appkata_starts(app):            # the startup pass, for this app: a launcher that is not today's is written again
+        if install.launcher_is_current(stored(), app, portable):
+            return False
+        install.rewrite_launcher(db, app, portable)
+        return True
+
+    def not_given(when, snippet, folder, was, now, *secret):
+        r = env.run(lp, snippet + "; echo RAN-AGAIN", cwd=str(other))
+        assert r.returncode == 0 and "RAN-AGAIN" in r.stdout and not [w for w in secret if w in r.stdout], (when, r.stdout, r.stderr)
+        assert LED.format(app="Tool6", folder=folder, was=was, now=now) in r.stderr and "bwrap" not in r.stderr, (when, r.stderr)
+
+    install.rewrite_launcher(db, app, portable)                              # the install takes the grant
+    assert stored()["launcher"] == lp and not appkata_starts(app)
+    text = open(lp).read()
+    r = env.run(lp, 'cat data/mine.txt && mv data data.old && ln -s ../../Documents data && echo planted', cwd=str(proj))
+    assert "MINE" in r.stdout and "planted" in r.stdout and os.path.islink(proj / "data"), (r.stdout, r.stderr)
+    assert os.path.realpath(proj / "data") == str(docs)                      # where bwrap would be led
+    look = 'ls "$HOME/src6/proj/data" 2>&1; cat "$HOME/src6/proj/data"/* 2>&1; (echo x > "$HOME/src6/proj/data/planted-by-app") 2>&1'
+    planted = (look, proj / "data", proj / "data", docs, "TAXES", "taxes.txt")
+    not_given("the next launch", *planted)
+    wrote = appkata_starts(app)                                              # AppKata's next start...
+    not_given("after AppKata's next start", *planted)                        # ...takes no link for the folder's place
+    assert not wrote and open(lp).read() == text                             # it had nothing to write
+    with open(lp, "a") as f:                                                 # and where it has (a launcher edited by hand)
+        f.write("# edited by hand\n")
+    assert appkata_starts(app) and open(lp).read() == text
+    not_given("written again by AppKata's start", *planted)
+    assert sorted(os.listdir(docs)) == ["taxes.txt"] and (docs / "taxes.txt").read_text() == "TAXES\n"
+    os.remove(proj / "data")                                                 # the link gone and the folder back: the grant stands again
+    (proj / "data.old").rename(proj / "data")
+    r = env.run(lp, 'cat "$HOME/src6/proj/data/mine.txt"', cwd=str(other))
+    assert r.returncode == 0 and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+
+    # The user's own link is judged when they save the grant; pointed elsewhere, the folder is not
+    # given, and neither AppKata's start nor their next Save of the sandbox changes that (the
+    # owner's decision of 2026-11-26 on #735): taken out and granted again, it is given again.
+    both = {**app, "sandbox": sb.to_json(sb.apply_overrides(gs, {"folders": {"+~/Docs6": "rw"}}))}
+    install.rewrite_launcher(db, both, portable)                             # as the backend asks for a Save (Backend._apply_sandbox)
+    r = env.run(lp, 'cat "$HOME/Docs6/note.txt" "$HOME/src6/proj/data/mine.txt"', cwd=str(other))
+    assert r.returncode == 0 and "A-NOTE" in r.stdout and "MINE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
+    (env.home / "Docs6").unlink()
+    (env.home / "Docs6").symlink_to(env.home / "disk6" / "B")
+    moved = ('cat "$HOME/Docs6/note.txt" 2>&1', env.home / "Docs6", env.home / "disk6" / "A", env.home / "disk6" / "B", "-NOTE")
+    not_given("the user's link moved", *moved)
+    assert not appkata_starts(both)
+    not_given("the user's link moved, after AppKata's next start", *moved)
+    install.rewrite_launcher(db, both, portable)                             # the user's Save, of the same set
+    not_given("the user's link moved, after their next Save", *moved)
+    install.rewrite_launcher(db, app, portable)                              # the folder taken out, and saved...
+    install.rewrite_launcher(db, both, portable)                             # ...and granted again
+    r = env.run(lp, 'cat "$HOME/Docs6/note.txt"', cwd=str(other))
+    assert r.returncode == 0 and "B-NOTE" in r.stdout and "isn't given" not in r.stderr, (r.stdout, r.stderr)
 
 
 def test_a_launcher_rewritten_while_the_app_runs_still_tears_down_and_reports_its_status(env):
@@ -2011,6 +2608,7 @@ def test_every_file_the_distributions_default_bashrc_sources_is_refused():
     # Ubuntu and Mint, ~/.bashrc.d/* on Fedora -- must each be refused, since a line appended to one
     # runs in every new terminal exactly as one in ~/.bashrc. On a host whose skel sources nothing the
     # test says so and passes; in the Mint container it finds ~/.bash_aliases.
+    _what_the_desktops_own_programs_load_from_the_home_is_refused()      # CR1.5-9: the same question of other programs
     found = []
     for rc in ("/etc/skel/.bashrc", "/etc/bash.bashrc", "/etc/bashrc", "/etc/skel/.profile", "/etc/skel/.zshrc"):
         if os.path.exists(rc):
@@ -2022,6 +2620,427 @@ def test_every_file_the_distributions_default_bashrc_sources_is_refused():
         assert sb.protected_folder(path), f"{path} is sourced by the host's default shell files and would be shared"
     if not found:
         pytest.skip("this host's default shell files source nothing under the home")
+
+
+# CR1.5-9 (#384): the same class a round later. The list had GNOME's and KDE's extension folders and
+# not Cinnamon's, the shell's startup files and not bash-completion's. So these expectations too come
+# from the platform: what the programs installed here name, in their own files, as the places in the
+# home they load code from. Where a program isn't installed its part finds nothing (the launcher
+# containers have neither Cinnamon nor bash-completion; the desktop images have Cinnamon and
+# im-config, and a stock Mint or Ubuntu all three), so each reader is first held to the lines of the
+# versions it was written from, quoted here. It is a part of the test above, not one of its own:
+# tests/skips/tier1.txt names every test of this file, and is another unit's.
+
+def _home_path(expr: str) -> str:
+    """A shell word that names a place in the home, as `~/...`: `$HOME/.x`, `~/.x`,
+    `${XDG_DATA_HOME:-$HOME/.local/share}/x` (the place the variable has when it is unset)."""
+    import re
+    return re.sub(r"\$\{XDG_\w+_HOME:-([^}]+)\}", r"\1", expr).replace("$HOME", "~").rstrip("/")
+
+
+def _bash_completion_loads(text: str) -> list[str]:
+    """The places in the home bash-completion's own script, or its profile script, reads code from:
+    the user file it sources, the folder it loads a command's completion from at a tab, and a file
+    under the user's configuration folder it sources."""
+    import re
+    out = [m.group(1) for m in re.finditer(r"BASH_COMPLETION_USER_FILE:-([^}\s]+)\}", text)]
+    out += [m.group(1) for m in re.finditer(r"(\$\{XDG_DATA_HOME:-[^}]+\}/bash-completion)", text)]
+    out += [m.group(1) for m in re.finditer(r"^\s*\.\s+\"?((?:\$\{XDG_\w+_HOME:-[^}]+\}|\$HOME|~)/[^\s\"]+)", text, re.M)]
+    return sorted({_home_path(p) for p in out})
+
+
+def _cinnamon_loads(main_js: str, launchers_js: str) -> list[str]:
+    """The places in the home Cinnamon's shell imports code from (the folders of its user data
+    folder that main.js puts on the importer's path) and the folders its panel-launchers applet
+    reads launchers from."""
+    import re
+    out = []
+    if "imports.searchPath.unshift(global.userdatadir)" in main_js:
+        for m in re.finditer(r"let types = \[([^\]]+)\]", main_js):
+            out += ["~/.local/share/cinnamon/" + t for t in re.findall(r"'([^']+)'", m.group(1))]
+    for m in re.finditer(r"GLib\.get_user_data_dir\(\)\s*\+\s*[\"']([^\"']+)[\"']", launchers_js):
+        out.append("~/.local/share" + m.group(1).rstrip("/"))
+    for m in re.finditer(r"GLib\.get_home_dir\(\)\s*\+\s*[\"']([^\"']+)[\"']", launchers_js):
+        out.append("~" + m.group(1).rstrip("/"))
+    return sorted(set(out))
+
+
+# pr-review pass 2 of #735, P2-3: this reader was given one script (xdg-user-dir) and matched only a
+# path written after the `.`, while its commit said it asked for every file a script of the platform
+# sources from the home. The session's own scripts name the file in a variable first
+# (`GNOMERC=$HOME/.gnomerc`, then `. "$GNOMERC"`), set it in another script (Xsession sets
+# USERXSESSIONRC, a file of Xsession.d sources it) or in a file they source (im-config's), loop over
+# a list of names, or hand the name to a function that sources its argument (Mint's
+# lightdm-session): none of which it saw, so it would have found neither ~/.xsessionrc nor
+# ~/.gnomerc (P2-2) had it been given their scripts. It reads them all now (_session_scripts), and a
+# word is resolved from the scripts themselves.
+_A_COMMAND = r"(?:^|&&|\|\||;|\bthen\b|\bdo\b|\belse\b)\s*(?:\w+=\S*\s+)*"       # where a command starts, after any `NAME=value` before it
+_IN_THE_HOME = r"(?:\$\{XDG_\w+_HOME:-[^}]+\}|\$\{HOME\}|\$HOME|~)/[^\s\"';)]+"   # a word that names a place in the home
+_A_NAME = r"\$\{?(\w+)\}?"                                                         # a word that is one variable
+
+
+def _names_in(texts: list[str], read) -> tuple[list[str], dict[str, set[str]], set[str]]:
+    """What a set of shell scripts says of its own words: the scripts with every file of the system
+    one of them sources by its full path (their variables count as its own); {a variable: the
+    places in the home a plain assignment gives it}; and the functions that source their first
+    argument."""
+    texts = [t for t in texts if t]
+    for text in texts:                                     # (grows as it goes)
+        for m in re.finditer(_A_COMMAND + r"(?:\.|source)\s+\"?(/[^\s\"';$]+)", text, re.M):
+            if (more := read(m.group(1))) and more not in texts:
+                texts.append(more)
+    names: dict[str, set[str]] = {}
+    for text in texts:
+        for m in re.finditer(r"^\s*(?:export\s+)?(\w+)=\"?(" + _IN_THE_HOME + r")\"?\s*(?:#.*)?$", text, re.M):
+            names.setdefault(m.group(1), set()).add(m.group(2))
+    sourcing = set()
+    for text in texts:
+        for m in re.finditer(r"^(\w+)\s*\(\)\s*\{\n(.*?)^\}", text, re.M | re.S):
+            first = {"1"} | set(re.findall(r"^\s*(\w+)=\"?\$\{?1\}?\"?\s*$", m.group(2), re.M))
+            if any(var in first for var in re.findall(_A_COMMAND + r"(?:\.|source)\s+\"?" + _A_NAME, m.group(2), re.M)):
+                sourcing.add(m.group(1))
+    return texts, names, sourcing
+
+
+def _named(var: str, text: str, at: int, names: dict[str, set[str]]) -> set[str]:
+    """The places in the home the variable `var` names at the place `at` of the script `text`: the
+    ones in the list of the last `for var in ...` before it (a loop's variable is the loop's own:
+    another loop of the script reuses the name for other files), each word of the list a place or a
+    variable; with no such loop, the ones an assignment gives it."""
+    loops = [m for m in re.finditer(r"\bfor\s+" + re.escape(var) + r"\s+in\s+([^;\n]+)", text) if m.start() < at]
+    if not loops:
+        return names.get(var, set())
+    out = set()
+    for quoted, bare in re.findall(r"\"([^\"]*)\"|(\S+)", loops[-1].group(1)):
+        word = quoted or bare
+        if re.fullmatch(_IN_THE_HOME, word):
+            out.add(word)
+        elif inner := re.fullmatch(_A_NAME, word):
+            out |= names.get(inner.group(1), set())
+    return out
+
+
+def _sourced_from_the_home(text: str, *beside: str, read=lambda path: "") -> list[str]:
+    """The files in the home the shell script `text` sources (`. <file>`, `source <file>`, or a
+    function of its own that sources its argument), wherever on a line it does, the file written
+    there or named by a variable: one the script sets, or a script `beside` it does, or a file of
+    the system they source (`read` gives a path's text)."""
+    _, names, sourcing = _names_in([text, *beside], read)
+    by = "|".join([r"\.", "source", *sorted(map(re.escape, sourcing))])
+    out = set()
+    for m in re.finditer(_A_COMMAND + r"(?:" + by + r")\s+\"?(?:(" + _IN_THE_HOME + r")|" + _A_NAME + r")", text, re.M):
+        out |= {m.group(1)} if m.group(1) else _named(m.group(2), text, m.start(), names)
+    return sorted({_home_path(p.replace("${HOME}", "$HOME")).rstrip("*").rstrip("/") for p in out})
+
+
+def _started_from_the_home(text: str, *beside: str, read=lambda path: "") -> list[str]:
+    """The files in the home `text`, a script of Xsession, makes the session's own program
+    (`STARTUP="$file"`, or `STARTUP="$shell $file"`): the user's session script, run in place of the
+    desktop's where the display manager names none."""
+    _, names, _ = _names_in([text, *beside], read)
+    out = set()
+    for m in re.finditer(r"^\s*STARTUP=\"?(?:\$\{?\w+\}?\s+)?" + _A_NAME + r"\"?\s*$", text, re.M):
+        out |= _named(m.group(1), text, m.start(), names)
+    return sorted({_home_path(p.replace("${HOME}", "$HOME")) for p in out})
+
+
+def _session_scripts() -> list[str]:
+    """Every script of this system that the X11 session runs as it starts, and that can source a
+    file from the home: Xsession and each file of Xsession.d (the Debian family's, which a display
+    manager runs or its own wrapper sources), the display managers' wrappers, xinit's, and
+    xdg-user-dir, which the desktop's programs run."""
+    import glob
+    return [p for p in ("/etc/X11/Xsession", *sorted(glob.glob("/etc/X11/Xsession.d/*")), "/usr/sbin/lightdm-session",
+                        "/etc/gdm3/Xsession", "/etc/sddm/Xsession", "/usr/share/sddm/scripts/Xsession", "/etc/X11/xdm/Xsession",
+                        "/etc/X11/xinit/xinitrc", *sorted(glob.glob("/etc/X11/xinit/xinitrc.d/*")), "/usr/bin/xdg-user-dir")
+            if os.path.isfile(p)]
+
+
+def _cinnamon_runs_what_its_settings_name(keybindings_js: str) -> bool:
+    """Cinnamon's shell runs the command of each custom keybinding its settings list."""
+    return all(w in keybindings_js for w in ('get_strv("custom-list")', "Util.spawnCommandLine(command)"))
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+# pr-review pass 2 of #735: five more places, none of which a reader of the platform's files above
+# would have found: no file of the system names them, the program's own code does. So these are
+# asked of the program itself: it is run by the system's python3 in a home of its own, with a file
+# planted in the place, and says whether it read it. {the place: (the program, what is run)}; what is
+# run is given the place, prints "absent" where the program isn't installed, and "read" or "not read".
+# libpulse, in a client of its own: a client.conf in the place that names a server at a socket this
+# probe listens on; "read" where the client connects to it (P2B-2)
+_PULSE_CLIENT = r"""
+import ctypes, os, socket, sys, threading, time
+try:
+    pulse = ctypes.CDLL("libpulse.so.0")
+except OSError:
+    sys.exit(print("absent"))
+place = sys.argv[1]
+os.makedirs(place)
+got = []
+server = socket.socket(socket.AF_UNIX)
+server.bind(place + "/s"); server.listen(1); server.settimeout(10)
+def serve():
+    try:
+        client, _ = server.accept()
+        got.append(len(client.recv(64)))
+    except OSError:
+        pass
+listener = threading.Thread(target=serve)
+listener.start()
+with open(place + "/client.conf", "w") as f:
+    f.write("autospawn = no\ndefault-server = unix:%s/s\n" % place)
+for name, result, args in (("pa_mainloop_new", ctypes.c_void_p, []), ("pa_mainloop_get_api", ctypes.c_void_p, [ctypes.c_void_p]),
+                           ("pa_context_new", ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_char_p]),
+                           ("pa_context_connect", ctypes.c_int, [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]),
+                           ("pa_mainloop_iterate", ctypes.c_int, [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p])):
+    getattr(pulse, name).restype = result
+    getattr(pulse, name).argtypes = args
+loop = pulse.pa_mainloop_new()
+context = pulse.pa_context_new(pulse.pa_mainloop_get_api(loop), b"appkata-probe")
+pulse.pa_context_connect(context, None, 0, None)
+end = time.time() + 5
+while time.time() < end and not got:
+    pulse.pa_mainloop_iterate(loop, 0, None)
+    time.sleep(0.02)
+server.close()
+listener.join()
+print("read" if got else "not read")
+sys.stdout.flush()
+os._exit(0)                                # the context is not taken down: nothing of it is used again
+"""
+
+_ASKED = {
+    # cinnamon-menus, which Cinnamon builds its app menu and its app system from: a menu file merged
+    # from the user's folder adds a folder of entries from anywhere (P2-1)
+    "~/.config/menus": ("cinnamon-menus", r"""
+import os, sys
+try:
+    import gi
+    gi.require_version("CMenu", "3.0")
+    from gi.repository import CMenu
+except (ImportError, ValueError):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]; menus = sys.argv[1]
+os.makedirs(menus + "/cinnamon-applications-merged"); os.makedirs(home + "/elsewhere")
+with open(home + "/elsewhere/appkata-probe.desktop", "w") as f:
+    f.write("[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\n")
+with open(menus + "/cinnamon-applications-merged/x.menu", "w") as f:
+    f.write('<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">\n'
+            "<Menu><Name>Applications</Name><AppDir>%s/elsewhere</AppDir>"
+            "<Include><Filename>appkata-probe.desktop</Filename></Include></Menu>\n" % home)
+tree = CMenu.Tree.new("cinnamon-applications.menu", CMenu.TreeFlags.INCLUDE_NODISPLAY)
+tree.load_sync()
+def entries(folder):
+    it = folder.iter()
+    while (kind := it.next()) != CMenu.TreeItemType.INVALID:
+        if kind == CMenu.TreeItemType.DIRECTORY:
+            yield from entries(it.get_directory())
+        elif kind == CMenu.TreeItemType.ENTRY:
+            yield it.get_entry().get_desktop_file_path()
+print("read" if home + "/elsewhere/appkata-probe.desktop" in entries(tree.get_root_directory()) else "not read")
+"""),
+    # cinnamon-desktop's thumbnail factory, the one Nemo makes its thumbnails with: a .thumbnailer
+    # file of the user's names the command for a kind of file, and the factory runs it (P2B-1)
+    "~/.local/share/thumbnailers": ("cinnamon-desktop's thumbnail factory", r"""
+import os, sys
+try:
+    import gi
+    gi.require_version("CinnamonDesktop", "3.0")
+    from gi.repository import CinnamonDesktop
+except (ImportError, ValueError):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(sys.argv[1]); os.makedirs(home + "/shown")
+with open(sys.argv[1] + "/x.thumbnailer", "w") as f:
+    f.write('[Thumbnailer Entry]\nTryExec=sh\nExec=sh -c "echo ran > %s/ran" x %%i %%o\nMimeType=text/plain;\n' % home)
+with open(home + "/shown/a.txt", "w") as f:
+    f.write("hello\n")
+factory = CinnamonDesktop.DesktopThumbnailFactory.new(CinnamonDesktop.DesktopThumbnailSize.NORMAL)
+try:
+    factory.generate_thumbnail("file://" + home + "/shown/a.txt", "text/plain")
+except Exception:      # the planted command makes no picture, which the factory may say
+    pass
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
+    # WirePlumber: the system's own file copied to the user's folder, with a program added to its
+    # list of programs to start. Started with no PipeWire to connect to, it reads its file, runs
+    # the list where its version does (0.4), and ends (P2C-1)
+    "~/.config/wireplumber": ("WirePlumber", r"""
+import os, subprocess, sys, time
+if not (os.path.exists("/usr/bin/wireplumber") and os.path.exists("/usr/share/wireplumber/wireplumber.conf")):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(sys.argv[1])
+with open(home + "/started.sh", "w") as f:
+    f.write("#!/bin/sh\necho ran > %s/ran\n" % home)
+os.chmod(home + "/started.sh", 0o755)
+with open("/usr/share/wireplumber/wireplumber.conf") as f, open(sys.argv[1] + "/wireplumber.conf", "w") as mine:
+    mine.write(f.read() + '\ncontext.exec = [ { path = "%s/started.sh" args = "" } ]\n' % home)
+try:
+    subprocess.run(["/usr/bin/wireplumber"], stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+except subprocess.TimeoutExpired:
+    pass
+time.sleep(0.5)
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
+    # Readline, in an interactive bash on a terminal of its own: Enter bound to a macro that adds a
+    # command to the line and accepts it, then `true` typed and Enter pressed (P2C-2)
+    "~/.inputrc": ("Readline (bash)", r"""
+import os, pty, select, sys, time
+if not os.path.exists("/bin/bash"):
+    sys.exit(print("absent"))
+home = os.environ["HOME"]
+os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+with open(sys.argv[1], "w") as f:
+    f.write('"\\C-m": "\\C-e; echo ran > %s/ran\\C-j"\n' % home)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv("/bin/bash", ["bash", "--norc", "--noprofile", "-i"])
+seen = []
+def wait(until, seconds):
+    end = time.time() + seconds
+    while time.time() < end and not until():
+        if select.select([fd], [], [], 0.1)[0]:
+            try:
+                seen.append(os.read(fd, 4096))
+            except OSError:
+                break
+wait(lambda: seen, 10)                     # its prompt
+os.write(fd, b"true\r")
+wait(lambda: os.path.exists(home + "/ran"), 5)
+os.write(fd, b"\x04")
+print("read" if os.path.exists(home + "/ran") else "not read")
+"""),
+    "~/.config/pulse": ("libpulse", _PULSE_CLIENT),
+    "~/.pulse": ("libpulse", _PULSE_CLIENT),          # the older folder, read instead where it exists
+}
+
+
+def _asked_of_the_program(place: str, moved: dict | None = None) -> str:
+    """What the program of `_ASKED[place]` says of a file planted in `place`: "read", "not read", or
+    "absent" where it isn't installed (or there is no system python3 to run it). It runs in a home
+    of its own, with no session bus and no display, and `moved` (a variable → a folder of that
+    home, written `~/...`) in its environment. Anything else it does is this test's failure."""
+    import tempfile
+    if not os.path.exists("/usr/bin/python3"):
+        return "absent"
+    with tempfile.TemporaryDirectory() as tmp:
+        home = os.path.join(tmp, "home")
+        os.makedirs(home)
+        os.mkdir(os.path.join(tmp, "rt"), 0o700)
+        there = lambda p: home + p[1:] if p.startswith("~/") else p      # noqa: E731
+        env = {"PATH": "/usr/bin:/bin", "HOME": home, "XDG_RUNTIME_DIR": os.path.join(tmp, "rt"), "LANG": "C.UTF-8",
+               **{k: there(v) for k, v in (moved or {}).items()}}
+        r = subprocess.run(["/usr/bin/python3", "-c", _ASKED[place][1], there(place)], env=env, cwd=home, capture_output=True, text=True, timeout=60)
+    said = r.stdout.strip()
+    assert r.returncode == 0 and said in ("absent", "read", "not read"), (place, r.returncode, r.stdout, r.stderr[-2000:])
+    return said
+
+
+def _loaded_from_the_home() -> dict[str, str]:
+    """{a place in the home: the program here that loads code from it}, by this system's own files."""
+    found = {}
+    for script in ("/usr/share/bash-completion/bash_completion", "/etc/bash_completion", "/etc/profile.d/bash_completion.sh"):
+        for path in _bash_completion_loads(_read(script)):
+            found[path] = script
+    cinnamon = "/usr/share/cinnamon"
+    for path in _cinnamon_loads(_read(f"{cinnamon}/js/ui/main.js"), _read(f"{cinnamon}/applets/panel-launchers@cinnamon.org/applet.js")):
+        found[path] = cinnamon
+    for line in _read("/usr/share/im-config/xinputrc.common").splitlines():     # the file im-config's Xsession hook sources
+        if line.startswith("IM_CONFIG_XINPUTRC_USR="):
+            found[_home_path(line.split("=", 1)[1].strip().strip('"'))] = "im-config"
+    scripts = {script: _read(script) for script in _session_scripts()}          # P2-3: all of them, each beside the others
+    for script, text in scripts.items():
+        beside = [t for s, t in scripts.items() if s != script]
+        for path in _sourced_from_the_home(text, *beside, read=_read):
+            found[path] = script
+        for path in _started_from_the_home(text, *beside, read=_read):
+            found[path] = script
+    # the settings Cinnamon takes a custom keybinding's command from are GSettings', kept in dconf's
+    # database in the user's configuration folder where its backend is installed (the default one)
+    import glob
+    if _cinnamon_runs_what_its_settings_name(_read(f"{cinnamon}/js/ui/keybindings.js")) and glob.glob("/usr/lib/*/gio/modules/libdconfsettings.so"):
+        found["~/.config/dconf"] = f"{cinnamon}/js/ui/keybindings.js"
+    for place, (program, _) in _ASKED.items():                                  # pr-review pass 2 of #735
+        if _asked_of_the_program(place) == "read":
+            found[place] = program
+    return found
+
+
+def _what_the_desktops_own_programs_load_from_the_home_is_refused():
+    # the readers, on the lines they were written from: bash-completion 2.11 (Mint 22.3, Ubuntu 24.04)
+    # and 2.16 (LMDE 7), Cinnamon 6.6.9's js/ui/main.js and its panel-launchers applet, im-config 0.57
+    assert _bash_completion_loads(
+        '    local -a dirs=(${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions)\n'
+        'user_completion=${BASH_COMPLETION_USER_FILE:-~/.bash_completion}\n'
+        '    local user_file=${BASH_COMPLETION_USER_FILE:-~/.bash_completion}\n'
+        '        dirs=("${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions")\n'
+        '        [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/bash_completion" ] &&\n'
+        '            . "${XDG_CONFIG_HOME:-$HOME/.config}/bash_completion"\n'
+        '        relative_include_base="$HOME/.ssh"\n            . /usr/share/bash-completion/bash_completion\n') == [
+            "~/.bash_completion", "~/.config/bash_completion", "~/.local/share/bash-completion"]
+    assert _cinnamon_loads(
+        "    imports.searchPath.unshift(global.datadir);\n    imports.searchPath.unshift(global.userdatadir);\n"
+        "    let types = ['applets', 'desklets', 'extensions', 'search_providers'];\n",
+        'const CUSTOM_LAUNCHERS_PATH = GLib.get_user_data_dir() + "/cinnamon/panel-launchers/";\n'
+        "const OLD_CUSTOM_LAUNCHERS_PATH = GLib.get_home_dir() + '/.cinnamon/panel-launchers/';\n") == [
+            "~/.cinnamon/panel-launchers", "~/.local/share/cinnamon/applets", "~/.local/share/cinnamon/desklets",
+            "~/.local/share/cinnamon/extensions", "~/.local/share/cinnamon/panel-launchers", "~/.local/share/cinnamon/search_providers"]
+    assert [_home_path(w) for w in ("$HOME/.xinputrc", "~/.x/", "${XDG_CONFIG_HOME:-$HOME/.config}/y")] == ["~/.xinputrc", "~/.x", "~/.config/y"]
+    # xdg-user-dirs 0.18's xdg-user-dir and Cinnamon 6.6.9's js/ui/keybindings.js (pr-review pass 1 of #735, P1-2)
+    assert _sourced_from_the_home(
+        '#!/bin/sh\ntest -f ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs && . ${XDG_CONFIG_HOME:-~/.config}/user-dirs.dirs\n'
+        'if [ "x$1" = "xDESKTOP" ]; then\n  eval echo \\${XDG_${1}_DIR:-$HOME/Desktop}\nfi\n. /etc/os-release\n') == ["~/.config/user-dirs.dirs"]
+    # ...and the session's scripts (P2-3), on the lines of x11-common 7.7 (/etc/X11/Xsession and its
+    # Xsession.d files), cinnamon-session-common 6.6.3, im-config 0.57, LMDE 7's 99lmde and lightdm
+    # 1.30's lightdm-session (Mint 22.3's default wrapper): a name set in one script and sourced in
+    # another, in the same one, in a file of the system it sources, in a loop's list, and handed to
+    # a function that sources its argument; a file the session writes (ERRFILE) or only merges
+    # (xrdb) is not one
+    xsession = ('USRRESOURCES=$HOME/.Xresources\nUSERXSESSION=$HOME/.xsession\nUSERXSESSIONRC=$HOME/.xsessionrc\nALTUSERXSESSION=$HOME/.Xsession\n'
+                'ERRFILE=$HOME/.xsession-errors\nSESSIONFILES=$(run-parts --list $SYSSESSIONDIR)\n  for SESSIONFILE in $SESSIONFILES; do\n    . $SESSIONFILE\n  done\n')
+    xsessionrc = '#Source user defined xsessionrc\nif [ -r "$USERXSESSIONRC" ]; then\n  . "$USERXSESSIONRC"\nfi\n'
+    startup = ('    for STARTUPFILE in "$USERXSESSION" "$ALTUSERXSESSION"; do\n      if [ -e "$STARTUPFILE" ]; then\n        if [ -x "$STARTUPFILE" ]; then\n'
+               '          STARTUP="$STARTUPFILE"\n        else\n          shell=${SHELL:-sh}\n          STARTUP="$shell $STARTUPFILE"\n        fi\n'
+               '  if [ -x /usr/bin/x-session-manager ]; then\n    STARTUP=x-session-manager\n')
+    gnomerc = 'case "$BASESTARTUP" in\n  cinnamon-session*)\n    GNOMERC=$HOME/.gnomerc\n    if [ -r "$GNOMERC" ]; then\n      . "$GNOMERC"\n    fi\n'
+    resources = 'if has_option allow-user-resources && [ -f "$USRRESOURCES" ]; then\n  if type xrdb >/dev/null 2>&1; then\n    xrdb -merge $USRRESOURCES\n'
+    im_config = ('    . /usr/share/im-config/xinputrc.common\n    if [ -r "$IM_CONFIG_XINPUTRC_USR" ]; then\n        . $IM_CONFIG_XINPUTRC_USR\n'
+                 '    elif [ -r "$IM_CONFIG_XINPUTRC_SYS" ]; then\n        . $IM_CONFIG_XINPUTRC_SYS\n    fi\n')
+    common = {"/usr/share/im-config/xinputrc.common": 'IM_CONFIG_XINPUTRC_USR=$HOME/.xinputrc\nIM_CONFIG_XINPUTRC_SYS=/etc/X11/xinit/xinputrc\n. gettext.sh\n'}
+    lmde = 'for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do\n    if [ -f "$file" ]; then\n        . "$file"\n    fi\ndone\n'
+    lightdm = ('source_with_error_check () {\n    CONFIG_FILE="$1"\n    echo "Loading $CONFIG_FILE"\n    BASH_VERSION= . "$CONFIG_FILE" 2>"$ERR"\n'
+               '    if [ -s "$ERR" ]; then\n        . /usr/lib/lightdm/config-error-dialog.sh\n    fi\n}\n'
+               'for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do\n    if [ -f "$file" ]; then\n'
+               '        source_with_error_check "$file"\n    fi\ndone\n    xresourcefile="$HOME/.Xresources"\n        xrdb -merge "$xresourcefile"\n'
+               '    for file in "/etc/X11/Xkbmap" "$HOME/.Xkbmap"; do\n            setxkbmap `cat "$file"`\n    done\n'
+               'USERXSESSIONRC=$HOME/.xsessionrc\n    for i in `ls $xsessionddir`; do\n        script="$xsessionddir/$i"\n            . "$script"\n    done\n')
+    session = {"Xsession": xsession, "40x11-common_xsessionrc": xsessionrc, "50x11-common_determine-startup": startup,
+               "55cinnamon-session_gnomerc": gnomerc, "30x11-common_xresources": resources, "70im-config_launch": im_config, "99lmde": lmde,
+               "lightdm-session": lightdm}
+    sourced = {name: _sourced_from_the_home(text, *(t for n, t in session.items() if n != name), read=lambda p: common.get(p, ""))
+               for name, text in session.items()}
+    assert sourced == {"Xsession": [], "40x11-common_xsessionrc": ["~/.xsessionrc"], "50x11-common_determine-startup": [],
+                       "55cinnamon-session_gnomerc": ["~/.gnomerc"], "30x11-common_xresources": [], "70im-config_launch": ["~/.xinputrc"],
+                       "99lmde": ["~/.profile", "~/.xprofile"], "lightdm-session": ["~/.profile", "~/.xprofile"]}, sourced
+    assert _sourced_from_the_home(xsessionrc) == [] and _sourced_from_the_home(im_config, xsession) == []     # the name is set elsewhere
+    assert _started_from_the_home(startup, xsession) == ["~/.Xsession", "~/.xsession"] and _started_from_the_home(startup) == []
+    assert _sourced_from_the_home('for rc in ~/.bashrc.d/*; do\n  if [ -f "$rc" ]; then source "$rc"; fi\ndone\n[ -r ${HOME}/.x ] && . ${HOME}/.x\n') == [
+        "~/.bashrc.d", "~/.x"]
+    assert _cinnamon_runs_what_its_settings_name(
+        '        let list = this.kb_schema.get_strv("custom-list");\n            let command = schema.get_string("command");\n'
+        '                Util.spawnCommandLine(command);\n') and not _cinnamon_runs_what_its_settings_name("Util.spawnCommandLine(command);")
+    # ...and what this system's own copies name
+    for path, where in sorted(_loaded_from_the_home().items()):
+        assert path.startswith("~/") and sb.protected_folder(path), f"{where} loads {path}, which would be shared"
 
 
 # ---------------------------------------------------------------- a degraded host (round five)
@@ -2040,9 +3059,10 @@ def test_a_missing_runtime_dir_refuses_the_launch_with_a_message(env):
 
 @needs_proxy
 def test_a_document_portal_that_never_answers_only_delays_the_launch_and_passes_the_arguments_through(env, tmp_path):
-    # The forward helper calls Documents.Add with a timeout; a document portal that hangs (a stuck
-    # FUSE mount) must cost that timeout and nothing more -- the launch goes on with the arguments as
-    # they were (R17.6.2), the app runs, the status comes out.
+    # The forward helper calls the document portal with a timeout (List, what the app holds, before
+    # the first Add: CR1.5-52); a document portal that hangs (a stuck FUSE mount) must cost that
+    # timeout and nothing more -- the launch goes on with the arguments as they were (R17.6.2), the
+    # app runs, the status comes out.
     import time
     (env.home / "Documents").mkdir()
     (env.home / "Documents" / "n.txt").write_text("x\n")
@@ -2076,6 +3096,7 @@ from gi.repository import Gio, GLib
 XML = '''<node><interface name="org.freedesktop.portal.Documents">
 <method name="Add"><arg type="h" direction="in"/><arg type="b" direction="in"/><arg type="b" direction="in"/><arg type="s" direction="out"/></method>
 <method name="GetMountPoint"><arg type="ay" direction="out"/></method>
+<method name="List"><arg type="s" direction="in"/><arg type="a{say}" direction="out"/></method>
 </interface></node>'''
 def call(conn, sender, path, iface, method, params, inv):
     pass                                                        # never answers: the caller's timeout is all it gets

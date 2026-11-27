@@ -24,6 +24,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import unicodedata
 
 import sys
 
@@ -46,17 +47,37 @@ HOSTILE = [
     "~/glob*", "~/q?", "~/[set]", "~/--not-an-option", "~/-x", "~/new\nline", "~/tab\tbed", "~/perc%20ent",
     "~/unicode-ünïcødé", "~/paren(s)", "~/pipe|here", "~/redirect>out", "~/hash#tag", "~/tilde~2",
     "~/trailing/", "~/double//slash", "~/dot/./dot", "~/" + "x" * 200,
+    # a control character (CR1.5-26): a NUL, which os.path.realpath() raises on, and the others; the
+    # corpus had a newline and a tab alone, which were bound, and its one NUL was cut off (WORDS, below)
+    "~/a\x00b", "\x00", "~/\x00", "/media/usb\x00/../../proc", "~/bell\x07", "~/esc\x1b[2J", "~/back\x08space", "~/del\x7f", "~/next\x85line", "~/cr\rlf",
 ]
-WORDS = HOSTILE + ["--ro-bind", "--", "-", "", " ", "file:///no/such/file", "file://evil/x", "https://x/y z",
+
+
+def _marked(path: str) -> str:
+    """`path` as it is kept and shown: the mark where each control character was (CR1.5-26)."""
+    return "".join("\ufffd" if unicodedata.category(c) == "Cc" else c for c in path)
+
+
+CONTROLS = [p for p in HOSTILE if p != _marked(p)]
+# ...as arguments, which can hold no NUL: the kernel ends each at one
+WORDS = [w for w in HOSTILE if "\x00" not in w] + ["--ro-bind", "--", "-", "", " ", "file:///no/such/file", "file://evil/x", "https://x/y z",
                    "$(touch /tmp/pwned)", "`id`", "'", '"', "\\", "a\x00b"[:1] + "nul"]
 
 
-def _bind_pairs(text: str) -> list[tuple[str, str]]:
-    """Every `--bind-try X Y` / `--ro-bind-try X Y` word pair baked into the app's bwrap command,
-    unquoted: the command runs from its `bwrap \\` line to the `"$@" || status=$?` word."""
+def _bwrap_words(text: str) -> list[str]:
+    """The words of the app's bwrap command that the launcher's text holds, unquoted: each folder
+    grant's, which it puts before "$@" at the launch while the grant stands (`[ F = "$g1" ] && set
+    -- --bind-try F F "$@"`, the lines after the guard's; CR1.5-40: they were baked into the
+    command), and the command's own, from its `bwrap \\` line to the `"$@" || status=$?` word."""
+    grants = text[text.rindex('; do guard "$d"; done\n'):text.rindex("if [ \"$logging\" = 1 ]")].split("\n", 1)[1]
     block = text[text.rindex("bwrap \\\n"):]
     block = block[:block.index('"$@" || status=$?')]
-    words = shlex.split(block.replace("\\\n", " "), posix=True)
+    return shlex.split(grants, posix=True) + shlex.split(block.replace("\\\n", " "), posix=True)
+
+
+def _bind_pairs(text: str) -> list[tuple[str, str]]:
+    """Every `--bind-try X Y` / `--ro-bind-try X Y` word pair among them (_bwrap_words)."""
+    words = _bwrap_words(text)
     return [(words[i + 1], words[i + 2]) for i, w in enumerate(words)
             if w in ("--bind-try", "--ro-bind-try", "--bind", "--ro-bind") and i + 2 < len(words)]
 
@@ -71,10 +92,21 @@ def test_a_hostile_folder_path_is_bound_whole_or_refused_and_the_launcher_stays_
     text = sb.build_launcher("app", "App", str(tmp_path / "home/bin/apps/app/1"), "bin/app", gs,
                              apps_root=str(tmp_path / "home/bin/apps"))
     subprocess.run(["sh", "-n"], input=text, text=True, check=True)
-    expanded = os.path.expanduser(path)
+    expanded = os.path.expanduser(sb.folder_path(path))      # as a grant is named: no doubled slash, no `.` step, no slash last (CR1.5-16)
     refused = sb.protected_folder(path, str(tmp_path / "home/bin/apps"))
     home = str(tmp_path / "home")
     pairs = [(s, d) for s, d in _bind_pairs(text) if s.startswith(home)]      # the folder grants: under the fake home
+    if path in CONTROLS:
+        # refused whoever asks, kept and shown with a mark where the character was, and no check raises
+        named, why = _marked(path), "not a full path (it has a control character in it, shown as \ufffd)"
+        assert refused == sb.protected_folder(named) == why and sb.secret_folder(path) == sb.secret_folder(named) == sb.system_folder(path) == ""
+        assert sb.folder_path(path) == named and list(gs["folders"]) == [named] and CONTROLS and "\ufffd" in named
+        assert sb.strip_protected(gs)[1] == [(named, why)] and sb.strip_secrets(gs)[1] == []
+        assert f"{named} · refused: {why}" in sb.summary(gs) and f"# Refused folder grant {' '.join(named.split())}: {why} (R17.3.1).\n" in text
+        assert sb.changes(sb.resolve_template("standard"), gs)[0] == [named + " (read-write)"] and named in json.dumps(sb.to_json(gs), ensure_ascii=False)
+        assert sb.parse_folders(f"+{path}:ro, ~/Notes") == {f"+{named}": "ro", "~/Notes": "rw"}     # ...from the line's own reading on
+    if "\n" not in path:
+        assert not [c for c in text if unicodedata.category(c) == "Cc" and c != "\n"], path      # nothing of it in the launcher's text
     if refused:
         assert pairs == [] and "# Refused folder grant" in text
     else:
@@ -110,19 +142,147 @@ def test_a_folder_not_named_from_the_root_or_home_is_refused_and_never_bound(pat
     assert path not in kept["folders"] and [p for p, _ in refused] == [path]
 
 
+# CR1.5-5 (#380): a system place was an ordinary folder to the never-shared check, so a review's
+# `Sandbox folders: /proc:ro` was bound as asked, after the sandbox's own /proc, and over it. The
+# corpora above name folders from `~` or from nowhere; none named a place outside the home. These
+# are the system's own places (sb.SYSTEM_PLACES), what an app would want inside them, a folder above
+# two of them, and each written the ways a line can write a path: all refused, none ever a bind.
+SYSTEM = ["/proc", "/proc/1/environ", "/proc/self/root", "/proc/self/cwd", "/sys", "/dev", "/dev/shm", "/run", "/run/dbus/system_bus_socket",
+          "/run/docker.sock", "/run/user", "/var/run", "/var/run/docker.sock", "/var", "/tmp", "/tmp/.X11-unix", "/tmp/ssh-XXXXab12cd/agent.4242",
+          "/var/tmp", "/etc", "/etc/passwd", "/usr", "/usr/lib", "/boot", "//proc", "/proc/", "/./proc", "/proc/.", "/tmp//", "/mnt/../proc",
+          "/run/media/../docker.sock", "/usr/../tmp", "/dev/shm/my folder", "/tmp/it's", "/tmp/new\nline", "/tmp/$(id)"]
+
+
+@pytest.mark.parametrize("path", SYSTEM, ids=[repr(p) for p in SYSTEM])
+def test_a_system_place_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")                        # where a user's home is: /tmp is not above it
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps = "/home/kata/bin/apps"
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+/media/usb": mode}})
+        assert sb.protected_folder(path, apps), path                 # refused, with a reason
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        words = _bwrap_words(text)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/media/usb", "/media/usb") in grants               # the folder beside it, as asked
+        mine = {path, os.path.normpath(path), os.path.realpath(path)}
+        assert not [g for g in grants if set(g) & mine], grants     # and this one never, by any of its names
+        assert "# Refused folder grant" in text
+        chips = sb.summary(gs, apps)
+        named = sb.folder_path(path)                                # `//proc` and `/proc/` are named /proc (CR1.5-16)
+        assert any(c.startswith(named + " · refused") for c in chips), chips
+        kept, refused = sb.strip_protected(gs, apps)
+        assert not {path, named} & set(kept["folders"]) and [p for p, _ in refused] == [named]
+
+
+# CR1.5-9 (#384): places in the home that code runs from later, which the never-shared list had not
+# heard of (Cinnamon's folders, bash-completion's files, a window manager's configuration, an
+# editor's extensions, Cargo's and Go's programs), each written the ways a line can write a path, with
+# what is inside it and above it: all refused, none ever a bind, and the folder beside it as asked.
+LATER = ["~/.local/share/cinnamon", "~/.local/share/cinnamon/applets", "~/.local/share/cinnamon/extensions/", "~//.local/share/cinnamon/desklets",
+         "/home/kata/.local/share/cinnamon/search_providers", "~/.cinnamon", "~/.cinnamon/panel-launchers/x.desktop", "~/.bash_completion",
+         "/home/kata/.bash_completion", "~/.config/bash_completion", "~/.local/share/bash-completion", "~/.local/share/bash-completion/completions/git",
+         "~/.xinputrc", "~/.config/sway", "~/.config/sway/config", "~/.sway", "~/.config/i3", "~/.i3/config", "~/.config/hypr/hyprland.conf",
+         "~/.config/labwc/autostart", "~/.config/openbox", "~/.config/river/init", "~/.config/niri", "~/.config/wayfire.ini",
+         "~/.config/pipewire", "~/.config/pipewire/pipewire.conf.d/x.conf", "~/.vscode/extensions", "~/.vscode", "~/./.vscode/extensions/a.b-1.0",
+         "~/.vscode-oss/extensions", "~/.cargo/bin", "~/.cargo", "~/.cargo/bin/cargo", "~/go/bin", "~/go", "~/Notes/../go/bin",
+         "~/.config/sway/it's", "~/.cargo/bin/new\nline", "~/go/bin/$(id)",
+         # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
+         "~/.config/dconf", "~/.config/dconf/", "~/.config/dconf/user", "/home/kata/.config/dconf", "~//.config/dconf/user",
+         "~/.config/user-dirs.dirs", "/home/kata/.config/user-dirs.dirs", "~/Notes/../.config/user-dirs.dirs", "~/.config/./dconf",
+         # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
+         "~/.config/menus", "~/.config/menus/", "~/.config/menus/applications-merged", "/home/kata/.config/menus/cinnamon-applications-merged/x.menu",
+         "~//.config/menus", "~/Notes/../.config/menus/cinnamon-applications.menu",
+         # ...the file cinnamon-session's Xsession hook sources, and Xsession's other name for ~/.xsession (P2-2)
+         "~/.gnomerc", "/home/kata/.gnomerc", "~/./.gnomerc", "~/Notes/../.gnomerc", "~/.Xsession", "/home/kata//.Xsession",
+         # ...the user's thumbnailers, which the file manager runs (P2B-1)
+         "~/.local/share/thumbnailers", "~/.local/share/thumbnailers/", "/home/kata/.local/share/thumbnailers/x.thumbnailer",
+         "~/.local/./share/thumbnailers", "~/Notes/../.local/share/thumbnailers",
+         # ...WirePlumber's configuration, which starts programs as PipeWire's does (P2C-1)
+         "~/.config/wireplumber", "~/.config/wireplumber/", "~/.config/wireplumber/wireplumber.conf", "/home/kata/.config/wireplumber/main.conf",
+         "~/.config//wireplumber/wireplumber.conf.d/x.conf", "~/Notes/../.config/wireplumber",
+         # ...and Readline's file, where a key can be made to type a command (P2C-2)
+         "~/.inputrc", "/home/kata/.inputrc", "~//.inputrc", "~/Notes/../.inputrc",
+         # ...and the sound clients' configuration, in both folders libpulse reads (P2B-2)
+         "~/.config/pulse", "~/.config/pulse/", "~/.config/pulse/client.conf", "/home/kata/.config/pulse", "~/.config/./pulse/cookie",
+         "~/.pulse", "/home/kata/.pulse/client.conf", "~/Notes/../.pulse"]
+
+
+@pytest.mark.parametrize("path", LATER, ids=[repr(p) for p in LATER])
+def test_a_place_code_runs_from_later_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps = "/home/kata/bin/apps"
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+~/Notes": mode}})
+        assert sb.protected_folder(path, apps), path                 # refused, with a reason
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        words = _bwrap_words(text)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/home/kata/Notes", "/home/kata/Notes") in grants   # the folder beside it, as asked
+        full = os.path.expanduser(path)
+        mine = {full, os.path.normpath(full), os.path.realpath(full)}
+        assert not [g for g in grants if set(g) & mine], grants     # and this one never, by any of its names
+        assert "# Refused folder grant" in text
+        named = sb.folder_path(path)
+        assert any(c.startswith(named + " · refused") for c in sb.summary(gs, apps)), sb.summary(gs, apps)
+        kept, refused = sb.strip_protected(gs, apps)
+        assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == [named]
+
+
+# CR1.5-45 (#701): another folder AppKata has apps in (the install folder before Settings changed),
+# written the ways a line can write it, with what an app would want of it: the other app's program
+# and launcher. An app was told of its own install folder alone; all refused now, none ever a bind.
+OTHER_ROOT = ["~/OldApps", "~/OldApps/", "~//OldApps", "/home/kata/OldApps", "~/OldApps/victim", "~/OldApps/victim/run", "~/OldApps/victim/1.0/bin/victim",
+              "~/./OldApps/victim/", "~/Notes/../OldApps/victim", "~/OldApps/it's", "~/OldApps/$(id)", "~/OldApps/a b/run"]
+
+
+@pytest.mark.parametrize("path", OTHER_ROOT, ids=[repr(p) for p in OTHER_ROOT])
+def test_another_folder_apps_are_installed_in_is_refused_and_never_bound_however_it_is_written(path, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/kata")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    for v in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPKATA_APPS", "APPKATA_DATA", "APPKATA_LOG_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.chdir(tmp_path)
+    apps, own = "/home/kata/Apps", sb.Own(roots=("/home/kata/Apps", "/home/kata/OldApps"))
+    for mode in ("rw", "ro"):
+        gs = sb.apply_overrides(sb.resolve_template("standard"), {"folders": {"+" + path: mode, "+~/Notes": mode}})
+        assert sb.protected_folder(path, apps, own) == "AppKata's installed apps", path
+        text = sb.build_launcher("app", "App", apps + "/app/1", "bin/app", gs, apps_root=apps, own=own)
+        subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+        words = _bwrap_words(text)
+        grants = [(words[i + 1], words[i + 2]) for i, w in enumerate(words) if w in ("--bind-try", "--ro-bind-try")]
+        assert ("/home/kata/Notes", "/home/kata/Notes") in grants   # the folder beside it, as asked
+        assert not [g for g in grants if any("/OldApps" in w for w in g)], grants      # and nothing of the other apps'
+        named = sb.folder_path(path)
+        assert any(c.startswith(named + " · refused") for c in sb.summary(gs, apps, own=own))
+        kept, refused = sb.strip_protected(gs, apps, own)
+        assert set(kept["folders"]) == {"~/Notes"} and [p for p, _ in refused] == [named]
+
+
 def test_parse_folders_keeps_every_hostile_path_whole():
     for path in HOSTILE:
-        if "," in path or "\n" in path:
-            continue                                     # the line's own separators; a newline ends the line
+        if "," in path:
+            continue                                     # the line's own separator
         out = sb.parse_folders(f"+{path}:ro, -{path}, {path}")
-        assert out == {f"+{path}": "ro", f"-{path}": None, path: "rw"}, (path, out)
+        kept = _marked(path)                             # whole, but a control character: a mark stands where one was (CR1.5-26)
+        assert out == {f"+{kept}": "ro", f"-{kept}": None, kept: "rw"} and (kept == path) is (path not in CONTROLS), (path, out)
     assert sb.parse_folders("~/a:RO,~/b:Rw, ,,") == {"~/a": "ro", "~/b": "rw"}
 
 
 def _through_the_launchers_own_lines(helper, args, tmp_path, visible=()):
     """The launcher's own file-argument lines (sb._FORWARD_BLOCK, as build_launcher fills them in),
     run by sh over `args` with `helper` as the helper; returns the arguments the app would get."""
-    block = sb._FORWARD_BLOCK.format(helper=shlex.quote(str(helper)), incwd='""', visible=" ".join(shlex.quote(str(v)) for v in visible))
+    block = sb._FORWARD_BLOCK.format(helper=shlex.quote(str(helper)), incwd='""', visible=" ".join(shlex.quote(str(v)) for v in visible),
+                                     never=shlex.quote(str(tmp_path / "never-shared")), name="App")
     script = f"id=io.appkata.app; rt={shlex.quote(str(tmp_path / 'rt'))}\n{block}" + 'for a; do printf "%s\\0" "$a"; done\n'
     r = subprocess.run(["sh", "-euc", script, "sh", *args], capture_output=True, timeout=30,
                        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
@@ -168,6 +328,21 @@ def test_whatever_the_helper_prints_is_read_as_arguments_and_never_run(answer, t
     back, err = _through_the_launchers_own_lines(helper, ["one", "two"], tmp_path)
     assert "ESCAPED" not in err and len(back) == 2, (back, err)
     assert back == ["one", "two"] or answer.count("\n=") == 1 and answer.startswith("="), back
+
+
+def test_a_line_of_the_answer_that_says_why_is_printed_as_text_and_is_no_argument(tmp_path):
+    # ...and a line with "!" first is why an argument was not handed over (CR1.5-38): printed after
+    # the app's name on stderr, as text (no format, no shell, no escape read), and counted as no
+    # argument; a line that is neither is nothing. R17.4 says so, and no hostile answer above had one.
+    ran = tmp_path / "ran"
+    why = f"%s%n\\c\\0101 $(touch {ran}) `touch {ran}`; touch {ran} 'x' \"y\""
+    helper = tmp_path / "hostile.py"
+    answer = ("!" + why + "\n=one\njunk\n!second\n=two\n").encode()
+    helper.write_text(f"import sys\nsys.stdout.buffer.write({answer!r})\n")
+    back, err = _through_the_launchers_own_lines(helper, ["a", "b"], tmp_path)
+    assert back == ["one", "two"] and err == f"App {why}\nApp second\n" and not ran.exists(), (back, err)
+    helper.write_text("import sys\nsys.stdout.write('!x\\n!y\\n')\n")           # two lines that say why are not two arguments
+    assert _through_the_launchers_own_lines(helper, ["a", "b"], tmp_path) == (["a", "b"], "")
 
 
 @pytest.mark.parametrize("name", ["My App", "it's", 'say "hi"', "a;b", "a&b", "$HOME", "`id`", "glob*", "--help", "-", "",

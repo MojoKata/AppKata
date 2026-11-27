@@ -837,7 +837,7 @@ class Backend(QObject):
             img_mb = (next((c["size"] for c in out["candidates"] if c.get("kind") == "appimage"), 0) or 0) / 1e6
             out["sandbox"] = {"applicable": True, "source": r.get("source", "default"),
                               "template": r.get("template", "strict"), "level": sandbox.level_of(gs),
-                              "chips": sandbox.summary_chips(gs, self._app_options(url).root, r.get("template")) + sandbox.refused_chips(r.get("refused")),
+                              "chips": sandbox.summary_chips(gs, eff.root, r.get("template"), eff.own) + sandbox.refused_chips(r.get("refused")),
                               "grants": gs, "suggestsOff": self._suggests_off(url),
                               "templates": self.sandboxTemplates,
                               "isCli": self._is_cli(url), "appImage": chosen_card["kind"] == "appimage",
@@ -852,7 +852,7 @@ class Backend(QObject):
                 rk = self._resolved_sandbox(url, kind=chosen_card["kind"], is_cli=k == "cli") or {}
                 gk = rk.get("grants") or gs
                 by_kind[k] = {"template": rk.get("template", "strict"), "level": sandbox.level_of(gk), "source": rk.get("source", "default"),
-                              "chips": sandbox.summary_chips(gk, self._app_options(url).root) + sandbox.refused_chips(rk.get("refused"))}
+                              "chips": sandbox.summary_chips(gk, eff.root, own=eff.own) + sandbox.refused_chips(rk.get("refused"))}
             out["sandbox"]["byKind"] = by_kind
             out["kind"] = {"detected": self._detected_kind(url), "choice": self._install_settings(url).get("cliKind") or ""}
         else:
@@ -1732,6 +1732,26 @@ class Backend(QObject):
                                 keep=int(p.get("keepVersions", 2) or 0), scope=p.get("installFor") or "me",
                                 folder_everyone=p.get("installDirEveryone") or "")
 
+    def _own_folders(self) -> sandbox.Own:
+        """AppKata's own folders that no sandboxed app is given, beyond the install folder of the app
+        asked about (R17.3.1, sandbox.Own): the command links folder Settings names, whether or
+        not the app has a link there (the other apps' links are), and each folder an installed app's
+        command link is in today, which is an earlier setting's until the app is next updated
+        (CR1.5-37: no list had the command links folder, so one set elsewhere than ~/bin could be
+        granted to an app, which then replaces a command the user runs). And every install folder
+        AppKata has apps in, with the one Settings name for the next install: an app keeps the
+        folder it was installed in (R4.3.1), so there can be several, and an app in one was told
+        of its own alone and could be granted another's (CR1.5-45)."""
+        from appkata_core.platform import command_dir_default
+        commands = {install.Portable(command_dir=self._prefs.get("commandDir") or command_dir_default()).command_folder}
+        roots = {self.portable().root}
+        for row in self.db.all("SELECT record FROM installs"):
+            rec = json.loads(row["record"] or "{}")
+            commands |= {os.path.dirname(link) for link in rec.get("links", []) if os.path.dirname(link) != rec.get("target")}
+            if rec.get("current") and rec.get("root"):
+                roots.add(rec["root"])
+        return sandbox.Own(commands=tuple(sorted(commands)), roots=tuple(sorted(roots)))
+
     def _recommended(self, url: str) -> dict:
         """Install options recommended in the Trusts' AppKata.md files (R10.3.1): for each
         option, yours first, then the highest-Score Trust's, then by name."""
@@ -1750,6 +1770,7 @@ class Backend(QObject):
         """The portable options for one app: its own (saved at install), else a Trust's recommendation,
         else Settings (R4.3.1.6)."""
         p = self.portable()
+        p.others = self._own_folders()
         a = self._app(url) or {}
         own = dict(choice or {}) or a.get("installChoice") or {}
         rec = self._recommended(url).get("settings", {})
@@ -1807,8 +1828,9 @@ class Backend(QObject):
     def _left_note(left: list[str]) -> str:
         """What an uninstall's notice adds when something the app's record names is still there
         (R4.7): a folder that isn't AppKata's to remove or couldn't be deleted, the user's own file
-        where a command link was (R4.3.1.3). The app's row is gone by then, so this is the one
-        place it is said (CR1.3-12)."""
+        where a command link was (R4.3.1.3), the private home the user asked to have removed
+        where it couldn't be removed whole (R17.14; CR1.5-20). The app's row is gone by then, so
+        this is the one place it is said (CR1.3-12)."""
         return f" Not removed: {', '.join(left)}." if left else ""
 
     def _save_options(self, url: str, port: install.Portable, extra: dict | None = None) -> None:
@@ -1965,6 +1987,19 @@ class Backend(QObject):
             return None, []
         gs = sandbox.resolve(reviews=reviews, is_cli=self._is_cli(url))[1]
         return sandbox.strip_secrets(gs) if sandbox.level_of(gs) != "off" else (gs, [])
+
+    def _given(self, url: str, gs: dict | None) -> dict | None:
+        """The grant set `gs` as the app at `url` is really given it: without the folders AppKata
+        refuses, judged as the app's launcher judges them (R17.3.1). A set is kept as it was written,
+        a refused folder too, so that the summary and the launcher can say it was refused; but where
+        two sets are compared for what one adds, such a folder is nothing either of them gives. The
+        review badge said "suggests adding ~/.ssh (read-only)" and the Audit "added: ~/.ssh
+        (read-only)" of a folder that is never mounted, and a review asking for nothing else stood
+        as a suggestion that adopting never settled (CR1.8-39)."""
+        if gs is None or sandbox.level_of(gs) == "off":
+            return gs
+        opts = self._app_options(url)
+        return sandbox.strip_protected(gs, opts.root, opts.own)[0]
 
     def _suggested_template(self, url: str) -> str | None:
         """The template the reviews suggest, when one review does; merged ones are "custom" (R17.3.2)."""
@@ -2181,8 +2216,8 @@ class Backend(QObject):
         app, so a refused folder is judged against its install root, as the launcher does; `template`
         the template it is named after (a folder template says "No folder yet", F10)."""
         grants = _plain(grants)
-        root = self._app_options(url).root if url else None
-        return sandbox.summary_chips(dict(grants) if grants else {}, root, template or None)
+        opts = self._app_options(url) if url else None
+        return sandbox.summary_chips(dict(grants) if grants else {}, opts and opts.root, template or None, opts and opts.own)
 
     @Property(str, notify=passwordServiceNoteChanged)
     def passwordServiceNote(self) -> str:
@@ -2232,15 +2267,18 @@ class Backend(QObject):
             return {"applicable": False}
         gs = r["grants"]
         is_cli = self._is_cli(url)
-        root = self._app_options(url).root           # the chips judge refused folders as the launcher does
+        opts = self._app_options(url)                # the chips judge refused folders as the launcher does
+        root, own = opts.root, opts.own
         suggested, srefused = self._suggestion(url)
+        # what each set gives: a folder AppKata refuses is nothing a suggestion adds (CR1.8-39)
+        given, offered = self._given(url, gs), self._given(url, suggested)
         a = self._app(url) or {}
         # whether the app really runs sandboxed: its launcher exists. An app installed while the system
         # couldn't sandbox runs Off until then, whatever its grants say (R17.10).
         active = self._runs_sandboxed(url)
         return {"applicable": True, "source": r["source"], "template": r["template"], "active": active,
                 "level": sandbox.level_of(gs), "levelLabel": sandbox.LEVEL_LABELS[sandbox.level_of(gs)],
-                "chips": sandbox.summary_chips(gs, root, r["template"]) + sandbox.refused_chips(r.get("refused")), "grants": gs, "isCli": is_cli,
+                "chips": sandbox.summary_chips(gs, root, r["template"], own) + sandbox.refused_chips(r.get("refused")), "grants": gs, "isCli": is_cli,
                 # named after its template, with changes: "Offline editor · customized" (review 2, F10)
                 "customized": sandbox.customized(r["template"], gs), "userFolders": sandbox.user_folders(),
                 "folders": [{"path": p, "mode": m} for p, m in sorted(sandbox.normalize(gs)["folders"].items())],
@@ -2253,7 +2291,7 @@ class Backend(QObject):
                 "sessionWarning": self._sb_session_warning(),
                 # only an app that has the network can reach an abstract session bus (R17.9, R3-8)
                 "busWarning": sandbox.bus_warning() if sandbox.normalize(gs)["network"] else {},
-                "reviewSuggests": sandbox.summary_chips(suggested, root, self._suggested_template(url)) + sandbox.refused_chips(srefused)
+                "reviewSuggests": sandbox.summary_chips(suggested, root, self._suggested_template(url), own) + sandbox.refused_chips(srefused)
                                   if suggested is not None else [],
                 # a review's Off is a suggestion the user adopts with "Use theirs", never applied by itself (R17.3.2)
                 "suggestsOff": suggested is not None and sandbox.level_of(suggested) == "off",
@@ -2266,13 +2304,13 @@ class Backend(QObject):
                 # review that named only that was never offered (the review of PR #694, P1-1).
                 "reviewBadge": bool(self._prefs.get("sandboxReviewBadge", True)
                                     and self._prefs.get("followReviewerSandbox", True) and suggested is not None
-                                    and sandbox.differs(gs, suggested)
+                                    and sandbox.differs(given, offered)
                                     and sandbox.grant_terms(suggested) != self._install_settings(url).get("sandboxReviewSeen")),
                 # a suggestion that differs from what's in force: the dialog offers to adopt it
-                "hasSuggestion": suggested is not None and sandbox.differs(gs, suggested),
+                "hasSuggestion": suggested is not None and sandbox.differs(given, offered),
                 "reviewBy": self._sandbox_reviewer(url),
                 # the badge's words: what the suggestion adds and removes, and what that means (R17.11)
-                "reviewBadgeText": sandbox.suggestion_text(gs, suggested, self._sandbox_reviewer(url) or "A reviewer")
+                "reviewBadgeText": sandbox.suggestion_text(given, offered, self._sandbox_reviewer(url) or "A reviewer")
                                    if suggested is not None else "",
                 "appImage": self._sandbox_kind(url) == "appimage",
                 "home": sandbox.sandbox_home(self._app_id(url)),
@@ -2308,9 +2346,11 @@ class Backend(QObject):
         """An Audit entry's detail for a sandbox change (R17.16; review 2, F11: it said only the template
         and level, so a folder added read "set the sandbox of X · Custom · standard"): the template as
         the dialog names it, the level, what was added and removed, and the launcher it wrote: a hash
-        of its text and the set it was written for (R17.4)."""
+        of its text and the set it was written for (R17.4). Both sets as the app is given them: a
+        folder AppKata refuses is not among what was added (CR1.8-39)."""
         off = sandbox.resolve_template("off")
         bg, ag = (before or {}).get("grants") or off, (after or {}).get("grants") or off
+        bg, ag = self._given(url, bg), self._given(url, ag)
         tpl = (after or {}).get("template") or "off"
         label = sandbox.TEMPLATE_LABELS.get(tpl, tpl) + (" · customized" if tpl in sandbox.TEMPLATES and sandbox.customized(tpl, ag) else "")
         added, removed = sandbox.changes(bg, ag)
@@ -2355,7 +2395,8 @@ class Backend(QObject):
             self._toast.emit("error", f"That sandbox choice can't be applied: {why}.")
             return
         if cfg and cfg.get("custom") is not None:      # a picked folder AppKata never shares (R17.3.1)
-            kept, refused = sandbox.strip_protected(cfg["custom"], self._app_options(url).root)
+            opts = self._app_options(url)
+            kept, refused = sandbox.strip_protected(cfg["custom"], opts.root, opts.own)
             if refused:
                 cfg["custom"] = sandbox.to_json(kept)
                 self._toast.emit("error", "Not shared: " + "; ".join(f"{p} ({why})" for p, why in refused)
@@ -2411,11 +2452,17 @@ class Backend(QObject):
         a = self._app(url)
         suggested, _ = self._suggestion(url)
         self._audit("you", "app", "kept the sandbox of", a["name"] if a else url, url,
-                    {"suggested": ", ".join(sandbox.summary(suggested, self._app_options(url).root) if suggested is not None else [])})
+                    {"suggested": ", ".join(sandbox.summary(suggested, (opts := self._app_options(url)).root, own=opts.own) if suggested is not None else [])})
         self.reload()
 
     def _regenerate_launcher(self, url: str) -> Exception | None:
         """Rewrite ~/bin/apps/<app>/run for the current grant set, without reinstalling (R17.4).
+        Every road here keeps where each granted folder led when its grant was judged, the
+        user's own Save of the app's sandbox (:meth:`_apply_sandbox`) as AppKata's start and the
+        setup do: only a folder new to the set is judged, and one is judged anew by taking it out
+        and granting it again (install._sandbox_launcher; CR1.5-53, and the owner's decision of
+        2026-11-26 on #735: the Save judged every folder anew, so a link put on a kept grant's
+        way became the grant at the next Save made for any other reason).
         Returns None, or the error that kept it from being written: the app is then as it was,
         install.rewrite_launcher having put the change back (#689's review, P4-B3), or, where even
         that couldn't be done, an install.NotPutBack that names what isn't (P5-2). An error AppKata
@@ -2457,7 +2504,7 @@ class Backend(QObject):
         force (Strict and no network, while the app ran with the network), the Audit's row named the
         old launcher's hash as written for it, and a failed Off stayed sandboxed under "Off", which
         AppKata's start never rewrites."""
-        e = self._regenerate_launcher(url)
+        e = self._regenerate_launcher(url)      # a folder the app already had keeps where it led; one the Save adds is judged (R17.4)
         if e is None:
             return True
         saved = self._install_settings(url)
@@ -2597,7 +2644,7 @@ class Backend(QObject):
                 r = self._resolved_sandbox(url)
                 self._audit(actor, "app", "rewrote the launcher of", (self._app(url) or {}).get("name", url), url,
                             {"by": f"AppKata {APPKATA_VERSION}", "launcher": self._launcher_hash(url),
-                             "written for": sandbox.describe(r["template"], r["grants"]) if r else ""})
+                             "written for": sandbox.describe(r["template"], self._given(url, r["grants"])) if r else ""})
         self._tell_sandboxed(first, actor)
         return done
 

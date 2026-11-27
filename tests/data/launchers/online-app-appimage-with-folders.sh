@@ -105,15 +105,33 @@ case "$upstream" in
        01:) busat=abstract ;;
      esac ;;
 esac
+# A folder the app was given is mounted only while it leads where it led when the app was given it
+# (R17.4): bwrap follows each link on the way to it, and a link put there since -- the app can put
+# one in a folder it could write, above another -- would mount whatever the link names. Where it led
+# is kept with the install, and is the same in every launcher AppKata writes until you take the
+# folder out in the app's Sandbox dialog and give it again, which judges it anew.
+# "$1": the folder; "$2": where it led then. The folder's variable ($g1, $g2 ...) is the folder
+# while its grant stands and empty once it is dropped: nothing below mounts or counts it then.
+leads() {
+  now=$(readlink -m -- "$1" 2>/dev/null) || now=
+  [ "$now" = "$2" ] && return 0
+  printf "%s runs sandboxed and isn't given %s this time: it led to %s when the app was given it and leads to %s now, so a link on the way there was made or changed since. AppKata keeps to where it led: if the change is yours, take the folder out in the app's Sandbox dialog, save, and give it again, and the folder is judged anew.\n" App "$1" "$2" "${now:-nowhere that can be followed}" >&2
+  return 1
+}
+g1=/home/kata/Media; leads "$g1" /home/kata/Media || g1=
+g2=/home/kata/Projects; leads "$g2" /home/kata/Projects || g2=
 # A file or folder the app was given as an argument ("Open with", a drop on the menu entry, `tool
 # ~/x.txt`, `--file=~/x.txt`) is a host path: one in a granted folder becomes the path the app sees it
 # at, the rest are handed over through the document portal from the host side. Without python3-gi or
 # a document portal the arguments pass through unchanged (R17.6.2). The helper's answer is data, one
 # argument a line ("=" first, a backslash doubled, a line break as a backslash and n): it is read
 # word by word and never evaluated, and replaces the arguments only when it holds as many as there were.
+# A file or folder that is a never-shared one (R17.3.1), in one or above one is not handed over,
+# whoever names it, nor one whose path passes through a link that isn't root's own: the helper is
+# given the list, and a line of its answer with "!" first says why.
 folders=1; [ "${busok:-1}" = 1 ] || folders=
 if [ $# -gt 0 ] && command -v python3 >/dev/null 2>&1; then
-  if fwd=$(python3 /home/kata/.local/share/appkata/sandboxes/.identity/forward-files.py "$id" "$rt" "" ${folders:+/home/kata/Media} ${folders:+/home/kata/Projects} -- "$@" 2>/dev/null); then
+  if fwd=$(python3 /home/kata/.local/share/appkata/sandboxes/.identity/forward-files.py "$id" "$rt" "" ${folders:+${g1:+/home/kata/Media}} ${folders:+${g2:+/home/kata/Projects}} -- "${bussocks:-}" /home/kata/.local/share/appkata/sandboxes /home/kata/bin/apps /home/kata/bin /home/kata/.local/share/appkata /home/kata/.config/autostart /home/kata/.config/autostart-scripts /home/kata/.config/systemd /home/kata/.local/share/systemd /home/kata/.local/share/applications /home/kata/.local/share/dbus-1 /home/kata/.local/share/flatpak /home/kata/.local/bin /home/kata/.config/environment.d /home/kata/.pam_environment /home/kata/.config/plasma-workspace /home/kata/.local/share/gnome-shell/extensions /home/kata/.local/share/kwin/scripts /home/kata/.local/share/plasma/plasmoids /home/kata/.local/share/nautilus/scripts /home/kata/.local/share/kservices5 /home/kata/.local/share/kio/servicemenus /home/kata/.mozilla/native-messaging-hosts /home/kata/.local/share/nemo/scripts /home/kata/.local/share/nemo/actions /home/kata/.local/lib /home/kata/.local/share/cinnamon /home/kata/.cinnamon /home/kata/.local/share/bash-completion /home/kata/.config/pipewire /home/kata/.config/wireplumber /home/kata/.config/pulse /home/kata/.pulse /home/kata/.config/dconf /home/kata/.config/user-dirs.dirs /home/kata/.config/menus /home/kata/.local/share/thumbnailers /home/kata/.vscode/extensions /home/kata/.vscode-oss/extensions /home/kata/.cargo/bin /home/kata/go/bin /home/kata/.gitconfig /home/kata/.config/git /home/kata/.ssh /home/kata/.gnupg /run/user/1000 /home/kata/.bashrc /home/kata/.bash_profile /home/kata/.bash_login /home/kata/.profile /home/kata/.bash_logout /home/kata/.bash_aliases /home/kata/.bashrc.d /home/kata/.bash_completion /home/kata/.config/bash_completion /home/kata/.zshrc /home/kata/.zprofile /home/kata/.zshenv /home/kata/.zlogin /home/kata/.zlogout /home/kata/.config/fish /home/kata/.kshrc /home/kata/.cshrc /home/kata/.tcshrc /home/kata/.inputrc /home/kata/.xsessionrc /home/kata/.xprofile /home/kata/.xinitrc /home/kata/.Xresources /home/kata/.xsession /home/kata/.xinputrc /home/kata/.gnomerc /home/kata/.Xsession /home/kata/.config/sway /home/kata/.sway /home/kata/.config/i3 /home/kata/.i3 /home/kata/.config/hypr /home/kata/.config/labwc /home/kata/.config/openbox /home/kata/.config/river /home/kata/.config/niri /home/kata/.config/wayfire.ini /home/kata/.config/chromium/NativeMessagingHosts /home/kata/.config/google-chrome/NativeMessagingHosts /home/kata/.config/google-chrome-beta/NativeMessagingHosts /home/kata/.config/google-chrome-unstable/NativeMessagingHosts /home/kata/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts /home/kata/.config/microsoft-edge/NativeMessagingHosts /home/kata/.config/vivaldi/NativeMessagingHosts /home/kata/.config/opera/NativeMessagingHosts -- "$@" 2>/dev/null); then
     n=0
     while IFS= read -r w; do
       case "$w" in =*) n=$((n + 1)) ;; esac
@@ -122,7 +140,7 @@ $fwd
 EOF
     if [ "$n" -eq $# ]; then
       while IFS= read -r w; do
-        case "$w" in =*) w=${w#=} ;; *) continue ;; esac
+        case "$w" in =*) w=${w#=} ;; "!"*) printf '%s %s\n' App "${w#!}" >&2; continue ;; *) continue ;; esac
         case "$w" in *\\*) w=$(printf '%bx' "$w"); w=${w%x} ;; esac
         set -- "$@" "$w"
       done <<EOF
@@ -184,14 +202,14 @@ if [ "${busok:-1}" = 1 ]; then
   while [ -n "$rest" ]; do
     s=${rest%%"$nl"*}; rest=${rest#*"$nl"}
     if [ -S "$s" ] && [ ! -L "$s" ]; then
-      r=$(readlink -f /home/kata/Media 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Media; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac
-      r=$(readlink -f /home/kata/Projects 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Projects; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac
+      [ -z "$g1" ] || { r=$(readlink -f /home/kata/Media 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Media; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Media"${s#"$r"}" "$@" ;; esac; }
+      [ -z "$g2" ] || { r=$(readlink -f /home/kata/Projects 2>/dev/null) && [ -n "$r" ] || r=/home/kata/Projects; case "$s" in "$r"|"$r"/*) set -- --ro-bind /dev/null /home/kata/Projects"${s#"$r"}" "$@" ;; esac; }
     fi
   done
 else
   # This session's address names a socket file the launcher can't read, which could be in any of them: each shown empty.
-  if [ -S /home/kata/Media ]; then set -- --ro-bind /dev/null /home/kata/Media "$@"; elif [ -d /home/kata/Media ]; then set -- --tmpfs /home/kata/Media --remount-ro /home/kata/Media "$@"; fi
-  if [ -S /home/kata/Projects ]; then set -- --ro-bind /dev/null /home/kata/Projects "$@"; elif [ -d /home/kata/Projects ]; then set -- --tmpfs /home/kata/Projects --remount-ro /home/kata/Projects "$@"; fi
+  if [ -z "$g1" ]; then :; elif [ -S /home/kata/Media ]; then set -- --ro-bind /dev/null /home/kata/Media "$@"; elif [ -d /home/kata/Media ]; then set -- --tmpfs /home/kata/Media --remount-ro /home/kata/Media "$@"; fi
+  if [ -z "$g2" ]; then :; elif [ -S /home/kata/Projects ]; then set -- --ro-bind /dev/null /home/kata/Projects "$@"; elif [ -d /home/kata/Projects ]; then set -- --tmpfs /home/kata/Projects --remount-ro /home/kata/Projects "$@"; fi
   printf "%s runs sandboxed and can't see the folders it was given (%s): this session bus's address (%s) names a socket file AppKata can't read, which could be in one of them.\n" App '~/Media, ~/Projects' "$upstream" >&2
 fi
 
@@ -304,6 +322,8 @@ declare -x $v="*) ;; *) continue ;; esac
   set -- --setenv "$v" "$val" "$@"
 done
 for d in "$HOME/.themes" "$HOME/.icons" "$HOME/.fonts" "$HOME/.config/fontconfig" "$HOME/.local/share/fonts" "$HOME/.local/share/icons" "$HOME/.local/share/themes" "$appdir" "$img" /home/kata/Media /home/kata/Projects; do guard "$d"; done
+[ /home/kata/Projects = "$g2" ] && set -- --bind-try /home/kata/Projects /home/kata/Projects "$@"
+[ /home/kata/Media = "$g1" ] && set -- --ro-bind-try /home/kata/Media /home/kata/Media "$@"
 
 if [ "$logging" = 1 ]; then printf 'AppKata: running %s (%s)\n' "$appdir/$exe" "$(date +%s)" >&2; fi
 status=0
@@ -323,8 +343,6 @@ bwrap \
   --ro-bind-try "$HOME/.local/share/icons" "$HOME/.local/share/icons" \
   --ro-bind-try "$HOME/.local/share/themes" "$HOME/.local/share/themes" \
   --ro-bind-try "$img" "$img" \
-  --ro-bind-try /home/kata/Media /home/kata/Media \
-  --bind-try /home/kata/Projects /home/kata/Projects \
   --ro-bind-try "$rt/pipewire-0" "$rt/pipewire-0" \
   --ro-bind-try "$rt/pulse/native" "$rt/pulse/native" \
   --ro-bind "$info" /.flatpak-info \

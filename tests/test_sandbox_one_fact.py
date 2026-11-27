@@ -232,37 +232,80 @@ def _folders(env: Env) -> dict[str, str]:
         "the install root": f"{h}/apps", "an installed app": f"{h}/apps/other/1.0", "~/.ssh": f"{h}/.ssh",
         "inside ~/.ssh": f"{h}/.ssh/sub", "~/.cache": f"{h}/.cache", "~/Documents": f"{h}/Documents",
         "Firefox's profiles (a secret)": f"{h}/.mozilla/firefox/x.default", "the runtime folder": str(env.rt),
-        "inside the runtime folder": f"{env.rt}/sub", "/tmp's own folder": str(env.home.parent / "elsewhere"),
+        "inside the runtime folder": f"{env.rt}/sub", "a folder under /tmp, outside the home": str(env.home.parent / "elsewhere"),
+        # places code runs from later, which the never-shared list gained (CR1.5-9): the folder, in it, above it
+        "Cinnamon's applets": f"{h}/.local/share/cinnamon/applets", "inside an applet": f"{h}/.local/share/cinnamon/applets/a@b",
+        "a window manager's configuration": f"{h}/.config/sway", "an editor's extensions": f"{h}/.vscode/extensions",
+        "above an editor's extensions": f"{h}/.vscode", "Cargo's programs": f"{h}/.cargo/bin", "above Go's programs": f"{h}/go",
+        "a Go project": f"{h}/go/src/proj",
+        # the desktop's settings database and the file xdg-user-dir runs as shell (pr-review pass 1 of #735, P1-2)
+        "the desktop's settings": f"{h}/.config/dconf", "the settings database": f"{h}/.config/dconf/user",
+        "the folders' names": f"{h}/.config/user-dirs.dirs",
+        # more of them, each found by pr-review pass 2 of #735: the user's own menu files (P2-1)
+        "the app menu's layout": f"{h}/.config/menus", "a merged menu folder": f"{h}/.config/menus/applications-merged",
+        "what Cinnamon's session sources at login": f"{h}/.gnomerc", "Xsession's other session script": f"{h}/.Xsession",
+        "the user's thumbnailers": f"{h}/.local/share/thumbnailers", "WirePlumber's configuration": f"{h}/.config/wireplumber",
+        "Readline's key bindings": f"{h}/.inputrc", "the sound clients' configuration": f"{h}/.config/pulse",
+        "the sound clients' older folder": f"{h}/.pulse",
+        # AppKata's own folders with the install folder set elsewhere, as here (~/apps), and a command
+        # links folder of the user's own (CR1.5-37): ~/bin, the default install folder in it, a
+        # folder beside that, and ~/tools, which is the links' folder only where Settings say so
+        "~/bin": f"{h}/bin", "the default install folder": f"{h}/bin/apps", "an app installed there": f"{h}/bin/apps/old/1.0",
+        "beside the default install folder": f"{h}/bin/mine", "~/tools": f"{h}/tools", "inside ~/tools": f"{h}/tools/sub",
     }
     for p in corpus.values():
         if p != "/":
             os.makedirs(p, exist_ok=True)
+    # A link written in the home: where it leads decides, for both. (One written under /tmp is
+    # refused to a grant by its own name, which is where a grant is mounted, R17.3.1, while a tool
+    # run through it is in the folder it leads to: not the same question, so none is asked here.)
+    os.makedirs(f"{h}/links", exist_ok=True)
     for name, target in (("a link to ~/.ssh", f"{h}/.ssh"), ("a link to a project", f"{h}/src/proj"),
-                         ("a link to the home folder", h)):
-        link = env.home.parent / name.replace(" ", "-").replace("/", "_").replace("~", "home")
+                         ("a link to the home folder", h), ("a link out of the home, into /tmp", str(env.home.parent / "elsewhere"))):
+        link = env.home / "links" / name.replace(" ", "-").replace("/", "_").replace("~", "home").replace(",", "")
         if not link.exists():
             link.symlink_to(target)
         corpus[name] = str(link)
+    # The system's own places, which neither shares (R17.3.1, R17.3.3; CR1.5-5, CR1.5-6), a folder in
+    # one and the folder above two of them, and where a stick or a disk is mounted, which both do.
+    # /etc and /usr themselves are not asked: every launcher binds them read-only itself, which the
+    # reading of its words below can't tell from a share (tests/test_sandbox.py tells them apart).
+    for p in ("/tmp", "/var/tmp", "/dev/shm", "/dev", "/proc", "/sys", "/usr/share", "/var", "/run", "/boot", "/mnt", "/media", "/run/media"):
+        if os.path.isdir(p) and os.access(p, os.X_OK):
+            corpus[p] = p
     return corpus
 
 
 def _sharing_disagreements(tmp_path, monkeypatch) -> list[str]:
+    """Where the tool's launcher and the grant check disagree on a folder, with the command links
+    folder where it is by default (~/bin) and with the one Settings would name (~/tools): the
+    launcher is told that folder as the check is (sb.Own; CR1.5-37)."""
     env = Env(tmp_path, monkeypatch)
-    lp = env.app("tool", sb.resolve_template("cli-tool"))
     path, log = _recording_bwrap(env)
-    wrong = []
-    for name, folder in _folders(env).items():
-        if os.path.exists(log):
-            os.unlink(log)
-        env.run(lp, "true", cwd=folder, env={"PATH": path})
-        with open(log) as f:
-            argv = next(a for a in reversed([json.loads(line) for line in f]) if "/.flatpak-info" in a)
-        here = os.path.realpath(folder)
-        shell = any(argv[i:i + 3] == [b, here, here] for i in range(len(argv) - 2) for b in ("--bind", "--ro-bind"))
-        python = sb.protected_folder(folder, str(env.home / "apps")) == ""
-        if shell != python:
-            wrong.append(f"{name}: the launcher {'shares' if shell else 'refuses'} it, the grant check "
-                         f"{'allows' if python else 'refuses'} it ({sb.protected_folder(folder, str(env.home / 'apps')) or 'no reason'})")
+    apps, wrong = str(env.home / "apps"), []
+    for tools in (False, True):
+        own = sb.Own(commands=(str(env.home / "tools"),)) if tools else None
+        lp = env.app("tool", sb.resolve_template("cli-tool"), own)
+        for name, folder in _folders(env).items():
+            if os.path.exists(log):
+                os.unlink(log)
+            env.run(lp, "true", cwd=folder, env={"PATH": path})
+            with open(log) as f:
+                argv = next(a for a in reversed([json.loads(line) for line in f]) if "/.flatpak-info" in a)
+            here = os.path.realpath(folder)
+            shell = any(argv[i:i + 3] == [b, here, here] for i in range(len(argv) - 2) for b in ("--bind", "--ro-bind"))
+            python = sb.protected_folder(folder, apps, own) == ""
+            if tools:
+                name += ", with the command links in ~/tools"
+            if shell != python:
+                wrong.append(f"{name}: the launcher {'shares' if shell else 'refuses'} it, the grant check "
+                             f"{'allows' if python else 'refuses'} it ({sb.protected_folder(folder, apps, own) or 'no reason'})")
+            # ...and both right: ~/tools is shared unless the links are there, and ~/bin and the default
+            # install folder are AppKata's while the install folder is elsewhere, as it is here
+            if name.split(",")[0] in ("~/tools", "inside ~/tools") and python is tools:
+                wrong.append(f"{name}: the grant check {'allows' if python else 'refuses'} it")
+            if name.split(",")[0] in ("~/bin", "the default install folder", "an app installed there", "beside the default install folder") and python:
+                wrong.append(f"{name}: the grant check allows it")
     return wrong
 
 

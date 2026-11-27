@@ -211,7 +211,12 @@
     400,
     401,
     666,
-    701
+    701,
+    736,
+    743,
+    745,
+    759,
+    767
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -234,8 +239,13 @@
     "tests/test_sandbox_one_fact.py",
     "tests/test_sandbox_run.py",
     "tests/test_sandbox_two_apps.py",
-    "tests/test_sandbox_user_shaped.py"
-   ]
+    "tests/test_sandbox_user_shaped.py",
+    "tests/test_backend.py",
+    "tests/test_sandbox_claims_table.py",
+    "tests/test_launcher_golden.py",
+    "tests/test_dialog_contract.py"
+   ],
+   "oversize": "22 findings: 17 from the review, and five its own batches found where its fixes stopped short (#736, #743, #745, #759, #767), which close before the review's own findings they follow from can."
   },
   {
    "id": "U06",
@@ -518,6 +528,7 @@
     751,
     752,
     753,
+    761,
     766
    ],
    "files": [
@@ -750,9 +761,15 @@
     500,
     501,
     617,
-    703
+    703,
+    769,
+    770,
+    773,
+    774,
+    775
    ],
    "files": [
+    "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
     "docs/requirements-trace.md",
     "docs/requirements/R10-trust-and-the-appkata-md-file.md",
     "docs/requirements/R17-app-sandboxing/R17.11-where-permissions-come-from.md",
@@ -767,8 +784,10 @@
     "src/appkata_core/install.py",
     "src/appkata_core/sandbox.py",
     "src/appkata_core/trustfile.py",
+    "tests/data/launchers/cli-tool.sh",
     "tests/test_dialog_contract.py",
     "tests/test_install_review.py",
+    "tests/test_launcher_golden.py",
     "tests/test_sandbox.py",
     "tests/test_sandbox_backend.py",
     "tests/test_sandbox_lifecycle.py",
@@ -1072,7 +1091,8 @@
     455,
     458,
     460,
-    657
+    657,
+    755
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -1091,7 +1111,9 @@
     "tests/test_launch.py",
     "tests/test_prefs.py",
     "tests/test_single.py",
-    "tests/test_windows.py"
+    "tests/test_windows.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_platform_matrix.py"
    ]
   },
   {
@@ -1232,7 +1254,8 @@
     321,
     446,
     447,
-    448
+    448,
+    756
    ],
    "files": [
     "docs/requirements/R1-platform-and-architecture.md",
@@ -1252,7 +1275,8 @@
     "tests/test_backend.py",
     "tests/test_dialog_contract.py",
     "tests/test_prefs.py",
-    "tests/test_sandbox_ui_surfaces.py"
+    "tests/test_sandbox_ui_surfaces.py",
+    "src/appkata_core/sandbox.py"
    ],
    "depends_on": [
     "U01"
@@ -1749,7 +1773,10 @@
     199,
     200,
     204,
-    619
+    619,
+    744,
+    734,
+    760
    ],
    "files": [
     "docs/architecture/A1-app-sandboxing/A1.11-claims.md",
@@ -1762,7 +1789,8 @@
     "docs/requirements/R17-app-sandboxing/R17.16-the-audit.md",
     "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md",
     "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md",
-    "tests/test_docs_facts.py"
+    "tests/test_docs_facts.py",
+    "docs/architecture/A1-app-sandboxing/A1.12-decisions.md"
    ]
   },
   {
@@ -11504,6 +11532,39 @@
    "note": "Found by U04's first batch (2026-11-25) and filed by the coordinator; taken in U04's fourth batch."
   },
   {
+   "finding": 734,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "depends_on": [
+    380
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's first batch (2026-11-25) after #380's fix, and filed by the coordinator; U42 (the sandbox's architecture text) holds the file."
+  },
+  {
+   "finding": 736,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md"
+   ],
+   "depends_on": [
+    379,
+    400
+   ],
+   "related": [
+    651
+   ],
+   "size": "medium",
+   "proof": "A folder argument, a link planted in it through the document portal, then a file argument through the link: the target is not handed over (tier 1, and tier 2 with the real portal in both containers).",
+   "note": "Found by U05's second batch (2026-11-25) on its branch after #379's fix, and filed by the coordinator; taken in U05's fifth batch beside #400 (the same portal records), so #379 closes with its road shut."
+  },
+  {
    "finding": 737,
    "readiness": "ready",
    "files": [
@@ -11596,6 +11657,56 @@
    "size": "small",
    "proof": "A test where the package manager refuses a plan: the backend shows the plan dialog with refused: True.",
    "note": "Found by U04's third batch (2026-11-25) and filed by the coordinator, by reading; U04's fourth batch takes it."
+  },
+  {
+   "finding": 743,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
+    "docs/requirements/R17-app-sandboxing/R17.4-the-launcher.md"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    736
+   ],
+   "size": "medium",
+   "proof": "A cli-tool run in a granted folder's parent replaces the folder with a link; after the launcher is written again, the grant is dropped, not followed (tier 1, and tier 2 in both containers).",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; #665's fix leaves it open, so U05's sixth batch takes it and #665 closes with it shut."
+  },
+  {
+   "finding": 744,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    734
+   ],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; with #734 in U42, which holds A1.2."
+  },
+  {
+   "finding": 745,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    391
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of the badge and the Audit for a review naming a refused folder.",
+   "note": "Found by U05's third batch (2026-11-25) and filed by the coordinator; U05's fourth batch takes it, beside its other refused-folder work."
   },
   {
    "finding": 746,
@@ -11739,6 +11850,39 @@
    "note": "Found by pr-review pass 1 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   },
   {
+   "finding": 755,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/platform.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_platform_matrix.py"
+   ],
+   "depends_on": [
+    392
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of data_dir() and user_folders() with a relative XDG_DATA_HOME and XDG_CONFIG_HOME: each uses its default.",
+   "note": "Found by U05's fourth batch (2026-11-25) and filed by the coordinator."
+  },
+  {
+   "finding": 756,
+   "readiness": "ready",
+   "files": [
+    "src/appkata/backend.py",
+    "src/appkata_core/sandbox.py",
+    "tests/test_backend.py"
+   ],
+   "depends_on": [
+    632,
+    701
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test setting the install folder to the home: refused in Settings, or grants of an app there not refused wholesale.",
+   "note": "Found by U05's fourth batch (2026-11-25) and filed by the coordinator; on master as well."
+  },
+  {
    "finding": 757,
    "readiness": "ready",
    "files": [
@@ -11767,6 +11911,59 @@
    "size": "small",
    "proof": "A test with dnf 4's refusal: the dry run is never rerun through pkexec on the download's path.",
    "note": "Found by pr-review pass 2 of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
+  },
+  {
+   "finding": 759,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.6-app-identity.md"
+   ],
+   "depends_on": [
+    736
+   ],
+   "related": [
+    743,
+    379
+   ],
+   "size": "medium",
+   "proof": "A tool run once in a folder plants a link there; a later file argument through the link is not handed its target (tier 1, and tier 2 with the real portal in both containers).",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator; its remedy is the owner's choice (asked 2026-11-25), taken in U05's sixth batch with #743."
+  },
+  {
+   "finding": 760,
+   "readiness": "ready",
+   "files": [
+    "docs/architecture/A1-app-sandboxing/A1.2-approach.md",
+    "docs/architecture/A1-app-sandboxing/A1.12-decisions.md"
+   ],
+   "depends_on": [
+    400,
+    736
+   ],
+   "related": [
+    734,
+    744
+   ],
+   "size": "small",
+   "proof": "The document checks.",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator; with #734 and #744 in U42."
+  },
+  {
+   "finding": 761,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_install_review.py"
+   ],
+   "depends_on": [
+    395
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test where the app leaves a folder it locked in its install folder: the uninstall gives it back and removes it.",
+   "note": "Found by U05's fifth batch (2026-11-25) and filed by the coordinator, by reading."
   },
   {
    "finding": 763,
@@ -11838,6 +12035,21 @@
    "note": "Found by the last check read of #732 (U04, 2026-11-25), latent, and filed under the owner's stopping rule."
   },
   {
+   "finding": 767,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/install.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    400
+   ],
+   "related": [],
+   "size": "small",
+   "proof": "A test of an update of a sandboxed app: the portal is asked to revoke nothing.",
+   "note": "Found by U05's sixth batch (2026-11-25) on what #400 just built, and filed by the coordinator; fixed in U05's first review round."
+  },
+  {
    "finding": 768,
    "readiness": "ready",
    "files": [
@@ -11850,6 +12062,96 @@
    "size": "medium",
    "proof": "A Windows VM test: the downloads folder made a junction; the elevated side opens nothing outside it.",
    "note": "Found by pr-review pass 3 of #732 (U04, 2026-11-25), latent; cleared for public text and placed in U10 by the owner's walk thru (2026-11-26)"
+  },
+  {
+   "finding": 769,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md"
+   ],
+   "depends_on": [
+    383
+   ],
+   "related": [
+    384
+   ],
+   "size": "small",
+   "proof": "A test per added root: each other channel's NativeMessagingHosts folder is never shared and its profile is a secret.",
+   "note": "Found by pr-review pass 1 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule."
+  },
+  {
+   "finding": 770,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py"
+   ],
+   "depends_on": [
+    665
+   ],
+   "related": [
+    401
+   ],
+   "size": "small",
+   "proof": "A test that plants a link to a folder whose name holds a control character under a granted folder: the grant is refused, and neither the record's leads nor the launcher's text holds one.",
+   "note": "Found by pr-review pass 1 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule."
+  },
+  {
+   "finding": 773,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
+    "docs/architecture/A1-app-sandboxing/A1.11-claims.md"
+   ],
+   "depends_on": [
+    392
+   ],
+   "related": [
+    384
+   ],
+   "size": "small",
+   "proof": "A moved case per variable: the folder PULSE_CONFIG_PATH, WIREPLUMBER_CONFIG_DIR or PIPEWIRE_CONFIG_DIR names and the file PULSE_CLIENTCONFIG names are never shared, and one that is the home or above it adds nothing.",
+   "note": "Found by pr-review pass 3 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule; a missing place, a Low under R17.17's limit until #772."
+  },
+  {
+   "finding": 774,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "tests/data/launchers/cli-tool.sh",
+    "tests/test_launcher_golden.py"
+   ],
+   "depends_on": [
+    381
+   ],
+   "related": [
+    665
+   ],
+   "size": "small",
+   "proof": "A test that makes a never-shared place a link after the launcher is written: a tool run in the real folder is not given it, and the refusal line is printed.",
+   "note": "Found by pr-review pass 3 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule."
+  },
+  {
+   "finding": 775,
+   "readiness": "ready",
+   "files": [
+    "src/appkata_core/sandbox.py",
+    "tests/test_sandbox.py",
+    "docs/requirements/R17-app-sandboxing/R17.3-templates.md",
+    "docs/architecture/A1-app-sandboxing/A1.11-claims.md"
+   ],
+   "depends_on": [],
+   "related": [
+    384
+   ],
+   "size": "small",
+   "proof": "A test of the added root: ~/.xserverrc is never shared, as ~/.xinitrc is.",
+   "note": "Found by pr-review pass 3 of #735 (U05, 2026-11-26), latent; filed under the owner's stopping rule; a missing place, a Low under R17.17's limit until #772."
   }
  ],
  "shared_files": [

@@ -14,6 +14,7 @@ import pytest
 
 from appkata_core import install, sandbox as sb
 from appkata_core.db import now
+from test_sandbox import _binds, _launched
 from test_sandbox_backend import be   # noqa: F401
 from test_sandbox_transitions import snapshot
 
@@ -121,6 +122,64 @@ def test_a_home_removed_with_its_app_frees_the_name(be, two):
     assert install.new_app_id(be.db, C, "Notes") == "notes"                  # nothing of A's is left to inherit
 
 
+def test_what_one_notes_was_handed_is_never_the_next_notes_with_its_id(be, two, tmp_path, monkeypatch):
+    # CR1.5-25 (#400): a file handed to an app through the document portal stays the portal's, under
+    # the app's identity, for the session. B's home was removed with it, so the next "Notes", from
+    # another Source, got B's id (the test above) and, in its doc/by-app view, every file the user
+    # had opened with B. The class is the one R6-1 and F19 are of: something keyed on the id that
+    # outlives the install. The portal's records were the one such thing AppKata does not keep.
+    from test_sandbox import ALL_PERMISSIONS, _portal_calls, a_portal_holding
+    taxes = str(tmp_path / "Documents" / "taxes.txt")
+    held = {"io.appkata.notes": {"d0": taxes}, "io.appkata.notes-2": {"d1": taxes, "d2": str(tmp_path / "proj")}}
+    docs, log, runs = a_portal_holding(tmp_path, monkeypatch, held)
+
+    def handed(app_id):                 # what the file-argument helper leaves when it hands the app something
+        os.makedirs(os.path.dirname(sb.handed_path(app_id)), exist_ok=True)
+        open(sb.handed_path(app_id), "w").close()
+
+    handed("notes-2")
+    be._uninstall(B, False, remove_home=True)
+    assert install.new_app_id(be.db, C, "Notes") == "notes-2"                # C gets B's id...
+    assert json.loads(docs.read_text()) == {**held, "io.appkata.notes-2": {}}       # ...and nothing B was handed; A's is A's
+    assert _portal_calls(log) == [["RevokePermissions", [d, "io.appkata.notes-2", ALL_PERMISSIONS]] for d in ("d1", "d2")]
+    # ...and an app that leaves Standard keeps nothing for when it comes back: to Strict, and to Off
+    for away in ("strict", "off"):
+        be.setSandbox(A, {"template": "online-app", "overrides": {}})
+        docs.write_text(json.dumps(held))
+        handed("notes")
+        be.setSandbox(A, {"template": "online-app", "overrides": {"network": False}})        # still Standard: it keeps them
+        assert json.loads(docs.read_text())["io.appkata.notes"] == held["io.appkata.notes"]
+        be.setSandbox(A, {"template": away, "overrides": {}} if away != "off" else {"template": "off"})
+        assert json.loads(docs.read_text())["io.appkata.notes"] == {}, away
+        assert not os.path.lexists(sb.handed_path("notes"))
+
+
+def test_a_home_that_cannot_be_removed_whole_is_said_and_stays_its_apps(be, two, monkeypatch):
+    # CR1.5-20 (#395): the user ticked "remove its private home", a file in it couldn't be removed,
+    # and the uninstall said "uninstalled" and removed the owner record: the home was then no
+    # app's, and A installed again got the next id and an empty home beside its old data.
+    home = sb.sandbox_home("notes")
+    os.makedirs(os.path.join(home, "data"), exist_ok=True)
+    for f in ("immutable.dat", "plain.dat"):
+        with open(os.path.join(home, "data", f), "w") as out:
+            out.write("x")
+    unlink = os.unlink
+
+    def refusing(path, *args, **kwargs):            # as for a file made immutable, which no test can make
+        if os.path.basename(os.fspath(path)) == "immutable.dat":
+            raise PermissionError(1, "Operation not permitted", os.fspath(path))
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", refusing)
+    toasts = []
+    be._toast.connect(lambda kind, text: toasts.append((kind, text)))
+    be._uninstall(A, False, remove_home=True)
+    assert toasts == [("info", f"Notes uninstalled. Not removed: {home}.")]
+    assert not be.db.one("SELECT 1 FROM installs WHERE url=?", (A,)) and os.listdir(os.path.join(home, "data")) == ["immutable.dat"]
+    assert install.new_app_id(be.db, C, "Notes") == "notes-3"                # not what is left of A's home, nor B's id
+    assert install.new_app_id(be.db, A, "Notes") == "notes"                  # A installed again finds it
+
+
 def test_an_install_record_without_an_id_still_keys_on_the_slug(be, tmp_path):
     # a record written before round six: the slug is the id, so nothing moves on upgrade
     assert install.app_id_of({}, {"name": "My Notes"}) == "my-notes"
@@ -194,3 +253,72 @@ def test_the_keyspace_catches_round_sixs_one_id_for_both(be, two):
     be._regenerate_launcher(B)
     found = _collisions(be, two)
     assert any("notes" in k and "notes-2" not in k and "Notes.log" not in k for k in found), found
+
+
+def test_appkatas_start_and_the_users_save_keep_where_a_granted_folder_led(be, two):
+    # CR1.5-53 (#743), through the backend: where a granted folder leads is in its launcher's text,
+    # so once a link an app made led it elsewhere, AppKata's next start found the launcher stale and
+    # wrote it again for where the link led; the app then read ~/Documents at the folder it was
+    # given. The start writes nothing for it now, and a launcher it does write again holds where the
+    # folder led when the user saved the grant; so does the user's next Save (the test below).
+    home = two
+    (home / "proj" / "data").mkdir(parents=True)
+    (home / "Documents").mkdir()
+    cfg = {"template": "online-app", "overrides": {"folders": {"+~/proj/data": "ro"}}}
+    be.setSandbox(B, cfg)
+    lp = _rec(be, B)["launcher"]
+    text = open(lp).read()
+    assert f'g1={home}/proj/data; leads "$g1" {home}/proj/data || g1=\n' in text and be._heal_launchers() == []
+    (home / "proj" / "data").rename(home / "proj" / "data.old")           # what an app that could write ~/proj once left there
+    (home / "proj" / "data").symlink_to("../Documents")
+    assert be._heal_launchers() == [] and open(lp).read() == text           # AppKata's start: nothing to write
+    with open(lp, "a") as f:                                                # ...and where it has a launcher to write again
+        f.write("# edited by hand\n")
+    assert be._heal_launchers() == [B] and open(lp).read() == text
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    assert be._heal_launchers() == [] and _rec(be, A).get("sandboxLeads") is None       # A has no folder: nothing kept
+    be.setSandbox(B, cfg)                                                    # the user's own Save, of the same set: kept too
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    assert open(lp).read() == text and be._heal_launchers() == []
+
+
+def test_a_save_of_the_sandbox_judges_only_the_folders_it_adds(be, two, tmp_path_factory, monkeypatch):
+    # The owner's decision of 2026-11-26, on #735 (R17.4): the user's Save judged every granted
+    # folder anew, so a link an app had put on a kept grant's way, which each launch refused,
+    # became the grant at the next Save made for any other reason (the network turned off). A
+    # folder the app already had keeps its answer through a Save now, as it does through AppKata's
+    # start; a folder the Save adds is judged; and one is judged anew by taking it out and
+    # granting it again. How it slipped past: the tests held the Save to judging anew, as the
+    # requirement said, and none changed a link and then saved something else.
+    home = two
+    for d in ("proj/data", "Documents", "Music", "disk/A", "disk/B"):
+        (home / d).mkdir(parents=True)
+    (home / "Docs").symlink_to(home / "disk" / "A")                          # the user's own link, there when it is granted
+    folders = {"+~/proj/data": "ro", "+~/Docs": "rw"}
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders}})
+    led = {"~/Docs": str(home / "disk" / "A"), "~/proj/data": str(home / "proj" / "data")}
+    assert _rec(be, B)["sandboxLeads"] == led
+    (home / "proj" / "data").rename(home / "proj" / "data.old")           # what an app that could write ~/proj once left there
+    (home / "proj" / "data").symlink_to("../Documents")
+    (home / "Docs").unlink()
+    (home / "Docs").symlink_to(home / "disk" / "B")                          # ...and the user's link, moved
+    # a Save that changes something else, and one that adds a folder: the kept answers stand, the new folder is judged
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders, "network": False}})
+    assert _rec(be, B)["sandboxLeads"] == led
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": {**folders, "+~/Music": "ro"}, "network": False}})
+    assert _rec(be, B)["sandboxLeads"] == {**led, "~/Music": str(home / "Music")}
+    text = open(_rec(be, B)["launcher"]).read()
+    assert f'leads "$g1" {home}/disk/A || g1=\n' in text and f'leads "$g3" {home}/proj/data || g3=\n' in text, text
+    # so the launch still drops both, and says how each is judged anew
+    _, bw, r, _ = _launched(tmp_path_factory.mktemp("launch"), monkeypatch, None, gs=sb.normalize(_rec(be, B)["sandbox"]), home=home, leads=_rec(be, B)["sandboxLeads"])
+    assert r.returncode == 0 and str(home / "Music") in _binds(bw), r.stderr
+    assert not [w for w in bw if "/Documents" in w or "/Docs" in w or "/proj/data" in w or "/disk" in w], bw
+    said = [line for line in r.stderr.splitlines() if "isn't given" in line]
+    assert len(said) == 2 and all(line.endswith("take the folder out in the app's Sandbox dialog, save, and give it again, and the folder is judged anew.")
+                                  for line in said), r.stderr
+    # taken out, the folder's answer goes with that Save; granted again, it is judged anew
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": {"+~/proj/data": "ro"}}})
+    assert _rec(be, B)["sandboxLeads"] == {"~/proj/data": str(home / "proj" / "data")}
+    be.setSandbox(B, {"template": "online-app", "overrides": {"folders": folders}})
+    assert _rec(be, B)["sandboxLeads"] == {"~/Docs": str(home / "disk" / "B"), "~/proj/data": str(home / "proj" / "data")}
+    assert f'leads "$g1" {home}/disk/B || g1=\n' in open(_rec(be, B)["launcher"]).read()

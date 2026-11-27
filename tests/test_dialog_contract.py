@@ -782,8 +782,14 @@ def test_what_the_dialogs_show_of_an_installed_app_is_the_folder_it_is_in_not_th
     assert be.portable().root == str(new) and be._app_options(URL).root == str(old)
     plan = _real_plan(be, monkeypatch, "Demo", installed="1.0")
     assert plan["portable"]["folder"] == str(old)
+    # (The chips were told apart by their answer, which differed between the two folders. It no
+    # longer does: the default install folder, which `old` is, is never shared whatever folder an
+    # app is in, CR1.5-37. So the folder the backend judges by is read where it hands it over.)
     gs = sb.to_json({**sb.resolve_template("standard"), "folders": {str(old / "another-app"): "rw"}})
-    assert be.summaryChips(gs, URL) == sb.summary_chips(gs, str(old)) != sb.summary_chips(gs, str(new))
+    chips, judged_by = sb.summary_chips, []
+    monkeypatch.setattr(sb, "summary_chips", lambda gs, apps_root=None, *a, **k: judged_by.append(apps_root) or chips(gs, apps_root, *a, **k))
+    assert be.summaryChips(gs, URL) == chips(gs, str(old)) and judged_by == [str(old)]
+    monkeypatch.setattr(sb, "summary_chips", chips)
     _review(be, "online-app")
     be._regenerate_launcher(URL)
     rec = json.loads(be.db.one("SELECT record FROM installs WHERE url=?", (URL,))["record"])

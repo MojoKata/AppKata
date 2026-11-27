@@ -848,6 +848,148 @@ def test_same_file_is_said_only_of_a_reviewers_whole_sha256(be, written, same, i
     assert be.detail(URL)["sameFileAs"] == (["Desk"] if same else [])
 
 
+# ---------------------------------------------------------------- AppKata's own folders and the sandbox (R17.3.1; CR1, #632)
+# The sandbox module reads no Settings and no install record: whoever asks it about a folder tells
+# it the app's install folder and AppKata's other folders (sandbox.Own). The backend told it the
+# install folder alone, so the command links folder was never among what a sandboxed app is refused,
+# and one set elsewhere than ~/bin could be granted by a review's line (CR1.5-37).
+LINKS = "the command links folder, which is on your PATH"
+
+
+def asked_chips(be, *folders):
+    """The Sandbox dialog's chips for Demo given these folders, as the dialog asks for them."""
+    gs = sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+" + f: "rw" for f in folders}}))
+    return [c[0] for c in be.summaryChips(gs, URL, "")]
+
+
+def test_the_sandbox_is_told_the_command_links_folder_of_settings_and_of_every_install(be):
+    home = os.path.expanduser("~")
+    source(be, published("1.0"))
+    folders = ("~/tools", "~/old-links", "~/bin/mine", "~/Notes")
+    # the defaults: the links are in ~/bin
+    assert be._app_options(URL).own.commands == (f"{home}/bin",)
+    assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", "~/old-links", "~/tools"]
+    # Settings name another folder: refused from then on, for this app's chips, its picker and its launcher
+    be.setPref("commandDir", "~/tools")
+    assert be._app_options(URL).own.commands == (f"{home}/tools",)
+    assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", "~/old-links", f"~/tools · refused: {LINKS}"]
+    # ...and with the app's own command link turned off, since the other apps' links are there
+    be.db.x("INSERT OR REPLACE INTO app_settings(url, install) VALUES(?,?)", (URL, json.dumps({"commandLink": False})))
+    be.reload()
+    assert be._app_options(URL).command_dir == "" and f"~/tools · refused: {LINKS}" in asked_chips(be, *folders)
+    # a command link an install made where the setting named before is still there: that folder too
+    installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
+                             "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo",
+                             "links": [f"{home}/bin/apps/demo/Demo.AppImage", f"{home}/old-links/demo"]})
+    assert be._app_options(URL).own.commands == (f"{home}/old-links", f"{home}/tools")
+    assert asked_chips(be, *folders)[1:5] == ["~/Notes", f"~/bin/mine · refused: {LINKS}", f"~/old-links · refused: {LINKS}", f"~/tools · refused: {LINKS}"]
+    # the user's own pick in the Sandbox dialog is dropped the same way, and said (Backend.setSandbox)
+    said = []
+    be.toast.connect(lambda kind, text: said.append((kind, text)))
+    be.setSandbox(URL, {"custom": sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/tools": "rw", "+~/Notes": "rw"}}))})
+    assert [t for k, t in said if k == "error"] == [f"Not shared: ~/tools ({LINKS}). AppKata never gives an app these folders."]
+    assert set(be.sandboxInfo(URL)["grants"]["folders"]) == {"~/Notes"}
+
+
+# ---------------------------------------------------------------- every install folder (R17.3.1; CR1, #701)
+URL2 = "https://github.com/example/other"
+APPS = "AppKata's installed apps"
+
+
+def test_the_sandbox_is_told_every_install_folder_apps_are_in_and_the_one_settings_name(be):
+    # CR1.5-45: an app stays in the folder it was installed in when the setting changes (R4.3.1), so
+    # apps are in two, and the app in one was told of its own folder alone
+    home = os.path.expanduser("~")
+    source(be, published("1.0"))
+    installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
+                             "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo", "links": []})
+    assert be._app_options(URL).own.roots == (f"{home}/bin/apps",)
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == ["~/Apps/other", "~/Next", "~/Notes"]
+    # Settings name another folder, and an app is installed there: the first app stays where it is,
+    # and each is told of both
+    be.setPref("installDir", "~/Apps")
+    be.db.x("INSERT INTO installs(url, name, version, date, asset, kind, record, installed_at) VALUES(?,?,?,?,?,?,?,?)",
+            (URL2, "Other", "2.0", "2026-01-01T00:00:00Z", "other.AppImage", "appimage", json.dumps(
+                {"current": {"version": "2.0", "path": f"{home}/Apps/other/other.AppImage", "exec": "other.AppImage"},
+                 "root": f"{home}/Apps", "target": f"{home}/Apps/other", "links": []}), now()))
+    be.reload()
+    assert be._app_options(URL).root == f"{home}/bin/apps" and be._app_options(URL2).root == f"{home}/Apps"
+    assert be._app_options(URL).own.roots == be._app_options(URL2).own.roots == (f"{home}/Apps", f"{home}/bin/apps")
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == [f"~/Apps/other · refused: {APPS}", "~/Next", "~/Notes"]
+    gs = sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/bin/apps/demo": "rw"}}))
+    assert f"~/bin/apps/demo · refused: {APPS}" in [c[0] for c in be.summaryChips(gs, URL2, "")]
+    # the folder Settings name for the next install, before anything is in it
+    be.setPref("installDir", "~/Next")
+    assert be._app_options(URL).own.roots == (f"{home}/Apps", f"{home}/Next", f"{home}/bin/apps")
+    assert asked_chips(be, "~/Apps/other", "~/Next", "~/Notes")[1:4] == [f"~/Apps/other · refused: {APPS}", f"~/Next · refused: {APPS}", "~/Notes"]
+    # the user's own pick is dropped the same way (Backend.setSandbox)
+    said = []
+    be.toast.connect(lambda kind, text: said.append((kind, text)))
+    be.setSandbox(URL, {"custom": sandbox.to_json(sandbox.apply_overrides(sandbox.resolve_template("standard"), {"folders": {"+~/Apps": "rw", "+~/Notes": "rw"}}))})
+    assert [t for k, t in said if k == "error"] == [f"Not shared: ~/Apps ({APPS}). AppKata never gives an app these folders."]
+
+
+# ---------------------------------------------------------------- a refused folder is nothing a review adds (R17.11, R17.16; CR1, #745)
+# A review's set is kept as it was written, a folder AppKata refuses too (R17.3.1), so that the
+# summary and the launcher say it was refused. The badge and the Audit compared the sets as written:
+# "Desk suggests adding ~/.ssh (read-only)", "added: ~/.ssh (read-only)", for a folder never mounted.
+# How it slipped past: the badge's and the Audit's tests used reviews of folders that can be shared.
+
+def a_sandbox_review(be, lines):
+    """Desk's review of Demo with these Settings lines, as a sync stores it."""
+    from appkata_core import trustfile
+    parsed, _ = trustfile.parse_section("Demo", f"## Demo::Settings\n\n- Trust: 4\n{lines}")
+    row = be.db.one("SELECT id FROM trusts WHERE name='Desk'")
+    tid = row["id"] if row else be.db.x("INSERT INTO trusts(url, name, own, verified_commit, score) VALUES(?,?,?,?,?)",
+                                        ("https://example.org/trust", "Desk", 0, "abc", 3)).lastrowid
+    be.db.x("DELETE FROM reviews WHERE url=?", (URL,))
+    be.db.x("INSERT INTO reviews(trust_id, url, app, settings) VALUES(?,?,?,?)", (tid, URL, "Demo", json.dumps(parsed["opts"])))
+    be.reload()
+
+
+REFUSED_LINE = "~/.ssh:ro, ~/Documents/../.cache:ro, ~/.local/share/cinnamon/applets, ~/bin/apps/other"
+
+
+def test_the_review_badge_and_the_audit_leave_a_refused_folder_out_of_what_a_reviewers_set_adds(be):
+    home = os.path.expanduser("~")
+    source(be, published("1.0"))
+    installed_as(be, "1.0", {"current": {"version": "1.0", "path": f"{home}/bin/apps/demo/{file_of('1.0')}", "exec": file_of("1.0")},
+                             "root": f"{home}/bin/apps", "target": f"{home}/bin/apps/demo", "links": []})
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})          # the user's own choice, before any review
+    # a review asks for folders AppKata refuses (never shared, a `..`, AppKata's own) and for one it can give
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}, ~/Notes\n")
+    info = be.sandboxInfo(URL)
+    assert info["hasSuggestion"] and info["reviewBadge"]
+    assert info["reviewBadgeText"] == "Desk suggests adding ~/Notes (read-write). Until you review it, the app may not work fully."
+    chips = [c[0] for c in info["reviewSuggests"]]                         # the dialog names them, as refused
+    assert {"~/Notes", "~/.ssh · refused: SSH keys", f"~/Documents/../.cache · refused: {sandbox.DOTDOT}",
+            "~/.local/share/cinnamon/applets · refused: Cinnamon's applets, desklets, extensions and panel launchers",
+            "~/bin/apps/other · refused: AppKata's installed apps"} <= set(chips), chips
+    # "Use theirs": the Audit says what the app was given
+    be.useSuggestion(URL)
+    entry = audit.page(be.db, kind="app")[0]
+    detail = json.loads(entry["detail"])
+    assert (entry["action"], detail.get("added"), detail.get("removed")) == ("set the sandbox of", "~/Notes (read-write)", None), entry
+    assert ".ssh" not in entry["detail"] and "cinnamon" not in entry["detail"]
+    assert be._resolved_sandbox(URL)["source"] in ("reviews", "pinned") and "~/.ssh" in be._resolved_sandbox(URL)["grants"]["folders"]   # kept as written
+    info = be.sandboxInfo(URL)
+    assert not info["hasSuggestion"] and not info["reviewBadge"] and info["reviewBadgeText"] == ""
+    assert "~/.ssh · refused: SSH keys" in [c[0] for c in info["chips"]]   # the summary still says so
+
+
+def test_a_review_that_asks_only_for_refused_folders_suggests_nothing_to_act_on(be):
+    source(be, published("1.0"))
+    be.setSandbox(URL, {"template": "standard", "overrides": {}})
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}\n")
+    info = be.sandboxInfo(URL)
+    assert not info["hasSuggestion"] and not info["reviewBadge"] and info["reviewBadgeText"] == ""
+    assert "~/.ssh · refused: SSH keys" in [c[0] for c in info["reviewSuggests"]]         # what they suggest is still shown
+    # ...and one that also drops something the user has is a suggestion for that alone
+    a_sandbox_review(be, f"- Sandbox (linux): standard\n- Sandbox folders (linux): {REFUSED_LINE}\n- Sandbox network (linux): no\n")
+    info = be.sandboxInfo(URL)
+    assert info["hasSuggestion"] and info["reviewBadgeText"] == "Desk suggests removing the network. The app may have more access than it needs."
+
+
 # ---------------------------------------------------------------- a plan AppKata refuses (R16.3.5, R16.4.3; CR1, #742)
 # How it slipped past: the dialog's refused form was drawn by no test of the backend, so nothing
 # saw that no refusal ever got there: install.py made an install error of each on its way.
